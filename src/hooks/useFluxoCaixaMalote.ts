@@ -397,6 +397,36 @@ export interface HistoricoAjusteFluxo {
   created_at: string;
 }
 
+// SIS-2026-0712: linha do tempo da linha do Fluxo — origem (Malote/Débito/planilha), ajustes, rateio, exclusão e restauração.
+export interface EventoHistoricoLinhaFluxo {
+  quando: string;
+  fonte: string;
+  tipo: string;
+  descricao: string | null;
+  usuario: string | null;
+  detalhe: Record<string, any> | null;
+}
+
+export function useHistoricoLinhaFluxo(linha: { origem: string; despesa_id: string; numero_parcela: number | null } | null) {
+  return useQuery({
+    queryKey: ["fluxo_caixa_historico_linha", linha?.origem, linha?.despesa_id, linha?.numero_parcela ?? null],
+    enabled: !!linha,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("fluxo_caixa_historico_linha", {
+        _origem: linha!.origem,
+        _despesa_id: linha!.despesa_id,
+        _numero_parcela: linha!.numero_parcela,
+      });
+      if (error) {
+        // Migration ainda não aplicada: o diálogo mostra a lista vazia, sem quebrar a tela.
+        if (error.code === "PGRST202" || error.code === "42883") return [] as EventoHistoricoLinhaFluxo[];
+        throw error;
+      }
+      return (data ?? []) as EventoHistoricoLinhaFluxo[];
+    },
+  });
+}
+
 export function useHistoricoAjusteFluxo(linha: { origem: string; despesa_id: string; numero_parcela: number | null } | null) {
   return useQuery({
     queryKey: ["fluxo_caixa_ajuste_historico", linha?.origem, linha?.despesa_id, linha?.numero_parcela ?? null],
