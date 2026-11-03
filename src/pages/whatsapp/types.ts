@@ -81,6 +81,9 @@ export interface WaPayload {
   // Reações à mensagem. O WhatsApp permite uma por pessoa, então são dois
   // slots: a do contato e a nossa. String vazia/ausente = sem reação.
   reacoes?: { deles?: string | null; nossa?: string | null };
+  // Mensagem pendente (fora da janela): o que aconteceu com a saudação que
+  // foi pedir a resposta do contato (whatsapp-enviar, 03/11/2026).
+  saudacao?: { modo?: "utility" | "marketing" | "barrada" | "enviada"; template?: string | null } | null;
 }
 
 // Paleta do seletor. O WhatsApp aceita qualquer emoji, mas uma lista curta
@@ -98,9 +101,70 @@ export const motivoFalha = (erro?: WaPayload["erro"]) => {
   if (erro.codigo === 131026) return "Número não recebe mensagens no WhatsApp.";
   // 131049/130472 só acontecem com template de MARKETING (14/10/2026: a saudação
   // caía no template anterior, marketing, enquanto o novo UTILITY não era aprovado).
-  if (erro.codigo === 131049 || erro.codigo === 130472) return "A Meta limitou a entrega para este contato (mensagem classificada como marketing). Tente de novo amanhã ou peça para a pessoa escrever primeiro.";
+  // 03/11/2026: o texto dizia "tente de novo amanhã" — a recrutadora tentava, e
+  // a mesma saudação era barrada todo dia. O que destrava é o contato escrever.
+  if (ehLimiteMarketing(erro)) return AVISO_LIMITE_MARKETING;
   return erro.detalhe || erro.titulo || `Erro ${erro.codigo ?? ""}`.trim();
 };
+
+/** 131049/130472: o limite por pessoa que a Meta aplica a template de marketing. */
+export const ehLimiteMarketing = (erro?: WaPayload["erro"]) => erro?.codigo === 131049 || erro?.codigo === 130472;
+
+export const AVISO_LIMITE_MARKETING =
+  "Não chegou: a Meta classificou esta mensagem como marketing e este contato já atingiu o limite delas. Reenviar não adianta. " +
+  "Ligue para a pessoa e peça que mande um \"oi\" neste WhatsApp — aí a conversa abre e o que estiver guardado sai na hora.";
+
+/**
+ * O aviso da mensagem PENDENTE (fora da janela), conforme o destino da
+ * saudação. Antes dizia sempre "enviamos a saudação" — inclusive quando a
+ * Meta a tinha barrado (131049), e a recrutadora esperava uma resposta que
+ * nunca viria (conversa ADRIEL, 03/11/2026). O 131049 chega depois, pelo
+ * webhook, na bolha da saudação: por isso olha as mensagens ao redor.
+ */
+export function avisoPendente(m: WaMensagem, mensagens: WaMensagem[]): { barrada: boolean; texto: string } {
+  const t = new Date(m.criada_em).getTime();
+  const saudacaoBarrada = m.payload?.saudacao?.modo === "barrada" || mensagens.some((n) => {
+    if (n.direcao !== "saida" || n.status !== "erro" || !ehLimiteMarketing(n.payload?.erro)) return false;
+    const tn = new Date(n.criada_em).getTime();
+    // A saudação sai junto (segundos antes) da primeira pendente; as seguintes
+    // da mesma espera (até 24h) herdam o destino dela.
+    return tn <= t + 5 * 60_000 && tn >= t - 24 * 60 * 60_000;
+  });
+  if (saudacaoBarrada) {
+    return {
+      barrada: true,
+      texto: "Guardada, mas o contato ainda não foi avisado: a Meta barrou a saudação (limite de mensagens de marketing). " +
+        "Ligue e peça para a pessoa mandar um \"oi\" neste WhatsApp — esta mensagem sai sozinha assim que ela escrever.",
+    };
+  }
+  return {
+    barrada: false,
+    texto: "Fora da janela de 24h: enviamos a saudação. Esta mensagem sai sozinha (com os botões) assim que o contato responder.",
+  };
+}
+
+/** O toast depois de mandar fora da janela, conforme o destino da saudação. */
+export function avisoForaDaJanela(saudacao?: WaPayload["saudacao"]): { titulo: string; descricao: string; grave: boolean } {
+  if (saudacao?.modo === "barrada") {
+    return {
+      titulo: "Mensagem guardada — a saudação não pôde sair",
+      descricao: "A Meta já barrou a saudação para este contato nas últimas 24h (marketing). Ligue e peça para a pessoa mandar um \"oi\" neste WhatsApp: sua mensagem sai sozinha quando ela escrever.",
+      grave: true,
+    };
+  }
+  if (saudacao?.modo === "marketing") {
+    return {
+      titulo: "Fora da janela de 24h",
+      descricao: "Enviamos a saudação, mas a Meta a classifica como marketing e pode não entregar. Se não houver resposta, ligue e peça para a pessoa mandar um \"oi\" neste WhatsApp.",
+      grave: false,
+    };
+  }
+  return {
+    titulo: "Fora da janela de 24h",
+    descricao: "Enviamos a saudação (modelo aprovado). Sua mensagem sai sozinha, com os botões, assim que o contato responder.",
+    grave: false,
+  };
+}
 
 export type WaMenuAcao = "texto" | "submenu" | "ia" | "humano" | "transferir" | "concluir";
 
