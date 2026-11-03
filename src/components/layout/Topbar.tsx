@@ -7,6 +7,7 @@ import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { supabase } from "@/integrations/supabase/client";
+import { lerMeuPerfil } from "@/lib/meuPerfil";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -71,8 +72,8 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
     queryKey: ["meu-perfil", user?.id],
     enabled: !!user?.id,
     queryFn: async () => {
-      const { data } = await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle();
-      return data as Record<string, any> | null;
+      // Leitura compartilhada com os contextos do boot (src/lib/meuPerfil.ts).
+      return lerMeuPerfil(user!.id);
     },
   });
   const displayName = perfilQ.data?.display_name || perfilQ.data?.email || user?.email || "";

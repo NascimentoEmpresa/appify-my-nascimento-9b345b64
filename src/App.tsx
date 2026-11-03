@@ -429,8 +429,15 @@ function LoginForaDoLugar() {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
-      gcTime: 300_000,
+      // 03/11/2026: 30 s -> 5 min e 5 -> 30 min. Com 30 s, voltar a uma tela
+      // depois de meio minuto refazia todas as consultas dela, e cada
+      // navegação refazia as do layout (menus, permissões, notificações).
+      // Dado que muda por ação do próprio usuário é invalidado pela mutation
+      // (invalidateQueries) e atualiza na hora; dado que muda por ação de
+      // OUTRA pessoa aparece ao clicar em atualizar ou recarregar a página —
+      // é a regra do item 5 (requisição só quando o usuário pede).
+      staleTime: 5 * 60_000,
+      gcTime: 30 * 60_000,
       // A ordem das checagens importa: auth PRIMEIRO. 401/403 é token vencido
       // (transitório, local, merece insistência), não sobrecarga.
       retry: (failureCount, error) => {

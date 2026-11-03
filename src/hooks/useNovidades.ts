@@ -33,7 +33,10 @@ export function useNovidades() {
 
   const listaQ = useQuery({
     queryKey: ["novidades"],
-    staleTime: 60_000,
+    // 03/11/2026: 60 s -> 30 min. 200 novidades com descrição (60 kB) a cada
+    // minuto de navegação: 4.842 leituras no dia. Novidade nova aparece na
+    // próxima recarga; quem publica invalida a lista na hora.
+    staleTime: 30 * 60_000,
     queryFn: async (): Promise<Novidade[]> => {
       // Sem filtro por `publicado`: a RLS já devolve rascunho só p/ quem
       // publica, e filtrar aqui esconderia o rascunho de quem o criou.
@@ -49,7 +52,7 @@ export function useNovidades() {
   const lidasQ = useQuery({
     queryKey: ["novidades-lidas", user?.id],
     enabled: !!user?.id,
-    staleTime: 60_000,
+    staleTime: 30 * 60_000,
     queryFn: async (): Promise<number[]> => {
       const { data, error } = await sb.from(TABELA_LIDAS)
         .select("novidade_id").eq("user_id", user!.id);
