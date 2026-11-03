@@ -20,11 +20,14 @@ import { tratamentoEfetivo, type TratamentoContrato } from "./faturamento/tratam
 import { useTratamentosContrato } from "./faturamento/useTratamentosContrato";
 import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { useAjustesAdmClassificacao, useContratosAdmTirados } from "./fechamento/useAjustesAdm";
+import type { ComposicaoAdmAberta } from "./fechamento/ComposicaoAdm";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { linkFluxoDoRecorte } from "./fechamento/linkFluxo";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheAdmForaDaColuna, despesaAdmPorContrato, ligacoesDoFechamento, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   ROTULO_SEM_CLASSIFICACAO, type ItemDetalheClassificacao, type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -90,6 +93,12 @@ export default function FechamentoEmpresa() {
   const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base, { manterInvestimentos: true, manterAdministrativos: true });
   const { data: admAno = [], isLoading: carregandoAdm, error: erroAdm } = useDespesasAdmAno(ano, base);
   const { data: ligacoes } = useLigacoesRubrica();
+  // Ajustes do Total Desp. Adm que valem só aqui (migration 20261103005200): a ligação do Fechamento se sobrepõe à global só na despesa administrativa.
+  const { data: ajustesAdmClassificacao } = useAjustesAdmClassificacao();
+  const { data: contratosAdmTirados } = useContratosAdmTirados();
+  const { data: podeAjustarAdm } = useScreenAccess("fechamento-empresa-despesa-adm", "alterar");
+  const ligacoesAdm = useMemo(() => ligacoesDoFechamento(ligacoes, ajustesAdmClassificacao), [ligacoes, ajustesAdmClassificacao]);
+  const tiradosAdm = useMemo(() => contratosAdmTirados ?? new Set<string>(), [contratosAdmTirados]);
 
   // Mês real de hoje, mesmo vendo outro ano: ano passado fica todo realizado, ano seguinte todo projetado.
   const meses = useMemo(() => Array.from({ length: 12 }, (_, i) => `${ano}-${String(i + 1).padStart(2, "0")}`), [ano]);
@@ -133,9 +142,9 @@ export default function FechamentoEmpresa() {
   // (as linhas voltam "sem contrato": é como as funções de despesa administrativa as reconhecem)
   const admDeContratos = useMemo(
     () => custosAno
-      .filter((l) => !!l.contrato_id && idsAdministrativos.has(l.contrato_id) && !socioPorContrato.has(l.contrato_id))
+      .filter((l) => !!l.contrato_id && idsAdministrativos.has(l.contrato_id) && !socioPorContrato.has(l.contrato_id) && !tiradosAdm.has(l.contrato_id))
       .map((l) => ({ ...l, contrato_id: null })),
-    [custosAno, idsAdministrativos, socioPorContrato],
+    [custosAno, idsAdministrativos, socioPorContrato, tiradosAdm],
   );
   // Tudo o que é despesa administrativa no Fluxo: sem contrato + contratos administrativos.
   const admTodas = useMemo(() => [...admAno, ...admDeContratos], [admAno, admDeContratos]);
@@ -164,7 +173,7 @@ export default function FechamentoEmpresa() {
     }
     // Com contrato escolhido só entra o lucro dele: despesa de sócio, como a administrativa, não pertence a contrato.
     const sociosPorMes = ctId !== TODOS ? new Map<string, Map<string, number>>() : despesasDosSocios(custosAno.filter((l) => !!l.contrato_id && passa(l.contrato_id)), socioPorContrato, ligacoes);
-    const admPorMes = ctId !== TODOS ? new Map<string, CustosPorRubrica>() : admPorMesRubrica(admTodas, ligacoes, empId === TODOS ? null : empId);
+    const admPorMes = ctId !== TODOS ? new Map<string, CustosPorRubrica>() : admPorMesRubrica(admTodas, ligacoesAdm, empId === TODOS ? null : empId);
     // SIS-2026-0749: IRPJ/CSLL saem da despesa administrativa e entram como Tributos sobre o Resultado (como a administrativa, não pertencem a contrato).
     const tributos = ctId !== TODOS ? new Map<string, number>() : tributosPorMes(admTodas, ligacoes, empId === TODOS ? null : empId);
     return montarFechamento({ meses, mesAtual, liquidoPorMes, executavelPorMes, custosContratoPorMes, admPorMes, sociosPorMes, tributosPorMes: tributos });
@@ -173,7 +182,7 @@ export default function FechamentoEmpresa() {
   const linhasAno = useMemo(
     () => linhasDoRecorte(empresaId, contratoId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [empresaId, contratoId, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admTodas, custosAno, socioPorContrato, idsAdministrativos, ligacoes, meses, mesAtual]
+    [empresaId, contratoId, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admTodas, custosAno, socioPorContrato, idsAdministrativos, ligacoes, ligacoesAdm, meses, mesAtual]
   );
 
   const visivel = (l: LinhaFechamento) => periodo === TODOS || (periodo === "realizado" && !l.projetado) || (periodo === "projetado" && l.projetado) || periodo === l.mes;
@@ -212,6 +221,21 @@ export default function FechamentoEmpresa() {
   // SIS-2026-0781: contratos que entram na despesa administrativa (os "ADMINISTRATIVO - …" das empresas; os dos sócios têm coluna própria) e os de cada sócio,
   // para o "Ver todos os lançamentos" abrir o Fluxo de Caixa com os mesmos contratos da célula.
   const idsContratosAdm = useMemo(() => [...idsAdministrativos].filter((id) => !socioPorContrato.has(id)), [idsAdministrativos, socioPorContrato]);
+  // O que compõe a coluna Total Desp. Adm / rubrica nos meses clicados: contratos administrativos (que contam e os tirados) e as classificações que ficam de fora.
+  const composicaoAdmDoDetalhe = (mesesAlvo: string[], rubricas: RubricaCusto[] | null): ComposicaoAdmAberta => {
+    const meses = new Set(mesesAlvo);
+    const idsAdmContas = new Set([...idsAdministrativos].filter((id) => !socioPorContrato.has(id)));
+    const porContrato = despesaAdmPorContrato(custosAno, idsAdmContas, meses, rubricas, ligacoesAdm, empresaAdm);
+    const nomeDe = (id: string) => contratoPorId.get(id)?.nome ?? "Contrato";
+    return {
+      podeAlterar: !!podeAjustarAdm,
+      globais: ligacoes,
+      doFechamento: ajustesAdmClassificacao,
+      contratos: porContrato.filter((c) => !tiradosAdm.has(c.id)).map((c) => ({ ...c, nome: nomeDe(c.id) })),
+      contratosFora: [...tiradosAdm].filter((id) => idsAdmContas.has(id)).map((id) => ({ id, nome: nomeDe(id), valor: porContrato.find((c) => c.id === id)?.valor ?? 0 })),
+      foraDaColuna: detalheAdmForaDaColuna(admTodas, meses, rubricas, ligacoesAdm, empresaAdm),
+    };
+  };
   const detalhe = useMemo<DetalheAberto | null>(() => {
     const p = detalheParams;
     if (!p) return null;
@@ -231,11 +255,12 @@ export default function FechamentoEmpresa() {
       return {
         titulo: `${p.rotulo} | ${rotuloPeriodo(p.mesesAlvo)}`,
         subtitulo: `Composição da despesa administrativa atribuída a ${p.rotulo} ${textoPeriodo(p.mesesAlvo)}.`,
-        itens: detalheAdmPorClassificacao(admTodas, new Set(p.mesesAlvo), p.rubricas, ligacoes, empresaAdm),
+        itens: detalheAdmPorClassificacao(admTodas, new Set(p.mesesAlvo), p.rubricas, ligacoesAdm, empresaAdm),
         valorCelula,
         projetado,
         mostrarRubrica: true,
         linkFluxo: linkFluxo({ contratoIds: idsContratosAdm, semContrato: true }),
+        composicaoAdm: composicaoAdmDoDetalhe(p.mesesAlvo, p.rubricas),
       };
     }
     if (p.tipo === "tributos") {
@@ -258,7 +283,7 @@ export default function FechamentoEmpresa() {
       linkFluxo: linkFluxo({ contratoIds: [...socioPorContrato].filter(([, nome]) => nome === p.socio).map(([id]) => id), semContrato: false }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detalheParams, linhasAno, admTodas, ligacoes, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual, base, idsContratosAdm]);
+  }, [detalheParams, linhasAno, admTodas, ligacoes, ligacoesAdm, ajustesAdmClassificacao, tiradosAdm, podeAjustarAdm, custosAno, idsAdministrativos, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual, base, idsContratosAdm]);
   const mesesDaTabela = linhas.map((l) => l.mes);
 
   const termo = buscaMes.trim().toLowerCase();
@@ -278,8 +303,8 @@ export default function FechamentoEmpresa() {
 
   const mesesVisiveis = useMemo(() => new Set(linhas.map((l) => l.mes)), [linhas]);
   const porClassificacao = useMemo(
-    () => (contratoId !== TODOS ? [] : admPorClassificacao(admTodas, mesesVisiveis, ligacoes, empresaId === TODOS ? null : empresaId)),
-    [admTodas, mesesVisiveis, ligacoes, empresaId, contratoId]
+    () => (contratoId !== TODOS ? [] : admPorClassificacao(admTodas, mesesVisiveis, ligacoesAdm, empresaId === TODOS ? null : empresaId)),
+    [admTodas, mesesVisiveis, ligacoesAdm, empresaId, contratoId]
   );
   const semClass = useMemo(() => admSemClassificacao(admAno, empresaId === TODOS ? null : empresaId), [admAno, empresaId]);
 
@@ -294,7 +319,7 @@ export default function FechamentoEmpresa() {
         .filter((x) => x.lucroContratos !== 0 || x.totalAdm !== 0)
         .sort((a, b) => b.lucroContratos - a.lucroContratos),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [empresas, contratoId, periodo, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admTodas, idsAdministrativos, ligacoes, meses, mesAtual]
+    [empresas, contratoId, periodo, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admTodas, idsAdministrativos, ligacoes, ligacoesAdm, meses, mesAtual]
   );
 
   const carregandoDados = carregando || carregandoCustos || carregandoAdm;

@@ -399,6 +399,69 @@ export function detalheAdmPorClassificacao(
   return agruparPorClassificacao(escolhidas);
 }
 
+// ── Ajuste do que compõe o Total Desp. Adm (só no Fechamento) ───────────────────────────────────────────────────────────
+// A Controladoria pode, no detalhamento da coluna: mudar a rubrica de uma classificação (ou tirá-la do Total Desp. Adm), trazer de volta uma
+// classificação que está fora e tirar/voltar contratos "ADMINISTRATIVO - …". Tudo vale só no Fechamento: a ligação global da Lucratividade
+// (lucratividade_rubrica_classificacao) é a base, e a do Fechamento (fechamento_adm_classificacao) se sobrepõe a ela só na despesa administrativa.
+
+/** Ligação global + a do Fechamento por cima (a do Fechamento vence). */
+export function ligacoesDoFechamento(globais: LigacoesRubrica | undefined, doFechamento: LigacoesRubrica | undefined): LigacoesRubrica {
+  if (!doFechamento || doFechamento.size === 0) return globais ?? new Map();
+  return new Map([...(globais ?? new Map()), ...doFechamento]);
+}
+
+/** Despesa administrativa dos meses que NÃO está na coluna clicada (rubricas = null: o Total Desp. Adm): é daqui que se adiciona uma classificação.
+ *  IRPJ/CSLL não entram (têm coluna própria, Tributos sobre o Resultado). Só saídas sem contrato (as dos contratos administrativos já vêm assim). */
+export function detalheAdmForaDaColuna(
+  linhas: LinhaFluxoCusto[],
+  meses: Set<string>,
+  rubricas: RubricaCusto[] | null,
+  ligacoes?: LigacoesRubrica,
+  empresaId?: string | null,
+): ItemDetalheClassificacao[] {
+  const fora = linhas.filter((l) => {
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || l.contrato_id || !mes || !meses.has(mes)) return false;
+    if (empresaId && l.empresa_id !== empresaId) return false;
+    if (!(l.classificacao_nome ?? "").trim()) return false; // lançamento sem classificação não tem o que ligar
+    if (ehTributoSobreResultado(l, ligacoes)) return false;
+    const rubrica = rubricaDaLinha(l, ligacoes);
+    return rubrica === null || (!!rubricas && !rubricas.includes(rubrica));
+  });
+  return agruparPorClassificacao(fora);
+}
+
+export interface ContratoDaDespesaAdm {
+  id: string;
+  valor: number;
+  lancamentos: number;
+}
+
+/** Quanto cada contrato "ADMINISTRATIVO - …" (não sócio) soma na coluna nos meses, mesmo os que foram tirados (a tela separa os dois grupos).
+ *  `linhas` são as saídas COM contrato (as do custo do ano); `idsAdm` os contratos administrativos que compõem a despesa adm. */
+export function despesaAdmPorContrato(
+  linhas: LinhaFluxoCusto[],
+  idsAdm: Set<string>,
+  meses: Set<string>,
+  rubricas: RubricaCusto[] | null,
+  ligacoes?: LigacoesRubrica,
+  empresaId?: string | null,
+): ContratoDaDespesaAdm[] {
+  const mapa = new Map<string, ContratoDaDespesaAdm>();
+  for (const l of linhas) {
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || !l.contrato_id || !idsAdm.has(l.contrato_id) || !mes || !meses.has(mes)) continue;
+    if (empresaId && l.empresa_id !== empresaId) continue;
+    const rubrica = rubricaAdm(l, ligacoes);
+    if (!rubrica || (rubricas && !rubricas.includes(rubrica))) continue;
+    const atual = mapa.get(l.contrato_id) ?? { id: l.contrato_id, valor: 0, lancamentos: 0 };
+    atual.valor += l.valor || 0;
+    atual.lancamentos += 1;
+    mapa.set(l.contrato_id, atual);
+  }
+  return [...mapa.values()].map((x) => ({ ...x, valor: r2(x.valor) })).sort((a, b) => b.valor - a.valor);
+}
+
 /** IRPJ/CSLL lançados nos meses, por classificação (mesma seleção de tributosPorMes). */
 export function detalheTributosPorClassificacao(linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes?: LigacoesRubrica, empresaId?: string | null): ItemDetalheClassificacao[] {
   const escolhidas = linhas.filter((l) => {

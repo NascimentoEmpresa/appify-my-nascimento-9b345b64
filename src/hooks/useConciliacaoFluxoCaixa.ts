@@ -93,6 +93,8 @@ export interface ConciliacaoFluxoCaixaSalva {
   todas_empresas: boolean;
   empresa_ids: string[];
   conta_extrato: string | null;
+  // SIS-2026-0777: conta do banco (ex.: Sicredi HAGG 119) quando a conciliação foi feita por conta; null = banco + empresa(s).
+  conta_banco_id?: string | null;
   // Saldo anterior (abertura) conferido na conciliação — null quando a
   // pessoa não informou o do extrato.
   saldo_anterior_fluxo: number | null;
@@ -200,6 +202,7 @@ export interface SalvarConciliacaoInput {
   todasEmpresas: boolean;
   empresaIds: string[];
   contaExtrato: string | null;
+  contaBancoId?: string | null;
   saldoAnteriorFluxo: number | null;
   saldoAnteriorExtrato: number | null;
   // SIS-2026-0657: soma do extrato dentro do período. A Auditoria da Controladoria lê daqui (quando tudo bate, nenhuma linha é gravada).
@@ -234,6 +237,7 @@ export function useSalvarConciliacaoFluxoCaixa() {
         todas_empresas: input.todasEmpresas,
         empresa_ids: input.todasEmpresas ? [] : input.empresaIds,
         conta_extrato: input.contaExtrato,
+        ...(input.contaBancoId ? { conta_banco_id: input.contaBancoId } : {}),
         saldo_anterior_fluxo: input.saldoAnteriorFluxo,
         saldo_anterior_extrato: input.saldoAnteriorExtrato,
         total_linhas: input.linhas.length,

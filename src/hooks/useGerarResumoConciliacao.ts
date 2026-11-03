@@ -41,7 +41,7 @@ async function gerarResumoUma({ conciliacao: c, linhasBrutas, bancoNome }: Gerar
     trns.push(...parseOFX(await blob.text(), a.nome_arquivo));
   }
 
-  const escopo = { bancoId: c.banco_id, todasEmpresas: c.todas_empresas, empresaIds: c.empresa_ids ?? [], dataDe: c.data_inicio, dataAte: c.data_fim };
+  const escopo = { bancoId: c.banco_id, todasEmpresas: c.todas_empresas, empresaIds: c.empresa_ids ?? [], dataDe: c.data_inicio, dataAte: c.data_fim, contaBancoId: c.conta_banco_id ?? null };
   // mesma regra da conciliação nova: despesa rateada entre empresas pertence à empresa que a pagou (quando marcada)
   const fluxo = aplicarEmpresaPagadora(linhasBrutas, mapaEmpresaPagadora(await buscarEmpresasPagadoras()), new Map());
   const linhasDoBancoEmpresa = linhasDoFluxoParaConciliacao(fluxo, escopo);
