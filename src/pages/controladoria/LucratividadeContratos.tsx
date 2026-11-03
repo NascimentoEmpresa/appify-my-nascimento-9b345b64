@@ -248,7 +248,7 @@ export default function LucratividadeContratos() {
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável do contrato no mês, segundo a planilha de custo vigente (sem planilha, o Valor Executado Mensal do cadastro do contrato). Zero depois do fim do contrato." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Bruto (R$)" formula="Soma do valor bruto das NFs Código N da competência (já validadas; fora de canceladas e substituídas)." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Líquido (R$)" formula="Soma do valor líquido das mesmas NFs: o bruto depois dos descontos." /></TableHead>
-                  <TableHead className={CAB}><TituloComFormula titulo="Desc. Contrato (R$)" formula="Valor Bruto − Valor Líquido: o que foi descontado nas notas da competência." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Desc. Contrato (R$)" formula="Valor Bruto − Valor Líquido: as retenções das notas da competência (ISSQN, INSS, IR, COFINS, PIS e CSLL). Faltas, glosas e multas não entram aqui: elas já reduziram o Valor Bruto (veja o item 7 da Auditoria)." /></TableHead>
                   {detalhar && RUBRICAS.map((r) => (
                     <TableHead key={r.id} className={CAB}>
                       <TituloComFormula titulo={`${r.label} (R$)`} formula={`Saídas do Fluxo de Caixa com contrato, da competência do mês, cuja classificação está ligada a “${r.label}”. A ligação é feita na aba “Rubricas de custo”${r.id === "outras" ? "; o que não casa com nenhuma outra coluna cai aqui" : ""}.`} />

@@ -104,3 +104,23 @@ describe("centros de custo x malote (centro de custo = contrato)", () => {
     expect(totaisCentrosMalote(linhas, tipos, { empresaId: null, contratoId: "C1" })).toEqual({ total: 100, comContrato: 100, administrativo: 0, pendente: 0 });
   });
 });
+
+// SIS-2026-0797: nota importada da planilha traz as faltas mas total_descontos 0; o "Valor Total Descontado" sai de exec − bruto.
+describe("descontosPorCategoria — total descontado de nota importada", () => {
+  const item = (o: Partial<ItemDesconto>): ItemDesconto => ({
+    faltas: 0, posto_nao_implementado: 0, multas: 0, glosas: 0, outros_descontos: 0,
+    multas_pos_emissao: 0, glosas_pos_emissao: 0, outros_descontos_pos_emissao: 0, vlr_materiais: 0, total_descontos: 0, ...o,
+  });
+  it("usa valor do contrato − bruto, e bate com as categorias mesmo com total_descontos gravado em 0", () => {
+    const r = descontosPorCategoria([
+      item({ faltas: 2312.42, valor_contrato_exec: 32525.4, vlr_bruto: 30212.98, total_descontos: 0 }),
+      item({ valor_contrato_exec: 500, vlr_bruto: 500 }),
+    ]);
+    expect(r.totalCategorias).toBe(2312.42);
+    expect(r.totalDescontado).toBe(2312.42);
+  });
+  it("pós-emissão e materiais não entram no total descontado (não mexem no bruto)", () => {
+    const r = descontosPorCategoria([item({ glosas_pos_emissao: 208.76, vlr_materiais: 100, valor_contrato_exec: 1000, vlr_bruto: 1000 })]);
+    expect(r.totalDescontado).toBe(0);
+  });
+});
