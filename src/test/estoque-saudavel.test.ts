@@ -56,6 +56,7 @@ function item(over: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel {
     tipo: "uniforme",
     disponivel: 20,
     reservado: 0,
+    fisico: 20,
     em_transito: 0,
     demanda_janela: 150,
     demanda_mensal: 26.55,
@@ -86,6 +87,7 @@ function item(over: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel {
     pct_falta: 0,
     ultima_falta: null,
     ultima_saida: "2026-09-15",
+    ultima_reserva: null,
     ultimo_pedido: "2026-09-01",
     valor_unitario: 70,
     sem_preco: false,
@@ -203,6 +205,7 @@ describe("recadoDoPainel", () => {
     ({
       resumo: {
         itens_planejados: 10,
+        entradas_registradas: 0,
         valor_em_estoque: 0,
         unidades_em_estoque: 0,
         dinheiro_parado: 0,
@@ -376,6 +379,7 @@ describe("faltaCronica", () => {
 describe("recadoDoPainel com falta histórica", () => {
   const base = {
     itens_planejados: 10,
+    entradas_registradas: 0,
     valor_em_estoque: 0,
     unidades_em_estoque: 0,
     dinheiro_parado: 0,

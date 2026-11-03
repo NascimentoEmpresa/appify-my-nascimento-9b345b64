@@ -879,8 +879,8 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
 
 /**
  * Ponto do faltante nas datas digitadas (mig 20261007000021): o modal mostra,
- * linha a linha, se ele bateu ponto no dia — e não deixa salvar se bateu. O
- * banco recusa do mesmo jeito (trigger em DIARIA_LINHA); aqui é o aviso antes.
+ * linha a linha, se ele bateu ponto no dia. Desde a mig 20261028000920 isso é
+ * somente um aviso para conferência; não impede criar nem ajustar a diária.
  * Sem a migration a RPC não existe: devolve null e a tela segue sem o aviso.
  */
 export function usePontoFaltanteDiaria(cpf: string, datas: string[]) {

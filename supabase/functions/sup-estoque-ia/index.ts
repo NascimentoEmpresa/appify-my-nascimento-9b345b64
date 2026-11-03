@@ -30,6 +30,12 @@
 // para o Groq (GROQ_API_KEY). Modelo por variável (IA_ESTOQUE_MODELO só vale
 // para o Gemini; o Groq usa GROQ_MODEL).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  ehPerguntaQuantidadeAtual,
+  itensRelacionados,
+  respostaQuantidadeAtual,
+  respostaResumoOperacional,
+} from "../_shared/estoque-ia.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -120,7 +126,7 @@ async function chamarIA(
  * texto continua certo mesmo com a lista cortada. O prompt avisa que a lista
  * é uma amostra, para a IA não concluir "só 40 itens têm problema".
  */
-function compactar(painel: Record<string, unknown>): Record<string, unknown> {
+function compactar(painel: Record<string, unknown>, pergunta = ""): Record<string, unknown> {
   const itens = Array.isArray(painel?.itens) ? (painel.itens as Record<string, unknown>[]) : [];
   const porSituacao = (s: string, n: number) =>
     itens.filter((i) => i.situacao === s).slice(0, n);
@@ -130,7 +136,9 @@ function compactar(painel: Record<string, unknown>): Record<string, unknown> {
   const enxuto = (i: Record<string, unknown>) => ({
     item: i.item,
     tam: i.tamanho,
+    fisico: i.fisico,
     disp: i.disponivel,
+    reservado: i.reservado,
     transito: i.em_transito,
     dem_mes: i.demanda_mensal,
     cob_dias: i.cobertura_dias,
@@ -157,6 +165,12 @@ function compactar(painel: Record<string, unknown>): Record<string, unknown> {
     // porque um topo tirado de amostra é uma resposta errada com cara de
     // certa. Cortar daqui para economizar prompt reintroduz esse erro.
     rankings: painel.rankings,
+    // Busca no catálogo COMPLETO, separada da amostra de prioridades. Pergunta
+    // sobre item/tamanho específico ("MOLETOM CINZA EGG") encontra a linha
+    // mesmo que ela não esteja entre os 25 itens mais urgentes.
+    itens_consultados: pergunta
+      ? itensRelacionados(pergunta, itens).slice(0, 20).map(enxuto)
+      : [],
     compra_por_familia: Array.isArray(painel.compra_por_familia)
       ? (painel.compra_por_familia as unknown[]).slice(0, 25)
       : [],
@@ -182,6 +196,7 @@ COMO O NÚMERO FOI FEITO (explique assim se perguntarem):
 - "ponto de pedido" = consumo durante o prazo de reposição + segurança. Abaixo dele, pedir.
 - "alvo saudável" = consumo durante (prazo de reposição + ciclo de revisão) + segurança. É o quanto ter em casa depois de comprar.
 - "comprar" = alvo − disponível − em trânsito.
+- "físico na prateleira" conta tudo que está no almoxarifado. "disponível" = físico − reservado para pedido que já está em separação. Ao responder estoque atual, cite os dois se houver reserva; nunca chame o disponível de físico.
 - ABC = onde está o dinheiro (A = 80% do valor consumido). XYZ = previsibilidade (X regular, Z irregular).
 - "dinheiro parado" = valor acima do alvo em itens que giram. "valor morto" = valor de item sem giro no prazo das premissas. São números SEPARADOS, nunca some os dois.
 
@@ -198,6 +213,7 @@ REGRAS DURAS:
 - NUNCA invente nem recalcule quantidade, valor ou preço. Use exatamente os números do JSON. Se quiser sugerir quantidade diferente da calculada, diga que é uma sugestão para a pessoa aprovar na tela, e por quê.
 - Se um dado não está no JSON, diga que o painel não mostra. Não estime.
 - A lista de itens é uma AMOSTRA das linhas que mais importam; os totais em "resumo" valem para o catálogo inteiro. Nunca diga que o problema se limita aos itens listados.
+- Para pergunta sobre item ou tamanho específico, use primeiro "itens_consultados": ele é buscado no catálogo inteiro. Nunca conclua que o item não existe olhando apenas "amostra_itens".
 - Item sem preço cadastrado fica fora do valor — se "itens_sem_preco" for maior que zero, avise que o valor está subestimado.
 - Respeite os alertas: "historico_curto" significa alvo provisório; "demanda_irregular" (classe Z) significa alvo inflado pelo colchão, que vale conferir antes de comprar.
 - Português do Brasil, direto, frases curtas, sem jargão técnico e sem falar de JSON, SQL ou nome de tabela/coluna.
@@ -260,17 +276,43 @@ Deno.serve(async (req) => {
     if (modo === "pergunta" && !pergunta) return respostaJson({ error: "Escreva a pergunta." }, 400);
 
     const historico: Msg[] = (Array.isArray(corpo?.historico) ? corpo.historico : [])
-      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .filter((m: unknown): m is Msg => {
+        if (!m || typeof m !== "object") return false;
+        const entrada = m as { role?: unknown; content?: unknown };
+        return (entrada.role === "user" || entrada.role === "assistant")
+          && typeof entrada.content === "string";
+      })
       .slice(-8)
-      .map((m: any) => ({ role: m.role, content: String(m.content).slice(0, 4000) }));
-
-    const provs = provedores();
-    if (!provs.length) {
-      return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
-    }
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
 
     const janela = Number.isInteger(corpo?.janelaMeses) ? Number(corpo.janelaMeses) : null;
     const categoria = typeof corpo?.categoria === "string" && corpo.categoria ? corpo.categoria : null;
+
+    // Saldo atual é uma pergunta OPERACIONAL, não de planejamento. A RPC do
+    // Estoque Saudável consolida variantes sob a família base para calcular
+    // demanda e alvo. Essa consolidação fez "AVENTAL DE NAPA (BRANCO)"
+    // herdar o saldo de "AVENTAL DE NAPA". Para perguntas de quantidade,
+    // consultamos primeiro as fichas exatas (código + nome + tamanho) que
+    // alimentam Estoque & Etiquetas e não deixamos o modelo escolher um nome
+    // parecido. A categoria do planejamento é ignorada de propósito: o código
+    // consultado pode ser EPI mesmo quando a aba está filtrada em uniforme.
+    if (modo === "pergunta" && ehPerguntaQuantidadeAtual(pergunta)) {
+      const { data: saldoOperacional, error: saldoErr } = await supa.rpc(
+        "sup_estoque_saldo_operacional_ia",
+        {
+          p_empresa_id: empresaId,
+          p_almoxarifado_id: uuid(corpo?.almoxarifadoId),
+        },
+      );
+      if (saldoErr) {
+        return respostaJson({ error: saldoErr.message }, saldoErr.code === "42501" ? 403 : 500);
+      }
+      const respostaDireta = respostaQuantidadeAtual(
+        pergunta,
+        Array.isArray(saldoOperacional) ? saldoOperacional as Record<string, unknown>[] : [],
+      );
+      if (respostaDireta) return respostaJson({ texto: respostaDireta });
+    }
 
     // A permissão é cobrada DENTRO da RPC (can_access no dashboard de
     // Compras/Estoque) — não se confere aqui de novo para não haver duas
@@ -281,16 +323,31 @@ Deno.serve(async (req) => {
       p_contrato_id: uuid(corpo?.contratoId),
       p_categoria: categoria,
       p_almoxarifado_id: uuid(corpo?.almoxarifadoId),
+      p_limite_itens: 5000,
     });
     if (painelErr) {
       return respostaJson({ error: painelErr.message }, painelErr.code === "42501" ? 403 : 500);
     }
     if (!painel) return respostaJson({ error: "O painel voltou vazio." }, 502);
 
+    if (modo === "pergunta") {
+      const resumo = (painel as Record<string, unknown>).resumo;
+      const respostaOperacional = respostaResumoOperacional(
+        pergunta,
+        resumo && typeof resumo === "object" ? resumo as Record<string, unknown> : {},
+      );
+      if (respostaOperacional) return respostaJson({ texto: respostaOperacional });
+    }
+
+    const provs = provedores();
+    if (!provs.length) {
+      return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
+    }
+
     const hoje = new Date().toISOString().slice(0, 10);
     const contexto =
       `PAINEL DE PLANEJAMENTO DE ESTOQUE — categoria: ${categoria ?? "todas"}. Hoje é ${hoje}.\n` +
-      JSON.stringify(compactar(painel as Record<string, unknown>));
+      JSON.stringify(compactar(painel as Record<string, unknown>, pergunta));
 
     const mensagens: Msg[] = modo === "analise"
       ? [{ role: "user", content: PEDIDO_ANALISE }]

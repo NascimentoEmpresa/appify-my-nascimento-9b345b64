@@ -92,6 +92,8 @@ export const LABEL_CAMPO: Record<string, string> = {
   decisao_sobre_parecer: "Decisão sobre a recomendação",
   decisao_medidas: "Medidas determinadas pela Presidência",
   decisao_em: "Data da decisão",
+  anexo_excluido: "Anexo excluído",
+  anexo_observacao: "Observação do anexo",
 };
 
 export const nomeCampo = (c: string) => LABEL_CAMPO[c] ?? c;
@@ -110,6 +112,7 @@ export function valorCampo(campo: string, valor: string | null): string {
     case "decisao_sobre_parecer":return rotulo(LABEL_DECISAO, v);
     case "medida_principal":     return rotulo(LABEL_MEDIDA, v);
     case "houve_recurso":        return v === "true" ? "Sim" : "Não";
+    case "anexo_excluido":       return v === "excluido" ? "excluído" : rotulo(LABEL_CATEGORIA_ANEXO, v);
     case "medidas":
       // text[] chega do Postgres como {a,b}. Cru, é ilegível no relatório.
       return v.replace(/^\{|\}$/g, "").split(",").filter(Boolean)
@@ -148,7 +151,7 @@ export function linhaDoTempo(d: DadosDossie, incluirInternas = true): LinhaTempo
     linhas.push({
       quando: e.created_at,
       tipo: e.campo === "status" ? "situacao" : "campo",
-      titulo: `${nomeCampo(e.campo)}: ${valorCampo(e.campo, e.de)} → ${valorCampo(e.campo, e.para)}`,
+      titulo: `${nomeCampo(e.campo)}${e.objeto ? ` (${e.objeto})` : ""}: ${valorCampo(e.campo, e.de)} → ${valorCampo(e.campo, e.para)}`,
       detalhe: e.justificativa ?? undefined,
       autor: e.por_nome ?? undefined,
     });
@@ -196,6 +199,7 @@ export function linhaDoTempo(d: DadosDossie, incluirInternas = true): LinhaTempo
         a.origem === "denunciante" ? "enviado pelo denunciante" : `juntado pelo ${a.origem}`,
         a.sensivel ? "sigiloso" : null,
         a.descricao || null,
+        a.observacao ? `Obs.: ${a.observacao}` : null,
       ].filter(Boolean).join(" · "),
       autor: a.autor_nome ?? undefined,
     });

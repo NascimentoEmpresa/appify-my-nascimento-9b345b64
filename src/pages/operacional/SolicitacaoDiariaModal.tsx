@@ -52,7 +52,7 @@ import {
   usePostosDiaria,
   usePontoFaltanteDiaria,
 } from "@/hooks/useDiarias";
-import { avaliarPontoFaltante, bloqueia, detalheEstado, fmtDataCurta, ROTULO_ESTADO, type ResultadoPontoDia } from "@/lib/diariaPonto";
+import { avaliarPontoFaltante, detalheEstado, fmtDataCurta, ROTULO_ESTADO, type ResultadoPontoDia } from "@/lib/diariaPonto";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   FORM_ID_PAINEL_DESPESA_DIARIA,
@@ -677,10 +677,10 @@ export function SolicitacaoDiariaModal({
 
   const temConflito = conflitos.some(Boolean);
 
-  // Ponto do faltante (mig 20261007000021): faltante que bateu ponto no dia
-  // trabalhou — não cabe diária no lugar dele. Na criação/ajuste confere as
+  // Ponto do faltante (mig 20261007000021): na criação/ajuste confere as
   // linhas digitadas; na aprovação/visualização, as gravadas (o ponto de
-  // "hoje" chega depois, então a aprovação é quando a conferência fecha).
+  // "hoje" chega depois). Desde 28/10/2026, a batida é somente um aviso:
+  // ela pode ser de outro turno e quem lança/aprova é quem conhece o caso.
   const cpfPonto = editavel ? faltanteCpf : (solicitacao?.faltanteCpf ?? "");
   const datasPonto = useMemo(
     () => (editavel ? linhas.map((l) => l.data) : (solicitacao?.diarias ?? []).map((l) => l.data)).filter(Boolean),
@@ -691,7 +691,7 @@ export function SolicitacaoDiariaModal({
     () => (qPonto.data ? avaliarPontoFaltante(qPonto.data, datasPonto) : null),
     [qPonto.data, datasPonto],
   );
-  const diasBatidos = pontoPorData ? [...pontoPorData.values()].filter((r) => bloqueia(r.estado)) : [];
+  const diasBatidos = pontoPorData ? [...pontoPorData.values()].filter((r) => r.estado === "trabalhou") : [];
   const temPontoBatido = diasBatidos.length > 0;
 
   const linhasPreenchidas = linhas.every((l) => l.data);
@@ -714,7 +714,7 @@ export function SolicitacaoDiariaModal({
     linhasPreenchidas &&
     totalComprovantes > 0 &&
     totalDocumentos > 0;
-  const podeSalvar = camposOk && !temConflito && !temPontoBatido;
+  const podeSalvar = camposOk && !temConflito;
 
   const totalGeral = linhas.reduce((acc, l) => acc + valorTotalLinha(l), 0);
 
@@ -741,9 +741,7 @@ export function SolicitacaoDiariaModal({
     if (!podeSalvar) {
       toast({
         title: "Não foi possível salvar",
-        description: temPontoBatido
-          ? `O faltante bateu ponto em ${diasBatidos.map((d) => fmtDataCurta(d.data)).join(", ")} — trabalhou nesse dia, não cabe diária.`
-          : temConflito
+        description: temConflito
           ? "Corrija as duplicidades para habilitar o salvamento."
           : "Preencha todos os campos obrigatórios e anexe os dois documentos.",
         variant: "destructive",
@@ -1428,7 +1426,7 @@ export function SolicitacaoDiariaModal({
               <p className="text-xs text-muted-foreground">
                 O status verifica se já existe pagamento de diária para o mesmo Faltante e/ou
                 Diarista, no mesmo turno e data — e confere no relógio de ponto se o faltante
-                bateu ponto no dia (se bateu, ele trabalhou e a diária não pode ser lançada).
+                bateu ponto no dia. A batida gera um aviso para conferência, mas não bloqueia o lançamento.
               </p>
             </div>
             {temPontoBatido && (
@@ -1440,9 +1438,7 @@ export function SolicitacaoDiariaModal({
                     {diasBatidos.map((d) => `${fmtDataCurta(d.data)} (${d.horarios.join(", ")})`).join("; ")}.
                   </p>
                   <p className="text-destructive/80">
-                    {editavel
-                      ? "Trabalhou nesse dia — não cabe diária no lugar dele(a). Remova ou corrija a data para salvar."
-                      : "Confira antes de aprovar — a aprovação continua liberada, quem aprova decide."}
+                    Confira os horários e o turno da diária — o lançamento e a aprovação continuam liberados.
                   </p>
                 </div>
               </div>
@@ -1659,7 +1655,7 @@ export function SolicitacaoDiariaModal({
               <Button variant="outline" onClick={onFechar}>
                 Cancelar
               </Button>
-              <Button onClick={salvar} disabled={temConflito || temPontoBatido || salvando}>
+              <Button onClick={salvar} disabled={temConflito || salvando}>
                 <CheckCircle2 className="mr-2 h-4 w-4" />
                 {salvando ? "Enviando anexos e salvando..." : "Salvar solicitação"}
               </Button>
@@ -1671,7 +1667,7 @@ export function SolicitacaoDiariaModal({
             )}
             {temPontoBatido && (
               <p className="mt-2 text-right text-[11px] font-medium text-destructive">
-                O faltante bateu ponto em dia da diária — remova ou corrija essa data.
+                Atenção: o faltante bateu ponto em dia da diária — confira os horários antes de salvar.
               </p>
             )}
           </div>
@@ -1683,7 +1679,7 @@ export function SolicitacaoDiariaModal({
               <Button variant="outline" onClick={onFechar}>
                 Cancelar
               </Button>
-              <Button onClick={salvar} disabled={temConflito || temPontoBatido || salvando}>
+              <Button onClick={salvar} disabled={temConflito || salvando}>
                 <Send className="mr-2 h-4 w-4" />
                 {salvando ? "Enviando anexos e salvando..." : "Reenviar para aprovação"}
               </Button>
@@ -1698,7 +1694,7 @@ export function SolicitacaoDiariaModal({
             )}
             {temPontoBatido && (
               <p className="mt-1 text-right text-[11px] font-medium text-destructive">
-                O faltante bateu ponto em dia da diária — remova ou corrija essa data.
+                Atenção: o faltante bateu ponto em dia da diária — confira os horários antes de reenviar.
               </p>
             )}
           </div>
@@ -1912,8 +1908,8 @@ export function SolicitacaoDiariaModal({
 
 /**
  * Status da linha quando não há duplicidade: o que o relógio de ponto diz do
- * faltante naquele dia (mig 20261007000021). Bateu ponto = vermelho e trava;
- * dia ainda não sincronizado = âmbar, mas válida (a aprovação confere).
+ * faltante naquele dia (mig 20261007000021). Bateu ponto = aviso vermelho,
+ * sem trava; dia ainda não sincronizado = âmbar (a aprovação confere).
  */
 function StatusPontoLinha({
   ponto,

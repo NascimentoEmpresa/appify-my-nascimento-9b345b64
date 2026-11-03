@@ -65,6 +65,8 @@ import RhInicioContrato from "./pages/implantacao/setor/RhInicioContrato";
 import OperacionalInicioContrato from "./pages/implantacao/setor/OperacionalInicioContrato";
 import ComprasInicioContrato from "./pages/implantacao/setor/ComprasInicioContrato";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
+import ConvencoesColetivas from "./pages/licitacoes/ConvencoesColetivas";
+import PrazosRecursos from "./pages/licitacoes/PrazosRecursos";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
 import PrecosMateriais from "./pages/licitacoes/PrecosMateriais";
@@ -212,6 +214,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
 import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
+import PesquisaPermanencia from "./pages/rh/PesquisaPermanencia";
 import RateioDespesas from "./pages/rh/RateioDespesas";
 import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
@@ -276,8 +279,11 @@ import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasC
 import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
 import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
+import FichaFinanceira from "./pages/financeiro/FichaFinanceira";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
+// Afastamentos e Telemedicina (mig 20261029001750): atestados, lotação automática e impacto financeiro.
+import SstAfastamentos from "./pages/sst/Afastamentos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -292,6 +298,7 @@ import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
+import PesquisaPermanenciaPublica from "./pages/publico/PesquisaPermanenciaPublica";
 import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
@@ -352,6 +359,7 @@ import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import GithubPainelDev from "./pages/chamados/GithubPainel";
+import ControlePullRequests from "./pages/chamados/ControlePullRequests";
 import ConferenciaPontoEncarregado from "./pages/encarregados/ConferenciaPontoEncarregado";
 import DocumentosEncarregado from "./pages/encarregados/DocumentosEncarregado";
 import DocumentosRh from "./pages/rh/DocumentosRh";
@@ -480,6 +488,9 @@ const App = () => (
           {/* Campanhas do Treinamentos — página pública do QR Code, sem login
               (mig 20260930000268: só as RPCs trn_campanha_publica/_responder). */}
           <Route path="/campanhas/:slug" element={<CampanhaPublica />} />
+          {/* RH › Pesquisa de Permanência — resposta anônima, sem login
+              (mig 20261028001200: só as RPCs pp_publica/pp_responder). */}
+          <Route path="/pesquisa-permanencia/:token" element={<PesquisaPermanenciaPublica />} />
           {/* Nascimento Formulários — resposta pública, sem login */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
           {/* Cadastro que o próprio fornecedor preenche, sem login. A credencial
@@ -590,6 +601,7 @@ const App = () => (
             <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
             {/* GitHub do repositório (mig 20261007000022 + Edge dev-github-sync). */}
             <Route path="sistemas/chamados/dev/github" element={<GithubPainelDev />} />
+            <Route path="sistemas/chamados/pull-requests" element={<ControlePullRequests />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a
@@ -634,6 +646,8 @@ const App = () => (
             <Route path="central-servicos/solicitacoes/advertencia" element={<MinhasSolicitacoes base="central" abrir="advertencia" />} />
             <Route path="central-servicos/solicitacoes/demissao" element={<SolicitarDemissao />} />
             <Route path="central-servicos/solicitacoes/mudanca-funcao" element={<SolicitarTrocaFuncao />} />
+            {/* 29/10/2026 (Pablo): a mesma tela de Encarregados, para o pessoal da Central. */}
+            <Route path="central-servicos/solicitacoes/treinamento" element={<SolicitarTreinamento />} />
             <Route path="central-servicos/quadro-avisos" element={<QuadroAvisos />} />
             {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
                 Serviços: mesmo componente e mesmos treinamentos, com menu
@@ -705,6 +719,9 @@ const App = () => (
             <Route path="prontas-contrato" element={<ProntasContrato />} />
             <Route path="contratos/implantacao" element={<Implantacao />} />
             <Route path="licitacoes/planilha-custo" element={<PlanilhaCusto />} />
+            {/* Convenções Coletivas e Decretos Municipais (mig 20261027000930). */}
+            <Route path="licitacoes/convencoes" element={<ConvencoesColetivas />} />
+            <Route path="licitacoes/prazos-recursos" element={<PrazosRecursos />} />
             <Route path="licitacoes/implantacao" element={<Implantacao />} />
             {/* SIS-2026-0599: a base mestre é tela separada do checklist de
                 Implantação — e as quatro setoriais leem dela. */}
@@ -918,6 +935,7 @@ const App = () => (
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            <Route path="rh/pesquisa-permanencia" element={<PesquisaPermanencia />} />
             <Route path="rh/documentos" element={<DocumentosRh />} />
             {/* Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e despesas lidas do PDF, por contrato. */}
             <Route path="rh/rateio-despesas" element={<RateioDespesas />} />
@@ -959,6 +977,8 @@ const App = () => (
             {/* 6ª aba (21/10/2026): o painel mensal dos contratos, mesmo menu ope_efetividade. */}
             <Route path="operacional/efetividade/mensal" element={<EfetividadeMensal />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
+            {/* Ficha Financeira: eventos de pagamento da Senior por colaborador (mig 20261029004700). */}
+            <Route path="financeiro/ficha-financeira" element={<FichaFinanceira />} />
             {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
                 menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
             <Route path="financeiro/dashboard-pontos" element={<ConferenciaPontoPainel />} />
@@ -1038,6 +1058,7 @@ const App = () => (
             <Route path="sst/aso-demissional" element={<AsoDemissional />} />
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
+            <Route path="sst/afastamentos" element={<SstAfastamentos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />

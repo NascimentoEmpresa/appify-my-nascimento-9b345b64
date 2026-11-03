@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  avaliarPontoFaltante, bloqueia, conflitosPorSolicitacao, datasSemPonto, estadoDoDia, horariosDoPonto, resumoPontoDiaria,
+  avaliarPontoFaltante, conflitosPorSolicitacao, datasSemPonto, estadoDoDia, horariosDoPonto, resumoPontoDiaria,
   type PontoDiariaMalote, type PontoFaltante,
 } from "@/lib/diariaPonto";
 
@@ -20,11 +20,6 @@ describe("diárias × ponto do faltante", () => {
     expect(estadoDoDia("2026-10-07", null, "2026-10-06", true)).toBe("nao_sincronizado");
     expect(estadoDoDia("2026-10-01", null, "2026-10-06", false)).toBe("sem_vinculo");
     expect(estadoDoDia("2026-10-01", null, null, true)).toBe("nao_sincronizado");
-  });
-
-  it("só bloqueia quando há batida", () => {
-    expect(bloqueia("trabalhou")).toBe(true);
-    for (const e of ["sem_marcacao", "parcial", "nao_sincronizado", "sem_vinculo", "indisponivel"] as const) expect(bloqueia(e)).toBe(false);
   });
 
   it("avalia as datas digitadas com o retorno da RPC", () => {

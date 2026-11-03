@@ -12,8 +12,19 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DndContext, type DragEndEvent, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   Plus, Trash2, Paperclip, Upload, Download, ShieldAlert, ShieldOff,
-  Loader2, CalendarClock, CheckCircle2, Gavel,
+  Loader2, CalendarClock, CheckCircle2, Gavel, GripVertical, StickyNote,
 } from "lucide-react";
 import {
   CATEGORIA_ANEXO, DECISAO_SOBRE_PARECER, SITUACAO_PROVIDENCIA,
@@ -27,7 +38,9 @@ import type { Anexo, Denuncia, Providencia } from "./metricas";
 //
 //   · Providências — lista com prazo e responsável, no lugar do campo único
 //     "primeira providência" que só guardava uma data.
-//   · Anexos       — os arquivos do procedimento, com marcação de sigiloso.
+//   · Anexos       — os arquivos do procedimento, com marcação de sigiloso,
+//                    ordem arrastável, observação e exclusão (só os do
+//                    Comitê — o que veio com o relato o banco não deixa sair).
 //   · Presidência  — a decisão final, atrás de capacidade própria.
 //
 // Ficam num arquivo só porque são as três caixas de baixo da mesma ficha e
@@ -195,7 +208,7 @@ export function BlocoAnexos({ denunciaId, podeEditar, podeVerSigiloso }: {
 
   const carregar = useCallback(async () => {
     const { data } = await db.from("CANAL_DENUNCIA_ANEXO")
-      .select("*").eq("denuncia_id", denunciaId).order("created_at");
+      .select("*").eq("denuncia_id", denunciaId).order("ordem").order("created_at");
     setItens((data ?? []) as Anexo[]);
     setCarregando(false);
   }, [denunciaId]);
@@ -262,6 +275,57 @@ export function BlocoAnexos({ denunciaId, podeEditar, podeVerSigiloso }: {
     carregar();
   };
 
+  const salvarObservacao = async (a: Anexo, texto: string) => {
+    // O histórico da mudança é gravado pelo gatilho no banco.
+    const { error } = await db.from("CANAL_DENUNCIA_ANEXO")
+      .update({ observacao: texto.trim() || null }).eq("id", a.id);
+    if (error) { toast({ title: "Erro ao salvar a observação", description: error.message, variant: "destructive" }); return false; }
+    carregar();
+    return true;
+  };
+
+  // A ordem é uma só para todo mundo. Quem não vê os sigilosos manda só os
+  // que vê, e a RPC reaproveita as posições deles — o sigiloso fica onde está.
+  const sensores = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const aoSoltar = async ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const de = itens.findIndex((a) => a.id === active.id);
+    const para = itens.findIndex((a) => a.id === over.id);
+    if (de < 0 || para < 0) return;
+    const nova = arrayMove(itens, de, para);
+    setItens(nova);
+    const { error } = await db.rpc("canal_denuncia_anexo_reordenar", {
+      _denuncia: denunciaId, _ids: nova.map((a) => a.id),
+    });
+    if (error) toast({ title: "Não foi possível salvar a ordem", description: error.message, variant: "destructive" });
+    carregar();
+  };
+
+  const [aExcluir, setAExcluir] = useState<Anexo | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
+  const excluir = async () => {
+    if (!aExcluir) return;
+    setExcluindo(true);
+    // A RPC confere acesso e origem, grava no histórico e apaga a linha; o
+    // arquivo do bucket sai depois, pela policy que só alcança arquivo sem linha.
+    const { data: caminho, error } = await db.rpc("canal_denuncia_anexo_excluir", { _anexo: aExcluir.id });
+    if (error) {
+      setExcluindo(false);
+      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
+      return;
+    }
+    if (typeof caminho === "string" && caminho) {
+      await supabase.storage.from(BUCKET).remove([caminho]);
+    }
+    setExcluindo(false);
+    toast({ title: "Arquivo excluído", description: aExcluir.nome_arquivo });
+    setAExcluir(null);
+    carregar();
+  };
+
   const doDenunciante = itens.filter((a) => a.origem === "denunciante");
 
   return (
@@ -280,41 +344,39 @@ export function BlocoAnexos({ denunciaId, podeEditar, podeVerSigiloso }: {
       ) : !itens.length ? (
         <p className="mb-3 text-sm text-muted-foreground">Nenhum arquivo neste procedimento.</p>
       ) : (
-        <ul className="mb-3 flex flex-col gap-1.5">
-          {itens.map((a) => (
-            <li key={a.id} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
-              <button type="button" onClick={() => baixar(a)}
-                      className="flex-1 truncate text-left text-sm font-medium hover:underline">
-                {a.nome_arquivo}
-              </button>
-              <Badge variant="outline" className="text-[10px]">
-                {rotulo(LABEL_CATEGORIA_ANEXO, a.categoria)}
-              </Badge>
-              {a.origem === "denunciante" && (
-                <Badge className="bg-info/10 text-[10px] text-info hover:bg-info/10">do denunciante</Badge>
-              )}
-              {a.sensivel && (
-                <Badge variant="destructive" className="gap-1 text-[10px]">
-                  <ShieldAlert className="h-3 w-3" /> sigiloso
-                </Badge>
-              )}
-              <span className="text-xs text-muted-foreground">
-                {bytesLegivel(a.tamanho_bytes)} · {fmtDataHora(a.created_at)}
-              </span>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => baixar(a)}
-                      aria-label={`Baixar ${a.nome_arquivo}`}>
-                <Download className="h-3.5 w-3.5" />
-              </Button>
-              {podeEditar && podeVerSigiloso && (
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => alternarSigilo(a)}
-                        aria-label={a.sensivel ? "Tirar o sigilo" : "Marcar como sigiloso"}>
-                  {a.sensivel ? <ShieldOff className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
+        <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={aoSoltar}>
+          <SortableContext items={itens.map((a) => a.id)} strategy={verticalListSortingStrategy}>
+            <ul className="mb-3 flex flex-col gap-1.5">
+              {itens.map((a) => (
+                <LinhaAnexo key={a.id} anexo={a} podeEditar={podeEditar} podeVerSigiloso={podeVerSigiloso}
+                            onBaixar={baixar} onAlternarSigilo={alternarSigilo}
+                            onSalvarObservacao={salvarObservacao} onExcluir={setAExcluir} />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
       )}
+
+      <AlertDialog open={!!aExcluir} onOpenChange={(v) => { if (!v && !excluindo) setAExcluir(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir este arquivo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{aExcluir?.nome_arquivo}” ({rotulo(LABEL_CATEGORIA_ANEXO, aExcluir?.categoria ?? "")}) sai do
+              procedimento e do armazenamento. Não dá para desfazer. A exclusão fica registrada no histórico
+              da denúncia, com o seu nome, a data e o nome do arquivo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindo}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction disabled={excluindo}
+                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                               onClick={(e) => { e.preventDefault(); excluir(); }}>
+              {excluindo && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {doDenunciante.length > 0 && (
         <p className="mb-3 text-xs text-muted-foreground">
@@ -345,6 +407,108 @@ export function BlocoAnexos({ denunciaId, podeEditar, podeVerSigiloso }: {
         </div>
       )}
     </section>
+  );
+}
+
+function LinhaAnexo({
+  anexo: a, podeEditar, podeVerSigiloso, onBaixar, onAlternarSigilo, onSalvarObservacao, onExcluir,
+}: {
+  anexo: Anexo; podeEditar: boolean; podeVerSigiloso: boolean;
+  onBaixar: (a: Anexo) => void;
+  onAlternarSigilo: (a: Anexo) => void;
+  onSalvarObservacao: (a: Anexo, texto: string) => Promise<boolean>;
+  onExcluir: (a: Anexo) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: a.id, disabled: !podeEditar,
+  });
+  const [editando, setEditando] = useState(false);
+  const [obs, setObs] = useState(a.observacao ?? "");
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => { if (!editando) setObs(a.observacao ?? ""); }, [a.observacao, editando]);
+
+  const salvar = async () => {
+    setSalvando(true);
+    const ok = await onSalvarObservacao(a, obs);
+    setSalvando(false);
+    if (ok) setEditando(false);
+  };
+
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+
+  return (
+    <li ref={setNodeRef} style={style} className="rounded-md border bg-background px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {podeEditar && (
+          <button type="button" {...attributes} {...listeners}
+                  className="cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
+                  aria-label={`Arrastar ${a.nome_arquivo} para mudar a ordem`}>
+            <GripVertical className="h-4 w-4" />
+          </button>
+        )}
+        <button type="button" onClick={() => onBaixar(a)}
+                className="flex-1 truncate text-left text-sm font-medium hover:underline">
+          {a.nome_arquivo}
+        </button>
+        <Badge variant="outline" className="text-[10px]">
+          {rotulo(LABEL_CATEGORIA_ANEXO, a.categoria)}
+        </Badge>
+        {a.origem === "denunciante" && (
+          <Badge className="bg-info/10 text-[10px] text-info hover:bg-info/10">do denunciante</Badge>
+        )}
+        {a.sensivel && (
+          <Badge variant="destructive" className="gap-1 text-[10px]">
+            <ShieldAlert className="h-3 w-3" /> sigiloso
+          </Badge>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {bytesLegivel(a.tamanho_bytes)} · {fmtDataHora(a.created_at)}
+        </span>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onBaixar(a)}
+                aria-label={`Baixar ${a.nome_arquivo}`}>
+          <Download className="h-3.5 w-3.5" />
+        </Button>
+        {podeEditar && (
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditando((v) => !v)}
+                  aria-label={a.observacao ? "Editar observação" : "Incluir observação"}>
+            <StickyNote className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {podeEditar && podeVerSigiloso && (
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onAlternarSigilo(a)}
+                  aria-label={a.sensivel ? "Tirar o sigilo" : "Marcar como sigiloso"}>
+            {a.sensivel ? <ShieldOff className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+          </Button>
+        )}
+        {/* O do denunciante não tem botão — e o banco recusa mesmo que alguém chame a RPC. */}
+        {podeEditar && a.origem !== "denunciante" && (
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onExcluir(a)}
+                  aria-label={`Excluir ${a.nome_arquivo}`}>
+            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+          </Button>
+        )}
+      </div>
+
+      {editando ? (
+        <div className="mt-2 flex flex-col gap-2">
+          <Textarea rows={2} value={obs} autoFocus placeholder="Observação sobre este documento"
+                    onChange={(e) => setObs(e.target.value)} />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" disabled={salvando}
+                    onClick={() => { setObs(a.observacao ?? ""); setEditando(false); }}>
+              Cancelar
+            </Button>
+            <Button size="sm" className="gap-1.5" disabled={salvando} onClick={salvar}>
+              {salvando && <Loader2 className="h-4 w-4 animate-spin" />} Salvar observação
+            </Button>
+          </div>
+        </div>
+      ) : a.observacao ? (
+        <p className="mt-1 whitespace-pre-wrap border-l-2 border-muted pl-2 text-xs">
+          <span className="font-medium text-muted-foreground">Observação: </span>{a.observacao}
+        </p>
+      ) : null}
+    </li>
   );
 }
 

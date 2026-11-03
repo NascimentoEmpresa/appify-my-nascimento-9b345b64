@@ -65,11 +65,17 @@ interface Body {
 function mensagemChamado(evento: string | undefined, numero: string, assunto: string): { title: string; body: string } {
   switch (evento) {
     case "atribuido":      return { title: "Chamado atribuído",      body: `#${numero} — ${assunto}` };
-    case "concluido":      return { title: "Chamado concluído",      body: `#${numero} foi concluído.` };
+    // Concluir não encerra de vez (mig 20261028001300): o solicitante confirma
+    // a conclusão — e enquanto não confirma, o chamado conta na trava de 3.
+    case "concluido":      return { title: "Confirme a conclusão do chamado", body: `#${numero} foi concluído pelo time. Confira e clique em Confirmar conclusão.` };
     // Reabertura: o solicitante já tinha visto "concluído", então o aviso
     // precisa dizer que voltou — senão ele só descobre ao abrir a tela.
     case "reaberto":       return { title: "Chamado reaberto",       body: `#${numero} voltou para atendimento.` };
     case "reprovado":      return { title: "Chamado reprovado",      body: `#${numero} — ${assunto}` };
+    // Dev iniciou com prazo / mudou o prazo (mig 20261028001400). O prazo em
+    // si está no sino e na tela do chamado.
+    case "desenvolvimento_iniciado": return { title: "Chamado em desenvolvimento", body: `#${numero}: o desenvolvedor começou. Veja a previsão de conclusão no chamado.` };
+    case "prazo_alterado": return { title: "Novo prazo no chamado",  body: `#${numero}: a previsão de conclusão mudou.` };
     // Solicitante desistiu (mig 260) — o aviso é pro responsável tirar da cabeça.
     case "cancelado":      return { title: "Chamado cancelado",      body: `#${numero} foi cancelado pelo solicitante.` };
     case "solicitar_info": return { title: "Aguardando seu retorno", body: `#${numero}: o time pediu mais informações.` };

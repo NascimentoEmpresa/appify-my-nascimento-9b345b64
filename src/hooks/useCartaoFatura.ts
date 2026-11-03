@@ -66,6 +66,41 @@ export function useFaturasResumoPorCartao() {
   });
 }
 
+// SIS-2026-0751: lista de faturas importadas (todas as competências) pra tela do
+// Cartão — o arquivo ia pro storage no import mas nenhuma tela dava como abri-lo.
+export interface FaturaImportadaLinha {
+  id: string;
+  cartao_id: string;
+  nome_cartao: string;
+  competencia: string;
+  arquivo_original_path: string | null;
+  valor_total: number;
+  importado_em: string | null;
+}
+
+export function useFaturasImportadas() {
+  return useQuery({
+    queryKey: [FATURA_KEY, "importadas"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("malote_cartao_fatura")
+        .select("id, cartao_id, competencia, arquivo_original_path, valor_total, importado_em, malote_cartao_credito(nome_cartao)")
+        .eq("status", "importada")
+        .order("competencia", { ascending: false });
+      if (error) throw error;
+      return ((data ?? []) as any[]).map((r) => ({
+        id: r.id,
+        cartao_id: r.cartao_id,
+        nome_cartao: r.malote_cartao_credito?.nome_cartao ?? "—",
+        competencia: r.competencia,
+        arquivo_original_path: r.arquivo_original_path,
+        valor_total: Number(r.valor_total ?? 0),
+        importado_em: r.importado_em,
+      })) as FaturaImportadaLinha[];
+    },
+  });
+}
+
 // SIS-2026-0413: itens na lixeira (soft-deleted) — usado pelo modal de
 // Lixeira do Fluxo de Caixa. Junta com a fatura/cartão pra dar contexto
 // (nome do cartão, competência) igual v_cartao_fatura_fluxo_caixa resolve.
@@ -208,6 +243,8 @@ export function useConfirmarImportacaoFatura() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [FATURA_KEY] });
+      // SIS-2026-0751: a lista de itens a classificar (e o resumo do card "Faturas importadas") muda com a importação.
+      qc.invalidateQueries({ queryKey: ["malote_cartao_fatura_item_rateio"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
     },
   });

@@ -122,7 +122,8 @@ function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
     case "aguardando_pagamento":
       return status === "aguardando_pagamento";
     case "necessidade_de_ajuste":
-      return status === "necessidade_de_ajuste";
+      // Inclui o ajuste pedido na Conferência de Pagamento ("Necessita de ajuste (pagamento)"), que é outro status mas a mesma pendência pro lançador.
+      return status === "necessidade_de_ajuste" || status === "ajuste_pagamento";
     case "despesa_paga":
       return status === "despesa_paga";
     case "despesa_reprovada":

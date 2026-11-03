@@ -434,7 +434,14 @@ export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo
       <div className="rounded-lg border overflow-hidden">
         <p className="border-b bg-muted/40 px-3 py-1.5 text-xs font-semibold">Centros de custo</p>
         <div className="divide-y">
-          <LinhaValor rotulo="Contratos" valor={p.contratos} />
+          <LinhaValor rotulo="Contratos" valor={p.contratos} dica="Mesmo valor do Total de custos da Lucratividade de Contratos (no mesmo período e base)." />
+          {p.contratosForaLucratividade !== 0 && (
+            <LinhaValor
+              rotulo="Contratos fora da Lucratividade"
+              valor={p.contratosForaLucratividade}
+              dica="Saídas de contrato que a Lucratividade não conta como custo: contratos de investimento, obra administrativa, estoque ou movimentação financeira; classificações que não são custo (transferência, financiamento, distribuição…); e lançamentos sem classificação."
+            />
+          )}
           <LinhaValor rotulo="Administrativo" valor={p.administrativo} />
           <LinhaValor rotulo="Sócios" valor={p.socios} />
           <div className={cn("flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-semibold", fechou ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300")}>

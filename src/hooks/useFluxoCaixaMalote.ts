@@ -144,6 +144,22 @@ export function useFluxoCaixaMalote() {
   });
 }
 
+// SIS-2026-0751: a tela de Cartão de Crédito só lia o Malote, então um Débito Automático
+// lançado com a forma de pagamento de um cartão nunca entrava em "Utilizado", "Fatura do
+// Mês" nem na lista de lançamentos. Só SAÍDA conta (entrada não é gasto no cartão). A chave
+// começa por "fluxo_caixa_combinado" de propósito: o Débito Automático já invalida esse
+// prefixo ao pagar/editar/excluir, então esta lista acompanha sem mexer no outro hook.
+export function useFluxoCaixaDebitoAutomaticoSaidas() {
+  return useQuery({
+    queryKey: ["fluxo_caixa_combinado", "debito_automatico_saidas"],
+    queryFn: async () => {
+      const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
+      const linhas = (await buscarTodasLinhas("v_debito_automatico_fluxo_caixa", ORDEM_FONTES, executar)) as FluxoCaixaMaloteLinha[];
+      return linhas.filter((l) => l.tipo === "saida");
+    },
+  });
+}
+
 // SIS-2026-0256/0255: fonte combinada da tela /app/financeiro/gestao-
 // financeira/fluxo-caixa — Pagamento Malote (só saída) + Débito Automático
 // (entrada e saída, itens "pago" que não passam pelo Malote) + fatura de
@@ -365,5 +381,41 @@ export function useReverterAjusteFluxoCaixa() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] }),
+  });
+}
+
+// SIS-2026-0733: histórico das edições do Fluxo (financeiro_fluxo_caixa_ajuste_historico) - quem criou, alterou ou
+// desfez o ajuste de uma linha, quando, e os valores antes/depois. Gravado por gatilho no banco; aqui so leitura.
+export interface HistoricoAjusteFluxo {
+  id: string;
+  operacao: "criado" | "alterado" | "desfeito";
+  campos: string[];
+  antes: Record<string, unknown> | null;
+  depois: Record<string, unknown> | null;
+  usuario_nome: string | null;
+  usuario_banco: string;
+  created_at: string;
+}
+
+export function useHistoricoAjusteFluxo(linha: { origem: string; despesa_id: string; numero_parcela: number | null } | null) {
+  return useQuery({
+    queryKey: ["fluxo_caixa_ajuste_historico", linha?.origem, linha?.despesa_id, linha?.numero_parcela ?? null],
+    enabled: !!linha,
+    queryFn: async () => {
+      let q = (supabase as any)
+        .from("financeiro_fluxo_caixa_ajuste_historico")
+        .select("id, operacao, campos, antes, depois, usuario_nome, usuario_banco, created_at")
+        .eq("origem", linha!.origem)
+        .eq("despesa_id", linha!.despesa_id)
+        .order("created_at", { ascending: false });
+      q = linha!.numero_parcela == null ? q.is("numero_parcela", null) : q.eq("numero_parcela", linha!.numero_parcela);
+      const { data, error } = await q;
+      if (error) {
+        // Migration ainda nao aplicada: a tela segue sem a secao, sem quebrar.
+        if (error.code === "PGRST205" || error.code === "42P01") return [] as HistoricoAjusteFluxo[];
+        throw error;
+      }
+      return (data ?? []) as HistoricoAjusteFluxo[];
+    },
   });
 }

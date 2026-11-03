@@ -25,6 +25,7 @@ import {
   Wallet,
   Users2,
   CalendarRange,
+  CalendarClock,
   Ruler,
   TrendingUp,
   PackageCheck,
@@ -50,6 +51,7 @@ import {
   FileOutput,
   Headset,
   ShieldAlert,
+  HeartPulse,
   ClipboardList,
   Bell,
   MessageCircle,
@@ -67,7 +69,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles, Clock, FileSpreadsheet } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -185,6 +187,10 @@ const licitacoesModule: ModuleDef = {
         // Acompanhamento desde 14/09/2026: a aprovação da demissão voltou
         // para o Operacional.
         { label: "Solicitações de Demissão — Acompanhar", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
+        // Base dos benefícios da vaga: a CCT/decreto vinculada ao posto na
+        // Planilha de Custo aparece sozinha na Abertura de Vagas (mig 20261027000930).
+        { label: "Convenções Coletivas e Decretos Municipais", to: "/app/licitacoes/convencoes", icon: FileText },
+        { label: "Prazos, Recursos e Impugnações", to: "/app/licitacoes/prazos-recursos", icon: CalendarClock },
       ],
     },
     {
@@ -401,6 +407,9 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0599: resumo financeiro do contrato que vai começar.
         { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Ficha Financeira (29/10/2026, mig 20261029004700): tudo o que cada
+        // colaborador recebeu na Senior. Nasce sem ninguém liberado.
+        { label: "Ficha Financeira", to: "/app/financeiro/ficha-financeira", icon: Receipt },
         // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
         // próprio do Financeiro (financeiro_dashboard_pontos).
         { label: "Dashboard de Pontos", to: "/app/financeiro/dashboard-pontos", icon: BarChart3 },
@@ -613,6 +622,8 @@ const rhModule: ModuleDef = {
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
         // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
         { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
+        // Pesquisa de Permanência (mig 20261028001200): motivos de ficar/sair por contrato, posto e função + turnover + I.A.
+        { label: "Pesquisa de Permanência", to: "/app/rh/pesquisa-permanencia", icon: ClipboardList },
         // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
         { label: "Rateio de Despesas", to: "/app/rh/rateio-despesas", icon: PieChart },
       ],
@@ -941,6 +952,7 @@ const sistemasModule: ModuleDef = {
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
+        { label: "Controle de Pull Requests (PR)", to: "/app/sistemas/chamados/pull-requests", icon: GitPullRequest },
       ],
     },
     {
@@ -1025,6 +1037,8 @@ const centralServicosModule: ModuleDef = {
         { label: "Mudança de Função", to: "/app/central-servicos/solicitacoes/mudanca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         { label: "Solicitar Medida Disciplinar", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
         { label: "Solicitar Manutenção de Equipamento", to: "/app/central-servicos/solicitar-manutencao-equipamento", icon: Wrench },
+        // 29/10/2026: a tela de Encarregados; cai no menu central_servicos_solicitacoes por prefixo.
+        { label: "Solicitar Treinamento", to: "/app/central-servicos/solicitacoes/treinamento", icon: GraduationCap },
       ],
     },
   ],
@@ -1320,6 +1334,14 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Laudos de EPI", to: "/app/sst/laudos", icon: FileCheck2 },
         { label: "Controle de CA", to: "/app/sst/controle-ca", icon: ShieldAlert },
+      ],
+    },
+    {
+      // Atestados + telemedicina com lotação automática e impacto financeiro (mig 20261029001750).
+      label: "Saúde ocupacional",
+      defaultOpen: true,
+      items: [
+        { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
       ],
     },
   ],

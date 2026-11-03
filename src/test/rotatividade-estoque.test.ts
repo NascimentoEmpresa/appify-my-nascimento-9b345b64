@@ -3,6 +3,7 @@ import {
   avisoMovimento,
   classeSituacaoCobertura,
   classeSituacaoGiro,
+  combinarRotatividadeEstoque,
   coberturaDePreco,
   compararGrade,
   escalaDoTamanho,
@@ -13,6 +14,8 @@ import {
   situacaoCobertura,
   situacaoGiro,
   somenteLetras,
+  type RotatividadeEstoqueDados,
+  type RotatividadeEstoqueDetalhe,
   type TamanhoRotatividade,
 } from "@/lib/suprimentos/rotatividadeEstoque";
 
@@ -199,5 +202,71 @@ describe("rotatividade do estoque — honestidade dos números na tela", () => {
     expect(formatarGiro(Number.POSITIVE_INFINITY)).toBe("—");
     expect(formatarGiro(0.38)).toBe("0,38×");
     expect(formatarGiro(2)).toBe("2,00×");
+  });
+});
+
+describe("rotatividade do estoque — consultas executiva e detalhada", () => {
+  it("recompõe o payload preservando o valor calculado pela visão executiva", () => {
+    const base = {
+      resumo: { saldo_fisico: 10, reservado: 2, saldo_disponivel: 8 },
+      por_item_tamanho: [],
+      por_peca: [
+        {
+          codigo: "0000101",
+          peca: "LUVA DE LATEX AZUL",
+          pedidas: 12,
+          valor_pedido: 345.67,
+          entradas: 10,
+          saidas: 4,
+          saldo_disponivel: 6,
+          tamanho_top: "M",
+          giro: 0.67,
+        },
+      ],
+    } as RotatividadeEstoqueDados;
+    const detalhe = {
+      resumo: { saldo_fisico: 11, reservado: 1, saldo_disponivel: 10 },
+      por_item_tamanho: [
+        {
+          codigo: "0002052",
+          item: "LUVA DE LATEX AZUL",
+          tamanho: "M",
+          pedidas: 12,
+          entradas: 10,
+          saidas: 4,
+          fisico: 11,
+          reservado: 1,
+          saldo_disponivel: 10,
+          cadastro_ativo: true,
+          giro: 0.4,
+        },
+      ],
+      por_peca: [
+        {
+          codigo: "0002052",
+          peca: "LUVA DE LATEX AZUL",
+          pedidas: 12,
+          valor_pedido: 0,
+          entradas: 10,
+          saidas: 4,
+          saldo_disponivel: 10,
+          tamanho_top: "M",
+          giro: 0.4,
+        },
+      ],
+    } satisfies RotatividadeEstoqueDetalhe;
+
+    const combinado = combinarRotatividadeEstoque(base, detalhe);
+
+    expect(combinado.resumo).toEqual(expect.objectContaining({
+      saldo_fisico: 11,
+      reservado: 1,
+      saldo_disponivel: 10,
+    }));
+    expect(combinado.por_item_tamanho[0].codigo).toBe("0002052");
+    expect(combinado.por_peca[0]).toEqual(expect.objectContaining({
+      codigo: "0002052",
+      valor_pedido: 345.67,
+    }));
   });
 });

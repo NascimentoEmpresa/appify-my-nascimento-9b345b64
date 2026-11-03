@@ -7,8 +7,9 @@ import { minutosParaHora } from "@/lib/ponto";
 // joãozinho se o joãozinho tem marcação de ponto hoje?". Cada linha da
 // solicitação é conferida no espelho do relógio (espelho."BiMarcacoes"):
 //
-//   trabalhou        — o faltante bateu ponto no dia → a diária NÃO pode
-//                      (o banco recusa a linha; a aprovação só avisa — mig 20261013000001);
+//   trabalhou        — o faltante bateu ponto no dia → avisa com os horários,
+//                      mas não bloqueia; o turno da batida pode ser diferente
+//                      do turno coberto pela diária (mig 20261028000920);
 //   sem_marcacao     — o dia já está no espelho e não há batida → ok;
 //   parcial          — é o último dia sincronizado: pode faltar batida da
 //                      tarde/noite. Passa, mas a aprovação confere de novo;
@@ -36,9 +37,6 @@ export interface ConflitosPonto {
 
 export type EstadoPonto = "trabalhou" | "sem_marcacao" | "parcial" | "nao_sincronizado" | "sem_vinculo" | "indisponivel";
 export interface ResultadoPontoDia { data: string; estado: EstadoPonto; minutos: number[]; horarios: string[] }
-
-/** Bloqueia a diária? Só quando há batida — nas demais o banco não tem como afirmar que trabalhou. */
-export const bloqueia = (e: EstadoPonto) => e === "trabalhou";
 
 /** 420 → "07:00"; 1560 → "02:00 (+1d)". */
 export function horariosDoPonto(minutos: number[] | null | undefined): string[] {
@@ -84,7 +82,7 @@ export const ROTULO_ESTADO: Record<EstadoPonto, string> = {
 export function detalheEstado(r: ResultadoPontoDia, sincronizadoAte?: string | null): string {
   const ate = sincronizadoAte ? fmtDataCurta(sincronizadoAte) : null;
   switch (r.estado) {
-    case "trabalhou": return `Batidas: ${r.horarios.join(", ")}. Ele(a) trabalhou nesse dia — não cabe diária.`;
+    case "trabalhou": return `Batidas: ${r.horarios.join(", ")}. Confira se os horários conflitam com o turno da diária; o lançamento continua liberado.`;
     case "sem_marcacao": return "Confirmado no relógio: não trabalhou.";
     case "parcial": return `O relógio vai até ${ate}; batidas do fim do dia podem não ter chegado. A aprovação confere de novo.`;
     case "nao_sincronizado": return `O relógio vai até ${ate ?? "—"}. A aprovação confere quando o ponto do dia chegar.`;

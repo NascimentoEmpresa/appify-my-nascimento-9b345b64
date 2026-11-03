@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft, Paperclip, ExternalLink, FileInput, X } from "lucide-react";
+import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft, Paperclip, ExternalLink, FileInput, X, Pencil, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -29,7 +30,13 @@ import {
   ItemSolicitacao,
   LinkSolicitacao,
   useLinksDaDespesa,
+  useReprovarCotacao,
+  useSolicitarAjusteCotacao,
+  souLancadorDespesa,
+  classificacaoTemLancadorConfigurado,
+  type MaloteDespesaRow,
 } from "@/hooks/useMaloteDespesa";
+import { useAuth } from "@/hooks/useAuth";
 import { abrirAnexoMalote } from "@/hooks/useMaloteCotacao";
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { LinksSolicitacao } from "@/components/malote/LinksSolicitacao";
@@ -260,6 +267,78 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
 // (status='cotacao_aprovada') virando uma Despesa de verdade. Chega aqui a
 // partir de um clique em Meus Itens — ver abrirItem em MeusItens.tsx.
 // ============================================================================
+// SIS-2026-0775: quem vai lançar a despesa (o lançador da Classificação; sem lançador, o solicitante) também pode reprovar a solicitação ou pedir ajuste da
+// cotação enquanto ela está em "Cotação aprovada" — às vezes o assunto se resolve depois da aprovação e a compra não é mais necessária. Mesma regra de
+// quem lança (SIS-2026-0340); o banco confere de novo (malote_reprovar_cotacao / malote_solicitar_ajuste_cotacao).
+function AcoesCotacaoAprovada({ solicitacao }: { solicitacao: MaloteDespesaRow }) {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const reprovar = useReprovarCotacao();
+  const ajustar = useSolicitarAjusteCotacao();
+  const [motivo, setMotivo] = useState("");
+  const [acao, setAcao] = useState<"reprovar" | "ajustar" | null>(null);
+
+  const podeAgir = classificacaoTemLancadorConfigurado(solicitacao) ? souLancadorDespesa(solicitacao, user?.id) : solicitacao.created_by === user?.id;
+  if (!podeAgir) return null;
+
+  async function executar(qual: "reprovar" | "ajustar") {
+    if (!motivo.trim()) return toast.error("Descreva o motivo no campo abaixo.");
+    setAcao(qual);
+    try {
+      if (qual === "reprovar") {
+        await reprovar.mutateAsync({ id: solicitacao.id, motivo: motivo.trim() });
+        toast.success("Solicitação reprovada.");
+      } else {
+        await ajustar.mutateAsync({ id: solicitacao.id, motivo: motivo.trim() });
+        toast.success("Ajuste solicitado. A cotação volta para decisão.");
+      }
+      navigate("/app/malote/meus-itens");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao executar a ação.");
+    } finally {
+      setAcao(null);
+    }
+  }
+
+  return (
+    <Card className="border-l-4 border-l-amber-400">
+      <CardContent className="p-4 space-y-2">
+        <p className="text-sm font-semibold">A compra não é mais necessária ou a cotação mudou?</p>
+        <p className="text-xs text-muted-foreground">
+          Reprove a solicitação (ela encerra aqui) ou peça ajuste (a cotação volta para decisão do aprovador). Informe o motivo; ele fica no histórico.
+        </p>
+        <Textarea
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value.slice(0, 500))}
+          placeholder="Ex.: o contrato resolveu por outra via e não precisa mais comprar; o valor do fornecedor mudou."
+          className="text-xs"
+          rows={2}
+        />
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50"
+            onClick={() => executar("ajustar")}
+            disabled={acao !== null}
+          >
+            <Pencil className="h-3.5 w-3.5" /> {acao === "ajustar" ? "Solicitando..." : "Solicitar ajuste"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 border-destructive text-destructive hover:bg-destructive/10"
+            onClick={() => executar("reprovar")}
+            disabled={acao !== null}
+          >
+            <Ban className="h-3.5 w-3.5" /> {acao === "reprovar" ? "Reprovando..." : "Reprovar solicitação"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: string }) {
   const navigate = useNavigate();
   const { data, isLoading } = useDespesa(solicitacaoId);
@@ -302,6 +381,8 @@ function ConverterSolicitacaoEmDespesa({ solicitacaoId }: { solicitacaoId: strin
           </Button>
         }
       />
+
+      <AcoesCotacaoAprovada solicitacao={solicitacao} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>

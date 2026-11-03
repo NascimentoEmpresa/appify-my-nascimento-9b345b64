@@ -31,9 +31,10 @@ import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
 import { desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
+import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
+  StatCard, StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, type CriterioSolicitanteKey,
 } from "./types";
@@ -137,6 +138,7 @@ export default function PainelDistribuicao() {
   }, [aba, busca, fCategoria, fPrioridade, fResponsavel, fDe, fAte, pagina]);
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
+  const [atribDefinicao, setAtribDefinicao] = useState<string>("");
   const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
   const [reabrir, setReabrir] = useState<Chamado | null>(null);
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
@@ -225,6 +227,10 @@ export default function PainelDistribuicao() {
       return (data ?? []) as Chamado[];
     },
   });
+
+  // Parecer da I.A (mig 20261029000900): valor médio + complexidade na linha,
+  // para distribuir já sabendo o tamanho do pedido.
+  const pareceresIa = useResumosParecerIa(gestor);
 
   // Treinamentos pendentes (etapa "treinamento"): a Presidência aprovou e
   // falta o dev e/ou o solicitante confirmarem. Alimenta a aba própria.
@@ -417,8 +423,16 @@ export default function PainelDistribuicao() {
   }, [chamados]);
 
   // Atribuição rápida: entra no FIM da fila do dev (posição = último lugar).
+  // A definição (Reunião / Extra, mig 20261028001700) é obrigatória aqui
+  // também — distribuir é o momento em que ela é registrada.
   const atribuir = async () => {
-    if (!atribChamado || !atribDev) return;
+    if (!atribChamado || !atribDev || !atribDefinicao) return;
+    const { error: erroDef } = await (supabase as any).from("CHAMADO_SISTEMA").update({ definicao: atribDefinicao }).eq("id", atribChamado);
+    if (erroDef) { toast({ title: "Erro ao gravar a definição", description: erroDef.message, variant: "destructive" }); return; }
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+      chamado_id: atribChamado, tipo: "evento",
+      texto: `Definição da prioridade: ${DEFINICOES[atribDefinicao as keyof typeof DEFINICOES]?.label ?? atribDefinicao}`,
+    });
     const { error } = await (supabase as any).rpc("chamado_direcionar", {
       p_chamado_id: atribChamado, p_responsavel_id: atribDev, p_posicao: null, p_observacao: null,
     });
@@ -426,7 +440,7 @@ export default function PainelDistribuicao() {
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     supabase.functions.invoke("notificar-chamado-whatsapp", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     toast({ title: "Chamado atribuído" });
-    setAtribChamado(null); setAtribDev(null);
+    setAtribChamado(null); setAtribDev(null); setAtribDefinicao("");
     qc.invalidateQueries({ queryKey: ["chamados-todos"] });
     qc.invalidateQueries({ queryKey: ["chamados-painel-stats"] });
     qc.invalidateQueries({ queryKey: ["chamados-devs"] });
@@ -463,7 +477,10 @@ export default function PainelDistribuicao() {
 
       {/* items-start: cada coluna fica com a altura do próprio conteúdo (sem o
           card da esquerda esticar até a altura da coluna da direita). */}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* Laterais ao lado da tabela só em tela larga (1536 px+); abaixo,
+          descem e a tabela usa a largura toda — antes ela ficava com ~740 px
+          para 11 colunas e saía do card. */}
+      <div className="grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="p-4">
           {/* Abas */}
           <div className="mb-3 flex flex-wrap gap-1 border-b border-border pb-2">
@@ -528,9 +545,11 @@ export default function PainelDistribuicao() {
                       Posição <span className="font-normal text-muted-foreground">(dev)</span>
                     </TableHead>
                     <TableHead>ID</TableHead>
+                    <TableHead>Prioridade</TableHead>
+                    {/* Reunião ou Extra — definida em Coordenar chamado (mig 20261028001700). */}
+                    <TableHead>Definição</TableHead>
                     <TableHead>Assunto</TableHead>
                     <TableHead>Categoria</TableHead>
-                    <TableHead>Prioridade</TableHead>
                     <TableHead>Solicitante</TableHead>
                     <TableHead>Abertura</TableHead>
                     <TableHead>Status</TableHead>
@@ -593,16 +612,11 @@ export default function PainelDistribuicao() {
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
                       {/* Título em destaque e a descrição logo abaixo: dá para
                           entender o pedido sem abrir o chamado. */}
-                      <TableCell className="min-w-[220px] max-w-[340px]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
-                        <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
-                        {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         {chamadoAtivo(c.status) ? (
                           <div className={flashPrioridade === c.id ? "animate-pop" : ""}>
                             <Select value={c.prioridade} onValueChange={(v) => mudarPrioridade(c.id, v, c.numero)}>
-                              <SelectTrigger className="h-7 w-[92px] text-xs"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="alta">Alta</SelectItem>
                                 <SelectItem value="media">Média</SelectItem>
@@ -614,8 +628,15 @@ export default function PainelDistribuicao() {
                           <PrioridadeBadge prioridade={c.prioridade} />
                         )}
                       </TableCell>
+                      <TableCell><DefinicaoBadge definicao={c.definicao} /></TableCell>
+                      <TableCell className="min-w-[150px] max-w-[340px] [overflow-wrap:anywhere]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
+                        <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
+                        {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
+                        <div className="mt-0.5"><ResumoParecerIaLinha resumo={pareceresIa[c.id]} /></div>
+                      </TableCell>
+                      <TableCell className="min-w-[100px] text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
+                      <TableCell className="min-w-[78px] text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell>
                         {treinosPendentes[c.id] ? (
                           treinosPendentes[c.id].treinamento_dev_em ? (
@@ -630,7 +651,7 @@ export default function PainelDistribuicao() {
                           )
                         ) : <StatusBadge status={c.status} />}
                       </TableCell>
-                      <TableCell className="text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
+                      <TableCell className="max-w-[110px] text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-0.5">
                           {treinosPendentes[c.id] && !treinosPendentes[c.id].treinamento_dev_em && (
@@ -675,7 +696,7 @@ export default function PainelDistribuicao() {
                   </SortableContext>
                   </DndContext>
                   {filtrados.length === 0 && (
-                    <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -761,7 +782,16 @@ export default function PainelDistribuicao() {
               searchPlaceholder="Buscar dev…"
               allowClear clearValue=""
             />
-            <Button size="sm" className="w-full" disabled={!atribChamado || !atribDev} onClick={atribuir}>Atribuir chamado</Button>
+            <Select value={atribDefinicao} onValueChange={setAtribDefinicao}>
+              <SelectTrigger className="h-9 text-xs" title="Onde a prioridade foi definida — vai para a coluna Definição">
+                <SelectValue placeholder="Definição: Reunião ou Extra…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reuniao"><DefinicaoBadge definicao="reuniao" /></SelectItem>
+                <SelectItem value="extra"><DefinicaoBadge definicao="extra" /></SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="sm" className="w-full" disabled={!atribChamado || !atribDev || !atribDefinicao} onClick={atribuir}>Atribuir chamado</Button>
           </Card>}
 
           <Card className="p-4">

@@ -24,8 +24,8 @@ vi.mock("@/hooks/useEmpresaId", () => ({
 }));
 
 vi.mock("@/hooks/useDashboardComprasEstoque", () => ({
-  useDashboardComprasEstoque: (empresaId: string | null, filtros: unknown) => {
-    consultarDashboard(empresaId, filtros);
+  useDashboardComprasEstoque: (empresaIds: string[], filtros: unknown) => {
+    consultarDashboard(empresaIds, filtros);
     return {
       data: undefined,
       error: null,
@@ -44,7 +44,7 @@ describe("dashboard de Suprimentos — empresa operacional", () => {
   it("consulta a empresa do perfil mesmo quando a empresa global ativa é outra", () => {
     render(<DashboardComprasEstoque />);
 
-    expect(consultarDashboard).toHaveBeenCalledWith("hagg", expect.objectContaining({
+    expect(consultarDashboard).toHaveBeenCalledWith(["hagg"], expect.objectContaining({
       contratoId: null,
       categoria: null,
       comprador: null,

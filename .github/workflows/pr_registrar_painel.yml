@@ -1,0 +1,143 @@
+name: Registrar PR no Controle de PRs
+
+# SIS-2026-0786 — alimenta a tela Sistemas › Controle de Pull Requests (PR)
+# (/app/sistemas/chamados/pull-requests, mig 20261029004900).
+#
+# · no-merge: toda PR mergeada (com chamado ou [SEM-CHAMADO]) é gravada no
+#   cache DEV_GITHUB_PR na hora, com os números que o próprio evento traz —
+#   nenhuma chamada à API do GitHub. O merge é a "data da aprovação" da tela.
+# · historico: "Run workflow" manual (aba Actions) para a carga inicial ou
+#   para tapar buraco. Lê as PRs mergeadas pelo GraphQL, 100 por página, com o
+#   token do próprio Actions — não o GITHUB_TOKEN das Edges, cuja sincronização
+#   em massa já suspendeu contas (13/10/2026). Rodar de novo é inofensivo.
+#
+# Arquivo separado do chamado_concluir_no_merge.yml para que uma falha aqui
+# não pinte de vermelho a conclusão do chamado, e vice-versa.
+#
+# pull_request_target (não pull_request): precisa dos secrets do repositório
+# base. Como nos outros workflows, NÃO fazemos checkout nem executamos nada do
+# código da branch da PR — só lemos o evento ($GITHUB_EVENT_PATH, via jq; o
+# título nunca é interpolado no script).
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+
+env:
+  # Mesmo ponto de virada dos outros workflows de chamado.
+  SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
+
+jobs:
+  no-merge:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Gravar a PR mergeada
+        env:
+          CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+        run: |
+          set -uo pipefail
+
+          # Best-effort: o merge já aconteceu, falhar aqui só acenderia alarme
+          # sem nada a corrigir na PR. Buraco se tapa com o "Run workflow".
+          jq '{prs: [.pull_request | {
+                numero: .number, titulo: .title, url: .html_url, rascunho: (.draft // false),
+                autor_login: .user.login, autor_avatar: .user.avatar_url,
+                branch_origem: .head.ref, branch_destino: .base.ref,
+                criado_em: .created_at, atualizado_em: .updated_at, fechado_em: .closed_at,
+                mergeado_em: .merged_at, mergeado_por: .merged_by.login,
+                commits: .commits, adicoes: .additions, remocoes: .deletions, arquivos: .changed_files
+              }]}' "$GITHUB_EVENT_PATH" > envio.json
+
+          # Até 4 tentativas, 20 s entre elas. O merge que dispara este job
+          # também dispara o cluster_pos_merge, que reinicia o runtime das
+          # functions -- a primeira chamada pode cair justo nesses segundos
+          # (foi o que aconteceu no merge da própria PR #1083: 404).
+          for TENTATIVA in 1 2 3 4; do
+            RESP=$(curl -sS --max-time 20 -w '\n%{http_code}' \
+              -X POST "$SUPABASE_FUNCTIONS_URL/dev-github-pr-registrar" \
+              -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
+              -H "Content-Type: application/json" \
+              --data-binary @envio.json) || RESP=$'\n000'
+            HTTP_CODE=$(echo "$RESP" | tail -n1)
+            BODY=$(echo "$RESP" | sed '$d')
+            [ "$HTTP_CODE" = "200" ] && break
+            echo "Tentativa $TENTATIVA: HTTP $HTTP_CODE: $BODY"
+            [ "$TENTATIVA" -lt 4 ] && sleep 20
+          done
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::dev-github-pr-registrar respondeu HTTP $HTTP_CODE: $BODY — a PR fica fora do Controle de PRs até o próximo 'Run workflow'."
+            exit 0
+          fi
+          echo "Resposta: $BODY"
+
+  historico:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Carregar o histórico de PRs mergeadas
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+        run: |
+          set -euo pipefail
+
+          QUERY='query($owner: String!, $repo: String!, $cursor: String) {
+            repository(owner: $owner, name: $repo) {
+              pullRequests(states: MERGED, baseRefName: "main", first: 100, after: $cursor,
+                           orderBy: {field: CREATED_AT, direction: DESC}) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  number title url isDraft headRefName baseRefName
+                  createdAt updatedAt closedAt mergedAt
+                  author { login avatarUrl } mergedBy { login }
+                  commits { totalCount } additions deletions changedFiles
+                }
+              }
+            }
+          }'
+
+          CURSOR=""
+          PAGINA=0
+          TOTAL=0
+          while :; do
+            PAGINA=$((PAGINA + 1))
+            ARGS=(-f query="$QUERY" -f owner="${GITHUB_REPOSITORY%/*}" -f repo="${GITHUB_REPOSITORY#*/}")
+            [ -n "$CURSOR" ] && ARGS+=(-f cursor="$CURSOR")
+            gh api graphql "${ARGS[@]}" > pagina.json
+
+            jq '{prs: [.data.repository.pullRequests.nodes[] | {
+                  numero: .number, titulo: .title, url: .url, rascunho: .isDraft,
+                  autor_login: .author.login, autor_avatar: .author.avatarUrl,
+                  branch_origem: .headRefName, branch_destino: .baseRefName,
+                  criado_em: .createdAt, atualizado_em: .updatedAt, fechado_em: .closedAt,
+                  mergeado_em: .mergedAt, mergeado_por: .mergedBy.login,
+                  commits: .commits.totalCount, adicoes: .additions, remocoes: .deletions, arquivos: .changedFiles
+                }]}' pagina.json > envio.json
+
+            RESP=$(curl -sS --max-time 30 -w '\n%{http_code}' \
+              -X POST "$SUPABASE_FUNCTIONS_URL/dev-github-pr-registrar" \
+              -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
+              -H "Content-Type: application/json" \
+              --data-binary @envio.json)
+            HTTP_CODE=$(echo "$RESP" | tail -n1)
+            BODY=$(echo "$RESP" | sed '$d')
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "::error::Página $PAGINA: dev-github-pr-registrar respondeu HTTP $HTTP_CODE: $BODY"
+              exit 1
+            fi
+            GRAVADAS=$(echo "$BODY" | jq -r '.gravadas // 0')
+            TOTAL=$((TOTAL + GRAVADAS))
+            echo "Página $PAGINA: $GRAVADAS PR(s) gravadas."
+
+            [ "$(jq -r '.data.repository.pullRequests.pageInfo.hasNextPage' pagina.json)" = "true" ] || break
+            CURSOR=$(jq -r '.data.repository.pullRequests.pageInfo.endCursor' pagina.json)
+            sleep 1   # em série e sem pressa
+          done
+          echo "Histórico carregado: $TOTAL PR(s) mergeadas na main."

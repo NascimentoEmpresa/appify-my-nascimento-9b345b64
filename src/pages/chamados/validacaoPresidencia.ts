@@ -109,8 +109,53 @@ export const abrirChamadoTravado = (pendentes: readonly unknown[]) =>
 /** Linha de chamados_meus_avaliacoes_pendentes (mig 269): o que trava abrir outro chamado. */
 export interface PendenciaSolicitante {
   id: string; numero: string; assunto: string; concluido_em: string | null;
-  /** avaliacao_participante: participante extra (mig 20261009000003) — mesma trava. */
-  pendencia: "avaliacao" | "avaliacao_participante";
+  /** avaliacao_participante: participante extra (mig 20261009000003) — mesma trava.
+   *  confirmacao: o time concluiu e o solicitante ainda não confirmou (mig
+   *  20261028001300). Cada chamado conta uma vez: confirma, depois avalia. */
+  pendencia: "confirmacao" | "avaliacao" | "avaliacao_participante";
+}
+
+// ---- Confirmação da conclusão pelo solicitante (mig 20261028001300) ----
+
+/**
+ * O time concluiu e o solicitante ainda não confirmou? Vale também no fluxo
+ * da Presidência (para o selo), mesmo antes de ela aprovar — quando a
+ * confirmação pode ser FEITA é `podeConfirmarConclusao`.
+ */
+export const conclusaoAguardandoConfirmacao = (
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em">,
+) => c.status === "concluido" && !c.conclusao_confirmada_em;
+
+/**
+ * O usuário pode clicar em CONFIRMAR CONCLUSÃO? ESPELHA a RPC
+ * chamado_confirmar_conclusao: só quem abriu, chamado concluído e ainda não
+ * confirmado, e no fluxo da Presidência depois que ela aprovar (mesma janela
+ * da avaliação).
+ */
+export function podeConfirmarConclusao(
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "solicitante_id">,
+  v: Pick<ValidacaoChamado, "etapa"> | null | undefined,
+  userId: string | null | undefined,
+): boolean {
+  if (!userId || c.solicitante_id !== userId) return false;
+  return conclusaoAguardandoConfirmacao(c) && avaliacaoLiberada(v).liberada;
+}
+
+/** Separa as pendências: o que falta confirmar e o que falta avaliar. */
+export function separarPendencias<T extends Pick<PendenciaSolicitante, "pendencia">>(pendentes: readonly T[]) {
+  return {
+    confirmar: pendentes.filter((p) => p.pendencia === "confirmacao"),
+    avaliar: pendentes.filter((p) => p.pendencia !== "confirmacao"),
+  };
+}
+
+/** Frase do bloqueio/aviso de abrir chamado, contando confirmações e avaliações. */
+export function descreverPendencias(pendentes: readonly Pick<PendenciaSolicitante, "pendencia">[]): string {
+  const { confirmar, avaliar } = separarPendencias(pendentes);
+  const partes: string[] = [];
+  if (confirmar.length) partes.push(confirmar.length === 1 ? "1 chamado aguardando sua confirmação" : `${confirmar.length} chamados aguardando sua confirmação`);
+  if (avaliar.length) partes.push(avaliar.length === 1 ? "1 chamado sem avaliar" : `${avaliar.length} chamados sem avaliar`);
+  return partes.length ? `Você tem ${partes.join(" e ")}` : "";
 }
 
 // ---- Linha do tempo do botão "Status" ---------------------------------
@@ -128,7 +173,24 @@ export interface PassoStatus {
 }
 
 type ChamadoStatus = Pick<Chamado,
-  "status" | "created_at" | "responsavel_id" | "concluido_em" | "motivo_reprovacao" | "motivo_cancelamento" | "cancelado_em" | "updated_at">;
+  "status" | "created_at" | "responsavel_id" | "concluido_em" | "motivo_reprovacao" | "motivo_cancelamento" | "cancelado_em" | "updated_at"
+  | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">;
+
+const dataHoraBr = (s: string) =>
+  new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+/** Passo "o solicitante confirmou a conclusão" (mig 20261028001300). */
+function passoConfirmacao(c: ChamadoStatus, liberado: boolean): PassoStatus {
+  const confirmada = !!c.conclusao_confirmada_em;
+  const atual = !confirmada && liberado && c.status === "concluido";
+  return {
+    key: "confirmacao",
+    titulo: "Conclusão confirmada pelo solicitante",
+    situacao: confirmada ? "feito" : atual ? "atual" : "pendente",
+    quando: c.conclusao_confirmada_em ?? null,
+    detalhe: atual ? "O solicitante confere a entrega e clica em Confirmar conclusão — ou reabre, se não resolveu" : null,
+  };
+}
 
 /**
  * Monta os passos da solicitação, do jeito que o solicitante entende:
@@ -161,6 +223,15 @@ export function montarLinhaDoTempo(
   const detalhesDev: string[] = [];
   if (temResponsavel) detalhesDev.push(`Responsável: ${nomeDe(c.responsavel_id)}`);
   else if (!devConcluiu) detalhesDev.push("Aguardando a coordenação direcionar a um desenvolvedor");
+  // Início + prazo informados pelo dev (mig 20261028001400).
+  if (!devConcluiu && !encerradoSemEntrega && c.status === "em_andamento") {
+    detalhesDev.push(c.desenvolvimento_iniciado_em
+      ? `Em desenvolvimento desde ${dataHoraBr(c.desenvolvimento_iniciado_em)}`
+      : "Na fila do desenvolvedor — ainda não começou");
+  }
+  if (!devConcluiu && !encerradoSemEntrega && c.prazo_conclusao_em) {
+    detalhesDev.push(`Previsão de conclusão: ${new Date(c.prazo_conclusao_em).toLocaleDateString("pt-BR")}`);
+  }
   if (c.status === "aguardando_retorno") detalhesDev.push("O time pediu mais informações ao solicitante");
   if (v && v.devolucoes > 0 && etapa === "desenvolvimento" && v.presidencia_aprovado === false) {
     detalhesDev.push(`Devolvido pela Presidência: ${v.presidencia_parecer ?? "—"}`);
@@ -190,7 +261,10 @@ export function montarLinhaDoTempo(
     detalhe: v && devConcluiu && v.desenvolvedor_id ? `Por ${nomeDe(v.desenvolvedor_id)}` : null,
   });
 
-  if (!v) return passos;
+  if (!v) {
+    passos.push(passoConfirmacao(c, devConcluiu));
+    return passos;
+  }
 
   // Presidência
   const presidenciaFeita = etapa === "treinamento" || etapa === "finalizado";
@@ -203,6 +277,9 @@ export function montarLinhaDoTempo(
       ? [`Aprovado por ${nomeDe(v.presidencia_por)}`, v.presidencia_parecer].filter(Boolean).join(" — ")
       : etapa === "validacao_presidencia" ? "A direção está conferindo se o desenvolvimento está OK" : null,
   });
+
+  // Confirmação do solicitante: abre depois que a Presidência aprova.
+  passos.push(passoConfirmacao(c, presidenciaFeita));
 
   // Treinamento
   const treinoFeito = etapa === "finalizado";
@@ -238,12 +315,15 @@ export function montarLinhaDoTempo(
 }
 
 /** Rótulo curto da situação atual — o que aparece no botão "Status". */
-export function resumoStatus(c: Pick<Chamado, "status">, v: ValidacaoChamado | null | undefined): string {
+export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em">, v: ValidacaoChamado | null | undefined): string {
   if (c.status === "reprovado") return "Reprovado";
   if (c.status === "cancelado") return "Cancelado";
+  // Concluído pelo time e ainda sem a confirmação (quando já dá para confirmar).
+  if (conclusaoAguardandoConfirmacao(c) && avaliacaoLiberada(v).liberada) return "Aguardando confirmação do solicitante";
   if (v && v.etapa !== "desenvolvimento") return ETAPAS_VALIDACAO[v.etapa].label;
   if (c.status === "concluido") return "Concluído";
   if (c.status === "aguardando_retorno") return "Aguardando retorno";
-  if (c.status === "em_andamento") return "Em desenvolvimento";
+  // Direcionado ao dev, mas ele ainda não clicou em Iniciar (mig 20261028001400).
+  if (c.status === "em_andamento") return c.desenvolvimento_iniciado_em ? "Em desenvolvimento" : "Na fila do desenvolvedor";
   return "Aberto";
 }

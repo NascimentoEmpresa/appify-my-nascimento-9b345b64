@@ -24,7 +24,7 @@ export interface RotasSolicitacoes {
   meusPedidos: string;
   /** Orientações Jurídicas (biblioteca + minhas perguntas) — cada módulo tem a sua porta (17/09/2026). */
   orientacoes: string;
-  /** Solicitar Treinamento (mig 20261026000910) — só existe no módulo Encarregados. */
+  /** Solicitar Treinamento (mig 20261026000910) — Encarregados e, desde 29/10/2026, a Central. */
   treinamento: string;
 }
 
@@ -44,7 +44,7 @@ export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): Rota
         chamadoNovo: "/app/central-servicos/chamados/novo",
         meusPedidos: "/app/encarregados/meus-pedidos",
         orientacoes: "/app/central-servicos/orientacoes-juridicas",
-        treinamento: "/app/encarregados/solicitar-treinamento",
+        treinamento: "/app/central-servicos/solicitacoes/treinamento",
       }
     : {
         base,

@@ -87,8 +87,14 @@ rsync -a --delete-excluded --exclude='.*' "$ORIGEM/" "$DESTINO/functions/" || ex
 [ -f "$TRABALHO/supabase/config.toml" ] && cp -f "$TRABALHO/supabase/config.toml" "$DESTINO/config.toml"
 
 log "reiniciando o runtime"
-cd /opt/erp/infra/failover || exit 1
-docker compose -f docker-compose.cluster.yml --env-file .env up -d functions >/dev/null 2>&1
+# `docker restart`, e nao `docker compose up -d functions`: o `up -d` so
+# recria o container se a DEFINICAO do servico mudou -- com o mesmo compose,
+# ele nao faz nada e o roteador (infra/failover/functions-main) continua com o
+# config.toml que leu no boot. Foi assim em 29/10/2026 (SIS-2026-0786): a
+# function nova `dev-github-pr-registrar`, com verify_jwt = false, chegou nos
+# dois nos e mesmo assim respondia "JWT invalido ou ausente" ao CI. Function
+# protegida nao sentia o defeito; so as publicas novas (CI, webhook, Etica).
+docker restart erp-pilha-functions-1 >/dev/null 2>&1
 sleep 6
 EST=$(docker inspect -f '{{.State.Status}}' erp-pilha-functions-1 2>/dev/null)
 log "container: $EST"

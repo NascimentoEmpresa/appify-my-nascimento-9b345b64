@@ -70,3 +70,32 @@ describe("links da auditoria", () => {
     expect(Object.fromEntries(q)).toMatchObject({ aba: "dashboard", mes: "2026-01", empresa: "E1", fe: "10", fs: "20", ee: "9", es: "21" });
   });
 });
+
+// SIS-2026-0747: o "Contratos" do item 3 tem que bater com o Total de custos da Lucratividade de Contratos.
+describe("totaisCentrosFluxo — Contratos igual à Lucratividade, o resto em 'fora da Lucratividade'", () => {
+  const fluxo = [
+    L({ valor: 1000, contrato_id: "c1", classificacao_nome: "SALARIO" }),
+    L({ valor: 300, contrato_id: "c1", classificacao_nome: "UNIFORMES" }),
+    L({ valor: 70, contrato_id: "c1", classificacao_nome: "FINANCIAMENTOS" }),
+    L({ valor: 40, contrato_id: "c1", classificacao_nome: null }),
+    L({ valor: 500, contrato_id: "invest", classificacao_nome: "SALARIO" }),
+    L({ valor: 200, contrato_id: "adm" }),
+  ];
+  // custo para a Lucratividade: contrato comum e classificação que é custo (não é financiamento, nem sem classificação)
+  const conta = (l: LinhaFluxoAud) => l.contrato_id !== "invest" && !!l.classificacao_nome && l.classificacao_nome !== "FINANCIAMENTOS";
+  const p = totaisCentrosFluxo(fluxo, tipoDoContrato, tipoClass, responsaveis, nenhum, conta);
+
+  it("Contratos soma só o que a Lucratividade conta como custo", () => {
+    expect(p.contratos).toBe(1300);
+  });
+  it("o restante das saídas de contrato aparece à parte (investimento, não-custo e sem classificação) e o total continua distribuído", () => {
+    expect(p.contratosForaLucratividade).toBe(610);
+    expect(p.administrativo).toBe(200);
+    expect(p.faltaDistribuir).toBe(0);
+  });
+  it("sem a regra da Lucratividade vale tudo em Contratos, como antes", () => {
+    const antigo = totaisCentrosFluxo(fluxo, tipoDoContrato, tipoClass, responsaveis, nenhum);
+    expect(antigo.contratos).toBe(1910);
+    expect(antigo.contratosForaLucratividade).toBe(0);
+  });
+});

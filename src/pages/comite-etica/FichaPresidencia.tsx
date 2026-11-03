@@ -15,6 +15,7 @@ import {
 import { type Denuncia, tipoEfetivo } from "./metricas";
 import { BlocoAnexos, BlocoPresidencia, BlocoProvidencias } from "./BlocosApuracao";
 import { HistoricoDenuncia } from "./HistoricoDenuncia";
+import { ParecerIaDenuncia } from "./ParecerIaDenuncia";
 import { fmtData, fmtDataHora } from "./dossie";
 
 // =====================================================================
@@ -106,6 +107,12 @@ export default function FichaPresidencia({ denuncia: d, podeDecidir, podeVerSigi
               {d.parecer_interno && <p className="whitespace-pre-wrap">{d.parecer_interno}</p>}
             </Leitura>
           </Bloco>
+
+          {/* ------------------------------------------------ parecer I.A */}
+          {/* O mesmo card da ficha do Comitê. A função lê com o login da
+              Presidência, então o resumo dela já sai sem as mensagens e sem
+              os anexos sigilosos que ela não enxerga. */}
+          <ParecerIaDenuncia denunciaId={d.id} />
 
           {/* ------------------------------------ decisão da Presidência */}
           {/* A key zera o formulário quando a decisão gravada muda — o bloco

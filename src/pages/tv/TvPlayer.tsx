@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
+import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type AlertaNaTv, type EstadoTv, type ItemTv, type LayoutAviso } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
 
@@ -41,11 +41,49 @@ import { TvTelaPadrao } from "./TvTelaPadrao";
 //   · VERSÃO: a cada 10 min confere o JS publicado e recarrega se mudou. TV
 //     SST e TV COMPRAS ficaram três dias no JS de antes da virada para o
 //     cluster, falando com o banco antigo — invisíveis para a gestão.
+//
+// 28/10/2026 (mig 20261028000020) — aviso geral com IMAGEM e tempo em
+// segundos ou minutos: a imagem cobre a tela inteira (contain), e o tempo é
+// contado pela própria TV a partir de quando desenha o aviso (useAvisoNoTempo).
+//
+// 28/10/2026, à tarde — "ao adicionar o aviso nas TVs TODAS ESTÃO FICANDO
+// VERMELHAS AINDA, faz a tv recarregar quando aparecer o aviso". Uma hora
+// depois do deploy as 7 TVs ainda mandavam só "960x540" (sem a versão): o JS
+// novo não tinha chegado em nenhuma, e o player antigo desenha o aviso só de
+// imagem como a cor com o texto vazio. Agora:
+//   · AVISO NOVO → a TV recarrega UMA vez antes de mostrar (o id do aviso fica
+//     em localStorage; sem localStorage não recarrega, para não entrar em loop);
+//   · todo recarregamento (aviso, versão, comando, cão de guarda) vai para a
+//     MESMA rota com ?tv-r=<agora>: URL nova, o WebView não tem como devolver
+//     o HTML (e o JS) antigo do cache, como um reload() simples pode fazer.
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
+const CHAVE_AVISO_RECARREGADO = "gn:tv:aviso-recarregado";
+
+/** Recarrega a página por uma URL nova (?tv-r=), nunca pelo cache. */
+function recarregarTv() {
+  const u = new URL(window.location.href);
+  u.searchParams.set("tv-r", String(Date.now()));
+  window.location.replace(u.toString());
+}
+/** Aviso que ainda não fez a TV recarregar → marca e devolve true. Sem localStorage, false (sem loop). */
+function recarregarPeloAviso(id: string): boolean {
+  try {
+    if (localStorage.getItem(CHAVE_AVISO_RECARREGADO) === id) return false;
+    localStorage.setItem(CHAVE_AVISO_RECARREGADO, id);
+    return localStorage.getItem(CHAVE_AVISO_RECARREGADO) === id;
+  } catch { return false; }
+}
 const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record<string, unknown>) => Promise<{ data: any; error: { message: string } | null }>;
-const tela = () => `${window.screen?.width ?? window.innerWidth}x${window.screen?.height ?? window.innerHeight}`;
+// 28/10/2026 — "todas TVs estão VERMELHAS em vez de estar aparecendo a imagem
+// anexada", e da gestão não dava para saber se a TV estava no JS novo nem o
+// que tinha acontecido com a imagem. Junto da resolução, a TV manda a versão
+// do JS (o hash do index-*.js) e como foi a imagem do aviso (av:ok, av:404#3,
+// av:rede, av:img) — aparece em "tela" na gestão. O banco guarda 30 letras.
+const VERSAO_JS = scriptPrincipal(document.documentElement.outerHTML)?.match(/index-([^./]+)\.js/)?.[1]?.slice(0, 8) ?? "dev";
+let estadoImagemAviso = "";
+const tela = () => [`${window.screen?.width ?? window.innerWidth}x${window.screen?.height ?? window.innerHeight}`, VERSAO_JS, estadoImagemAviso].filter(Boolean).join(" ");
 const lerToken = () => { try { return localStorage.getItem(CHAVE_TOKEN); } catch { return null; } };
 const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE_TOKEN, t) : localStorage.removeItem(CHAVE_TOKEN); } catch { /* modo privado */ } };
 const midiaPublica = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
@@ -78,7 +116,9 @@ export default function TvPlayer() {
         tokenRef.current = null; gravarToken(null); return consultar();
       }
       ultimoOk.current = Date.now();
-      if (e.comando === "recarregar") { window.location.reload(); return; }
+      if (e.comando === "recarregar") { recarregarTv(); return; }
+      // Aviso novo no ar: recarrega uma vez, e o aviso entra já no JS publicado.
+      if (e.pareada && e.alerta?.id && recarregarPeloAviso(e.alerta.id)) { recarregarTv(); return; }
       setEstado(e); setErro(null);
       batimento();
     } catch (e) {
@@ -124,7 +164,7 @@ export default function TvPlayer() {
       try {
         const r = await fetch(`${window.location.origin}/?tv-versao=${Date.now()}`, { cache: "no-store" });
         const publicada = r.ok ? scriptPrincipal(await r.text()) : null;
-        if (publicada && publicada !== minha) window.location.reload();
+        if (publicada && publicada !== minha) recarregarTv();
       } catch { /* sem rede: o cão de guarda cuida */ }
     }, CONFERE_VERSAO_MS);
     return () => window.clearInterval(t);
@@ -135,8 +175,8 @@ export default function TvPlayer() {
   useEffect(() => {
     const t = window.setInterval(() => {
       const h = new Date().getHours();
-      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) window.location.reload();
-      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) window.location.reload();
+      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) recarregarTv();
+      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) recarregarTv();
     }, 30_000);
     const voltou = () => consultar();
     window.addEventListener("online", voltou);
@@ -154,12 +194,14 @@ export default function TvPlayer() {
     return () => { document.removeEventListener("visibilitychange", vis); document.body.style.cursor = ""; lock?.release?.(); };
   }, []);
 
+  const alerta = useAvisoNoTempo(estado?.alerta ?? null);
+
   return (
     <div className="fixed inset-0 overflow-hidden bg-black text-white" onDoubleClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>
       {!estado ? <Centro titulo="Conectando ao ERP…" sub={erro ?? undefined} />
         : !estado.pareada ? <Pareamento codigo={estado.codigo ?? "------"} erro={erro} />
         : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} aoMostrar={reportar} />}
-      {estado?.pareada && estado.alerta && <Alerta texto={estado.alerta.texto} cor={estado.alerta.cor} />}
+      {estado?.pareada && alerta && <Alerta key={alerta.id} texto={alerta.texto} cor={alerta.cor} imagem={alerta.imagem} layout={alerta.layout} />}
       {erro && estado?.pareada && <div className="absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-white/70">sem conexão — tentando de novo</div>}
     </div>
   );
@@ -186,11 +228,133 @@ function Pareamento({ codigo, erro }: { codigo: string; erro: string | null }) {
   );
 }
 
-export function Alerta({ texto, cor }: { texto: string; cor: string }) {
-  return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center p-[6vmin] text-center" style={{ background: corAviso(cor) }}>
+/**
+ * Aviso com tempo (duracao_seg, mig 20261028000020): conta a partir de
+ * quando ESTA TV desenhou o aviso e some sozinho no fim, mesmo que o
+ * tv_estado ainda o devolva (o `fim` gravado leva a folga de FOLGA_AVISO_S).
+ * Encerrado na gestão → o tv_estado para de devolver e ele some na próxima
+ * consulta. Aviso antigo (sem duracao_seg): fica enquanto vier.
+ */
+function useAvisoNoTempo(alerta: AlertaNaTv | null): AlertaNaTv | null {
+  const vistoEm = useRef(new Map<string, number>());
+  const [, redesenhar] = useState(0);
+  const id = alerta?.id ?? null;
+  const duracao = alerta?.duracao_seg ?? null;
+  if (id && !vistoEm.current.has(id)) vistoEm.current.set(id, Date.now());
+  const saiEm = id && duracao ? vistoEm.current.get(id)! + duracao * 1000 : null;
+  useEffect(() => {
+    if (saiEm == null) return;
+    const t = window.setTimeout(() => redesenhar((n) => n + 1), Math.max(0, saiEm - Date.now()) + 50);
+    return () => window.clearTimeout(t);
+  }, [saiEm]);
+  if (!alerta) return null;
+  return saiEm != null && Date.now() >= saiEm ? null : alerta;
+}
+
+// O Storage do cluster espelha arquivo entre banco1/banco2 a cada minuto:
+// imagem recém-enviada pode dar 404 no nó que atende nos primeiros segundos
+// (o mesmo do chat dos chamados, useImagensAnexo). Tenta de novo, com a URL
+// "furando" o cache, por até ~2 min.
+const TENTATIVAS_IMAGEM_AVISO = 8;
+const ESPERA_IMAGEM_AVISO_MS = 15_000;
+
+/**
+ * A imagem do aviso, BAIXADA por fetch (blob:) — 28/10/2026: no primeiro
+ * aviso com imagem as TVs ficaram só na cor, sem imagem, enquanto o ao vivo
+ * da gestão mostrava. Nenhuma TV tinha carregado arquivo do Storage antes (só
+ * relatórios); o fetch é o mesmo caminho das RPCs, que funcionam na TV, e diz
+ * o status de verdade (404 do espelho × rede). Se o próprio fetch não passar,
+ * cai para o <img> direto na URL pública. blob:/http (prévia) vai direto.
+ */
+function useImagemAviso(imagem: string | null | undefined): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    setSrc(null);
+    if (!imagem) return;
+    if (/^(blob:|https?:)/.test(imagem)) { setSrc(imagem); return; }
+    const url = midiaPublica(imagem);
+    let vivo = true;
+    let local: string | null = null;
+    let timer = 0;
+    const tentar = async (n: number) => {
+      let motivo: string;
+      try {
+        const r = await fetch(n ? `${url}${url.includes("?") ? "&" : "?"}t=${n}` : url, { cache: "no-store" });
+        if (r.ok) {
+          const blob = await r.blob();
+          if (!vivo) return;
+          local = URL.createObjectURL(blob);
+          estadoImagemAviso = "av:ok";
+          setSrc(local);
+          return;
+        }
+        motivo = String(r.status);
+      } catch {
+        if (!vivo) return;
+        estadoImagemAviso = "av:rede";
+        setSrc(url);   // fetch barrado: o <img> tenta direto
+        return;
+      }
+      if (!vivo) return;
+      estadoImagemAviso = `av:${motivo}#${n + 1}`;
+      if (n + 1 >= TENTATIVAS_IMAGEM_AVISO) { setSrc(url); return; }   // última cartada: <img> direto
+      timer = window.setTimeout(() => tentar(n + 1), ESPERA_IMAGEM_AVISO_MS);
+    };
+    tentar(0);
+    return () => { vivo = false; window.clearTimeout(timer); if (local) URL.revokeObjectURL(local); };
+  }, [imagem]);
+  return src;
+}
+
+/**
+ * Aviso geral cobrindo a tela. Só texto: o texto na cor escolhida. Com
+ * imagem, conforme o layout (mig 20261028000021):
+ *   · cheia    — a imagem inteira (contain, sem cortar) em fundo preto e, se
+ *                houver texto, uma faixa na cor embaixo;
+ *   · esquerda — imagem à esquerda, texto na cor à direita (direita: o
+ *                contrário). Sem texto, vira "cheia".
+ * Enquanto a imagem não chega: com texto, mostra só o texto; só imagem, NÃO
+ * cobre a playlist (antes ficava a tela inteira na cor, sem nada). Se a
+ * imagem não vier nunca, idem. `imagem` é o caminho no bucket tv-midia ou uma
+ * URL (blob: na prévia da gestão).
+ */
+export function Alerta({ texto, cor, imagem, layout }: { texto: string; cor: string; imagem?: string | null; layout?: LayoutAviso | null }) {
+  const src = useImagemAviso(imagem);
+  const [carregou, setCarregou] = useState(false);
+  const [quebrou, setQuebrou] = useState(false);
+  useEffect(() => { setCarregou(false); setQuebrou(false); }, [src]);
+  const temTexto = !!texto?.trim();
+  const fundo = corAviso(cor);
+  const soTexto = (
+    <div className="absolute inset-0 z-20 flex items-center justify-center p-[6vmin] text-center" style={{ background: fundo }}>
       <p className="whitespace-pre-wrap text-[7vmin] font-black leading-tight">{texto}</p>
     </div>
+  );
+  if (!imagem || quebrou) return temTexto ? soTexto : null;
+
+  const lado = temTexto && (layout === "esquerda" || layout === "direita") ? layout : null;
+  const img = src && (
+    <img key={src} src={src} alt="" className="h-full w-full object-contain"
+      onLoad={() => { setCarregou(true); if (!src.startsWith("blob:")) estadoImagemAviso = "av:ok-img"; }}
+      onError={() => { estadoImagemAviso = "av:img"; setQuebrou(true); }} />
+  );
+  return (
+    <>
+      {/* Enquanto a imagem carrega (invisível), fica o texto — ou nada. */}
+      {!carregou && temTexto && soTexto}
+      <div className={`absolute inset-0 z-20 flex bg-black ${lado ? (lado === "direita" ? "flex-row-reverse" : "flex-row") : "flex-col"} ${carregou ? "" : "invisible"}`}>
+        <div className={`relative min-h-0 min-w-0 ${lado ? "w-1/2" : "flex-1"}`}>{img}</div>
+        {temTexto && (lado ? (
+          <div className="flex w-1/2 items-center justify-center p-[5vmin] text-center" style={{ background: fundo }}>
+            <p className="whitespace-pre-wrap text-[6vmin] font-black leading-tight">{texto}</p>
+          </div>
+        ) : (
+          <div className="shrink-0 px-[4vmin] py-[2vmin] text-center" style={{ background: fundo }}>
+            <p className="whitespace-pre-wrap text-[4.5vmin] font-black leading-tight">{texto}</p>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

@@ -1,16 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  BadgeCheck,
   BarChart3,
   Boxes,
   Clock3,
+  CircleAlert,
   FileCheck2,
   FileText,
+  Mail,
   PackageCheck,
   PiggyBank,
   RefreshCw,
   Gauge,
   Repeat,
   ShoppingCart,
+  Truck,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -50,6 +54,7 @@ import {
   EstadoVazio,
   PainelGrafico,
   TickCategoria,
+  TickCategoriaQuebrado,
   TickCategoriaInclinado,
   TooltipMoeda,
   formatarEixoMoeda,
@@ -68,10 +73,12 @@ import {
   type DashboardComprasEstoqueDados,
   type FiltroDashboardCompras,
   type ItemMovimentado,
+  type SerieNomeQuantidade,
 } from "@/lib/suprimentos/dashboardComprasEstoque";
 import { cn } from "@/lib/utils";
 
 const AZUIS = ["#0969da", "#2f8fea", "#60a5fa", "#93c5fd", "#bfdbfe"];
+const TODAS_EMPRESAS = "__todas_empresas__";
 const SAUDE_CORES: Record<string, string> = {
   Adequado: "#10b981",
   Atenção: "#f59e0b",
@@ -165,9 +172,10 @@ function CardsSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const r = dados.resumo;
   return (
     <>
+      <CartaoIndicador titulo="Pedidos cadastrados" valor={formatarNumero(r.solicitacoes_total_geral)} icone={<FileText className="h-6 w-6" />} detalhe="total geral — igual a Pedidos de Materiais" />
       <CartaoIndicador titulo="Solicitações realizadas" valor={formatarNumero(r.solicitacoes)} icone={<FileText className="h-6 w-6" />} detalhe="no período selecionado" />
-      <CartaoIndicador titulo="Despachadas" valor={formatarNumero(r.despachadas)} icone={<PackageCheck className="h-6 w-6" />} tom="green" detalhe={`${percentual(r.despachadas, r.solicitacoes)}% das solicitações`} />
-      <CartaoIndicador titulo="Pendentes" valor={formatarNumero(r.pendentes)} icone={<Clock3 className="h-6 w-6" />} tom="amber" detalhe="em preparação, compra ou envio" />
+      <CartaoIndicador titulo="Despachadas" valor={formatarNumero(r.despachadas)} icone={<PackageCheck className="h-6 w-6" />} tom="green" detalhe={`${percentual(r.despachadas, r.solicitacoes)}% — entregues ou aguardando confirmação`} />
+      <CartaoIndicador titulo="Pendentes" valor={formatarNumero(r.pendentes)} icone={<Clock3 className="h-6 w-6" />} tom="amber" detalhe="pedidos únicos; parcial entra aqui" />
       <CartaoIndicador titulo="Tempo médio de atendimento" valor={`${formatarNumero(r.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} detalhe="da solicitação ao despacho" />
     </>
   );
@@ -184,19 +192,193 @@ function CardsCotacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   );
 }
 
+function GraficoCotacoesPorPessoa({
+  titulo,
+  subtitulo,
+  dados,
+  vazio,
+  cor,
+}: {
+  titulo: string;
+  subtitulo: string;
+  dados: SerieNomeQuantidade[];
+  vazio: string;
+  cor: string;
+}) {
+  return (
+    <PainelGrafico titulo={titulo} subtitulo={subtitulo}>
+      {dados.length ? (
+        <div style={{ height: Math.max(300, dados.length * 48) }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={dados} layout="vertical" margin={{ left: 10, right: 18 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} />
+              <YAxis type="category" dataKey="nome" width={220} interval={0} tick={<TickCategoriaQuebrado maximoLinha={34} />} />
+              <Tooltip />
+              <Bar dataKey="quantidade" name="Envios" fill={cor} radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : <EstadoVazio texto={vazio} />}
+    </PainelGrafico>
+  );
+}
+
+function PainelExpedicoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
+  const resumo = dados.entregas_resumo ?? {
+    total_despachado: 0,
+    correios: 0,
+    supervisores: 0,
+    confirmadas: 0,
+    sem_modalidade: 0,
+  };
+  const porResponsavel = dados.entregas_por_responsavel ?? [];
+  const recentes = dados.entregas_recentes ?? [];
+  const rotuloComprovacao = {
+    CONFIRMADA: "Confirmada",
+    PENDENTE: "Pendente",
+    LEGADO: "Legado",
+    SEM_REGISTRO: "Sem registro",
+  } as const;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <CartaoIndicador
+          titulo="Despachados no período"
+          valor={formatarNumero(resumo.total_despachado)}
+          detalhe="pela data efetiva do despacho"
+          icone={<PackageCheck className="h-6 w-6" />}
+        />
+        <CartaoIndicador
+          titulo="Via Correios"
+          valor={formatarNumero(resumo.correios)}
+          detalhe="pedidos postados"
+          icone={<Mail className="h-6 w-6" />}
+          tom="green"
+        />
+        <CartaoIndicador
+          titulo="Via supervisor"
+          valor={formatarNumero(resumo.supervisores)}
+          detalhe="pedidos despachados nessa modalidade"
+          icone={<Truck className="h-6 w-6" />}
+          tom="violet"
+        />
+        <CartaoIndicador
+          titulo="Entregas comprovadas"
+          valor={formatarNumero(resumo.confirmadas)}
+          detalhe="com confirmação do destinatário"
+          icone={<BadgeCheck className="h-6 w-6" />}
+          tom="green"
+        />
+        <CartaoIndicador
+          titulo="Sem modalidade"
+          valor={formatarNumero(resumo.sem_modalidade)}
+          detalhe="histórico que precisa ser classificado"
+          icone={<CircleAlert className="h-6 w-6" />}
+          tom="red"
+        />
+      </div>
+      <div className="grid gap-3 xl:grid-cols-[0.9fr_1.6fr]">
+        <PainelGrafico
+          titulo="Despachos por Responsável"
+          subtitulo="Correios mostra quem registrou o despacho; Supervisor mostra quem retirou o romaneio. Quando não há retirada registrada, usa o operador do despacho."
+        >
+          {porResponsavel.length ? (
+            <div style={{ height: Math.max(300, porResponsavel.length * 48) }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={porResponsavel} layout="vertical" margin={{ left: 10, right: 18 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="nome" width={185} interval={0} tick={<TickCategoriaQuebrado maximoLinha={28} />} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="correios" name="Correios" stackId="envio" fill="#10b981" />
+                  <Bar dataKey="supervisores" name="Supervisor" stackId="envio" fill="#7c3aed" />
+                  <Bar dataKey="sem_modalidade" name="Sem modalidade" stackId="envio" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <EstadoVazio texto="Nenhum despacho no período selecionado." />}
+        </PainelGrafico>
+        <PainelGrafico
+          titulo="Expedições do Período"
+          subtitulo="Lista auditável pela data do despacho. A confirmação só aparece quando o destinatário enviou a comprovação; registros anteriores à regra são identificados como legado."
+        >
+          <div className="max-h-[520px] overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10 bg-white">
+                <tr>
+                  <CabecalhoTabela>Pedido</CabecalhoTabela>
+                  <CabecalhoTabela>Despacho</CabecalhoTabela>
+                  <CabecalhoTabela>Contrato / destino</CabecalhoTabela>
+                  <CabecalhoTabela>Modalidade</CabecalhoTabela>
+                  <CabecalhoTabela>Responsável</CabecalhoTabela>
+                  <CabecalhoTabela>Entrega</CabecalhoTabela>
+                  <CabecalhoTabela>Rastreio</CabecalhoTabela>
+                </tr>
+              </thead>
+              <tbody>
+                {recentes.map((linha) => (
+                  <tr key={`${linha.id}-${linha.data}`} className="border-b last:border-0 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-blue-700">{linha.id}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{new Date(linha.data).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td className="max-w-52 px-3 py-2">
+                      <p className="truncate font-medium" title={linha.contrato}>{linha.contrato}</p>
+                      <p className="truncate text-[10px] text-slate-500" title={linha.destino}>{linha.destino}</p>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline">
+                        {linha.modalidade === "CORREIO" ? "Correios" : linha.modalidade === "SUPERVISOR" ? "Supervisor" : "Não informada"}
+                      </Badge>
+                    </td>
+                    <td className="max-w-44 truncate px-3 py-2" title={linha.responsavel}>{linha.responsavel}</td>
+                    <td className="px-3 py-2">
+                      <span title={linha.recebedor ? `Recebido por ${linha.recebedor}` : undefined}>
+                        {rotuloComprovacao[linha.comprovacao]}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px]">{linha.rastreio ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!recentes.length && <EstadoVazio texto="Nenhuma expedição no período selecionado." />}
+          </div>
+        </PainelGrafico>
+      </div>
+    </div>
+  );
+}
+
 function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
+  const cotacoesMalote = dados.cotacoes_malote_por_comprador ?? [];
+  const cotacoesLicitacao = dados.cotacoes_licitacao_por_comprador ?? [];
   return (
     <>
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="grid gap-3 xl:grid-cols-2">
         <PainelGrafico titulo="Solicitações por Contrato (Quantidade)">
-          {dados.solicitacoes_por_contrato.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato} layout="vertical" margin={{ left: 20, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={105} interval={0} tick={<TickCategoria maximo={22} />} /><Tooltip /><Bar dataKey="quantidade" name="Solicitações" fill="#2f8fea" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem solicitações para exibir." />}
+          {dados.solicitacoes_por_contrato.length ? <div style={{ height: Math.max(300, dados.solicitacoes_por_contrato.length * 48) }}><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato} layout="vertical" margin={{ left: 10, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={220} interval={0} tick={<TickCategoriaQuebrado maximoLinha={34} />} /><Tooltip /><Bar dataKey="quantidade" name="Solicitações" fill="#2f8fea" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem solicitações para exibir." />}
         </PainelGrafico>
         <PainelGrafico titulo="Motivos das Pendências">
           {dados.motivos_pendencias.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.motivos_pendencias} layout="vertical" margin={{ left: 25, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={115} interval={0} tick={<TickCategoria maximo={24} />} /><Tooltip /><Bar dataKey="quantidade" name="Pendências" fill="#ef8888" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhuma pendência no período." />}
         </PainelGrafico>
-          <PainelGrafico titulo="Cotações por Comprador">
-          {dados.cotacoes_por_comprador.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.cotacoes_por_comprador} layout="vertical" margin={{ left: 10, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={95} interval={0} tick={<TickCategoria maximo={20} />} /><Tooltip /><Bar dataKey="quantidade" name="Cotações" fill="#2f8fea" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhum comprador no período." />}
-        </PainelGrafico>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        <GraficoCotacoesPorPessoa
+          titulo="Envios de Cotação do Malote por Pessoa"
+          subtitulo="Cada barra conta solicitações enviadas em /app/suprimentos/cotacoes-malote; as três propostas internas continuam sendo um único processo."
+          dados={cotacoesMalote}
+          vazio="Nenhuma cotação enviada pelo Malote no período."
+          cor="#2f8fea"
+        />
+        <GraficoCotacoesPorPessoa
+          titulo="Cotações de Licitações por Pessoa"
+          subtitulo="Respostas enviadas no módulo /app/suprimentos/cotacoes, sem misturar os registros do Malote."
+          dados={cotacoesLicitacao}
+          vazio="Nenhuma cotação de Licitação no período."
+          cor="#7c3aed"
+        />
       </div>
       <div className="grid gap-3 xl:grid-cols-3">
         <PainelGrafico titulo="Quantidade de Cotações por Solicitação">
@@ -205,10 +387,14 @@ function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }
         <PainelGrafico titulo="Participação das Licitações nas Cotações">
           <div className="relative h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={[{ nome: "Cotações de Licitações", valor: dados.resumo.licitacoes }, { nome: "Outras cotações", valor: Math.max(0, dados.resumo.cotacoes - dados.resumo.licitacoes) }]} dataKey="valor" nameKey="nome" innerRadius={63} outerRadius={92}><Cell fill="#2f8fea" /><Cell fill="#d9e1ea" /></Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className="text-center"><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.resumo.participacao_licitacoes, 1)}%</p><p className="text-xs text-slate-500">Licitações</p></div></div></div>
         </PainelGrafico>
-        <PainelGrafico titulo="Evolução das Solicitações e Cotações">
-          {dados.evolucao.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" tick={{ fontSize: 10 }} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Line type="monotone" dataKey="solicitacoes" name="Solicitações" stroke="#0969da" strokeWidth={2.5} /><Line type="monotone" dataKey="cotacoes" name="Cotações" stroke="#159957" strokeWidth={2.5} /></LineChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem evolução para exibir." />}
+        <PainelGrafico
+          titulo="Evolução das Solicitações e Cotações"
+          subtitulo="Solicitações são os Pedidos de Materiais pela data real da solicitação. O filtro de contrato é respeitado; em Todos, entram pedidos com e sem contrato."
+        >
+          {dados.evolucao.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" tick={{ fontSize: 10 }} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Line type="monotone" dataKey="solicitacoes" name="Pedidos de Materiais" stroke="#0969da" strokeWidth={2.5} /><Line type="monotone" dataKey="cotacoes" name="Cotações" stroke="#159957" strokeWidth={2.5} /></LineChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem evolução para exibir." />}
         </PainelGrafico>
       </div>
+      <PainelExpedicoes dados={dados} />
     </>
   );
 }
@@ -232,9 +418,11 @@ function TelaEstoqueSaving({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const s = dados.saving_resumo;
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <CartaoIndicador titulo="Valor total do estoque" valor={formatarMoeda(e.valor_total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" detalhe={`${formatarNumero(e.itens_distintos)} itens distintos`} />
-        <CartaoIndicador titulo="Quantidade disponível" valor={formatarNumero(e.quantidade_itens)} icone={<Boxes className="h-6 w-6" />} detalhe="unidades livres de reserva" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        <CartaoIndicador titulo="Valor físico do estoque" valor={formatarMoeda(e.valor_total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" detalhe={`${formatarNumero(e.itens_distintos)} itens distintos · mesma base de Estoque & Etiquetas`} />
+        <CartaoIndicador titulo="Quantidade física" valor={formatarNumero(e.quantidade_fisica)} icone={<Boxes className="h-6 w-6" />} detalhe="todas as unidades na prateleira" />
+        <CartaoIndicador titulo="Quantidade reservada" valor={formatarNumero(e.quantidade_reservada)} icone={<PackageCheck className="h-6 w-6" />} tom="amber" detalhe="separadas para pedidos" />
+        <CartaoIndicador titulo="Quantidade disponível" valor={formatarNumero(e.quantidade_itens)} icone={<Boxes className="h-6 w-6" />} detalhe="físico menos reservado" />
         <CartaoIndicador titulo="Entradas no período" valor={formatarNumero(e.entradas)} icone={<TrendingUp className="h-6 w-6" />} tom="amber" detalhe="entradas + devoluções" />
         <CartaoIndicador titulo="Saídas no período" valor={formatarNumero(e.saidas)} icone={<TrendingDown className="h-6 w-6" />} tom="red" detalhe="saídas + remoções" />
       </div>
@@ -260,7 +448,7 @@ function TelaEstoqueSaving({ dados }: { dados: DashboardComprasEstoqueDados }) {
           <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><CabecalhoTabela>Código</CabecalhoTabela><CabecalhoTabela>Item</CabecalhoTabela><CabecalhoTabela>Categoria</CabecalhoTabela><CabecalhoTabela>Disponível</CabecalhoTabela><CabecalhoTabela>Reservado</CabecalhoTabela><CabecalhoTabela>Valor unitário</CabecalhoTabela><CabecalhoTabela>Valor total</CabecalhoTabela><CabecalhoTabela>Situação</CabecalhoTabela></tr></thead><tbody>{dados.estoque_detalhado.map((linha, i) => <tr key={`${linha.codigo ?? linha.item}-${i}`} className="border-b last:border-0"><td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{linha.codigo ?? "—"}</td><td className="max-w-48 truncate px-3 py-2 font-medium" title={linha.item}>{linha.item}</td><td className="px-3 py-2">{rotuloCategoria(linha.categoria)}</td><td className="px-3 py-2 text-right">{formatarNumero(linha.disponivel)}</td><td className="px-3 py-2 text-right">{formatarNumero(linha.reservado)}</td><td className="px-3 py-2 text-right">{formatarMoeda(linha.valor_unitario)}</td><td className="px-3 py-2 text-right font-medium">{formatarMoeda(linha.valor_total)}</td><td className="px-3 py-2"><Badge className={cn("border-0 text-[10px]", classeSituacaoEstoque(linha.situacao))}>{linha.situacao}</Badge></td></tr>)}</tbody></table>{!dados.estoque_detalhado.length && <EstadoVazio texto="Nenhum item em estoque." />}</div>
         </PainelGrafico>
         <PainelGrafico titulo="Saving por Contrato">
-          <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><CabecalhoTabela>Contrato</CabecalhoTabela><CabecalhoTabela>Valor inicial</CabecalhoTabela><CabecalhoTabela>Valor comprado</CabecalhoTabela><CabecalhoTabela>Saving</CabecalhoTabela><CabecalhoTabela>Saving %</CabecalhoTabela></tr></thead><tbody>{dados.saving_por_contrato.map((linha) => <tr key={linha.contrato} className="border-b last:border-0"><td className="max-w-48 truncate px-3 py-2 font-medium" title={linha.contrato}>{linha.contrato}</td><td className="px-3 py-2 text-right">{formatarMoeda(linha.valor_inicial)}</td><td className="px-3 py-2 text-right">{formatarMoeda(linha.valor_comprado)}</td><td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatarMoeda(linha.saving)}</td><td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatarNumero(linha.percentual, 1)}%</td></tr>)}</tbody></table>{!dados.saving_por_contrato.length && <EstadoVazio texto="Nenhuma cotação aprovada com saving no período." />}</div>
+          <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><CabecalhoTabela>Contrato</CabecalhoTabela><CabecalhoTabela>Melhor cotação inicial</CabecalhoTabela><CabecalhoTabela>Valor comprado</CabecalhoTabela><CabecalhoTabela>Economia na cotação</CabecalhoTabela><CabecalhoTabela>Economia %</CabecalhoTabela></tr></thead><tbody>{dados.saving_por_contrato.map((linha) => <tr key={linha.contrato} className="border-b last:border-0"><td className="max-w-48 truncate px-3 py-2 font-medium" title={linha.contrato}>{linha.contrato}</td><td className="px-3 py-2 text-right">{formatarMoeda(linha.valor_inicial)}</td><td className="px-3 py-2 text-right">{formatarMoeda(linha.valor_comprado)}</td><td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatarMoeda(linha.saving)}</td><td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatarNumero(linha.percentual, 1)}%</td></tr>)}</tbody></table><p className="px-3 py-2 text-xs text-slate-500">Esta tabela mede economia entre a cotação inicial e a compra aprovada; não é o orçamento do contrato.</p>{!dados.saving_por_contrato.length && <EstadoVazio texto="Nenhuma cotação aprovada com economia no período." />}</div>
         </PainelGrafico>
       </div>
     </div>
@@ -281,14 +469,26 @@ export default function DashboardComprasEstoque() {
   const { data: empresaOperacionalId } = useEmpresaId();
   const [empresaSelecionadaId, setEmpresaSelecionadaId] = useState<string | null>(null);
   const [filtros, setFiltros] = useState<FiltroDashboardCompras>(filtrosIniciais);
-  const empresaId = empresaSelecionadaId ?? empresaOperacionalId ?? null;
+  const [periodoAutomatico, setPeriodoAutomatico] = useState(true);
+  const todasEmpresas = empresaSelecionadaId === TODAS_EMPRESAS;
+  const empresaId = todasEmpresas ? null : empresaSelecionadaId ?? empresaOperacionalId ?? null;
+  const empresaIdsConsulta = useMemo(
+    () => todasEmpresas ? empresas.map((item) => item.id) : empresaId ? [empresaId] : [],
+    [empresaId, empresas, todasEmpresas],
+  );
   const empresa = empresas.find((item) => item.id === empresaId);
-  const consulta = useDashboardComprasEstoque(empresaId, filtros);
+  const consulta = useDashboardComprasEstoque(empresaIdsConsulta, filtros);
   const dados = consulta.data;
+  useEffect(() => {
+    const inicio = dados?.periodo_disponivel?.inicio;
+    if (!periodoAutomatico || !inicio || filtros.inicio === inicio) return;
+    setFiltros((atuais) => ({ ...atuais, inicio }));
+  }, [dados?.periodo_disponivel?.inicio, filtros.inicio, periodoAutomatico]);
   const atualizado = useMemo(() => dados?.atualizado_em ? new Date(dados.atualizado_em).toLocaleString("pt-BR") : "—", [dados?.atualizado_em]);
   const trocar = <K extends keyof FiltroDashboardCompras>(campo: K, valor: FiltroDashboardCompras[K]) => setFiltros((f) => ({ ...f, [campo]: valor }));
   const trocarEmpresa = (id: string) => {
     setEmpresaSelecionadaId(id);
+    setPeriodoAutomatico(true);
     setFiltros((atuais) => ({
       ...atuais,
       contratoId: null,
@@ -303,39 +503,65 @@ export default function DashboardComprasEstoque() {
         <div className="rounded-xl bg-gradient-to-r from-[#062b53] via-[#0a4d88] to-[#0d75c5] p-5 text-white shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3"><div className="rounded-xl bg-white/15 p-3"><ShoppingCart className="h-8 w-8" /></div><div><h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Compras, Estoque e Solicitações</h1><p className="mt-1 text-sm text-blue-100">Visão executiva com dados reais do Suprimentos, Malote e Licitações</p></div></div>
-            <div className="text-right text-xs text-blue-100"><p>Última atualização</p><p className="font-semibold text-white">{atualizado}</p><p className="mt-1">{empresa?.razao ?? "Empresa operacional"}</p></div>
+            <div className="text-right text-xs text-blue-100"><p>Última atualização</p><p className="font-semibold text-white">{atualizado}</p><p className="mt-1">{todasEmpresas ? "Todas as empresas acessíveis" : empresa?.razao ?? "Empresa operacional"}</p></div>
           </div>
         </div>
 
         <Card className="border-slate-200 shadow-sm"><CardContent className="p-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
-          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Início</label><Input type="date" value={filtros.inicio} max={filtros.fim} onChange={(e) => trocar("inicio", e.target.value)} /></div>
-          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Fim</label><Input type="date" value={filtros.fim} min={filtros.inicio} onChange={(e) => trocar("fim", e.target.value)} /></div>
-          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Empresa</label><Select value={empresaId ?? undefined} onValueChange={trocarEmpresa} disabled={!empresaId}><SelectTrigger><SelectValue placeholder="Carregando..." /></SelectTrigger><SelectContent>{empresas.map((item) => <SelectItem key={item.id} value={item.id}>{item.sigla}</SelectItem>)}</SelectContent></Select></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Início</label><Input type="date" value={filtros.inicio} max={filtros.fim} onChange={(e) => { setPeriodoAutomatico(false); trocar("inicio", e.target.value); }} /></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Fim</label><Input type="date" value={filtros.fim} min={filtros.inicio} onChange={(e) => { setPeriodoAutomatico(false); trocar("fim", e.target.value); }} /></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Empresa</label><Select value={todasEmpresas ? TODAS_EMPRESAS : empresaId ?? undefined} onValueChange={trocarEmpresa} disabled={!empresaIdsConsulta.length}><SelectTrigger><SelectValue placeholder="Carregando..." /></SelectTrigger><SelectContent><SelectItem value={TODAS_EMPRESAS}>Todas</SelectItem>{empresas.map((item) => <SelectItem key={item.id} value={item.id}>{item.sigla}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Contrato</label><Select value={filtros.contratoId ?? "todos"} onValueChange={(v) => trocar("contratoId", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.contratos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Categoria</label><Select value={filtros.categoria ?? "todas"} onValueChange={(v) => trocar("categoria", v === "todas" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todas">Todas</SelectItem>{dados?.filtros.categorias.map((c) => <SelectItem key={c.valor} value={c.valor}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Comprador responsável</label><Select value={filtros.comprador ?? "todos"} onValueChange={(v) => trocar("comprador", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.compradores.map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}</SelectContent></Select></div>
           <div className="flex items-end"><Button variant="outline" className="w-full" onClick={() => consulta.refetch()} disabled={consulta.isFetching}><RefreshCw className={cn("mr-2 h-4 w-4", consulta.isFetching && "animate-spin")} />Atualizar</Button></div>
         </div></CardContent></Card>
 
+        {dados?.periodo_disponivel?.inicio && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-900">
+            <p>
+              <strong>Cobertura encontrada no sistema:</strong>{" "}
+              solicitações desde {dados.periodo_disponivel.solicitacoes_inicio ? new Date(`${dados.periodo_disponivel.solicitacoes_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"};{" "}
+              itens desde {dados.periodo_disponivel.itens_registrados_inicio ? new Date(`${dados.periodo_disponivel.itens_registrados_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"};{" "}
+              movimentos desde {dados.periodo_disponivel.movimentos_inicio ? new Date(`${dados.periodo_disponivel.movimentos_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"};{" "}
+              cotações desde {dados.periodo_disponivel.cotacoes_inicio ? new Date(`${dados.periodo_disponivel.cotacoes_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"}.
+              Pedidos importados são posicionados pela data real da solicitação, não pela data da importação.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setPeriodoAutomatico(true);
+                setFiltros((atuais) => ({ ...atuais, inicio: dados.periodo_disponivel.inicio! }));
+              }}
+            >
+              Todo o histórico disponível
+            </Button>
+          </div>
+        )}
+
         {consulta.isLoading && <Carregando />}
         {consulta.error && <Alert variant="destructive"><AlertTitle>Não foi possível carregar o dashboard</AlertTitle><AlertDescription>{(consulta.error as Error).message}. Se a migration do SIS-2026-0607 ainda não foi aplicada no Supabase, execute-a antes de abrir esta tela.</AlertDescription></Alert>}
         {dados && <Tabs defaultValue="geral" className="space-y-3">
           <TabsList className="grid h-auto w-full grid-cols-5 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger><TabsTrigger value="rotatividade" className="gap-2 py-2.5"><Repeat className="h-4 w-4" /><span className="hidden sm:inline">Rotatividade do Estoque</span></TabsTrigger><TabsTrigger value="saudavel" className="gap-2 py-2.5"><Gauge className="h-4 w-4" /><span className="hidden sm:inline">Estoque Saudável</span></TabsTrigger></TabsList>
-          <TabsContent value="geral" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><CartaoIndicador titulo="Solicitações" valor={formatarNumero(dados.resumo.solicitacoes)} icone={<FileText className="h-6 w-6" />} /><CartaoIndicador titulo="Pendentes" valor={formatarNumero(dados.resumo.pendentes)} icone={<Clock3 className="h-6 w-6" />} tom="amber" /><CartaoIndicador titulo="Despachadas" valor={formatarNumero(dados.resumo.despachadas)} icone={<PackageCheck className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Tempo médio" valor={`${formatarNumero(dados.resumo.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} /><CartaoIndicador titulo="Cotações" valor={formatarNumero(dados.resumo.cotacoes)} icone={<FileCheck2 className="h-6 w-6" />} tom="violet" /><CartaoIndicador titulo="Saving" valor={formatarMoeda(dados.saving_resumo.total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Saving %" valor={`${formatarNumero(percentual(dados.saving_resumo.total, dados.saving_por_contrato.reduce((s, x) => s + Number(x.valor_inicial), 0)), 1)}%`} icone={<TrendingUp className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Estoque" valor={formatarMoeda(dados.estoque_resumo.valor_total)} icone={<Boxes className="h-6 w-6" />} /></div><div className="grid gap-3 xl:grid-cols-3"><PainelGrafico titulo="Solicitações por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="nome" interval={0} height={96} tick={<TickCategoriaInclinado maximo={24} />} /><YAxis /><Tooltip /><Legend /><Bar dataKey="quantidade" name="Solicitações" fill="#0969da" /><Bar dataKey="despachadas" name="Despachadas" fill="#60a5fa" /><Bar dataKey="pendentes" name="Pendentes" fill="#94a3b8" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Saving por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.saving_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="contrato" interval={0} height={96} tick={<TickCategoriaInclinado maximo={24} />} /><YAxis tickFormatter={formatarEixoMoeda} /><Tooltip content={<TooltipMoeda />} /><Bar dataKey="saving" name="Saving" fill="#0969da" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Motivos das Pendências"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={dados.motivos_pendencias} dataKey="quantidade" nameKey="nome" innerRadius={60} outerRadius={90}>{dados.motivos_pendencias.map((_, i) => <Cell key={i} fill={AZUIS[i % AZUIS.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div></PainelGrafico></div><div className="grid gap-3 xl:grid-cols-[1.3fr_0.7fr]"><PainelGrafico titulo="Movimentação de Estoque (Entradas x Saídas)"><div className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" /><YAxis /><Tooltip /><Legend /><Bar dataKey="entradas" name="Entradas" fill="#0969da" /><Bar dataKey="saidas" name="Saídas" fill="#60a5fa" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Resumo do Estoque"><div className="grid h-[250px] grid-cols-2 items-center gap-3"><div className="rounded-xl border bg-blue-50 p-4 text-center"><Boxes className="mx-auto h-7 w-7 text-blue-600" /><p className="mt-2 text-xs text-slate-500">Itens disponíveis</p><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.estoque_resumo.quantidade_itens)}</p></div><div className="rounded-xl border bg-emerald-50 p-4 text-center"><PiggyBank className="mx-auto h-7 w-7 text-emerald-600" /><p className="mt-2 text-xs text-slate-500">Valor total</p><p className="text-xl font-extrabold text-blue-950">{formatarMoeda(dados.estoque_resumo.valor_total)}</p></div></div></PainelGrafico></div></TabsContent>
-          <TabsContent value="solicitacoes" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7"><CardsSolicitacoes dados={dados} /><CardsCotacoes dados={dados} /></div><GraficosSolicitacoes dados={dados} /><div className="grid gap-3 xl:grid-cols-2"><TabelaSolicitacoes dados={dados} /><TabelaCotacoes dados={dados} /></div></TabsContent>
+          <p className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-900">
+            <strong>Escopos conferíveis:</strong> “Pedidos cadastrados” é o total histórico da mesma empresa e da mesma tabela usada em Pedidos de Materiais. Pendentes e despachadas usam os mesmos status operacionais dessa rota, inclusive a identificação de pedido parcialmente despachado. Os demais indicadores respeitam empresa, contrato, categoria e o período de {new Date(`${filtros.inicio}T12:00:00`).toLocaleDateString("pt-BR")} a {new Date(`${filtros.fim}T12:00:00`).toLocaleDateString("pt-BR")}.
+          </p>
+          <TabsContent value="geral" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><CartaoIndicador titulo="Pedidos cadastrados" valor={formatarNumero(dados.resumo.solicitacoes_total_geral)} detalhe={`${formatarNumero(dados.resumo.solicitacoes)} no período`} icone={<FileText className="h-6 w-6" />} /><CartaoIndicador titulo="Pendentes" valor={formatarNumero(dados.resumo.pendentes)} detalhe="pedidos únicos; parcial entra aqui" icone={<Clock3 className="h-6 w-6" />} tom="amber" /><CartaoIndicador titulo="Despachadas" valor={formatarNumero(dados.resumo.despachadas)} detalhe="entregues ou aguardando confirmação" icone={<PackageCheck className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Tempo médio" valor={`${formatarNumero(dados.resumo.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} /><CartaoIndicador titulo="Cotações" valor={formatarNumero(dados.resumo.cotacoes)} icone={<FileCheck2 className="h-6 w-6" />} tom="violet" /><CartaoIndicador titulo="Saving" valor={formatarMoeda(dados.saving_resumo.total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Saving %" valor={`${formatarNumero(percentual(dados.saving_resumo.total, dados.saving_por_contrato.reduce((s, x) => s + Number(x.valor_inicial), 0)), 1)}%`} icone={<TrendingUp className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Estoque físico" valor={formatarMoeda(dados.estoque_resumo.valor_total)} detalhe={`${formatarNumero(dados.estoque_resumo.quantidade_fisica)} unidades físicas`} icone={<Boxes className="h-6 w-6" />} /></div><div className="grid gap-3 xl:grid-cols-3"><PainelGrafico titulo="Solicitações por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="nome" interval={0} height={96} tick={<TickCategoriaInclinado maximo={24} />} /><YAxis /><Tooltip /><Legend /><Bar dataKey="quantidade" name="Solicitações" fill="#0969da" /><Bar dataKey="despachadas" name="Despachadas" fill="#60a5fa" /><Bar dataKey="pendentes" name="Pendentes" fill="#94a3b8" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Saving por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.saving_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="contrato" interval={0} height={96} tick={<TickCategoriaInclinado maximo={24} />} /><YAxis tickFormatter={formatarEixoMoeda} /><Tooltip content={<TooltipMoeda />} /><Bar dataKey="saving" name="Saving" fill="#0969da" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Motivos das Pendências"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={dados.motivos_pendencias} dataKey="quantidade" nameKey="nome" innerRadius={60} outerRadius={90}>{dados.motivos_pendencias.map((_, i) => <Cell key={i} fill={AZUIS[i % AZUIS.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div></PainelGrafico></div><div className="grid gap-3 xl:grid-cols-[1.3fr_0.7fr]"><PainelGrafico titulo="Movimentação de Estoque (Entradas x Saídas)"><div className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" /><YAxis /><Tooltip /><Legend /><Bar dataKey="entradas" name="Entradas" fill="#0969da" /><Bar dataKey="saidas" name="Saídas" fill="#60a5fa" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Resumo do Estoque"><div className="grid h-[250px] grid-cols-3 items-center gap-3"><div className="rounded-xl border bg-blue-50 p-3 text-center"><Boxes className="mx-auto h-7 w-7 text-blue-600" /><p className="mt-2 text-xs text-slate-500">Físico</p><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.estoque_resumo.quantidade_fisica)}</p></div><div className="rounded-xl border bg-amber-50 p-3 text-center"><PackageCheck className="mx-auto h-7 w-7 text-amber-600" /><p className="mt-2 text-xs text-slate-500">Reservado</p><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.estoque_resumo.quantidade_reservada)}</p></div><div className="rounded-xl border bg-emerald-50 p-3 text-center"><PiggyBank className="mx-auto h-7 w-7 text-emerald-600" /><p className="mt-2 text-xs text-slate-500">Valor físico</p><p className="text-lg font-extrabold text-blue-950">{formatarMoeda(dados.estoque_resumo.valor_total)}</p></div></div></PainelGrafico></div></TabsContent>
+          <TabsContent value="solicitacoes" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><CardsSolicitacoes dados={dados} /><CardsCotacoes dados={dados} /></div><GraficosSolicitacoes dados={dados} /><div className="grid gap-3 xl:grid-cols-2"><TabelaSolicitacoes dados={dados} /><TabelaCotacoes dados={dados} /></div></TabsContent>
           <TabsContent value="estoque"><TelaEstoqueSaving dados={dados} /></TabsContent>
           {/* A aba de Rotatividade tem RPC própria (sup_dashboard_rotatividade_estoque)
               e recebe só período/empresa/contrato do filtro acima; a categoria é
               escolhida dentro dela. Montar só quando a aba abre evita disparar a
               consulta pesada de giro em quem nunca entra aqui. */}
-          <TabsContent value="rotatividade"><RotatividadeEstoque empresaId={empresaId} inicio={filtros.inicio} fim={filtros.fim} contratoId={filtros.contratoId} /></TabsContent>
+          <TabsContent value="rotatividade">{empresaId ? <RotatividadeEstoque empresaId={empresaId} inicio={filtros.inicio} fim={filtros.fim} contratoId={filtros.contratoId} /> : <Alert><AlertTitle>Selecione uma empresa para analisar a rotatividade</AlertTitle><AlertDescription>O consolidado “Todas” está disponível nas abas executivas. Giro e cobertura exigem uma empresa porque usam o saldo físico e a política operacional daquele estoque.</AlertDescription></Alert>}</TabsContent>
           {/* Estoque Saudável (migs 20261020000020/21/22) também tem RPC própria.
               Não recebe período: o alvo é calculado sobre uma JANELA MÓVEL de
               meses (premissa editável na aba), e não sobre o intervalo de datas
               do filtro acima — alvo calculado sobre "01/01 a 15/01" não quer
               dizer nada. Recebe o contrato para o gerente poder ver o
               planejamento de um contrato só. */}
-          <TabsContent value="saudavel"><EstoqueSaudavel empresaId={empresaId} contratoId={filtros.contratoId} /></TabsContent>
+          <TabsContent value="saudavel">{empresaId ? <EstoqueSaudavel empresaId={empresaId} contratoId={filtros.contratoId} /> : <Alert><AlertTitle>Selecione uma empresa para planejar o estoque saudável</AlertTitle><AlertDescription>Mínimo, máximo, lead time e aprovações são políticas próprias de cada empresa e não podem ser alterados em um consolidado.</AlertDescription></Alert>}</TabsContent>
         </Tabs>}
       </div>
     </AcessoGate>

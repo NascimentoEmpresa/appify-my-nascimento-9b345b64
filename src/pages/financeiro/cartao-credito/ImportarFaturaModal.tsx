@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +16,7 @@ import { adaptadorPorNomeBanco, extensaoAceita, BANCOS_COM_ADAPTADOR } from "@/l
 import { reconciliar, type ItemRevisao } from "@/lib/cartaoFatura/reconciliar";
 import { novoUuid } from "@/lib/utils";
 import { RateioItemFaturaDialog } from "./RateioItemFaturaDialog";
+import { CompetenciasCartao } from "./CompetenciasCartao";
 
 const STATUS_LABEL: Record<ItemRevisao["statusRevisao"], string> = {
   novo: "Nova",
@@ -37,9 +40,14 @@ interface LinhaTabela extends ItemRevisao {
 export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: boolean; onClose: () => void; cartaoInicialId?: string | null }) {
   const { data: cartoes = [] } = useCartoesCredito();
   const { data: bancos = [] } = useCartaoBancos();
+  const navigate = useNavigate();
+  const { can } = usePermissoes();
+  const podeClassificar = can("visualizar", "financeiro", "financeiro-cartao-credito-classificar");
 
   const [cartaoId, setCartaoId] = useState("");
   const [competencia, setCompetencia] = useState(""); // yyyy-mm (input type=month)
+  // SIS-2026-0751: aberto a partir de um cartão, começa pela lista de competências do ano.
+  const [etapaLista, setEtapaLista] = useState(!!cartaoInicialId);
   const [linhas, setLinhas] = useState<LinhaTabela[]>([]);
   const [analisando, setAnalisando] = useState(false);
   const [arquivoNome, setArquivoNome] = useState<string | null>(null);
@@ -57,6 +65,7 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
   useEffect(() => {
     if (!open) return;
     setCartaoId(cartaoInicialId ?? "");
+    setEtapaLista(!!cartaoInicialId);
     setCompetencia("");
     setLinhas([]);
     setArquivoNome(null);
@@ -124,10 +133,14 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
     ]);
   }
 
-  const totalConfirmado = useMemo(
-    () => linhas.filter((l) => !l.removida && l.statusRevisao !== "nao_encontrada").reduce((s, l) => s + Number(l.valor || 0), 0),
-    [linhas],
-  );
+  // SIS-2026-0751: valor <= 0 (pagamento da fatura anterior, estorno, crédito) não conta na fatura nem vai pro Fluxo.
+  const { totalConfirmado, totalForaDaFatura } = useMemo(() => {
+    const ativas = linhas.filter((l) => !l.removida && l.statusRevisao !== "nao_encontrada");
+    return {
+      totalConfirmado: ativas.filter((l) => Number(l.valor || 0) > 0).reduce((s, l) => s + Number(l.valor || 0), 0),
+      totalForaDaFatura: ativas.filter((l) => Number(l.valor || 0) <= 0).reduce((s, l) => s + Number(l.valor || 0), 0),
+    };
+  }, [linhas]);
 
   async function handleConfirmar() {
     if (!cartaoId || !competenciaISO) {
@@ -160,7 +173,17 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
       }
 
       await confirmar.mutateAsync({ cartaoId, competenciaISO, arquivoPath, itens, itensExcluirIds });
-      toast.success("Fatura importada — lançamentos enviados pro Fluxo de Caixa.");
+      // SIS-2026-0751: logo após importar, leva direto pra classificar os itens (cartão/competência já filtrados).
+      toast.success("Fatura importada — classifique os itens para ela entrar no Fluxo de Caixa.", {
+        action: podeClassificar
+          ? {
+              label: "Classificar itens",
+              onClick: () =>
+                navigate(`/app/financeiro/gestao-financeira/cartao-credito/classificar?cartao=${cartaoId}&competencia=${competencia}`),
+            }
+          : undefined,
+        duration: 10000,
+      });
       onClose();
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao confirmar importação.");
@@ -176,10 +199,28 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
         <DialogHeader>
           <DialogTitle>Importar Fatura</DialogTitle>
           <DialogDescription>
-            Anexe a fatura do mês, confira os lançamentos identificados e confirme — o que for confirmado vai pro Fluxo de Caixa.
+            Anexe a fatura do mês, confira os lançamentos identificados e confirme. Depois de classificar todos os itens, a fatura entra no Fluxo de Caixa em uma linha, no vencimento.
           </DialogDescription>
         </DialogHeader>
 
+        {etapaLista && cartaoId ? (
+          <>
+            <p className="text-sm font-medium">
+              {cartaoSelecionado?.nome_cartao}
+              {cartaoSelecionado?.final_cartao ? ` •••• ${cartaoSelecionado.final_cartao}` : ""}
+            </p>
+            <CompetenciasCartao cartaoId={cartaoId} onImportar={(c) => { setCompetencia(c); setEtapaLista(false); }} />
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose}>Fechar</Button>
+            </DialogFooter>
+          </>
+        ) : (
+        <>
+        {cartaoInicialId && !mostrandoRevisao && (
+          <Button variant="ghost" size="sm" className="-mb-2 w-fit px-2 text-xs" onClick={() => { setEtapaLista(true); setCompetencia(""); }}>
+            ← Voltar às competências
+          </Button>
+        )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           {BANCOS_COM_ADAPTADOR.map((a) => (
             <span key={a.nomeBanco}>
@@ -312,6 +353,11 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
                       </TableCell>
                       <TableCell className="p-1">
                         <Badge className={STATUS_CLASSE[l.statusRevisao]}>{STATUS_LABEL[l.statusRevisao]}</Badge>
+                        {Number(l.valor || 0) <= 0 && !l.removida && (
+                          <Badge variant="outline" className="mt-1 text-[10px]" title="Pagamento, estorno ou crédito: não entra na soma da fatura nem no Fluxo">
+                            Fora da fatura
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="p-1">
                         {l.id && !l.removida && (
@@ -343,7 +389,8 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
               </Table>
             </div>
             <p className="text-xs text-muted-foreground text-right">
-              Total a confirmar: <span className="font-semibold text-foreground">{fmtBRL(totalConfirmado)}</span>
+              Total da fatura: <span className="font-semibold text-foreground">{fmtBRL(totalConfirmado)}</span>
+              {totalForaDaFatura !== 0 && <> · fora da soma (pagamentos/créditos): {fmtBRL(totalForaDaFatura)}</>}
             </p>
           </div>
         )}
@@ -356,6 +403,8 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
             </Button>
           )}
         </DialogFooter>
+        </>
+        )}
       </DialogContent>
 
       <RateioItemFaturaDialog

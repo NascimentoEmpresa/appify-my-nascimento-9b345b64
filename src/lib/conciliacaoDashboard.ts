@@ -274,3 +274,55 @@ export function valoresDaConciliacao(c: {
   const ee = Number(c.extrato_entradas), es = Number(c.extrato_saidas);
   return { fe: r2(fe), fs: r2(fs), ee: r2(ee), es: r2(es), ce: r2(ce), cs: r2(cs), difEntradas: r2(fe - ee), difSaidas: r2(fs - es) };
 }
+
+// SIS-2026-0736 (continuação): o que o EXTRATO diz de entradas e saídas no período filtrado, lido das conciliações salvas (totais do OFX, sem o saldo
+// de abertura, como na Auditoria). Só entra conciliação que existe: banco sem conciliação salva não tem extrato aqui.
+type CamposExtrato = Parameters<typeof valoresDaConciliacao>[0];
+export interface TotaisExtrato { entradas: number; saidas: number; conciliacoes: number; semValores: number }
+
+function conciliacaoNoFiltro(c: ConciliacaoParaSaldo, f: { empresaId: string | null; bancoId: string | null; mesDe: string; mesAte: string }): boolean {
+  const mes = c.data_fim.slice(0, 7);
+  return (!f.empresaId || c.todas_empresas || c.empresa_ids.includes(f.empresaId)) && (!f.bancoId || c.banco_id === f.bancoId) && (!f.mesDe || mes >= f.mesDe) && (!f.mesAte || mes <= f.mesAte);
+}
+
+export function totaisDoExtrato<T extends ConciliacaoParaSaldo & CamposExtrato>(
+  atuais: T[],
+  f: { empresaId: string | null; bancoId: string | null; mesDe: string; mesAte: string },
+): TotaisExtrato {
+  let entradas = 0, saidas = 0, conciliacoes = 0, semValores = 0;
+  for (const c of atuais) {
+    if (!conciliacaoNoFiltro(c, f)) continue;
+    const v = valoresDaConciliacao(c);
+    if (v) { entradas += v.ee; saidas += v.es; conciliacoes += 1; continue; }
+    if (c.extrato_entradas != null && c.extrato_saidas != null) { entradas += Number(c.extrato_entradas); saidas += Number(c.extrato_saidas); conciliacoes += 1; continue; }
+    semValores += 1;
+  }
+  return { entradas: r2(entradas), saidas: r2(saidas), conciliacoes, semValores };
+}
+
+// O Fluxo só dos bancos que têm conciliação salva no mesmo mês e empresa (e sem o que a conciliação ignora e sem saldo anterior): é com ele que o extrato
+// se compara. Linhas cruas, uma por cota, como na Auditoria.
+export function totaisFluxoDosBancosConciliados(
+  linhas: (LinhaParaTotais & { classificacao_nome?: string | null; descricao?: string | null; banco_nome?: string | null })[],
+  atuais: ConciliacaoParaSaldo[],
+  f: { dataDe: string; dataAte: string; empresaId: string | null; bancoId: string | null; mesDe: string; mesAte: string },
+  hoje: string,
+): { entradas: number; saidas: number } {
+  const doFiltro = atuais.filter((c) => conciliacaoNoFiltro(c, f));
+  let entradas = 0, saidas = 0;
+  for (const l of linhas) {
+    const data = l.data_pagamento?.slice(0, 10) ?? null;
+    if (!data || l.situacao_base || data > hoje) continue;
+    if (f.dataDe && data < f.dataDe) continue;
+    if (f.dataAte && data > f.dataAte) continue;
+    if (f.empresaId && l.empresa_id !== f.empresaId) continue;
+    if (f.bancoId && l.banco_id !== f.bancoId) continue;
+    if (ehSaldoAnterior({ classificacao_nome: l.classificacao_nome ?? null }) || ignoraNaConciliacao({ tipo: l.tipo, descricao: l.descricao ?? "", classificacao_nome: l.classificacao_nome ?? null, banco_nome: l.banco_nome ?? null })) continue;
+    const mes = data.slice(0, 7);
+    const coberta = !!l.banco_id && doFiltro.some((c) => c.banco_id === l.banco_id && c.data_fim.slice(0, 7) === mes && (c.todas_empresas || (!!l.empresa_id && c.empresa_ids.includes(l.empresa_id))));
+    if (!coberta) continue;
+    const v = Number(l.valor) || 0;
+    if (l.tipo === "entrada") entradas += v; else saidas += v;
+  }
+  return { entradas: r2(entradas), saidas: r2(saidas) };
+}

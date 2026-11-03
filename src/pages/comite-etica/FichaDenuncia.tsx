@@ -28,6 +28,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { BlocoAnexos, BlocoPresidencia, BlocoProvidencias } from "./BlocosApuracao";
 import { ExportarDenuncia } from "./ExportarDenuncia";
 import { HistoricoDenuncia } from "./HistoricoDenuncia";
+import { ParecerIaDenuncia } from "./ParecerIaDenuncia";
 
 // =====================================================================
 // FICHA DE APURAÇÃO — o formulário que o Comitê de Ética preenche
@@ -555,6 +556,11 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
           <Bloco titulo="Evidências e documentos" desc="Os arquivos do procedimento. O que veio com o relato não pode ser excluído.">
             <BlocoAnexos denunciaId={d.id} podeEditar podeVerSigiloso={podeVerSigiloso} />
           </Bloco>
+
+          {/* ------------------------------------------------- parecer I.A */}
+          {/* Lê o que já está GRAVADO (com o login de quem pede), não o
+              rascunho desta ficha: salve antes para a I.A ver a mudança. */}
+          <ParecerIaDenuncia denunciaId={d.id} />
 
           {/* ------------------------------------------------------ desfecho */}
           <Bloco titulo="Resultado e medidas" desc="O que a apuração concluiu e o que foi feito a respeito.">

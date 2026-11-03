@@ -65,6 +65,9 @@ export function useItensParaClassificar() {
               "malote_cartao_fatura(competencia, cartao_id, malote_cartao_credito(nome_cartao))",
           )
           .eq("status", "confirmado")
+          // SIS-2026-0751: valor <= 0 (pagamento da fatura anterior, estorno) não entra na fatura do Fluxo
+          // nem tem o que ratear (o rateio exige valor >= 0) — fora da lista de classificação.
+          .gt("valor", 0)
           .order("data_compra", { ascending: false }),
         (supabase as any).from("malote_cartao_fatura_item_rateio").select("item_id"),
       ]);

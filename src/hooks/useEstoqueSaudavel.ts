@@ -47,6 +47,11 @@ export function useEstoqueSaudavel(
         p_contrato_id: filtros.contratoId,
         p_categoria: filtros.categoria,
         p_almoxarifado_id: filtros.almoxarifadoId,
+        // A tabela tem busca local. Com o teto antigo de 500, uma combinação
+        // existente (como MOLETOM CINZA EGG) podia ficar fora do payload e a
+        // busca afirmava que não existia. O cálculo já percorre o catálogo
+        // inteiro; aqui apenas pedimos todas as linhas calculadas.
+        p_limite_itens: 5000,
       });
       if (error) throw error;
       return data as EstoqueSaudavelDados;

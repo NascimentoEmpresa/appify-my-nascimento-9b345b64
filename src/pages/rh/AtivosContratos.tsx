@@ -18,7 +18,7 @@
 // tem, saldo, afastados; e um bloco "Definir posto" enquanto houver gente
 // sem posto.
 // =====================================================================
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -38,7 +38,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import {
-  usePainelAtivosContratos, usePessoasAtivas, useVincularPostos, useVincularFilial,
+  usePainelAtivosContratos, usePessoasAtivas, usePessoasSemContrato, useVincularPostos, useVincularFilial,
   useMoverColaborador, useObservacoesAtivos, useSalvarObservacaoAtivos, useExcluirObservacaoAtivos,
   type ObservacaoAtivos,
 } from "@/hooks/useAtivosContratos";
@@ -69,6 +69,13 @@ const passa = (l: Linha, f: Filtro) => {
     default: return temPlanilha && l.conf.situacao === f;
   }
 };
+
+/** Sem acento e minúsculo — a busca não diferencia "Santarém" de "SANTAREM". */
+const normalizar = (s: string | null | undefined) =>
+  (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+/** A partir de quantas letras a busca também procura colaborador pelo nome. */
+const MIN_BUSCA_PESSOA = 3;
 
 const corSaldo = (n: number) => (n === 0 ? "text-success" : n < 0 ? "text-destructive" : "text-warning");
 
@@ -168,12 +175,52 @@ export default function AtivosContratos() {
     return m;
   }, [linhas]);
 
+  // Busca por colaborador (29/10/2026): "Pablo Flores Santarem" acha o
+  // contrato onde ele está. Procura no que o painel já trouxe (c.pessoas: os
+  // trabalhando e os afastados) — nada de RPC nova numa tela que já esteve
+  // perto do statement timeout. Só quem está em filial sem contrato ligado
+  // precisa ir ao banco, pela mesma RPC do "Ver" da filial, e só quando
+  // alguém digita 3+ letras.
+  const buscaAdiada = useDeferredValue(busca);
+  const q = normalizar(buscaAdiada);
+  const buscaPessoa = q.length >= MIN_BUSCA_PESSOA;
+
+  const nomesNorm = useMemo(() => {
+    const m = new Map<string, string[]>();
+    linhas.forEach((l) => m.set(l.c.id, l.c.pessoas.map((p) => normalizar(p.nome))));
+    return m;
+  }, [linhas]);
+
+  const achados = useMemo(() => {
+    const m = new Map<string, PessoaContrato[]>();
+    if (!buscaPessoa) return m;
+    linhas.forEach((l) => {
+      const nomes = nomesNorm.get(l.c.id) ?? [];
+      const hit = l.c.pessoas.filter((_, i) => nomes[i].includes(q));
+      if (hit.length) m.set(l.c.id, hit);
+    });
+    return m;
+  }, [linhas, nomesNorm, q, buscaPessoa]);
+
+  const semContrato = usePessoasSemContrato(
+    (data?.filiais_sem_contrato ?? []).map((f) => f.filial),
+    buscaPessoa,
+  );
+  const achadosSemContrato = useMemo(() => {
+    if (!buscaPessoa) return [];
+    return semContrato.porFilial.flatMap(({ filial, pessoas }) =>
+      pessoas.filter((p) => normalizar(p.nome).includes(q)).map((p) => ({ filial, p })));
+  }, [semContrato.porFilial, q, buscaPessoa]);
+
   const visiveis = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    return linhas
-      .filter((l) => passa(l, filtro))
-      .filter((l) => !q || l.c.nome.toLowerCase().includes(q) || (l.c.cliente ?? "").toLowerCase().includes(q));
-  }, [linhas, filtro, busca]);
+    return linhas.filter((l) => {
+      // Contrato com a pessoa buscada aparece em qualquer aba — senão quem
+      // está, por ex., num contrato "Completo" sumiria na aba "Falta gente".
+      if (achados.has(l.c.id)) return true;
+      if (!passa(l, filtro)) return false;
+      return !q || normalizar(l.c.nome).includes(q) || normalizar(l.c.cliente).includes(q);
+    });
+  }, [linhas, filtro, q, achados]);
 
   const tot = useMemo(() => {
     const com = linhas.filter((l) => l.c.postos.length);
@@ -253,7 +300,7 @@ export default function AtivosContratos() {
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <div className="relative w-full sm:w-72">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="h-9 pl-8 text-sm" placeholder="Buscar contrato ou cliente…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+                <Input className="h-9 pl-8 text-sm" placeholder="Buscar contrato, cliente ou colaborador…" value={busca} onChange={(e) => setBusca(e.target.value)} />
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {FILTROS.map(({ k, label }) => (
@@ -264,6 +311,26 @@ export default function AtivosContratos() {
                 ))}
               </div>
             </div>
+
+            {achadosSemContrato.length > 0 && (
+              <div className="mb-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
+                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-warning">
+                  <UserX className="h-3.5 w-3.5" /> Sem contrato ligado — não entra em conta nenhuma
+                </p>
+                {achadosSemContrato.map(({ filial, p }) => (
+                  <div key={p.empregado_id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-xs">
+                    <span className="font-semibold">{p.nome}</span>
+                    <span className="text-muted-foreground">
+                      — filial {filial} · posto {limparPostoSenior(p.posto_senior)}{p.cargo ? ` · função ${p.cargo}` : ""} · {p.situacao ?? "—"}
+                    </span>
+                    <button type="button" className="ml-auto text-xs font-medium text-primary hover:underline"
+                      onClick={() => document.getElementById("sem-contrato")?.scrollIntoView({ behavior: "smooth" })}>
+                      Ligar ao contrato ↓
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
@@ -284,11 +351,14 @@ export default function AtivosContratos() {
                     const exp = aberto === c.id;
                     return (
                       <LinhaContrato key={c.id} c={c} conf={conf} aberto={exp} podeVincular={podeVincular}
-                        onToggle={() => setAberto(exp ? null : c.id)} />
+                        achados={achados.get(c.id)} onToggle={() => setAberto(exp ? null : c.id)} />
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <tr><td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Nenhum contrato neste filtro.</td></tr>
+                    <tr><td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                      {achadosSemContrato.length ? "Nenhum contrato — a pessoa está em filial sem contrato ligado (acima)."
+                        : buscaPessoa && semContrato.carregando ? "Procurando…" : "Nenhum contrato neste filtro."}
+                    </td></tr>
                   )}
                 </tbody>
               </table>
@@ -320,8 +390,10 @@ export default function AtivosContratos() {
 
 // ---- Linha do contrato ---------------------------------------------------------
 
-function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
-  c: ContratoAtivos; conf: ConferenciaContrato; aberto: boolean; podeVincular: boolean; onToggle: () => void;
+function LinhaContrato({ c, conf, aberto, podeVincular, achados, onToggle }: {
+  c: ContratoAtivos; conf: ConferenciaContrato; aberto: boolean; podeVincular: boolean;
+  /** Pessoas deste contrato que batem com a busca por nome. */
+  achados?: PessoaContrato[]; onToggle: () => void;
 }) {
   const temPlanilha = c.postos.length > 0;
   return (
@@ -331,6 +403,7 @@ function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
         <td className="py-2.5 pr-3">
           <p className="flex items-center gap-1.5 font-medium">{c.nome}<SeloObservacoes contratoId={c.id} /></p>
           {c.cliente && <p className="text-[11px] text-muted-foreground">{c.cliente}</p>}
+          {achados?.map((p) => <PessoaAchada key={p.id} p={p} temPlanilha={temPlanilha} />)}
         </td>
         <td className="py-2.5 pr-3 text-right tabular-nums">{temPlanilha ? <Implantado implantado={conf.implantado} previsto={conf.previsto} /> : "—"}</td>
         <td className="py-2.5 pr-3 text-right font-medium tabular-nums">{conf.tem}</td>
@@ -358,6 +431,24 @@ function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
         </tr>
       )}
     </>
+  );
+}
+
+/** A pessoa buscada, embaixo do contrato: posto, função, situação e o aviso, se houver. */
+function PessoaAchada({ p, temPlanilha }: { p: PessoaContrato; temPlanilha: boolean }) {
+  const aviso = p.fora ? "fora da conta"
+    : ehPostoRT(p.posto) ? "renda técnica"
+    : temPlanilha && !p.posto ? "sem posto definido"
+    : null;
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-x-1.5 rounded bg-primary/10 px-2 py-1 text-xs">
+      <span className="font-semibold text-primary">{p.nome}</span>
+      <span className="text-muted-foreground">
+        — posto {p.posto ?? limparPostoSenior(p.posto_senior)}{p.cargo ? `, função ${p.cargo}` : ""}, situação{" "}
+        <span className={p.conta ? "text-success" : "text-warning"}>{p.situacao ?? "—"}</span>
+      </span>
+      {aviso && <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] font-semibold text-info">{aviso}</Badge>}
+    </p>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Banknote,
@@ -19,6 +19,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -60,6 +61,7 @@ import {
   PainelGrafico,
   SERIES,
   TickCategoria,
+  TickCategoriaCentralizado,
   formatarEixoMoeda,
 } from "@/components/suprimentos/dashboard/PainelBase";
 import {
@@ -155,6 +157,7 @@ export function EstoqueSaudavel({
     almoxarifadoId: null,
   });
   const [situacao, setSituacao] = useState("problema");
+  const tabelaItensRef = useRef<HTMLDivElement>(null);
   const [busca, setBusca] = useState("");
   const [premissasAbertas, setPremissasAbertas] = useState(false);
   const [pedidoChat, setPedidoChat] = useState<PedidoExternoChat>({
@@ -269,12 +272,8 @@ export function EstoqueSaudavel({
       {/* ---- Gráficos ---- */}
       <div className="grid gap-3 xl:grid-cols-[1.25fr_0.75fr]">
         <PainelGrafico
-          titulo="Mês a mês: o que temos, o que consumimos e qual era o alvo"
-          subtitulo={
-            dados.evolucao.length
-              ? "Cada ponto é um fechamento de mês. O alvo cai sozinho quando o quadro do contrato diminui."
-              : "Começa no primeiro fechamento mensal."
-          }
+          titulo="Mês a mês: estoque, consumo e alvo"
+          subtitulo="Todos os meses da janela aparecem. Consumo vem dos pedidos; estoque e alvo usam fechamentos reais e a posição de hoje. Lacuna significa mês anterior ao primeiro fechamento — não estimativa."
         >
           {dados.evolucao.length ? (
             <div className="h-[280px]">
@@ -283,7 +282,18 @@ export function EstoqueSaudavel({
                   <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} />
                   <XAxis dataKey="rotulo" />
                   <YAxis />
-                  <Tooltip />
+                  <Tooltip
+                    formatter={(valor, nome) => [
+                      valor == null ? "Sem fechamento" : formatarNumero(Number(valor), 1),
+                      nome,
+                    ]}
+                    labelFormatter={(rotulo, entradas) => {
+                      const tipo = entradas?.[0]?.payload?.tipo_ponto;
+                      if (tipo === "hoje") return `${rotulo} · posição de hoje`;
+                      if (tipo === "sem_fechamento") return `${rotulo} · sem fechamento de estoque`;
+                      return `${rotulo} · fechamento mensal`;
+                    }}
+                  />
                   <Legend />
                   <Line
                     type="monotone"
@@ -292,6 +302,7 @@ export function EstoqueSaudavel({
                     stroke={AZUL_MAGNITUDE}
                     strokeWidth={2}
                     dot={{ r: 3 }}
+                    connectNulls={false}
                   />
                   <Line
                     type="monotone"
@@ -301,6 +312,7 @@ export function EstoqueSaudavel({
                     strokeWidth={2}
                     strokeDasharray="5 4"
                     dot={{ r: 3 }}
+                    connectNulls={false}
                   />
                   <Line
                     type="monotone"
@@ -325,9 +337,24 @@ export function EstoqueSaudavel({
           titulo="Situação dos itens"
           subtitulo={`${formatarNumero(r.itens_planejados)} combinações de item e tamanho no plano`}
         >
-          <GraficoSituacao dados={dados} />
+          <GraficoSituacao
+            dados={dados}
+            aoSelecionar={(proximaSituacao) => {
+              setSituacao(proximaSituacao);
+              requestAnimationFrame(() =>
+                tabelaItensRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+              );
+            }}
+          />
         </PainelGrafico>
       </div>
+
+      <PainelGrafico
+        titulo="Prateleira saudável por item e tamanho"
+        subtitulo="Azul é o disponível para novos pedidos (físico menos reservado); cinza é o mínimo para disparar a reposição; verde é o máximo saudável. Ex.: se saem 10, o alvo pode ser 15 para absorver uma saída surpresa."
+      >
+        <GraficoFaixaPorItem itens={dados.itens} />
+      </PainelGrafico>
 
       <PainelGrafico
         titulo="Compra sugerida por família — o volume que dá poder de negociação"
@@ -340,14 +367,16 @@ export function EstoqueSaudavel({
         )}
       </PainelGrafico>
 
-      <TabelaItens
-        dados={dados}
-        empresaId={empresaId}
-        situacao={situacao}
-        setSituacao={setSituacao}
-        busca={busca}
-        setBusca={setBusca}
-      />
+      <div ref={tabelaItensRef} className="scroll-mt-4">
+        <TabelaItens
+          dados={dados}
+          empresaId={empresaId}
+          situacao={situacao}
+          setSituacao={setSituacao}
+          busca={busca}
+          setBusca={setBusca}
+        />
+      </div>
 
       {dados.liquidar.length > 0 && <BlocoLiquidar dados={dados} empresaId={empresaId} />}
 
@@ -606,7 +635,13 @@ function Alertas({ alertas }: { alertas: EstoqueSaudavelDados["alertas"] }) {
 /* Gráficos                                                           */
 /* ================================================================== */
 
-function GraficoSituacao({ dados }: { dados: EstoqueSaudavelDados }) {
+function GraficoSituacao({
+  dados,
+  aoSelecionar,
+}: {
+  dados: EstoqueSaudavelDados;
+  aoSelecionar: (situacao: string) => void;
+}) {
   const r = dados.resumo;
   const linhas = [
     { nome: "Faltando", chave: "falta", itens: r.itens_em_falta },
@@ -625,11 +660,84 @@ function GraficoSituacao({ dados }: { dados: EstoqueSaudavelDados }) {
           <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} horizontal={false} />
           <XAxis type="number" allowDecimals={false} />
           <YAxis type="category" dataKey="nome" width={86} tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(v: number) => [`${formatarNumero(v)} itens`, "Quantidade"]} />
-          <Bar dataKey="itens" name="Itens" radius={[0, 4, 4, 0]}>
+          <Tooltip formatter={(v: number) => [`${formatarNumero(v)} itens — clique para ver a lista`, "Quantidade"]} />
+          <Bar
+            dataKey="itens"
+            name="Itens"
+            radius={[0, 4, 4, 0]}
+            className="cursor-pointer"
+            onClick={(entrada) => {
+              const chave = (entrada as { payload?: { chave?: string } }).payload?.chave;
+              if (chave) aoSelecionar(chave);
+            }}
+          >
             {linhas.map((l) => (
               <Cell key={l.chave} fill={COR_SITUACAO[l.chave] ?? AZUL_MAGNITUDE} />
             ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * A tabela detalhada explica todos os itens, mas o gerente pediu uma leitura
+ * de prateleira: ver de uma vez quanto há, quando pedir e até onde repor.
+ * Mostramos os itens com demanda, priorizando os que estão mais longe do alvo,
+ * para o gráfico continuar legível sem esconder tamanhos diferentes.
+ */
+function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
+  const dados = itens
+    .filter((item) => item.demanda_janela > 0 || item.disponivel > 0 || item.comprar > 0)
+    .map((item) => ({
+      rotulo: `${item.item} · ${item.tamanho ?? "único"}`,
+      fisico: item.fisico,
+      disponivel: item.disponivel,
+      reservado: item.reservado,
+      minimo: item.minimo,
+      alvo: item.alvo,
+      comprar: item.comprar,
+      demanda_mensal: item.demanda_mensal,
+    }))
+    .sort((a, b) => b.comprar - a.comprar || b.alvo - a.alvo || a.rotulo.localeCompare(b.rotulo, "pt-BR"))
+    .slice(0, 12);
+
+  if (!dados.length) {
+    return <EstadoVazio altura={360} texto="Nenhum item com saldo ou demanda para montar a prateleira saudável." />;
+  }
+
+  return (
+    <div className="h-[360px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={dados} layout="vertical" margin={{ left: 12, right: 42, top: 4 }} barGap={2}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} horizontal={false} />
+          <XAxis type="number" allowDecimals={false} />
+          <YAxis type="category" dataKey="rotulo" width={176} tick={<TickCategoria maximo={26} />} />
+          <Tooltip
+            cursor={{ fill: "#f1f5f9" }}
+            content={({ active, payload, label }) =>
+              active && payload?.length ? (
+                <div className="rounded-lg border bg-white p-2 text-xs shadow-lg">
+                  <p className="mb-1 max-w-72 font-semibold text-slate-700">{label}</p>
+                  <p className="text-slate-600">Físico na prateleira: {formatarNumero(payload[0].payload.fisico)}</p>
+                  <p className="text-slate-600">Já reservado: {formatarNumero(payload[0].payload.reservado)}</p>
+                  <p className="text-slate-600">Disponível para novo pedido: {formatarNumero(payload[0].payload.disponivel)}</p>
+                  <p className="text-slate-600">Mínimo para pedir: {formatarNumero(payload[0].payload.minimo)}</p>
+                  <p className="text-slate-600">Máximo saudável: {formatarNumero(payload[0].payload.alvo)}</p>
+                  <p className="text-slate-600">Demanda média: {formatarNumero(payload[0].payload.demanda_mensal, 1)} / mês</p>
+                  {payload[0].payload.comprar > 0 && (
+                    <p className="font-semibold text-blue-800">Comprar agora: {formatarNumero(payload[0].payload.comprar)}</p>
+                  )}
+                </div>
+              ) : null
+            }
+          />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar dataKey="disponivel" name="Disponível" fill={AZUL_MAGNITUDE} radius={[0, 4, 4, 0]} maxBarSize={14} />
+          <Bar dataKey="minimo" name="Mínimo para pedir" fill="#94a3b8" radius={[0, 4, 4, 0]} maxBarSize={14} />
+          <Bar dataKey="alvo" name="Máximo saudável" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={14}>
+            <LabelList dataKey="alvo" position="right" className="text-[10px]" fill="#475569" formatter={(v: number) => formatarNumero(v)} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -643,9 +751,14 @@ function GraficoFamilias({ familias }: { familias: EstoqueSaudavelDados["compra_
     <div className="space-y-3">
       <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={dados} margin={{ bottom: 8 }}>
+          <BarChart data={dados} margin={{ bottom: 8, left: 8, right: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} />
-            <XAxis dataKey="item" interval={0} height={92} tick={<TickCategoria maximo={18} />} />
+            <XAxis
+              dataKey="item"
+              interval={0}
+              height={48}
+              tick={<TickCategoriaCentralizado maximo={18} />}
+            />
             <YAxis tickFormatter={formatarEixoMoeda} />
             <Tooltip
               formatter={(valor: number, nome: string) =>
@@ -792,7 +905,9 @@ function TabelaItens({
                 <tr>
                   <CabecalhoTabela>Item</CabecalhoTabela>
                   <CabecalhoTabela>Tam.</CabecalhoTabela>
-                  <CabecalhoTabela alinhar="right">Em casa</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Disponível</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Físico</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Reservado</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Vindo</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Consumo/mês</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Cobertura</CabecalhoTabela>
@@ -801,7 +916,15 @@ function TabelaItens({
                   <CabecalhoTabela alinhar="right">Comprar</CabecalhoTabela>
                   <CabecalhoTabela alinhar="center">Já faltou</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Parado R$</CabecalhoTabela>
-                  <CabecalhoTabela alinhar="center">Classe</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="center">
+                    <Dica>
+                      <TooltipTrigger asChild><span className="cursor-help">Classe ABC/XYZ</span></TooltipTrigger>
+                      <TooltipContent className="max-w-[320px] text-xs">
+                        <p><strong>ABC</strong> mostra o impacto financeiro: A concentra maior valor de consumo, C o menor.</p>
+                        <p className="mt-1"><strong>XYZ</strong> mostra a previsibilidade: X é regular; Z oscila muito. Não é nível de qualidade do item.</p>
+                      </TooltipContent>
+                    </Dica>
+                  </CabecalhoTabela>
                   <CabecalhoTabela>Situação</CabecalhoTabela>
                   <CabecalhoTabela alinhar="center">Conta</CabecalhoTabela>
                 </tr>
@@ -870,6 +993,8 @@ function LinhaItem({
       </td>
       <td className="px-3 py-1.5 font-mono text-[11px]">{item.tamanho ?? "único"}</td>
       <td className="px-3 py-1.5 text-right">{formatarNumero(item.disponivel)}</td>
+      <td className="px-3 py-1.5 text-right text-slate-500">{formatarNumero(item.fisico)}</td>
+      <td className="px-3 py-1.5 text-right text-slate-500">{formatarNumero(item.reservado)}</td>
       <td className="px-3 py-1.5 text-right text-slate-500">
         {item.em_transito > 0 ? formatarNumero(item.em_transito) : "—"}
       </td>
@@ -1055,10 +1180,10 @@ function BlocoLiquidar({
             <tr>
               <CabecalhoTabela>Item</CabecalhoTabela>
               <CabecalhoTabela>Tam.</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Em casa</CabecalhoTabela>
+              <CabecalhoTabela alinhar="right">Disponível</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Valor parado</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Sem giro há</CabecalhoTabela>
-              <CabecalhoTabela>Última saída</CabecalhoTabela>
+              <CabecalhoTabela>Última baixa física</CabecalhoTabela>
               <CabecalhoTabela>Motivo</CabecalhoTabela>
               <CabecalhoTabela alinhar="center">Liquidar</CabecalhoTabela>
             </tr>
@@ -1078,9 +1203,13 @@ function BlocoLiquidar({
                   </td>
                   <td className="px-3 py-1.5 text-right">{formatarMeses(l.meses_sem_giro)}</td>
                   <td className="px-3 py-1.5 text-slate-500">
-                    {l.ultima_saida
-                      ? new Date(`${l.ultima_saida}T12:00:00`).toLocaleDateString("pt-BR")
-                      : "nunca saiu"}
+                    {l.ultima_saida ? (
+                      new Date(`${l.ultima_saida}T12:00:00`).toLocaleDateString("pt-BR")
+                    ) : l.ultima_reserva ? (
+                      <span title="Houve reserva para separação, mas não há baixa física registrada.">
+                        Sem baixa · reserva em {new Date(`${l.ultima_reserva}T12:00:00`).toLocaleDateString("pt-BR")}
+                      </span>
+                    ) : "sem baixa registrada"}
                   </td>
                   <td className="px-3 py-1.5">
                     {l.ja_marcado ? (

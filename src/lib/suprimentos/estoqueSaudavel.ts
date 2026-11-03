@@ -48,6 +48,8 @@ export interface ItemEstoqueSaudavel {
 
   disponivel: number;
   reservado: number;
+  /** Peças físicas na prateleira, antes de descontar o que já está separado. */
+  fisico: number;
   em_transito: number;
 
   demanda_janela: number;
@@ -94,6 +96,8 @@ export interface ItemEstoqueSaudavel {
   pct_falta: number | null;
   ultima_falta: string | null;
   ultima_saida: string | null;
+  /** Última reserva para separação. Reserva não é baixa física. */
+  ultima_reserva: string | null;
   ultimo_pedido: string | null;
 
   valor_unitario: number | null;
@@ -138,6 +142,7 @@ export interface LinhaLiquidar {
   valor_em_estoque: number;
   meses_sem_giro: number | null;
   ultima_saida: string | null;
+  ultima_reserva: string | null;
   ultimo_pedido: string | null;
   ja_marcado: boolean;
   motivo: string | null;
@@ -197,10 +202,13 @@ export interface RankingsEstoque {
 export interface MesEstoque {
   mes: string;
   rotulo: string;
-  saldo: number;
+  /** Nulo quando aquele mês ainda não tinha fechamento confiável. */
+  saldo: number | null;
   demanda: number;
-  alvo: number;
-  valor: number;
+  alvo: number | null;
+  valor: number | null;
+  /** Fechamento histórico, posição ao vivo de hoje ou mês sem fechamento. */
+  tipo_ponto?: "fechamento" | "hoje" | "sem_fechamento";
 }
 
 export interface AlertaEstoque {
@@ -231,6 +239,8 @@ export interface EstoqueSaudavelDados {
   };
   resumo: {
     itens_planejados: number;
+    /** Mesmo total de etiquetas exibido como "Entradas registradas" no estoque operacional. */
+    entradas_registradas: number;
     valor_em_estoque: number;
     unidades_em_estoque: number;
     dinheiro_parado: number;

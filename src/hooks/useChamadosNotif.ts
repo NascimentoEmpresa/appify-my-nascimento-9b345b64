@@ -37,6 +37,7 @@ interface ChamadoRow {
   status: string;
   solicitante_id: string;
   responsavel_id: string | null;
+  conclusao_confirmada_em?: string | null;
 }
 
 // Estados que cada papel precisa "ver". Gatilhar por status evita que quem
@@ -62,7 +63,7 @@ export function useChamadosNotif() {
     queryFn: async () => {
       const { data } = await (supabase as any)
         .from("CHAMADO_SISTEMA")
-        .select("id, updated_at, status, solicitante_id, responsavel_id")
+        .select("id, updated_at, status, solicitante_id, responsavel_id, conclusao_confirmada_em")
         .or(`solicitante_id.eq.${uid},responsavel_id.eq.${uid}`);
       return (data ?? []) as ChamadoRow[];
     },
@@ -92,8 +93,13 @@ export function useChamadosNotif() {
     };
   }, [readSeen]);
 
+  // Concluído pelo time e ainda sem a confirmação do solicitante (mig
+  // 20261028001300): a bolinha fica acesa até ele confirmar ou reabrir —
+  // abrir a tela não apaga, porque é pendência, não novidade.
   const meus = chamados.some(
-    (c) => c.solicitante_id === uid && STATUS_MEUS.has(c.status) && Date.parse(c.updated_at) > seen.meus,
+    (c) => c.solicitante_id === uid && (
+      (STATUS_MEUS.has(c.status) && Date.parse(c.updated_at) > seen.meus)
+      || (c.status === "concluido" && !c.conclusao_confirmada_em)),
   );
   const dev = chamados.some(
     (c) => c.responsavel_id === uid && STATUS_DEV.has(c.status) && Date.parse(c.updated_at) > seen.dev,

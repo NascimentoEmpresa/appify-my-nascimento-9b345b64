@@ -2,6 +2,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   TickCategoria,
+  TickCategoriaCentralizado,
   TickCategoriaInclinado,
   abreviarRotulo,
   formatarEixoMoeda,
@@ -108,6 +109,20 @@ describe("tick de categoria — uma linha só, que é o que mata a sobreposiçã
     expect(texto.querySelectorAll("tspan").length).toBe(0);
     expect(texto.getAttribute("transform")).toBe("rotate(-35, 80, 40)");
     expect(texto.getAttribute("text-anchor")).toBe("end");
+  });
+
+  it("centraliza o nome de item exatamente no ponto da barra", () => {
+    const texto = desenhar(
+      <TickCategoriaCentralizado
+        x={120}
+        y={60}
+        payload={{ value: "CALÇA DE SARJA (CINZA)" }}
+        maximo={18}
+      />,
+    );
+    expect(texto.getAttribute("x")).toBe("120");
+    expect(texto.getAttribute("text-anchor")).toBe("middle");
+    expect(texto.querySelector("title")?.textContent).toBe("CALÇA DE SARJA (CINZA)");
   });
 
   it("não quebra quando o recharts não passa valor", () => {

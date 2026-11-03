@@ -108,11 +108,17 @@ export interface CartaoCredito {
   // aprovador1_nomes (ClassificacoesMalote.tsx).
   usuarios_classificar_ids: string[];
   usuarios_classificar_nomes: string[];
+  // SIS-2026-0759: quem está com o cartão — usuário do ERP (nome em cache em `responsavel`) e/ou uma empresa
+  // do grupo (ou "Grupo" = todas). Independe da empresa à qual o cartão está vinculado.
+  responsavel: string | null;
+  responsavel_user_id: string | null;
+  responsavel_empresa_id: string | null;
+  responsavel_grupo: boolean;
 }
 
 const KEY = "malote_cartao_credito";
 const COLUMNS =
-  "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao, usuarios_classificar_ids, usuarios_classificar_nomes";
+  "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao, usuarios_classificar_ids, usuarios_classificar_nomes, responsavel, responsavel_user_id, responsavel_empresa_id, responsavel_grupo";
 
 export function useCartoesCredito() {
   return useQuery({
@@ -142,6 +148,10 @@ interface SalvarCartaoCreditoInput {
   final_cartao: string | null;
   usuarios_classificar_ids: string[];
   usuarios_classificar_nomes: string[];
+  responsavel: string | null;
+  responsavel_user_id: string | null;
+  responsavel_empresa_id: string | null;
+  responsavel_grupo: boolean;
 }
 
 export function useSalvarCartaoCredito() {
@@ -186,4 +196,22 @@ export function calcularFatura(dataPagamento: string, diaFechamento: number): st
     }
   }
   return `${ano}-${String(mes + 1).padStart(2, "0")}`;
+}
+
+// SIS-2026-0751: formas de pagamento de cartões com fatura IMPORTADA (não consolidada). Débito automático de saída
+// com uma dessas formas não gera linha própria no Fluxo — a fatura importada é a fonte (migration 20261029001900).
+export function useFormasCartaoFaturaImportada() {
+  return useQuery({
+    queryKey: ["malote_cartao_credito", "formas_fatura_importada"],
+    staleTime: 300_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("fn_formas_cartao_fatura_importada");
+      if (error) {
+        // migration ainda não aplicada: sem aviso, sem quebrar o modal
+        if (error.code === "PGRST202" || error.code === "42883") return [] as string[];
+        throw error;
+      }
+      return ((data ?? []) as { tipo_forma_pagamento: string }[]).map((r) => r.tipo_forma_pagamento);
+    },
+  });
 }

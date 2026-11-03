@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,8 +40,10 @@ interface GrupoFatura {
 // CartaoCredito.tsx) pra achar rápido o que falta classificar.
 export default function ClassificarLancamentos() {
   const { data: itens = [], isLoading } = useItensParaClassificar();
-  const [filtroCompetencia, setFiltroCompetencia] = useState("");
-  const [filtroCartaoId, setFiltroCartaoId] = useState("");
+  // SIS-2026-0751: o card "Faturas importadas" do Cartão chega aqui já filtrado (?cartao=&competencia=).
+  const [params] = useSearchParams();
+  const [filtroCompetencia, setFiltroCompetencia] = useState(params.get("competencia") ?? "");
+  const [filtroCartaoId, setFiltroCartaoId] = useState(params.get("cartao") ?? "");
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>("");
   const [itemClassificar, setItemClassificar] = useState<ItemParaClassificar | null>(null);
 

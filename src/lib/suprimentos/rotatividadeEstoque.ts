@@ -39,6 +39,7 @@ export interface TamanhoRotatividade {
 }
 
 export interface PecaRotatividade {
+  codigo: string | null;
   peca: string;
   pedidas: number;
   valor_pedido: number;
@@ -46,6 +47,22 @@ export interface PecaRotatividade {
   saidas: number;
   saldo_disponivel: number;
   tamanho_top: string | null;
+  giro: number | null;
+}
+
+/** Unidade de decisão operacional: produto identificado + tamanho. */
+export interface ItemTamanhoRotatividade {
+  codigo: string | null;
+  item: string;
+  tamanho: string | null;
+  pedidas: number;
+  entradas: number;
+  saidas: number;
+  fisico: number;
+  reservado: number;
+  saldo_disponivel: number;
+  /** False quando a linha existe só para explicar movimentações antigas. */
+  cadastro_ativo?: boolean;
   giro: number | null;
 }
 
@@ -70,6 +87,12 @@ export interface MesRotatividade {
 /** Linha mensal do histórico que orienta a futura política de estoque mínimo. */
 export interface HistoricoUniformeLinha {
   mes: string;
+  /**
+   * Origem operacional do pedido. O campo vem de `sup_pedido.admissao` e
+   * `tipo_admissao`; não é inferido do volume, para não misturar uma demanda
+   * de implantação com reposição recorrente na conta do estoque mínimo.
+   */
+  origem_demanda: "implantacao_aditivo" | "substituicao" | "reposicao";
   tipo_uniforme: string;
   tamanho: string | null;
   solicitados: number;
@@ -118,6 +141,16 @@ export interface DestaqueTamanho {
   saidas?: number;
 }
 
+export interface DestaqueItemTamanho {
+  codigo: string | null;
+  item: string;
+  tamanho: string | null;
+  unidades?: number;
+  giro?: number;
+  saldo?: number;
+  saidas?: number;
+}
+
 export interface RotatividadeEstoqueDados {
   atualizado_em: string;
   categoria: string | null;
@@ -137,6 +170,8 @@ export interface RotatividadeEstoqueDados {
     entradas: number;
     saidas: number;
     devolucoes: number;
+    saldo_fisico: number;
+    reservado: number;
     saldo_disponivel: number;
     itens_distintos: number;
     tamanhos_distintos: number;
@@ -144,10 +179,14 @@ export interface RotatividadeEstoqueDados {
     tamanho_mais_sai: DestaqueTamanho | null;
     tamanho_mais_entra: DestaqueTamanho | null;
     tamanho_maior_giro: DestaqueTamanho | null;
-    peca_mais_sai: { peca: string; unidades: number } | null;
+    item_tamanho_mais_sai: DestaqueItemTamanho | null;
+    item_tamanho_mais_entra: DestaqueItemTamanho | null;
+    item_tamanho_maior_giro: DestaqueItemTamanho | null;
+    peca_mais_sai: { codigo: string | null; peca: string; unidades: number } | null;
     tamanhos_zerados: number;
   };
   por_tamanho: TamanhoRotatividade[];
+  por_item_tamanho: ItemTamanhoRotatividade[];
   por_peca: PecaRotatividade[];
   por_contrato: ContratoRotatividade[];
   evolucao: MesRotatividade[];
@@ -160,6 +199,39 @@ export interface RotatividadeEstoqueDados {
     ultima_resposta: string | null;
   };
   alertas: AlertaRotatividade[];
+}
+
+/**
+ * Parte conferível por código + item + tamanho, carregada separadamente da
+ * visão executiva. Separar as duas RPCs dá a cada agregação seu próprio
+ * limite de execução; a RPC detalhada antiga fazia as duas leituras em série
+ * dentro do mesmo `statement_timeout` e expirava em períodos maiores.
+ */
+export interface RotatividadeEstoqueDetalhe {
+  resumo: Partial<RotatividadeEstoqueDados["resumo"]>;
+  por_item_tamanho: ItemTamanhoRotatividade[];
+  por_peca: PecaRotatividade[];
+}
+
+/** Reconstitui o contrato de dados que a aba já consumia antes da divisão. */
+export function combinarRotatividadeEstoque(
+  base: RotatividadeEstoqueDados,
+  detalhe: RotatividadeEstoqueDetalhe,
+): RotatividadeEstoqueDados {
+  // O valor pedido depende da regra de preço da RPC executiva. A consulta de
+  // detalhe cuida somente de identidade e quantidade, portanto preservamos o
+  // valor da mesma peça calculado pela fonte original.
+  const valorPorPeca = new Map(base.por_peca.map((linha) => [linha.peca, linha.valor_pedido]));
+
+  return {
+    ...base,
+    resumo: { ...base.resumo, ...detalhe.resumo },
+    por_item_tamanho: detalhe.por_item_tamanho,
+    por_peca: detalhe.por_peca.map((linha) => ({
+      ...linha,
+      valor_pedido: valorPorPeca.get(linha.peca) ?? linha.valor_pedido ?? 0,
+    })),
+  };
 }
 
 /** Tamanho com `ordem` abaixo de 1000 é escala de letra (PP…EXGG). */
