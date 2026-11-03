@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { criarLimitadorDeConcorrencia } from "@/lib/limitarConcorrencia";
+import { atribuirContaAosLancamentos } from "@/hooks/useContasBanco";
 
 // SIS-2026-0038 (achado do usuário, DESPESA SD-2026-0038 sumida do Fluxo de
 // Caixa): PostgREST limita todo select("*") sem .range() a 1000 linhas por
@@ -129,6 +130,9 @@ export interface FluxoCaixaMaloteLinha {
   // só pra tela avisar visualmente que aquele valor foi editado só aqui,
   // sem mudar o lançamento original.
   ajustado: boolean;
+  // SIS-2026-0777: conta do banco (ex.: Sicredi HAGG 119) atribuída ao lançamento em financeiro_fluxo_caixa_conta. Não vem das views:
+  // as telas carimbam com comContaBanco(). Ausente = sem conta definida.
+  conta_banco_id?: string | null;
   // SIS-2026-0569: só a view da importação histórica devolve — texto com o
   // que subiu sem vínculo (contrato/classificação não mapeados, possível
   // duplicidade). Calculado na view, então some sozinho quando a linha é
@@ -393,11 +397,17 @@ export function useAlteracaoEmMassaFluxo() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (i: {
-      tipo: "centro_custo" | "classificacao";
+      tipo: "centro_custo" | "classificacao" | "conta_banco";
       linhas: LinhaDaAlteracaoEmMassa[];
       destinoId: string;
       aoAndar?: (feitas: number, total: number) => void;
     }): Promise<ResultadoAlteracaoEmMassa> => {
+      // SIS-2026-0777: a conta do banco é só uma ligação (tabela à parte), então grava em lotes em vez de linha a linha.
+      if (i.tipo === "conta_banco") {
+        const r = await atribuirContaAosLancamentos(i.linhas, i.destinoId);
+        i.aoAndar?.(i.linhas.length, i.linhas.length);
+        return r;
+      }
       const resultado: ResultadoAlteracaoEmMassa = { feitas: [], erros: [] };
       for (const linha of i.linhas) {
         try {
@@ -414,7 +424,9 @@ export function useAlteracaoEmMassaFluxo() {
       }
       return resultado;
     },
-    onSettled: () => {
+    onSettled: (_r, _e, vars) => {
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_conta"] });
+      if (vars?.tipo === "conta_banco") return; // só a ligação com a conta mudou: não refaz os 16 MB do Fluxo
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_ajuste"] });

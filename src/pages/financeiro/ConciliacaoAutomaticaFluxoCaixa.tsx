@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,8 @@ import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useContasBanco, useContasDosLancamentos } from "@/hooks/useContasBanco";
+import { comContaBanco, contarSemConta, contasDaConciliacao, extratoPareceDaConta, filtrarPorConta, rotuloConta } from "@/lib/contaBanco";
 
 // SIS-2026-0492: conciliação automática — o lado "Fluxo" vem direto do
 // Fluxo de Caixa interno (useFluxoCaixaCombinado), o lado banco continua
@@ -153,6 +155,9 @@ function ConciliarTab() {
   const [empresaIds, setEmpresaIds] = useState<string[]>([]);
   const [todasEmpresas, setTodasEmpresas] = useState(false);
   const [contaExtrato, setContaExtrato] = useState<string | null>(null);
+  // SIS-2026-0777: conta do banco (ex.: Sicredi HAGG 119) desta conciliação; vazio = banco + empresa(s), como antes. Os ACCTID do OFX conferem a escolha.
+  const [contaBancoId, setContaBancoId] = useState("");
+  const [acctIds, setAcctIds] = useState<string[]>([]);
   // O OFX só traz movimentos e o saldo final — o saldo ANTERIOR (abertura)
   // está só no extrato impresso/PDF. Campo opcional pra digitar e conferir.
   // SIS-2026-0713: saldo anterior de JANEIRO informado à mão (fechamento de dezembro), por empresa + banco + ano de início do histórico.
@@ -185,9 +190,11 @@ function ConciliarTab() {
   const salvarPagadora = useSalvarEmpresaPagadora();
   const [dialogPagadora, setDialogPagadora] = useState<LancamentoRow | null>(null);
   // Despesa rateada entre empresas pertence, na conciliação, à empresa que a pagou (quando marcada em "Quem pagou?"): o extrato dela traz o total.
+  const { data: contasBanco = [] } = useContasBanco();
+  const { data: contasDosLancamentos } = useContasDosLancamentos();
   const linhasBrutas = useMemo(
-    () => aplicarEmpresaPagadora(linhasFluxo, mapaEmpresaPagadora(pagadoras), new Map(empresas.map((e) => [e.id, e.nome]))),
-    [linhasFluxo, pagadoras, empresas]
+    () => comContaBanco(aplicarEmpresaPagadora(linhasFluxo, mapaEmpresaPagadora(pagadoras), new Map(empresas.map((e) => [e.id, e.nome]))), contasDosLancamentos ?? new Map()),
+    [linhasFluxo, pagadoras, empresas, contasDosLancamentos]
   );
   const ajustar = useAjustarLinhaFluxoCaixa();
   const criarDebito = useCriarDebito();
@@ -210,7 +217,9 @@ function ConciliarTab() {
   // mesmo valor/data podia "casar" por coincidência e mascarar divergência real.
   // Também só das empresas escolhidas: o banco é compartilhado pelo grupo, mas
   // o extrato é de uma conta. "Todas" não filtra (inclui lançamento sem empresa).
-  const linhasDoBancoTodasEmpresas = useMemo(() => linhasPeriodo.filter((l) => l.banco_id === bancoId), [linhasPeriodo, bancoId]);
+  const linhasDoBancoSemFiltroConta = useMemo(() => linhasPeriodo.filter((l) => l.banco_id === bancoId), [linhasPeriodo, bancoId]);
+  // SIS-2026-0777: com uma conta escolhida, o lado Fluxo é só o que está ligado a ela (o rateio pago por uma conta só segue a mesma conta).
+  const linhasDoBancoTodasEmpresas = useMemo(() => filtrarPorConta(linhasDoBancoSemFiltroConta, contaBancoId), [linhasDoBancoSemFiltroConta, contaBancoId]);
   const linhasDoBancoEmpresa = useMemo(
     () => linhasDoBancoTodasEmpresas.filter((l) => todasEmpresas || (!!l.empresa_id && empresaIds.includes(l.empresa_id))),
     [linhasDoBancoTodasEmpresas, todasEmpresas, empresaIds]
@@ -234,11 +243,21 @@ function ConciliarTab() {
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
   }, [saldoFinalTxt]);
   const empresasEscolhidas = todasEmpresas || empresaIds.length > 0;
+  const contasDoEscopo = useMemo(() => contasDaConciliacao(contasBanco, bancoId, todasEmpresas, empresaIds), [contasBanco, bancoId, todasEmpresas, empresaIds]);
+  const contaEscolhida = contasBanco.find((c) => c.id === contaBancoId) ?? null;
+  // do banco e das empresas escolhidas, sem conta atribuída: ficam fora da conciliação de uma conta específica
+  const semContaNoEscopo = useMemo(
+    () => contarSemConta(linhasDoBancoSemFiltroConta.filter((l) => !ehSaldoAnterior(l) && (todasEmpresas || (!!l.empresa_id && empresaIds.includes(l.empresa_id))))),
+    [linhasDoBancoSemFiltroConta, todasEmpresas, empresaIds]
+  );
+  const extratoDaConta = contaEscolhida ? extratoPareceDaConta(acctIds, contaEscolhida.numero) : null;
+  // trocar de banco ou de empresa descarta a conta escolhida (ela pertence a um banco + empresa)
+  useEffect(() => setContaBancoId(""), [bancoId, todasEmpresas, empresaIds.join(",")]);
 
   const { data: saldosIniciais = [] } = useSaldosIniciaisConciliacao();
   const salvarBase = useSalvarSaldoInicialConciliacao();
   const baseUmaEmpresa = !todasEmpresas && empresaIds.length === 1 && !!bancoId;
-  const basesDoGrupo = baseUmaEmpresa ? saldosIniciais.filter((i) => i.empresa_id === empresaIds[0] && i.banco_id === bancoId) : [];
+  const basesDoGrupo = baseUmaEmpresa ? saldosIniciais.filter((i) => i.empresa_id === empresaIds[0] && i.banco_id === bancoId && i.conta === contaBancoId) : [];
   // O ano é o de início do histórico: se já existe base, é o dela (não se pede de novo todo janeiro); senão, o do período escolhido.
   const baseAno = basesDoGrupo.length ? Math.min(...basesDoGrupo.map((i) => i.ano)) : Number((dataDe || new Date().toISOString()).slice(0, 4));
   const baseSalva = basesDoGrupo.some((i) => i.ano === baseAno) ? basesDoGrupo.filter((i) => i.ano === baseAno).reduce((t, i) => t + i.valor, 0) : null;
@@ -255,7 +274,7 @@ function ConciliarTab() {
       return;
     }
     try {
-      await salvarBase.mutateAsync({ empresaId: empresaIds[0], bancoId, conta: "", ano: baseAno, valor: valor === null ? null : Math.round(valor * 100) / 100 });
+      await salvarBase.mutateAsync({ empresaId: empresaIds[0], bancoId, conta: contaBancoId, ano: baseAno, valor: valor === null ? null : Math.round(valor * 100) / 100 });
       setBaseTxt(null);
       toast.success(valor === null ? "Saldo anterior removido." : "Saldo anterior de janeiro salvo.");
     } catch (e: any) {
@@ -305,6 +324,7 @@ function ConciliarTab() {
     try {
       const trns: OFXTransaction[] = [];
       const contas = new Set<string>();
+      const acctLista: string[] = [];
       let saldoFinalOfx: { valor: number; data: string | null } | null = null;
       let fimDosArquivos: string | null = null;
       for (const f of ofxFiles) {
@@ -319,7 +339,11 @@ function ConciliarTab() {
         // conferir se a empresa escolhida é a dona desse arquivo.
         const bank = /<BANKID>\s*([^\s<]+)/i.exec(text)?.[1];
         const acct = /<ACCTID>\s*([^\s<]+)/i.exec(text)?.[1];
-        if (acct) contas.add(bank ? `${bank} / ${acct}` : acct);
+        if (acct) { contas.add(bank ? `${bank} / ${acct}` : acct); acctLista.push(acct); }
+      }
+      setAcctIds(acctLista);
+      if (contaEscolhida && extratoPareceDaConta(acctLista, contaEscolhida.numero) === false) {
+        toast.warning(`O extrato (conta ${acctLista.join(", ")}) não parece ser da conta ${contaEscolhida.numero} escolhida. Confira o arquivo.`);
       }
       setContaExtrato(contas.size ? Array.from(contas).join(" · ") : null);
       // O saldo é o do ÚLTIMO DIA do período: se o arquivo passa dele, desconta o que se movimentou depois.
@@ -352,6 +376,7 @@ function ConciliarTab() {
     setResolvidos({});
     setObservacoes("");
     setContaExtrato(null);
+    setAcctIds([]);
     setSaldoFinalTxt("");
     setSaldoFinalData(null);
     setEditandoSaldoFinal(false);
@@ -491,7 +516,7 @@ function ConciliarTab() {
       const arquivosOfx = ofxFiles;
       const id = await salvar.mutateAsync({
         dataInicio: dataDe, dataFim: dataAte, observacoes: observacoes || null,
-        bancoId, todasEmpresas, empresaIds, contaExtrato, arquivosOfx, linhas,
+        bancoId, todasEmpresas, empresaIds, contaExtrato, contaBancoId: contaBancoId || null, arquivosOfx, linhas,
         saldoAnteriorFluxo: null,
         saldoAnteriorExtrato: null,
         saldoFinalExtrato,
@@ -554,6 +579,23 @@ function ConciliarTab() {
               </SelectContent>
             </Select>
           </div>
+          {(
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs">Conta do banco</Label>
+                <Link className="text-[11px] text-sky-700 underline" to="/app/financeiro/gestao-financeira/cartao-credito" title="Cartão de Crédito → Gerenciar Bancos e Bandeiras → Contas">Cadastrar contas</Link>
+              </div>
+              <Select value={contaBancoId || "_"} onValueChange={(v) => setContaBancoId(v === "_" ? "" : v)} disabled={contasDoEscopo.length === 0}>
+                <SelectTrigger className="h-9 w-56"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_">{!bancoId || !empresasEscolhidas ? "Escolha banco e empresa" : contasDoEscopo.length === 0 ? "Sem contas cadastradas" : "Todas (banco + empresa)"}</SelectItem>
+                  {contasDoEscopo.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{todasEmpresas || empresaIds.length !== 1 ? `${empresas.find((e) => e.id === c.empresa_id)?.nome ?? "—"} · ` : ""}{rotuloConta(c)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="min-w-[16rem] flex-1">
             <div className="flex items-center justify-between gap-3">
               <Label className="text-xs">Empresa(s) desta conciliação *</Label>
@@ -601,9 +643,30 @@ function ConciliarTab() {
           )}
           <div className="w-full text-xs text-muted-foreground">
             {bancoId && empresasEscolhidas
-              ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco${todasEmpresas ? "" : " e das empresas escolhidas"}.`
+              ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco${contaEscolhida ? `, da conta ${contaEscolhida.numero}` : ""}${todasEmpresas ? "" : " e das empresas escolhidas"}.`
               : `${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período. Escolha o banco e a(s) empresa(s) para conciliar.`}
           </div>
+          {bancoId && empresasEscolhidas && contasDoEscopo.length > 0 && !contaBancoId && (
+            <p className="w-full rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              Este banco tem {contasDoEscopo.length} conta(s) cadastrada(s) para as empresas escolhidas. Sem escolher a conta, a conciliação compara o extrato com o Fluxo de todas elas juntas.
+            </p>
+          )}
+          {contaEscolhida && semContaNoEscopo > 0 && (
+            <p className="w-full rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              {semContaNoEscopo} lançamento(s) do Fluxo deste banco, no período, ainda não têm conta definida e ficam fora desta conciliação (o que for dessa conta aparece como "consta no extrato, sem Fluxo").{" "}
+              <Link
+                className="font-medium underline"
+                to={`/app/financeiro/gestao-financeira/fluxo-caixa?banco=${bancoId}&conta=__sem${!todasEmpresas && empresaIds.length === 1 ? `&empresa=${empresaIds[0]}` : ""}`}
+              >
+                Abrir no Fluxo para definir a conta
+              </Link>
+            </p>
+          )}
+          {contaEscolhida && extratoDaConta === false && (
+            <p className="w-full rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800">
+              O extrato enviado (conta {acctIds.join(", ")}) não parece ser da conta {contaEscolhida.numero}. Confira se subiu o arquivo certo antes de salvar.
+            </p>
+          )}
         </CardContent>
       </Card>
 

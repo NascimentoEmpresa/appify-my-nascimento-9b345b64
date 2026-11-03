@@ -1,3 +1,4 @@
+import { ContasBancoAba } from "@/pages/financeiro/conciliacao/ContasBancoAba";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1016,15 +1017,20 @@ export default function CartaoCredito() {
       </Dialog>
 
       <Dialog open={openCatalogo} onOpenChange={setOpenCatalogo}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Gerenciar Bancos e Bandeiras</DialogTitle>
           </DialogHeader>
           <Tabs defaultValue="bancos">
-            <TabsList className="grid grid-cols-2 w-full">
+            <TabsList className="grid grid-cols-3 w-full">
               <TabsTrigger value="bancos">Bancos</TabsTrigger>
+              <TabsTrigger value="contas">Contas</TabsTrigger>
               <TabsTrigger value="bandeiras">Bandeiras</TabsTrigger>
             </TabsList>
+            {/* SIS-2026-0777: contas de cada banco (um banco pode ter N contas por empresa), usadas no Fluxo de Caixa e na Conciliação. */}
+            <TabsContent value="contas" className="mt-3">
+              <ContasBancoAba podeAlterar={can("alterar", "financeiro", "financeiro-cartao-credito")} />
+            </TabsContent>
             <TabsContent value="bancos" className="mt-3">
               <AbaCatalogo
                 itens={bancos}
