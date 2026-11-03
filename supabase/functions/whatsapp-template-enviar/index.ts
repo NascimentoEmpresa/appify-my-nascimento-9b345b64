@@ -27,6 +27,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { descobrirWaba } from "../_shared/whatsapp-waba.ts";
+import { barradoPorMarketing, statusNaMeta as statusNaMetaComum } from "../_shared/whatsapp-saudacao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -59,22 +60,11 @@ async function wabaId(): Promise<string | null> {
   return (await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID)).id;
 }
 
-/** Status de cada template da conta, por nome. */
+/** Status de cada template da conta, por nome (mora em _shared/whatsapp-saudacao.ts desde 03/11/2026). */
 // categoria (14/10/2026): a que a META deu, não a que pedimos. A Meta
 // reclassifica UTILITY → MARKETING sozinha, e marketing toma 131049/130472
 // (limite por pessoa) — a saudação "não chegava pra ninguém" por isso.
-async function statusNaMeta(waba: string): Promise<Record<string, { status: string; motivo?: string; categoria?: string }>> {
-  const out: Record<string, { status: string; motivo?: string; categoria?: string }> = {};
-  let url = `${GRAPH}/${waba}/message_templates?limit=200&fields=name,status,category,rejected_reason`;
-  for (let pagina = 0; pagina < 10 && url; pagina++) {
-    const r = await fetch(url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) break;
-    for (const t of d?.data ?? []) out[t.name] = { status: t.status, motivo: t.rejected_reason, categoria: t.category };
-    url = d?.paging?.next ?? "";
-  }
-  return out;
-}
+const statusNaMeta = (waba: string) => statusNaMetaComum(WA_TOKEN, waba);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -161,7 +151,10 @@ Deno.serve(async (req) => {
           text: texto,
           // A Meta exige uma amostra de cada {{n}} para revisar, e recusa a
           // criação sem isso. O rótulo da variável serve de exemplo.
-          ...(variaveis.length ? { example: { body_text: [variaveis] } } : {}),
+          // Nome e vaga ganham amostra de verdade (03/11/2026): "Olá, Primeiro
+          // nome!" na revisão não parece aviso de candidatura nenhum.
+          ...(variaveis.length ? { example: { body_text: [variaveis.map((v) =>
+            /nome/i.test(v) ? "Maria" : /vaga|cargo/i.test(v) ? "Auxiliar de Limpeza" : v)] } } : {}),
         },
         // Botões de resposta rápida (até 3, 25 caracteres): o clique volta
         // como mensagem do contato e abre a janela de 24h.
@@ -210,6 +203,23 @@ Deno.serve(async (req) => {
     .select("id", { count: "exact", head: true })
     .eq("conversa_id", conversa.id).eq("direcao", "entrada").gt("criada_em", limite);
   const dentroJanela = (count ?? 0) > 0;
+
+  // Limite de marketing (03/11/2026): quem levou 131049/130472 nas últimas
+  // 24h não recebe outro template MARKETING — a Meta barraria de novo, e cada
+  // tentativa empurra o limite para frente. Só consulta a Meta nesse caso.
+  if (!dentroJanela && tpl.template_nome && await barradoPorMarketing(db, conversa.id)) {
+    const waba = await wabaId();
+    const naMeta = waba ? await statusNaMeta(waba) : {};
+    const principal = naMeta[tpl.template_nome];
+    // Não aprovado, o envio cai no anterior: é a categoria DELE que conta.
+    const vaiSair = principal?.status === "APPROVED" || !tpl.template_nome_anterior ? principal : naMeta[tpl.template_nome_anterior];
+    if (vaiSair?.categoria === "MARKETING") {
+      return json({
+        error: `A Meta barrou mensagens de marketing para este contato hoje, e "${tpl.titulo}" é classificada como marketing — reenviar não adianta. Ligue para a pessoa e peça que mande um "oi" no WhatsApp: aí a conversa abre e tudo sai.`,
+        limite_marketing: true,
+      }, 409);
+    }
+  }
 
   if (!dentroJanela && !tpl.template_nome) {
     return json({
