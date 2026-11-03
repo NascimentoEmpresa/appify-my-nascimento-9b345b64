@@ -101,28 +101,32 @@ export default function WhatsAppInbox() {
     enabled: podeVer,
     refetchInterval: 8000,
     queryFn: async () => {
-      const { data: convs } = await (supabase as any).from("WA_CONVERSA")
-        .select("*").order("ultima_mensagem_em", { ascending: false, nullsFirst: false });
-      const lista = (convs ?? []) as WaConversa[];
-      const ids = [...new Set(lista.map((c) => c.contato_id))];
-      const mapa: Record<string, WaContato> = {};
-      // Em lotes: o .in() vira query string, e com todas as conversas de uma
-      // vez a URL passou do limite (set/2026) — a consulta falhava calada e a
-      // lista inteira ficava "—", sem nome nem número.
-      // 19/10/2026: aconteceu DE NOVO depois da virada para o cluster
-      // (api.grpnascimento.com.br) — o gateway de lá devolve 502 com 100 uuids
-      // (~3,8 KB de URL; 90 ainda passa). O "folgado para qualquer proxy" de
-      // antes não era. Lote de 40 fica em ~1,5 KB, longe do limite.
-      const LOTE = 40;
-      const lotes = await Promise.all(
-        Array.from({ length: Math.ceil(ids.length / LOTE) }, (_, i) =>
-          (supabase as any).from("WA_CONTATO").select("*").in("id", ids.slice(i * LOTE, (i + 1) * LOTE))),
-      );
-      for (const { data: cts, error } of lotes) {
-        if (error) console.error("[wa-conversas] contatos:", error.message);
-        for (const c of cts ?? []) mapa[c.id] = c as WaContato;
-      }
-      return lista.map((c) => ({ ...c, contato: mapa[c.contato_id] ?? null }));
+      // O contato vem EMBUTIDO, pela FK WA_CONVERSA_contato_id_fkey. Uma
+      // requisição, não 31.
+      //
+      // Como era até 03/11/2026, e por que mudou: buscávamos as conversas e
+      // depois os contatos num .in(), que vira query string. Com todas as
+      // conversas de uma vez a URL passava do limite (set/2026) — a consulta
+      // falhava calada e a lista inteira ficava "—", sem nome nem número.
+      // 19/10/2026 aconteceu DE NOVO depois da virada para o cluster
+      // (api.grpnascimento.com.br): o gateway de lá devolve 502 com 100 uuids
+      // (~3,8 KB de URL; 90 ainda passa). A saída foi lotes de 40 (~1,5 KB).
+      //
+      // Só que lote de 40 com 1.179 contatos = 30 requisições em paralelo, a
+      // cada 8 s, POR ABA ABERTA: 232 requisições por minuto de UMA aba. Em
+      // 03/11/2026 isso derrubou a produção por ~45 min (banco1 tem 2
+      // núcleos; a CPU de usuário foi de 19,88% para 72,68% e tudo passou a
+      // estourar statement_timeout). O embed mata o problema na raiz: não há
+      // mais lista de uuid nenhuma na URL, então o limite do gateway deixa de
+      // existir junto com os lotes.
+      const { data: convs, error } = await (supabase as any).from("WA_CONVERSA")
+        .select("*, WA_CONTATO(*)")
+        .order("ultima_mensagem_em", { ascending: false, nullsFirst: false });
+      if (error) console.error("[wa-conversas]:", error.message);
+      return ((convs ?? []) as any[]).map(({ WA_CONTATO: ct, ...c }) => ({
+        ...(c as WaConversa),
+        contato: (ct ?? null) as WaContato | null,
+      }));
     },
   });
 

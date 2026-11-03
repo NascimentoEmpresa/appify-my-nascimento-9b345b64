@@ -17,6 +17,8 @@ import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, t
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
+import { useContasBanco, useContasDosLancamentos } from "@/hooks/useContasBanco";
+import { comContaBanco, rotuloConta } from "@/lib/contaBanco";
 import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import {
@@ -104,7 +106,12 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const bancoNome = (id: string | null) => (id ? bancos.find((b) => b.id === id)?.nome ?? "—" : "—");
 
   const atuais = useMemo(() => registrosAtuais(salvas), [salvas]);
-  const todosSaldos = useMemo(() => saldosMensais(linhasFluxo, iniciais, salvas), [linhasFluxo, iniciais, salvas]);
+  // SIS-2026-0777: contas do mesmo banco (ex.: Sicredi HAGG 119 e 155) são conferidas cada uma no seu cartão
+  const { data: contasBanco = [] } = useContasBanco();
+  const { data: contasDosLancamentos } = useContasDosLancamentos();
+  const linhasComConta = useMemo(() => comContaBanco(linhasFluxo, contasDosLancamentos ?? new Map()), [linhasFluxo, contasDosLancamentos]);
+  const rotulosDeConta = useMemo(() => new Map(contasBanco.map((c) => [c.id, rotuloConta(c)] as [string, string])), [contasBanco]);
+  const todosSaldos = useMemo(() => saldosMensais(linhasComConta, iniciais, salvas, undefined, rotulosDeConta), [linhasComConta, iniciais, salvas, rotulosDeConta]);
 
   // Banco e conta só das opções que existem para a empresa escolhida.
   const bancosDaEmpresa = useMemo(() => {
@@ -148,7 +155,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
     const m = new Map<string, SaldoMensal[]>();
     for (const s of todosSaldos) {
       if (!saldosFiltrados.includes(s)) continue;
-      const k = `${s.empresaId}|${s.bancoId}`;
+      const k = `${s.empresaId}|${s.bancoId}|${s.contaBancoId ?? ""}`;
       m.set(k, [...(m.get(k) ?? []), s]);
     }
     return [...m.entries()].sort((a, b) => empresaNome(a[0].split("|")[0]).localeCompare(empresaNome(b[0].split("|")[0])) || bancoNome(a[0].split("|")[1]).localeCompare(bancoNome(b[0].split("|")[1])));
@@ -228,8 +235,8 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
 
   // SIS-2026-0736: soma de entradas e saídas do período de movimentação (empresa e banco dos filtros), igual ao "(filtro atual)" do Fluxo — Realizado.
   const totaisMov = useMemo(
-    () => totaisDeMovimentacao(linhasFluxo, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido }, hojeISO()),
-    [linhasFluxo, dataDe, dataAte, empresaId, bancoValido],
+    () => totaisDeMovimentacao(linhasComConta, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido }, hojeISO()),
+    [linhasComConta, dataDe, dataAte, empresaId, bancoValido],
   );
 
   // O que o EXTRATO diz no mesmo período e filtros (conciliações salvas) e o Fluxo só dos bancos conciliados, para comparar um com o outro.
@@ -239,9 +246,9 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
     [atuais, empresaId, bancoValido, mesDe, mesAte],
   );
   const fluxoConciliado = useMemo(
-    () => totaisFluxoDosBancosConciliados(linhasFluxo, atuais, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido, mesDe, mesAte }, hojeISO()),
+    () => totaisFluxoDosBancosConciliados(linhasComConta, atuais, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido, mesDe, mesAte }, hojeISO()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [linhasFluxo, atuais, dataDe, dataAte, empresaId, bancoValido, mesDe, mesAte],
+    [linhasComConta, atuais, dataDe, dataAte, empresaId, bancoValido, mesDe, mesAte],
   );
 
   // SIS-2026-0724: totais dos saldos finais (sistema × extrato) do que está filtrado.
@@ -250,7 +257,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   // Meses em que o saldo do sistema não bate com o do extrato (aparece como aviso na sub-aba).
   const divergentes = saldosFiltrados.filter((s) => s.confere === "nao").length;
 
-  async function salvarBase(eId: string, bId: string, ano: number, chave: string) {
+  async function salvarBase(eId: string, bId: string, cId: string, ano: number, chave: string) {
     const txt = rascunhoBase[chave];
     if (txt === undefined) return;
     const valor = parseValor(txt);
@@ -259,7 +266,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
       return;
     }
     try {
-      await salvarInicial.mutateAsync({ empresaId: eId, bancoId: bId, conta: "", ano, valor });
+      await salvarInicial.mutateAsync({ empresaId: eId, bancoId: bId, conta: cId, ano, valor });
       setRascunhoBase((r) => {
         const { [chave]: _, ...resto } = r;
         return resto;
@@ -684,8 +691,8 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
         )}
         {grupos.length === 0 && <p className="text-sm text-muted-foreground">Nenhum saldo para os filtros escolhidos.</p>}
         {grupos.map(([chave, meses]) => {
-          const [eId, bId] = chave.split("|");
-          const doGrupo = iniciais.filter((i) => i.empresa_id === eId && i.banco_id === bId);
+          const [eId, bId, cId = ""] = chave.split("|");
+          const doGrupo = iniciais.filter((i) => i.empresa_id === eId && i.banco_id === bId && (cId ? i.conta === cId : !rotulosDeConta.has(i.conta)));
           const ano = doGrupo.length ? Math.min(...doGrupo.map((i) => i.ano)) : Number(meses[0].mes.slice(0, 4));
           const salvo = doGrupo.filter((i) => i.ano === ano).reduce((t, i) => t + i.valor, 0);
           const campo = rascunhoBase[chave] ?? (doGrupo.length ? String(salvo).replace(".", ",") : "");
@@ -705,7 +712,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                         value={campo}
                         onChange={(e) => setRascunhoBase((r) => ({ ...r, [chave]: e.target.value }))}
                       />
-                      <Button size="sm" variant="outline" className="h-8" disabled={rascunhoBase[chave] === undefined || salvarInicial.isPending} onClick={() => void salvarBase(eId, bId, ano, chave)}>
+                      <Button size="sm" variant="outline" className="h-8" disabled={rascunhoBase[chave] === undefined || salvarInicial.isPending} onClick={() => void salvarBase(eId, bId, cId, ano, chave)}>
                         Salvar
                       </Button>
                     </span>

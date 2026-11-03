@@ -24,6 +24,8 @@ export interface LinhaFluxoSaldo {
   valor: number | string;
   descricao: string | null;
   classificacao_nome: string | null;
+  /** SIS-2026-0777: conta do banco atribuída ao lançamento (ex.: Sicredi HAGG 119). Ausente = sem conta definida. */
+  conta_banco_id?: string | null;
 }
 
 export interface SaldoInicialConta {
@@ -42,15 +44,19 @@ export interface ConciliacaoParaSaldo {
   todas_empresas: boolean;
   empresa_ids: string[];
   conta_extrato: string | null;
+  /** SIS-2026-0777: conciliação feita por conta do banco; ausente/nulo = por banco + empresa, como antes. */
+  conta_banco_id?: string | null;
   saldo_final_extrato?: number | null;
   saldo_final_extrato_data?: string | null;
   created_at: string;
 }
 
 export interface SaldoMensal {
-  chave: string; // empresa|banco|mês
+  chave: string; // empresa|banco[|conta]|mês
   empresaId: string;
   bancoId: string;
+  /** SIS-2026-0777: conta do banco do grupo; vazio = lançamentos/conciliações sem conta definida (o comportamento de antes). */
+  contaBancoId?: string;
   conta: string;
   mes: string; // YYYY-MM
   entradas: number;
@@ -75,8 +81,8 @@ function proximoMes(mes: string): string {
   return m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, "0")}`;
 }
 
-export const chaveRegistro = (c: Pick<ConciliacaoParaSaldo, "banco_id" | "todas_empresas" | "empresa_ids" | "conta_extrato" | "data_inicio" | "data_fim">) =>
-  [c.banco_id ?? "", c.todas_empresas ? "todas" : [...c.empresa_ids].sort().join(","), c.conta_extrato ?? "", c.data_inicio, c.data_fim].join("|");
+export const chaveRegistro = (c: Pick<ConciliacaoParaSaldo, "banco_id" | "todas_empresas" | "empresa_ids" | "conta_extrato" | "data_inicio" | "data_fim"> & { conta_banco_id?: string | null }) =>
+  [c.banco_id ?? "", c.todas_empresas ? "todas" : [...c.empresa_ids].sort().join(","), c.conta_extrato ?? "", c.conta_banco_id ?? "", c.data_inicio, c.data_fim].join("|");
 
 // Salvar de novo o mesmo registro (mesma empresa, banco, conta e período) não duplica indicadores: vale o salvamento mais recente.
 export function registrosAtuais<T extends ConciliacaoParaSaldo>(salvas: T[]): T[] {
@@ -95,16 +101,21 @@ export function statusConfere(saldoSistema: number | null, saldoExtrato: number 
 }
 
 // A conciliação é de UMA empresa para o saldo ser atribuído a ela ("todas" ou várias misturariam contas).
-function conciliacaoDoMes(concs: ConciliacaoParaSaldo[], empresaId: string, bancoId: string, mes: string): ConciliacaoParaSaldo | null {
+function conciliacaoDoMes(concs: ConciliacaoParaSaldo[], empresaId: string, bancoId: string, mes: string, contaId = ""): ConciliacaoParaSaldo | null {
   const fim = ultimoDiaDoMes(mes);
   let melhor: ConciliacaoParaSaldo | null = null;
   for (const c of concs) {
     if (c.banco_id !== bancoId || c.data_fim !== fim) continue;
+    if ((c.conta_banco_id ?? "") !== contaId) continue;
     if (c.todas_empresas || c.empresa_ids.length !== 1 || c.empresa_ids[0] !== empresaId) continue;
     if (!melhor || c.created_at > melhor.created_at) melhor = c;
   }
   return melhor;
 }
+
+// SIS-2026-0777: o saldo inicial guarda no campo `conta` (texto) o id da conta do banco; valor antigo/livre conta como "sem conta".
+const contaDoSaldoInicial = (conta: string) => (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conta) ? conta : "");
+const chaveGrupo = (empresaId: string, bancoId: string, contaId: string) => (contaId ? `${empresaId}|${bancoId}|${contaId}` : `${empresaId}|${bancoId}`);
 
 export function saldosMensais(
   linhas: LinhaFluxoSaldo[],
@@ -112,14 +123,16 @@ export function saldosMensais(
   conciliacoes: ConciliacaoParaSaldo[],
   /** último mês (YYYY-MM) a mostrar; padrão = o mês mais recente com lançamento ou conciliação do grupo */
   ateMes?: string,
+  /** SIS-2026-0777: id da conta do banco → rótulo para mostrar ("119 — HAGG 119") */
+  rotulosDeConta: Map<string, string> = new Map(),
 ): SaldoMensal[] {
   const atuais = registrosAtuais(conciliacoes);
-  // movimento do mês por grupo (empresa|banco)
+  // movimento do mês por grupo (empresa|banco[|conta]): cada conta do banco é conferida à parte
   const mov = new Map<string, Map<string, { e: number; s: number }>>();
   for (const l of linhas) {
     if (!l.empresa_id || !l.banco_id || !l.data_pagamento) continue;
     if (ehSaldoAnterior(l) || ignoraNaConciliacao({ ...l, banco_nome: l.banco_nome ?? null })) continue;
-    const g = `${l.empresa_id}|${l.banco_id}`;
+    const g = chaveGrupo(l.empresa_id, l.banco_id, l.conta_banco_id ?? "");
     const meses = mov.get(g) ?? new Map();
     mov.set(g, meses);
     const mes = l.data_pagamento.slice(0, 7);
@@ -130,26 +143,28 @@ export function saldosMensais(
   }
 
   const grupos = new Set<string>(mov.keys());
-  for (const i of iniciais) grupos.add(`${i.empresa_id}|${i.banco_id}`);
-  for (const c of atuais) if (c.banco_id && !c.todas_empresas && c.empresa_ids.length === 1) grupos.add(`${c.empresa_ids[0]}|${c.banco_id}`);
+  for (const i of iniciais) grupos.add(chaveGrupo(i.empresa_id, i.banco_id, contaDoSaldoInicial(i.conta)));
+  for (const c of atuais) if (c.banco_id && !c.todas_empresas && c.empresa_ids.length === 1) grupos.add(chaveGrupo(c.empresa_ids[0], c.banco_id, c.conta_banco_id ?? ""));
 
   const saida: SaldoMensal[] = [];
   for (const g of grupos) {
-    const [empresaId, bancoId] = g.split("|");
+    const [empresaId, bancoId, contaBancoId = ""] = g.split("|");
     const meses = mov.get(g) ?? new Map<string, { e: number; s: number }>();
-    const iniGrupo = iniciais.filter((i) => i.empresa_id === empresaId && i.banco_id === bancoId);
+    const iniGrupo = iniciais.filter((i) => i.empresa_id === empresaId && i.banco_id === bancoId && contaDoSaldoInicial(i.conta) === contaBancoId);
     const anoBase = iniGrupo.length ? Math.min(...iniGrupo.map((i) => i.ano)) : null;
     const base = anoBase == null ? null : r2(iniGrupo.filter((i) => i.ano === anoBase).reduce((t, i) => t + Number(i.valor), 0));
-    const contas = [
-      ...new Set([
-        ...iniGrupo.map((i) => i.conta),
-        ...atuais.filter((c) => c.banco_id === bancoId && !c.todas_empresas && c.empresa_ids.length === 1 && c.empresa_ids[0] === empresaId).map((c) => c.conta_extrato ?? ""),
-      ].filter(Boolean)),
-    ].join(" · ");
+    const contas = contaBancoId
+      ? rotulosDeConta.get(contaBancoId) ?? "conta do banco"
+      : [
+          ...new Set([
+            ...iniGrupo.map((i) => i.conta),
+            ...atuais.filter((c) => c.banco_id === bancoId && !c.todas_empresas && c.empresa_ids.length === 1 && c.empresa_ids[0] === empresaId && !c.conta_banco_id).map((c) => c.conta_extrato ?? ""),
+          ].filter(Boolean)),
+        ].join(" · ");
 
     const conhecidos = [
       ...meses.keys(),
-      ...atuais.filter((c) => c.banco_id === bancoId && !c.todas_empresas && c.empresa_ids[0] === empresaId).map((c) => c.data_fim.slice(0, 7)),
+      ...atuais.filter((c) => c.banco_id === bancoId && !c.todas_empresas && c.empresa_ids[0] === empresaId && (c.conta_banco_id ?? "") === contaBancoId).map((c) => c.data_fim.slice(0, 7)),
     ].sort();
     if (conhecidos.length === 0 && anoBase == null) continue;
     const inicio = anoBase != null ? `${anoBase}-01` : conhecidos[0];
@@ -161,21 +176,22 @@ export function saldosMensais(
       const entradas = r2(m.e);
       const saidas = r2(m.s);
       if (acumulado != null) acumulado = r2(acumulado + entradas - saidas);
-      const conc = conciliacaoDoMes(atuais, empresaId, bancoId, mes);
+      const conc = conciliacaoDoMes(atuais, empresaId, bancoId, mes, contaBancoId);
       const saldoExtrato = conc?.saldo_final_extrato ?? null;
       // sem conciliação processada naquele mês, a conferência fica pendente mesmo que exista saldo do sistema
       // Saldo de data posterior ao fim do período não é o do último dia: não compara (fica pendente) até alguém informar o saldo certo.
       const deOutraData = conc?.saldo_final_extrato_data && saldoExtrato != null && conc.saldo_final_extrato_data > conc.data_fim ? conc.saldo_final_extrato_data : null;
       const { confere, diferenca } = conc ? statusConfere(acumulado, deOutraData ? null : saldoExtrato) : { confere: "pendente" as const, diferenca: null };
       saida.push({
-        chave: `${g}|${mes}`, empresaId, bancoId, conta: contas, mes, entradas, saidas,
+        chave: `${g}|${mes}`, empresaId, bancoId, contaBancoId, conta: contas, mes, entradas, saidas,
         saldoSistema: acumulado, saldoExtrato,
         saldoExtratoDeOutraData: deOutraData,
         diferenca, confere, conciliacaoId: conc?.id ?? null,
       });
     }
   }
-  return saida.sort((a, b) => (a.empresaId + a.bancoId === b.empresaId + b.bancoId ? (a.mes < b.mes ? -1 : 1) : a.empresaId + a.bancoId < b.empresaId + b.bancoId ? -1 : 1));
+  const grupoDe = (s: SaldoMensal) => s.empresaId + s.bancoId + (s.contaBancoId ?? "");
+  return saida.sort((a, b) => (grupoDe(a) === grupoDe(b) ? (a.mes < b.mes ? -1 : 1) : grupoDe(a) < grupoDe(b) ? -1 : 1));
 }
 
 // SIS-2026-0724: totais de Saldo final (sistema), Saldo final (extrato) e Diferença, para a leitura de cima da conferência mensal.
@@ -194,7 +210,7 @@ export interface TotaisSaldos {
 export function totaisDeSaldos(saldos: SaldoMensal[]): TotaisSaldos {
   const ultimo = new Map<string, SaldoMensal | null>();
   for (const s of saldos) {
-    const g = `${s.empresaId}|${s.bancoId}`;
+    const g = `${s.empresaId}|${s.bancoId}|${s.contaBancoId ?? ""}`;
     if (!ultimo.has(g)) ultimo.set(g, null);
     if (s.saldoSistema == null || s.saldoExtrato == null || s.saldoExtratoDeOutraData) continue;
     const atual = ultimo.get(g);
@@ -224,6 +240,8 @@ export interface LinhaParaTotais {
   tipo: "entrada" | "saida";
   valor: number | string;
   situacao_base?: "aberto" | "cancelado" | null;
+  /** SIS-2026-0777 */
+  conta_banco_id?: string | null;
 }
 
 export function totaisDeMovimentacao(
@@ -319,7 +337,8 @@ export function totaisFluxoDosBancosConciliados(
     if (f.bancoId && l.banco_id !== f.bancoId) continue;
     if (ehSaldoAnterior({ classificacao_nome: l.classificacao_nome ?? null }) || ignoraNaConciliacao({ tipo: l.tipo, descricao: l.descricao ?? "", classificacao_nome: l.classificacao_nome ?? null, banco_nome: l.banco_nome ?? null })) continue;
     const mes = data.slice(0, 7);
-    const coberta = !!l.banco_id && doFiltro.some((c) => c.banco_id === l.banco_id && c.data_fim.slice(0, 7) === mes && (c.todas_empresas || (!!l.empresa_id && c.empresa_ids.includes(l.empresa_id))));
+    // Conciliação feita por conta só cobre os lançamentos ligados àquela conta (SIS-2026-0777); a feita por banco + empresa cobre todos, como antes.
+    const coberta = !!l.banco_id && doFiltro.some((c) => c.banco_id === l.banco_id && c.data_fim.slice(0, 7) === mes && (!c.conta_banco_id || l.conta_banco_id === c.conta_banco_id) && (c.todas_empresas || (!!l.empresa_id && c.empresa_ids.includes(l.empresa_id))));
     if (!coberta) continue;
     const v = Number(l.valor) || 0;
     if (l.tipo === "entrada") entradas += v; else saidas += v;

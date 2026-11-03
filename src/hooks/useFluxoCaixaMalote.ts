@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { criarLimitadorDeConcorrencia } from "@/lib/limitarConcorrencia";
+import { atribuirContaAosLancamentos } from "@/hooks/useContasBanco";
 
 // SIS-2026-0038 (achado do usuário, DESPESA SD-2026-0038 sumida do Fluxo de
 // Caixa): PostgREST limita todo select("*") sem .range() a 1000 linhas por
@@ -129,6 +130,9 @@ export interface FluxoCaixaMaloteLinha {
   // só pra tela avisar visualmente que aquele valor foi editado só aqui,
   // sem mudar o lançamento original.
   ajustado: boolean;
+  // SIS-2026-0777: conta do banco (ex.: Sicredi HAGG 119) atribuída ao lançamento em financeiro_fluxo_caixa_conta. Não vem das views:
+  // as telas carimbam com comContaBanco(). Ausente = sem conta definida.
+  conta_banco_id?: string | null;
   // SIS-2026-0569: só a view da importação histórica devolve — texto com o
   // que subiu sem vínculo (contrato/classificação não mapeados, possível
   // duplicidade). Calculado na view, então some sozinho quando a linha é
@@ -198,8 +202,40 @@ export function useFluxoCaixaCombinado() {
     // da tela. Quem edita/exclui/troca contrato já invalida esta chave, então
     // o dado do próprio usuário nunca fica velho; mudança de outra pessoa
     // aparece em até 2 min ou ao recarregar.
+    //
+    // 03/11/2026 — MEDIDO: já não são 16 MB, são **17,9 MB**, e o grosso vem de
+    // UMA fonte: v_fluxo_caixa_importado_fluxo_caixa devolve 21.650 linhas × 24
+    // colunas em 2,7 a 6,4 s (as outras cinco somadas dão < 900 kB). Separando
+    // o custo: avaliar a view leva 420–550 ms; **o resto é serializar o JSON**.
+    // Não há truque de serializador — a RPC (json_agg em PL/pgSQL) e a view
+    // direto pelo PostgREST com `Range: 0-29999` dão o mesmo tempo e o mesmo
+    // tamanho; formato colunar cairia só para 11 MB.
+    //
+    // Por que isso importa além da lentidão: a tela produz a saturação que
+    // derruba o próprio monitor de saúde. `monitorDeQueda.ts` trata qualquer
+    // resposta ≥ 500 como queda e, com duas falhas seguidas, mostra
+    // SistemaIndisponivel — que desenha um "404" grande. É daí que vem o
+    // "a Fluxo de Caixa fica caindo no 404" relatado pelos usuários.
+    //
+    // `refetchOnWindowFocus: false` AQUI (contra o padrão global `true`, que é
+    // deliberado — ver o comentário do QueryClient em App.tsx): aquele padrão
+    // foi escrito para consultas de tamanho normal. Com 17,9 MB, voltar para a
+    // aba depois de 2 min rebaixava o payload inteiro. A garantia que o
+    // comentário de App.tsx dá continua valendo: as 586 chamadas de
+    // `invalidateQueries` do projeto seguem invalidando esta chave a cada
+    // escrita, então aprovar/pagar/trocar contrato atualiza na hora. O que
+    // deixa de acontecer é só a rebusca PASSIVA por foco de janela.
+    //
+    // Isto é PALIATIVO, não conserto. O conserto exige a tela parar de precisar
+    // das 21.650 linhas: filtro por competência no servidor **e** totais no
+    // servidor — hoje FluxoCaixaGestao.tsx soma e filtra tudo no navegador
+    // (filtrarPorAbaFluxo / filtrarPorSituacaoFluxo), então limitar linhas
+    // mudaria totais financeiros. Índice não resolve (a view já avalia em
+    // 0,5 s) e paginação já foi tentada e desfeita — era pior, chegava a 24
+    // consultas (ver o comentário no topo deste arquivo).
     staleTime: 120_000,
     gcTime: 1_800_000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
       // SIS-2026-0473: Aplicações Financeiras entra como DUAS views — aplicar
@@ -393,11 +429,17 @@ export function useAlteracaoEmMassaFluxo() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (i: {
-      tipo: "centro_custo" | "classificacao";
+      tipo: "centro_custo" | "classificacao" | "conta_banco";
       linhas: LinhaDaAlteracaoEmMassa[];
       destinoId: string;
       aoAndar?: (feitas: number, total: number) => void;
     }): Promise<ResultadoAlteracaoEmMassa> => {
+      // SIS-2026-0777: a conta do banco é só uma ligação (tabela à parte), então grava em lotes em vez de linha a linha.
+      if (i.tipo === "conta_banco") {
+        const r = await atribuirContaAosLancamentos(i.linhas, i.destinoId);
+        i.aoAndar?.(i.linhas.length, i.linhas.length);
+        return r;
+      }
       const resultado: ResultadoAlteracaoEmMassa = { feitas: [], erros: [] };
       for (const linha of i.linhas) {
         try {
@@ -414,7 +456,9 @@ export function useAlteracaoEmMassaFluxo() {
       }
       return resultado;
     },
-    onSettled: () => {
+    onSettled: (_r, _e, vars) => {
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_conta"] });
+      if (vars?.tipo === "conta_banco") return; // só a ligação com a conta mudou: não refaz os 16 MB do Fluxo
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_ajuste"] });
