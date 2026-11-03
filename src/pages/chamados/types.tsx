@@ -263,6 +263,13 @@ export const BUCKET_CHAMADOS = "chamados-sistemas";
 export const STATUS_ENCERRADOS = ["concluido", "reprovado", "cancelado"] as const;
 export const chamadoEncerrado = (status: string) => (STATUS_ENCERRADOS as readonly string[]).includes(status);
 
+/**
+ * Conversa com o grupo fechada: só reprovado e cancelado (03/11/2026). O
+ * concluído segue aberto — é quando o solicitante testa e volta com dúvida.
+ * Mesma lista de chamado_enviar_mensagem (mig 20261103001700).
+ */
+export const conversaChamadoFechada = (status: string) => status === "reprovado" || status === "cancelado";
+
 /** Chamado ativo = ainda está na fila (não foi concluído, reprovado nem cancelado). */
 export const chamadoAtivo = (status: string) => !chamadoEncerrado(status);
 
@@ -535,4 +542,42 @@ export function ehImagemAnexo(a: { mime_type?: string | null; nome_arquivo?: str
   const nome = a.nome_arquivo || a.storage_path || "";
   if (/\.svg$/i.test(nome) || (a.mime_type ?? "").includes("svg")) return false;
   return (a.mime_type ?? "").startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(nome);
+}
+
+/**
+ * Anexo que o navegador mostra numa aba (PDF e texto puro). O resto — Word,
+ * planilha, zip, HTML/SVG — vai direto como download com o nome original.
+ */
+export function abreNaAbaAnexo(a: { mime_type?: string | null; nome_arquivo?: string | null; storage_path?: string | null }): boolean {
+  const nome = a.nome_arquivo || a.storage_path || "";
+  const mime = a.mime_type ?? "";
+  return mime === "application/pdf" || mime === "text/plain" || /\.(pdf|txt)$/i.test(nome);
+}
+
+/** Nome do arquivo para salvar: o original, ou o do caminho sem o carimbo de tempo. */
+export function nomeSalvarAnexo(a: { nome_arquivo?: string | null; storage_path: string }): string {
+  return a.nome_arquivo || (a.storage_path.split("/").pop() ?? "anexo").replace(/^\d+-/, "");
+}
+
+/**
+ * Motivo legível de um download de anexo que falhou (03/11/2026). O clique no
+ * .docx da abertura do chamado da HELENA "não fazia nada": o link assinado
+ * sai mesmo sem o arquivo no nó que respondeu, e a aba aberta depois do
+ * `await` ainda podia ser barrada pelo bloqueador de pop-up — sem toast em
+ * nenhum dos dois casos. Agora o download é autenticado e o erro do Storage
+ * vira frase.
+ */
+export function motivoFalhaAnexo(erro: unknown): string {
+  const e = (erro ?? {}) as { message?: string; status?: number; statusCode?: string | number };
+  const msg = String(e.message ?? "");
+  const codigo = String(e.statusCode ?? "");
+  if (e.status === 404 || /^(404|not_found|NoSuchKey)$/i.test(codigo) || /not.?found|no such/i.test(msg)) {
+    return "Arquivo não encontrado no servidor. Ele pode ter ficado de fora da migração dos anexos — avise o T.I.";
+  }
+  if (e.status === 401 || e.status === 403 || /^(401|403)$/.test(codigo) || /row-level security|unauthorized|forbidden|jwt/i.test(msg)) {
+    return "Sem permissão para abrir este arquivo.";
+  }
+  if (/failed to fetch|network/i.test(msg)) return "Sem conexão com o servidor de arquivos. Tente de novo.";
+  if (!erro) return "O servidor não devolveu o arquivo.";
+  return msg || "Erro desconhecido ao baixar o arquivo.";
 }

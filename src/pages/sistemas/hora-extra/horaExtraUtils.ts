@@ -20,6 +20,31 @@ export function mensagemErro(erro: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Motivo legível de uma Edge Function que respondeu fora do 2xx (03/11/2026,
+ * Pablo viu só "Edge Function returned a non-2xx status code"). Três donos
+ * possíveis do corpo: a nossa função (`error`), o roteador do cluster
+ * (infra/failover/functions-main: `erro` — 404 sem a função na réplica, 401
+ * JWT, 500 worker que não subiu) e o proxy na frente, que devolve página em
+ * texto/HTML (502/504 quando o de trás demora). O status vai sempre junto.
+ */
+export function motivoErroFuncao(status: number | null | undefined, corpo: string): string {
+  const texto = String(corpo ?? "").trim();
+  let motivo = "";
+  try {
+    const j = JSON.parse(texto) as Record<string, unknown>;
+    const v = j?.error ?? j?.erro ?? j?.message ?? j?.msg;
+    motivo = typeof v === "string" ? v : v ? JSON.stringify(v) : "";
+  } catch {
+    // Página do proxy: tira as tags e fica com o começo.
+    motivo = texto.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+  if (!motivo && (status === 502 || status === 504)) motivo = "o servidor demorou demais para responder";
+  const http = status ? `HTTP ${status}` : "";
+  if (!motivo) return http ? `Falha na função (${http}).` : "Falha na função.";
+  return http ? `${motivo} (${http})` : motivo;
+}
+
 export function paraMinutos(horario?: string | null): number {
   if (!horario) return 0;
   const [horas, minutos] = horario.slice(0, 5).split(":").map(Number);

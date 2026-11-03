@@ -42,7 +42,29 @@ async function buscarPagina(tabela: string, ordenarPor: string[], pagina: number
   });
 }
 
+// Incidente 03/11/2026 (API em 503 PGRST002, banco1 com carga 19): paginar
+// com ORDER BY + OFFSET fazia o banco montar e ordenar a view INTEIRA a cada
+// página — 22 páginas só na importação, ~19 s de banco por abertura do Fluxo.
+// fluxo_caixa_ler_fonte (mig 20261103002000) devolve a view numa consulta só,
+// sem ORDER BY (uma consulta não repete nem pula linha; o hook já reordena por
+// data). Medido com a RLS de quem usa a tela: as 8 views em 1,6-2,5 s no total.
+// Se a função ainda não existe no banco, ou se estourar os 8 s do
+// statement_timeout num pico (57014), segue paginando como antes — página a
+// página cada consulta fica curta e a tela abre, só mais devagar.
+async function lerFonteDeUmaVez(tabela: string, executar: ExecutarLimitado): Promise<any[] | null> {
+  return executar(async () => {
+    const { data, error } = await (supabase as any).rpc("fluxo_caixa_ler_fonte", { p_fonte: tabela });
+    if (error) {
+      if (error.code === "PGRST202" || error.code === "42883" || error.code === "57014") return null;
+      throw error;
+    }
+    return (data ?? []) as any[];
+  });
+}
+
 async function buscarTodasLinhas(tabela: string, ordenarPor: string[] = ORDEM_FONTES, executar = criarLimitadorDeConcorrencia(1)): Promise<any[]> {
+  const deUmaVez = await lerFonteDeUmaVez(tabela, executar);
+  if (deUmaVez) return deUmaVez;
   const linhas: any[] = [];
   for (let pagina = 0; ; pagina += 1) {
     const dados = await buscarPagina(tabela, ordenarPor, pagina, executar);

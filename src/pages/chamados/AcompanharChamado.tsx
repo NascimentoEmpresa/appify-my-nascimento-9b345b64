@@ -21,7 +21,7 @@ import { avaliacaoLiberada, conclusaoAguardandoConfirmacao, podeConfirmarConclus
 import {
   StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado,
+  labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado, conversaChamadoFechada,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
@@ -260,7 +260,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             chamadoId={chamado.id}
             solicitanteId={chamado.solicitante_id}
             perfil="solicitante"
-            encerrado={encerrado}
+            encerrado={conversaChamadoFechada(chamado.status)}
             somenteLeitura={!ehSolicitante}
           />
         </div>
