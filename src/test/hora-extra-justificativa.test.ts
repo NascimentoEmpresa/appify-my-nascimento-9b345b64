@@ -6,6 +6,24 @@ import {
   montarPrompt,
   normalizarChamados,
 } from "../../supabase/functions/_shared/hora-extra-justificativa";
+import { motivoErroFuncao } from "@/pages/sistemas/hora-extra/horaExtraUtils";
+
+describe("hora extra › motivo do erro da Edge no toast", () => {
+  it("lê `error` da nossa função e `erro` do roteador do cluster, com o status", () => {
+    expect(motivoErroFuncao(403, '{"error":"Você não tem acesso para solicitar hora extra."}')).toBe(
+      "Você não tem acesso para solicitar hora extra. (HTTP 403)",
+    );
+    expect(motivoErroFuncao(404, `{"erro":"funcao 'x' nao existe nesta replica"}`)).toBe(
+      "funcao 'x' nao existe nesta replica (HTTP 404)",
+    );
+  });
+
+  it("página do proxy (não JSON) vira texto curto; 504 vazio diz que demorou", () => {
+    expect(motivoErroFuncao(502, "<html><h1>502 Bad Gateway</h1></html>")).toBe("502 Bad Gateway (HTTP 502)");
+    expect(motivoErroFuncao(504, "")).toBe("o servidor demorou demais para responder (HTTP 504)");
+    expect(motivoErroFuncao(500, "{}")).toBe("Falha na função (HTTP 500).");
+  });
+});
 
 // Os dois chamados do print do Pablo (03/11/2026).
 const CHAMADOS = [

@@ -29,6 +29,7 @@ import {
   limitarPercentual,
   mediaConclusao,
   mensagemErro,
+  motivoErroFuncao,
   normalizarPontoSemIntervalo,
   podeIgnorarEscalaNoFimDeSemana,
   validarSolicitacao,
@@ -272,10 +273,17 @@ export default function NovaSolicitacaoDialog({
         prazo,
       ]);
       if (error) {
-        // A mensagem útil vem no corpo (403 sem acesso, 429 sem tokens).
-        const ctx = (error as { context?: Response }).context;
-        const corpo = ctx && typeof ctx.json === "function" ? await ctx.json().catch(() => null) : null;
-        throw new Error(corpo?.error ?? error.message);
+        // A mensagem útil vem no corpo — mas nem sempre em JSON com `error`:
+        // o roteador do cluster usa `erro` e o proxy devolve página em texto.
+        const ctx = (error as { context?: unknown }).context;
+        if (ctx instanceof Response) {
+          const corpo = await ctx.text().catch(() => "");
+          throw new Error(motivoErroFuncao(ctx.status, corpo));
+        }
+        if ((error as { name?: string }).name === "FunctionsFetchError") {
+          throw new Error("A função não respondeu (rede fora ou passou de 25 s).");
+        }
+        throw new Error(error.message);
       }
       if (data?.error || !data?.texto) throw new Error(data?.error ?? "A IA não devolveu texto.");
       alterar("justificativa", String(data.texto).slice(0, 500));
