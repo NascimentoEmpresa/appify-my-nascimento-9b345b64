@@ -52,13 +52,13 @@ function proximoMes(anoMes: string): string {
 // [de, ate): datas "YYYY-MM-DD", fim exclusivo.
 // SIS-2026-0642: `semContrato` busca as despesas administrativas (saídas sem contrato) em vez dos custos de contrato.
 // SIS-2026-0721: `base` escolhe a coluna do período (competência ou data de pagamento) e já deixa em cada linha o mês em que ela conta.
-async function buscarView(view: string, ordem: string[], de: string, ate: string, semContrato = false, base: BaseDespesa = "competencia"): Promise<LinhaFluxoCusto[]> {
+async function buscarView(view: string, ordem: string[], de: string, ate: string, semContrato = false, base: BaseDespesa = "competencia", tipo: "saida" | "entrada" = "saida"): Promise<LinhaFluxoCusto[]> {
   const linhas: LinhaFluxoCusto[] = [];
   for (let pagina = 0; ; pagina++) {
     let q = (supabase as any)
       .from(view)
       .select("tipo, data_pagamento, competencia, contrato_id, empresa_id, classificacao_id, classificacao_nome, valor, id_malote, descricao")
-      .eq("tipo", "saida")
+      .eq("tipo", tipo)
       // SIS-2026-0708: o período é o da COMPETÊNCIA; só a linha sem competência cai pelo mês do pagamento.
       // SIS-2026-0721: na base "data de pagamento", o período é o do pagamento.
       .or(base === "pagamento"
@@ -74,13 +74,13 @@ async function buscarView(view: string, ordem: string[], de: string, ate: string
   return linhas;
 }
 
-async function buscarPeriodo(de: string, ate: string, semContrato = false, base: BaseDespesa = "competencia", opcoes?: OpcoesCustos): Promise<LinhaFluxoCusto[]> {
+async function buscarPeriodo(de: string, ate: string, semContrato = false, base: BaseDespesa = "competencia", opcoes?: OpcoesCustos, tipo: "saida" | "entrada" = "saida"): Promise<LinhaFluxoCusto[]> {
   const foraPromessa = semContrato ? Promise.resolve(new Set<string>()) : idsContratosForaDasDespesas(opcoes);
   const partes = await Promise.all(
     FONTES.map((f) =>
-      buscarView(f.view, f.ordem, de, ate, semContrato, base)
+      buscarView(f.view, f.ordem, de, ate, semContrato, base, tipo)
         // linha_id ainda não existe na view da importação (migration 20261006000002).
-        .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? buscarView(f.view, ["despesa_id"], de, ate, semContrato, base) : Promise.reject(e)))
+        .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? buscarView(f.view, ["despesa_id"], de, ate, semContrato, base, tipo) : Promise.reject(e)))
         // View ainda não criada no ambiente: não derruba a tela.
         .catch((e: any) => {
           if (e?.code === "PGRST205" || e?.code === "42P01") return [] as LinhaFluxoCusto[];
@@ -118,5 +118,23 @@ export function useDespesasAdmAno(ano: number, base: BaseDespesa = "competencia"
     queryKey: ["fechamento_adm_ano", ano, base],
     staleTime: 120_000,
     queryFn: () => buscarPeriodo(`${ano}-01-01`, `${ano + 1}-01-01`, true, base),
+  });
+}
+
+// SIS-2026-0793: entradas do ano do Fluxo de Caixa (Receitas Extras do Fechamento): as sem contrato e as dos contratos, que a tela filtra pelos
+// contratos ADMINISTRATIVO das empresas. Mesma base (competência ou pagamento) das despesas; o que está programado para frente vem junto.
+export function useEntradasAdmAno(ano: number, base: BaseDespesa = "competencia") {
+  return useQuery({
+    queryKey: ["fechamento_entradas_ano", ano, base],
+    staleTime: 120_000,
+    queryFn: async () => {
+      const de = `${ano}-01-01`;
+      const ate = `${ano + 1}-01-01`;
+      const [semContrato, comContrato] = await Promise.all([
+        buscarPeriodo(de, ate, true, base, undefined, "entrada"),
+        buscarPeriodo(de, ate, false, base, { manterInvestimentos: true, manterAdministrativos: true }, "entrada"),
+      ]);
+      return [...semContrato, ...comContrato];
+    },
   });
 }
