@@ -37,6 +37,8 @@ import {
 } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { atribuirContaAosLancamentos, useContasBanco, useContasDosLancamentos, useInvalidarContasDosLancamentos } from "@/hooks/useContasBanco";
+import { comContaBanco, rotuloConta } from "@/lib/contaBanco";
 import { useExcluirDespesaSoft, useRestaurarDespesa, useDespesasLixeira } from "@/hooks/useMaloteDespesa";
 import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from "@/hooks/useDebitoAutomatico";
 import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira } from "@/hooks/useCartaoFatura";
@@ -178,7 +180,13 @@ export default function FluxoCaixaGestao() {
   const erroDoFluxo = erroRealizadas ?? (aba !== "realizado" ? erroPrevistas : null);
   const recarregarFluxo = erroRealizadas ? recarregarRealizadas : recarregarPrevistas;
   const estaCarregandoFluxo = isLoading || (aba !== "realizado" && carregandoPrevistas);
-  const linhasBrutas = useMemo(() => [...linhasRealizadas, ...linhasPrevistas], [linhasRealizadas, linhasPrevistas]);
+  // SIS-2026-0777: conta do banco de cada lançamento (tabela à parte; sem atribuição o array segue o mesmo).
+  const { data: contasBanco = [] } = useContasBanco();
+  const { data: contasDosLancamentos } = useContasDosLancamentos();
+  const linhasBrutas = useMemo(
+    () => comContaBanco([...linhasRealizadas, ...linhasPrevistas], contasDosLancamentos ?? new Map()),
+    [linhasRealizadas, linhasPrevistas, contasDosLancamentos],
+  );
   // SIS-2026-0632: valor real da fatura (digitado no Cartão de Crédito) p/ comparar com a linha consolidada.
   const { data: faturasInformadas } = useFaturasInformadas();
 
@@ -331,6 +339,17 @@ export default function FluxoCaixaGestao() {
   const [editEmpresaId, setEditEmpresaId] = useState("");
   const [editFormaPagamento, setEditFormaPagamento] = useState("");
   const [editBancoId, setEditBancoId] = useState("");
+  // SIS-2026-0777: conta do banco do lançamento (vazio = sem conta definida). Só aparece com contas cadastradas; grava em financeiro_fluxo_caixa_conta.
+  const [editContaId, setEditContaId] = useState("");
+  const invalidarContas = useInvalidarContasDosLancamentos();
+  const contasParaEditar = useMemo(
+    () => contasBanco.filter((c) => (c.ativo || c.id === itemEditar?.conta_banco_id) && c.banco_id === editBancoId && c.empresa_id === editEmpresaId),
+    [contasBanco, editBancoId, editEmpresaId, itemEditar],
+  );
+  // trocar banco ou empresa na edição descarta a conta que deixou de pertencer a eles
+  useEffect(() => {
+    setEditContaId((atual) => (atual && contasParaEditar.some((c) => c.id === atual) ? atual : ""));
+  }, [contasParaEditar]);
 
   // SIS-2026-0720: a Auditoria da Controladoria (item 3, "falta distribuir") abre o Fluxo já na edição do lançamento para reclassificar.
   // ?editar=origem|despesa_id|parcela. Só abre para quem tem "alterar" no Fluxo (o mesmo gate do lápis); sem permissão, nada acontece.
@@ -362,6 +381,7 @@ export default function FluxoCaixaGestao() {
     setEditEmpresaId(l.empresa_id ?? "");
     setEditFormaPagamento(l.forma_pagamento ?? "");
     setEditBancoId(l.banco_id ?? "");
+    setEditContaId(l.conta_banco_id ?? "");
     setEditNovoContratoId("");
     setEditCienteEstouro(false);
     setEditExigeCiencia(false);
@@ -398,6 +418,15 @@ export default function FluxoCaixaGestao() {
         formaPagamento: editFormaPagamento || null,
         bancoId: editBancoId || null,
       });
+      // SIS-2026-0777: conta do banco (tabela à parte; não mexe no lançamento nem no ajuste do Fluxo)
+      if ((editContaId || "") !== (itemEditar.conta_banco_id ?? "")) {
+        const { erros } = await atribuirContaAosLancamentos(
+          [{ origem: itemEditar.origem, despesa_id: itemEditar.despesa_id, numero_parcela: itemEditar.numero_parcela }],
+          editContaId || null,
+        );
+        invalidarContas();
+        if (erros.length > 0) throw new Error(`Salvo, mas a conta do banco não foi gravada: ${erros[0].motivo}`);
+      }
       toast.success(
         editNovoContratoId === SEM_CONTRATO
           ? "Confirmado: lançamento sem contrato (administrativo); os demais campos valem só neste Fluxo de Caixa."
@@ -468,7 +497,9 @@ export default function FluxoCaixaGestao() {
   const [kpiAberto, setKpiAberto] = useState<KpiFluxo | null>(null);
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
-  const [bancoIds, setBancoIds] = useState<string[]>([]);
+  const [bancoIds, setBancoIds] = useState<string[]>(() => doParametroLista("banco"));
+  // SIS-2026-0777: filtro por conta do banco ("Sem conta" = lançamento ainda não atribuído); a Conciliação abre o Fluxo já nele.
+  const [contaIds, setContaIds] = useState<string[]>(() => doParametroLista("conta"));
   // Valor exato digitado como a pessoa fala ("1.066,65"); ver fluxo-caixa/filtroValor.ts.
   const [valor, setValor] = useState("");
   // SIS-2026-0569: linhas importadas da planilha que subiram sem vínculo
@@ -549,6 +580,7 @@ export default function FluxoCaixaGestao() {
     setFormasFiltro([]);
     setSituacoes([]);
     setBancoIds([]);
+    setContaIds([]);
     setValor("");
     setSoInconsistentes(false);
     setBusca("");
@@ -571,12 +603,13 @@ export default function FluxoCaixaGestao() {
       if (!casaSelecao(classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
       if (formasFiltro.length > 0 && !formasFiltro.includes(l.forma_pagamento ?? "")) return false;
       if (bancoIds.length > 0 && !bancoIds.includes(l.banco_id ?? "")) return false;
+      if (!casaSelecao(contaIds, !!l.conta_banco_id, (id) => l.conta_banco_id === id)) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
       // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
       if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     }).map((l) => fatiaDoContratoNaLinha(l, contratoIds.filter((id) => id !== FILTRO_SEM_VALOR)));
-  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tipoFiltro, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tipoFiltro, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, contaIds, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -1098,6 +1131,25 @@ export default function FluxoCaixaGestao() {
               <Label className="text-xs">Banco</Label>
               <SearchableMultiSelect className="text-xs" value={bancoIds} onChange={setBancoIds} options={opcoesDe(bancosDisponiveis)} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
+            {contasBanco.length > 0 && (
+              <div>
+                <Label className="text-xs">Conta do banco</Label>
+                <SearchableMultiSelect
+                  className="text-xs"
+                  value={contaIds}
+                  onChange={setContaIds}
+                  options={opcoesDe(
+                    contasBanco
+                      .filter((c) => c.ativo && (bancoIds.length === 0 || bancoIds.includes(c.banco_id)))
+                      .map((c) => [c.id, `${bancosDisponiveis.find(([id]) => id === c.banco_id)?.[1] ?? "Banco"} · ${empresasDisponiveis.find(([id]) => id === c.empresa_id)?.[1] ?? "Empresa"} · ${rotuloConta(c)}`] as [string, string]),
+                    "Sem conta definida (—)",
+                  )}
+                  placeholder="Todas"
+                  searchPlaceholder="Buscar..."
+                  maxBadges={1}
+                />
+              </div>
+            )}
             <div>
               <Label className="text-xs">Valor (exato)</Label>
               <Input
@@ -1310,6 +1362,11 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                     <TableCell className="text-center text-sm">
                       {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
+                      {l.conta_banco_id && (
+                        <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground" title="Conta do banco (SIS-2026-0777)">
+                          {(() => { const c = contasBanco.find((x) => x.id === l.conta_banco_id); return c ? `Conta ${c.numero}` : ""; })()}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-center text-sm">
                       <span className="mx-auto line-clamp-3 max-w-[120px] text-[11px] leading-tight" title={l.forma_pagamento ?? undefined}>
@@ -1711,6 +1768,20 @@ export default function FluxoCaixaGestao() {
                 </SelectContent>
               </Select>
             </div>
+            {contasBanco.length > 0 && (
+              <div>
+                <Label className="text-xs">Conta do banco</Label>
+                <Select value={editContaId || "_"} onValueChange={(v) => setEditContaId(v === "_" ? "" : v)} disabled={contasParaEditar.length === 0}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_">{contasParaEditar.length === 0 ? "— (sem contas para este banco e empresa)" : "— (sem conta definida)"}</SelectItem>
+                    {contasParaEditar.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{rotuloConta(c)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {itemEditar && (
               <div className={camposEdicao.has("contrato") ? DESTAQUE_REVISAR : undefined}>
                 <ContratoTrocaCampo
