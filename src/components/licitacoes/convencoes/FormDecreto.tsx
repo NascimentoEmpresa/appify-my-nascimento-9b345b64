@@ -20,7 +20,7 @@ import { DEF_POR_CHAVE, pendenciasDecreto, type Periodo, type ValorBeneficio } f
 import { ANEXO_VAZIO, Campo, CampoAnexo, PERIODO_LABEL, Secao, type Anexo } from "./FormConvencao";
 import { IconeBeneficio } from "./IconeBeneficio";
 
-// Novo Decreto Municipal (03/11/2026, mig 20261103002100): cadastro próprio,
+// Novo Decreto Municipal (03/11/2026, mig 20261103002250): cadastro próprio,
 // separado da convenção coletiva. 1. Informações do Decreto · 2. Benefício do
 // Decreto (Vale-Transporte) · 3. Observações. O decreto é do município, não
 // do contrato — quem liga o VT dele a um posto é o vínculo da Planilha de
