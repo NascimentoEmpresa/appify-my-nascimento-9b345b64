@@ -299,50 +299,54 @@ export interface AjusteFluxoCaixaInput {
 // é NULL na maioria dos casos (malote não-parcelado, débito automático), e
 // NULL nunca "conflita" com NULL num ON CONFLICT — o upsert nativo criaria
 // uma linha de ajuste nova a cada edição em vez de atualizar a existente.
+export async function gravarAjusteFluxoCaixa(input: AjusteFluxoCaixaInput): Promise<void> {
+  const { origem, despesaId, numeroParcela, ...campos } = input;
+  let q = (supabase as any)
+    .from("financeiro_fluxo_caixa_ajuste")
+    .select("id")
+    .eq("origem", origem)
+    .eq("despesa_id", despesaId);
+  q = numeroParcela == null ? q.is("numero_parcela", null) : q.eq("numero_parcela", numeroParcela);
+  const { data: existente, error: errBusca } = await q.maybeSingle();
+  if (errBusca) throw errBusca;
+
+  const payload = {
+    data_pagamento: campos.dataPagamento,
+    tipo: campos.tipo,
+    classificacao_id: campos.classificacaoId,
+    descricao: campos.descricao,
+    competencia: campos.competencia,
+    empresa_id: campos.empresaId,
+    banco_id: campos.bancoId,
+    forma_pagamento: campos.formaPagamento,
+    valor: campos.valor,
+  };
+  // Só grava os campos que quem chamou de fato passou — os outros
+  // continuam com o que já estava salvo no ajuste (ou null, se for
+  // linha nova).
+  const camposPresentes = Object.fromEntries(
+    Object.entries(payload).filter(([, v]) => v !== undefined),
+  );
+
+  if (existente) {
+    const { error } = await (supabase as any)
+      .from("financeiro_fluxo_caixa_ajuste")
+      .update(camposPresentes)
+      .eq("id", existente.id);
+    if (error) throw error;
+  } else {
+    const { error } = await (supabase as any)
+      .from("financeiro_fluxo_caixa_ajuste")
+      .insert({ origem, despesa_id: despesaId, numero_parcela: numeroParcela, ...camposPresentes });
+    if (error) throw error;
+  }
+}
+
 export function useAjustarLinhaFluxoCaixa() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: AjusteFluxoCaixaInput) => {
-      const { origem, despesaId, numeroParcela, ...campos } = input;
-      let q = (supabase as any)
-        .from("financeiro_fluxo_caixa_ajuste")
-        .select("id")
-        .eq("origem", origem)
-        .eq("despesa_id", despesaId);
-      q = numeroParcela == null ? q.is("numero_parcela", null) : q.eq("numero_parcela", numeroParcela);
-      const { data: existente, error: errBusca } = await q.maybeSingle();
-      if (errBusca) throw errBusca;
-
-      const payload = {
-        data_pagamento: campos.dataPagamento,
-        tipo: campos.tipo,
-        classificacao_id: campos.classificacaoId,
-        descricao: campos.descricao,
-        competencia: campos.competencia,
-        empresa_id: campos.empresaId,
-        banco_id: campos.bancoId,
-        forma_pagamento: campos.formaPagamento,
-        valor: campos.valor,
-      };
-      // Só grava os campos que quem chamou de fato passou — os outros
-      // continuam com o que já estava salvo no ajuste (ou null, se for
-      // linha nova).
-      const camposPresentes = Object.fromEntries(
-        Object.entries(payload).filter(([, v]) => v !== undefined),
-      );
-
-      if (existente) {
-        const { error } = await (supabase as any)
-          .from("financeiro_fluxo_caixa_ajuste")
-          .update(camposPresentes)
-          .eq("id", existente.id);
-        if (error) throw error;
-      } else {
-        const { error } = await (supabase as any)
-          .from("financeiro_fluxo_caixa_ajuste")
-          .insert({ origem, despesa_id: despesaId, numero_parcela: numeroParcela, ...camposPresentes });
-        if (error) throw error;
-      }
+      await gravarAjusteFluxoCaixa(input);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] }),
   });
@@ -352,20 +356,68 @@ export function useAjustarLinhaFluxoCaixa() {
 // ORIGEM (rateio do Malote / débito automático / importação) via RPC — é o que
 // faz o valor ir pro contrato certo no Orçamento. Ver a migration
 // 20261005000020_fluxo_caixa_trocar_contrato.sql.
+export async function trocarContratoFluxoCaixa({ origem, despesaId, contratoId }: { origem: string; despesaId: string; contratoId: string }): Promise<void> {
+  const { error } = await (supabase as any).rpc("fluxo_caixa_trocar_contrato", {
+    _origem: origem,
+    _despesa_id: despesaId,
+    _contrato_id: contratoId,
+  });
+  if (error) throw error;
+}
+
 export function useTrocarContratoFluxoCaixa() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ origem, despesaId, contratoId }: { origem: string; despesaId: string; contratoId: string }) => {
-      const { error } = await (supabase as any).rpc("fluxo_caixa_trocar_contrato", {
-        _origem: origem,
-        _despesa_id: despesaId,
-        _contrato_id: contratoId,
-      });
-      if (error) throw error;
-    },
+    mutationFn: trocarContratoFluxoCaixa,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+      qc.invalidateQueries({ queryKey: ["utilizado_orcamento"] });
+      qc.invalidateQueries({ queryKey: ["malote_despesa"] });
+    },
+  });
+}
+
+// SIS-2026-0780: alteração em massa. Repete, linha a linha, o que o lápis do Fluxo faz (ajuste de classificação / troca de centro de custo na
+// origem), mas invalida as consultas UMA vez no fim — invalidar a cada linha refaria a leitura das 6 views do Fluxo N vezes.
+export interface LinhaDaAlteracaoEmMassa {
+  origem: FluxoCaixaMaloteLinha["origem"];
+  despesa_id: string;
+  numero_parcela: number | null;
+}
+export interface ResultadoAlteracaoEmMassa {
+  feitas: LinhaDaAlteracaoEmMassa[];
+  erros: { linha: LinhaDaAlteracaoEmMassa; motivo: string }[];
+}
+export function useAlteracaoEmMassaFluxo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (i: {
+      tipo: "centro_custo" | "classificacao";
+      linhas: LinhaDaAlteracaoEmMassa[];
+      destinoId: string;
+      aoAndar?: (feitas: number, total: number) => void;
+    }): Promise<ResultadoAlteracaoEmMassa> => {
+      const resultado: ResultadoAlteracaoEmMassa = { feitas: [], erros: [] };
+      for (const linha of i.linhas) {
+        try {
+          if (i.tipo === "classificacao") {
+            await gravarAjusteFluxoCaixa({ origem: linha.origem, despesaId: linha.despesa_id, numeroParcela: linha.numero_parcela, classificacaoId: i.destinoId });
+          } else {
+            await trocarContratoFluxoCaixa({ origem: linha.origem, despesaId: linha.despesa_id, contratoId: i.destinoId });
+          }
+          resultado.feitas.push(linha);
+        } catch (e: any) {
+          resultado.erros.push({ linha, motivo: e?.message ?? "Erro ao salvar." });
+        }
+        i.aoAndar?.(resultado.feitas.length + resultado.erros.length, i.linhas.length);
+      }
+      return resultado;
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_ajuste"] });
       qc.invalidateQueries({ queryKey: ["utilizado_orcamento"] });
       qc.invalidateQueries({ queryKey: ["malote_despesa"] });
     },

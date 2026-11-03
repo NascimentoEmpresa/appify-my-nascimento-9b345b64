@@ -27,6 +27,7 @@ import {
   montarGruposPresenca,
   reordenarPessoa,
   reordenarSetor,
+  rotuloSetor,
   type GrupoPresenca,
   type PessoaPainel,
   type StatusPresenca,
@@ -113,7 +114,7 @@ function CardPessoa({
           <Avatar pessoa={pessoa} tamanho="h-11 w-11" />
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-tight">{pessoa.nome}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{pessoa.setor || "Setor não informado"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{rotuloSetor(pessoa.setor) || "Setor não informado"}</p>
           </div>
         </div>
       </HoverCardContent>
