@@ -622,8 +622,6 @@ const rhModule: ModuleDef = {
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
         // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
         { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
-        // Pesquisa de Permanência (mig 20261028001200): motivos de ficar/sair por contrato, posto e função + turnover + I.A.
-        { label: "Pesquisa de Permanência", to: "/app/rh/pesquisa-permanencia", icon: ClipboardList },
         // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
         { label: "Rateio de Despesas", to: "/app/rh/rateio-despesas", icon: PieChart },
       ],

@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  MIN_RESPOSTAS_GRUPO, PERGUNTAS, agrupar, agruparTurnover, alternar, alternarComplemento, contarPergunta, contextoIA, errosDaPergunta,
-  filtrar, indicadores, perguntaPorId, pontosDeAtencao, regrasParaBanco, resumoGerencial, taxaTurnover, validarRespostas,
-  type LinhaResposta, type LinhaTurnover, type Respostas,
+  FORMULARIO_PERMANENCIA_ID, ID_PERGUNTA_FORM, MIN_RESPOSTAS_GRUPO, PERGUNTAS, agrupar, agruparTurnover, alternar, alternarComplemento,
+  contarPergunta, contextoIA, ehFormularioPermanencia, errosDaPergunta, filtrar, indicadores, linhasDoFormulario, paraPergunta,
+  perguntaPorId, perguntasDoFormulario, pontosDeAtencao, resumoGerencial, taxaTurnover, validarRespostas,
+  type ConfigEscolha, type LinhaResposta, type LinhaTurnover, type Respostas,
 } from "../../supabase/functions/_shared/pesquisa-permanencia";
 
-// RH › Pesquisa de Permanência (mig 20261028001200): as regras do documento
-// do RH e as contas dos relatórios.
+// Pesquisa de Permanência (mig 20261028001200; virou formulário na
+// 20261030001000): as regras do documento do RH e as contas dos relatórios.
 
 const P = (id: string) => perguntaPorId(id)!;
 
@@ -40,12 +41,46 @@ describe("catálogo do documento", () => {
   it("só 'Manter as condições atuais' é exclusiva", () => {
     expect(PERGUNTAS.flatMap((p) => p.opcoes.filter((o) => o.exclusiva).map((o) => `${p.id}.${o.cod}`))).toEqual(["p8.manter"]);
   });
-  it("o catálogo do banco (pp_regras) é o mesmo do código", () => {
-    const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261028001200_rh_pesquisa_permanencia.sql"), "utf8");
-    const trecho = sql.slice(sql.indexOf("-- pp-regras-inicio"), sql.indexOf("-- pp-regras-fim"));
-    const json = trecho.match(/SELECT '(\{.*\})'::jsonb/s)?.[1];
+  it("o formulário gravado pela migration tem exatamente as perguntas do catálogo", () => {
+    const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261030001000_pesquisa_permanencia_vira_formulario.sql"), "utf8");
+    const trecho = sql.slice(sql.indexOf("-- form-permanencia-inicio"), sql.indexOf("-- form-permanencia-fim"));
+    expect(trecho).toContain(FORMULARIO_PERMANENCIA_ID);
+    const json = trecho.match(/'(\[\{.*\}\])'::jsonb/s)?.[1];
     expect(json).toBeTruthy();
-    expect(JSON.parse(json!)).toEqual(regrasParaBanco());
+    expect(JSON.parse(json!)).toEqual(perguntasDoFormulario());
+    // A migração das respostas antigas usa os mesmos ids de pergunta.
+    for (const [cod, id] of Object.entries(ID_PERGUNTA_FORM)) if (cod !== "local") expect(sql).toContain(`('${cod}', '${id}')`);
+  });
+  it("o formulário é reconhecido como pesquisa de permanência; sem o local de trabalho, não", () => {
+    const ps = perguntasDoFormulario();
+    expect(ehFormularioPermanencia(ps)).toBe(true);
+    expect(ehFormularioPermanencia(ps.filter((p) => p.tipo !== "local_trabalho"))).toBe(false);
+    expect(ehFormularioPermanencia(ps.filter((p) => (p.config as ConfigEscolha).codigo !== "p8"))).toBe(false);
+  });
+});
+
+describe("dentro do Formulários", () => {
+  const ps = perguntasDoFormulario();
+  it("a pergunta do formulário valida igual à do catálogo", () => {
+    const f = ps.find((p) => (p.config as ConfigEscolha).codigo === "p8")!;
+    const pf = paraPergunta(f.id, f.titulo, 8, f.config as ConfigEscolha);
+    let r = alternar(pf, undefined, "salario");
+    r = alternar(pf, r, "manter");
+    expect(r.marcadas).toEqual(["manter"]);
+    expect(errosDaPergunta(pf, { marcadas: ["salario", "fiscais"] })).toEqual(errosDaPergunta(P("p8"), { marcadas: ["salario", "fiscais"] }));
+  });
+  it("respostas do formulário viram as linhas dos relatórios (só o mês, sem quem respondeu)", () => {
+    const itens = {
+      [ID_PERGUNTA_FORM.local]: { empresa: 1, filial: 10, contrato: "UFAC", posto: "PO-1", posto_nome: "AUX LIMPEZA", funcao: "aux de  limpeza" },
+      ...Object.fromEntries(Object.entries(resp()).map(([cod, v]) => [ID_PERGUNTA_FORM[cod], v])),
+    };
+    const ls = linhasDoFormulario(ps, [
+      { formulario_id: "f1", enviado_em: "2026-11-01T01:00:00Z", itens },   // 31/10 22h em Brasília
+      { formulario_id: "f1", enviado_em: "2026-10-15T12:00:00Z", itens: { [ID_PERGUNTA_FORM.p1]: { marcadas: ["salario"] } } },
+    ]);
+    expect(ls).toHaveLength(1);
+    expect(ls[0]).toMatchObject({ mes: "2026-10", empresa: 1, filial: 10, contrato: "UFAC", posto: "PO-1", funcao: "AUX DE LIMPEZA" });
+    expect(ls[0].r).toEqual(resp());
   });
 });
 

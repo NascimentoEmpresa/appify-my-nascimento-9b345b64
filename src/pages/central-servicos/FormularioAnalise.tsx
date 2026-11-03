@@ -1,79 +1,118 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
-import QRCode from "qrcode";
 import {
-  AlertTriangle, ClipboardList, Copy, ExternalLink, Link2, ListChecks, Loader2, Plus, QrCode, Send, Sparkles, TrendingDown, Users,
+  AlertTriangle, ArrowLeft, ClipboardList, ExternalLink, ListChecks, Loader2, Plus, Send, Sparkles, TrendingDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
-import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { useFormPerms } from "@/hooks/useFormPerms";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { PRIORIDADES, PRIORIDADE_LABEL, STATUS_LABELS } from "@/types/planoAcao";
 import {
-  perguntarIA, useAplicacoes, useCriarPlanoPesquisa, usePlanosPesquisa, useRespostasPesquisa, useSalvarAplicacao, useTurnoverPesquisa,
-  type Aplicacao, type MsgIA, type OrigemPlano,
-} from "@/hooks/usePesquisaPermanencia";
+  perguntarIA, useCriarPlanoFormulario, useFormularioAnalise, usePlanosFormulario, useRespostasAnalise, useRotatividade,
+  type FormularioAnalise as Form, type MsgIA, type OrigemPlano,
+} from "@/hooks/useAnaliseFormulario";
 import {
-  CATEGORIA_ROTULO, MIN_RESPOSTAS_GRUPO, PERGUNTAS, agrupar, agruparTurnover, chaveDe, contarPergunta, filtrar, filtrarTurnover,
-  indicadores, pontosDeAtencao, resumoGerencial, taxaTurnover,
+  MIN_RESPOSTAS_GRUPO, PERGUNTAS, agrupar, agruparTurnover, chaveDe, contarPergunta, ehFormularioPermanencia,
+  filtrar, filtrarTurnover, indicadores, pontosDeAtencao, resumoGerencial, taxaTurnover,
   type Dimensao, type Filtro, type Grupo, type LinhaResposta, type LinhaTurnover, type PontoAtencao,
 } from "../../../supabase/functions/_shared/pesquisa-permanencia";
 
 // =====================================================================
-// RH › PESQUISA DE PERMANÊNCIA (mig 20261028001200)
+// FORMULÁRIOS › ROTATIVIDADE, PLANO DE AÇÃO E ASSISTENTE DE I.A
+// (/app/central-servicos/formularios/:id/analise?aba=…, mig 20261030001000)
 //
-// Chamado do RH/Operação: "mapear nos contratos os motivos do excesso de
-// rotatividade", com a pesquisa selecionando contrato, posto e função, e
-// "gerar plano de ação a partir das respostas". Pablo: "mesmo que precise de
-// um agente de i.a respondendo sobre". Abas:
-//   · Relatórios — os do documento do RH: por contrato/posto/função, por
-//     motivo, por prioridade, por período e o resumo gerencial (empresa ×
-//     fiscais × órgão), com quantidades e %; grupo com menos de 3 respostas
-//     não é detalhado (anonimato);
-//   · Rotatividade — turnover do mesmo recorte (conta do Relatórios ›
-//     Turn-over) lado a lado com o que as pessoas responderam;
-//   · Plano de ação — ações criadas daqui no Plano de Ações de sempre;
-//   · Aplicações — as rodadas da pesquisa (link e QR Code públicos);
-//   · Assistente I.A — Edge Function pesquisa-permanencia-ia.
+// Era a tela RH › Pesquisa de Permanência (mig 20261028001200). Pablo,
+// 30/10/2026: "tira do RH essa pesquisa permanência, vai ficar só no
+// formulários" e "o assistente de i.a ter em todos formulários". A pesquisa
+// virou um formulário comum; os botões Rotatividade, Plano de ação e
+// Assistente de I.A do card dele em Formulários abrem esta tela na aba certa.
+//   · formulário com local de trabalho + o catálogo de permanência
+//     (ehFormularioPermanencia): Relatórios, Rotatividade, Plano de ação e
+//     Assistente — as abas de antes, sem "Aplicações" (link, QR Code, prazo e
+//     encerrar agora são os do próprio formulário);
+//   · qualquer outro formulário: só o Assistente de I.A.
+// Acesso: as respostas são as que a RLS do Formulários mostra (como na tela
+// de Respostas); Rotatividade e Plano de ação pedem a capacidade
+// "rotatividade", o Assistente a "assistente_ia" — as duas em Administração ›
+// Acesso por Usuário › Formulários, nascidas sem ninguém.
 // Contas em supabase/functions/_shared/pesquisa-permanencia.ts (com teste).
 // =====================================================================
 
-const MENU = "rh_pesquisa_permanencia";
 const TODOS = "__todos__";
 const fmt = (n: number) => n.toLocaleString("pt-BR");
 const fmtPct = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
-const linkPublico = (token: string) => `${window.location.origin}/pesquisa-permanencia/${token}`;
+type Aba = "relatorios" | "rotatividade" | "planos" | "ia";
 
-export default function PesquisaPermanencia() {
+export default function FormularioAnalise() {
+  const { id } = useParams<{ id: string }>();
+  const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const { can, loading: permsLoading } = useFormPerms();
+  const form = useFormularioAnalise(id);
+  const permanencia = ehFormularioPermanencia(form.data?.perguntas);
+  const podeRotatividade = can("rotatividade");
+  const podeIA = can("assistente_ia");
+
+  const abas: Aba[] = permanencia
+    ? (["relatorios", ...(podeRotatividade ? ["rotatividade", "planos"] : []), ...(podeIA ? ["ia"] : [])] as Aba[])
+    : (podeIA ? ["ia"] : []);
+  const pedida = params.get("aba") as Aba | null;
+  const aba: Aba | undefined = pedida && abas.includes(pedida) ? pedida : abas[0];
+
+  const voltar = (
+    <Button variant="ghost" size="sm" onClick={() => nav("/app/central-servicos/formularios")}><ArrowLeft className="mr-1 h-4 w-4" />Formulários</Button>
+  );
+
+  if (form.isLoading || permsLoading) return <Carregando />;
+  if (form.error || !form.data) {
+    return <div className="space-y-3 p-6">{voltar}<Card className="p-6 text-sm text-muted-foreground">Formulário não encontrado ou sem acesso.</Card></div>;
+  }
+  if (!aba) {
+    return (
+      <div className="space-y-3 p-6">{voltar}
+        <Card className="p-6 text-sm text-muted-foreground">
+          Você não tem acesso {permanencia ? "à Rotatividade nem ao Assistente de I.A" : "ao Assistente de I.A"} dos formulários.
+          Peça a liberação em Administração › Acesso por Usuário › Formulários.
+        </Card>
+      </div>
+    );
+  }
+
   return (
-    <AcessoGate menu={MENU} acao="visualizar" fallback={
-      <div className="p-6"><Card className="p-6 text-sm text-muted-foreground">Você não tem acesso à Pesquisa de Permanência. Peça a liberação em Administração › Acesso por Usuário.</Card></div>
-    }>
-      <Conteudo />
-    </AcessoGate>
+    <div className="space-y-4 p-4 md:p-6">
+      <div className="flex items-center gap-2">{voltar}</div>
+      <PageHeader title={form.data.titulo} breadcrumb={["Central de Serviços", "Formulários"]}
+        subtitle={permanencia
+          ? "Motivos de permanência e de saída por contrato, posto e função — com a rotatividade do mesmo recorte e o plano de ação."
+          : "Assistente de I.A sobre as respostas deste formulário."} />
+      {permanencia
+        ? <ConteudoPermanencia form={form.data} aba={aba} abas={abas}
+            setAba={(a) => setParams({ aba: a }, { replace: true })} podeRotatividade={podeRotatividade} />
+        : <AssistenteIA formularioId={form.data.id} permanencia={false} filtro={{}} />}
+    </div>
   );
 }
 
-function Conteudo() {
-  const resp = useRespostasPesquisa();
-  const turn = useTurnoverPesquisa(12);
-  const apl = useAplicacoes();
-  const { data: podeAlterar = false } = useScreenAccess(MENU, "alterar");
+function ConteudoPermanencia({ form, aba, abas, setAba, podeRotatividade }: {
+  form: Form; aba: Aba; abas: Aba[]; setAba: (a: Aba) => void; podeRotatividade: boolean;
+}) {
+  const resp = useRespostasAnalise(form);
+  const turn = useRotatividade(12, podeRotatividade);
   const [filtro, setFiltro] = useState<Filtro>({});
   const [planoDe, setPlanoDe] = useState<OrigemPlano | null>(null);
 
@@ -82,48 +121,47 @@ function Conteudo() {
   const turnover = useMemo(() => filtrarTurnover(turn.data?.linhas ?? [], filtro), [turn.data, filtro]);
 
   const novoPlano = (o: Partial<OrigemPlano> & { motivo: string }) => setPlanoDe({
-    aplicacao_id: filtro.aplicacao ?? null, empresa: null, filial: null, contrato: null, posto: null, posto_nome: null, funcao: null, ...o,
+    formulario_id: form.id, empresa: null, filial: null, contrato: null, posto: null, posto_nome: null, funcao: null, ...o,
   });
 
   return (
-    <div className="space-y-4 p-4 md:p-6">
-      <PageHeader title="Pesquisa de Permanência" breadcrumb={["RH", "Contratos"]}
-        subtitle="Motivos de permanência e de saída por contrato, posto e função — com a rotatividade do mesmo recorte e o plano de ação." />
+    <>
+      <Filtros todas={todas} turnover={turn.data?.linhas ?? []} filtro={filtro} setFiltro={setFiltro} />
 
-      <Filtros todas={todas} turnover={turn.data?.linhas ?? []} aplicacoes={apl.data ?? []} filtro={filtro} setFiltro={setFiltro} />
-
-      <Tabs defaultValue="relatorios">
+      <Tabs value={aba} onValueChange={(v) => setAba(v as Aba)}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="relatorios"><ClipboardList className="mr-1.5 h-4 w-4" />Relatórios</TabsTrigger>
-          <TabsTrigger value="rotatividade"><TrendingDown className="mr-1.5 h-4 w-4" />Rotatividade</TabsTrigger>
-          <TabsTrigger value="planos"><ListChecks className="mr-1.5 h-4 w-4" />Plano de ação</TabsTrigger>
-          <TabsTrigger value="aplicacoes"><QrCode className="mr-1.5 h-4 w-4" />Aplicações</TabsTrigger>
-          <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-4 w-4" />Assistente I.A</TabsTrigger>
+          {abas.includes("rotatividade") && <TabsTrigger value="rotatividade"><TrendingDown className="mr-1.5 h-4 w-4" />Rotatividade</TabsTrigger>}
+          {abas.includes("planos") && <TabsTrigger value="planos"><ListChecks className="mr-1.5 h-4 w-4" />Plano de ação</TabsTrigger>}
+          {abas.includes("ia") && <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-4 w-4" />Assistente de I.A</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="relatorios">
           {resp.isLoading ? <Carregando /> : resp.error ? <Erro msg={(resp.error as Error).message} /> : (
-            <Relatorios linhas={linhas} turnover={turnover} podeAlterar={podeAlterar} novoPlano={novoPlano} />
+            <Relatorios linhas={linhas} turnover={turnover} podeAlterar={podeRotatividade} novoPlano={novoPlano} />
           )}
         </TabsContent>
-        <TabsContent value="rotatividade">
-          {turn.isLoading ? <Carregando /> : turn.error ? <Erro msg={(turn.error as Error).message} /> : (
-            <Rotatividade linhas={linhas} turnover={turnover} meses={turn.data?.meses ?? []} podeAlterar={podeAlterar} novoPlano={novoPlano} />
-          )}
-        </TabsContent>
-        <TabsContent value="planos">
-          <Planos podeAlterar={podeAlterar} novoPlano={() => novoPlano({ motivo: "" })} />
-        </TabsContent>
-        <TabsContent value="aplicacoes">
-          <Aplicacoes lista={apl.data ?? []} carregando={apl.isLoading} podeAlterar={podeAlterar} />
-        </TabsContent>
-        <TabsContent value="ia">
-          <AssistenteIA filtro={filtro} />
-        </TabsContent>
+        {abas.includes("rotatividade") && (
+          <TabsContent value="rotatividade">
+            {turn.isLoading ? <Carregando /> : turn.error ? <Erro msg={(turn.error as Error).message} /> : (
+              <Rotatividade linhas={linhas} turnover={turnover} meses={turn.data?.meses ?? []} podeAlterar={podeRotatividade} novoPlano={novoPlano} />
+            )}
+          </TabsContent>
+        )}
+        {abas.includes("planos") && (
+          <TabsContent value="planos">
+            <Planos formId={form.id} podeAlterar={podeRotatividade} novoPlano={() => novoPlano({ motivo: "" })} />
+          </TabsContent>
+        )}
+        {abas.includes("ia") && (
+          <TabsContent value="ia">
+            <AssistenteIA formularioId={form.id} permanencia filtro={filtro} />
+          </TabsContent>
+        )}
       </Tabs>
 
-      {planoDe && <DialogPlano origem={planoDe} fechar={() => setPlanoDe(null)} />}
-    </div>
+      {planoDe && <DialogPlano origem={planoDe} tituloForm={form.titulo} fechar={() => setPlanoDe(null)} />}
+    </>
   );
 }
 
@@ -132,8 +170,8 @@ const Erro = ({ msg }: { msg: string }) => <Card className="p-4 text-sm text-des
 
 // ─── Filtros ───────────────────────────────────────────────────────────────
 
-function Filtros({ todas, turnover, aplicacoes, filtro, setFiltro }: {
-  todas: LinhaResposta[]; turnover: LinhaTurnover[]; aplicacoes: Aplicacao[]; filtro: Filtro; setFiltro: (f: Filtro) => void;
+function Filtros({ todas, turnover, filtro, setFiltro }: {
+  todas: LinhaResposta[]; turnover: LinhaTurnover[]; filtro: Filtro; setFiltro: (f: Filtro) => void;
 }) {
   // Contratos/postos/funções de quem respondeu E de quem tem rotatividade.
   const base = useMemo(() => [
@@ -159,14 +197,6 @@ function Filtros({ todas, turnover, aplicacoes, filtro, setFiltro }: {
         <SearchableSelect value={v(filtro.posto)} options={opcoes("posto", noContrato)} onChange={(x) => setFiltro({ ...filtro, posto: x === TODOS || !x ? null : x, funcao: null })} /></div>
       <div className="md:col-span-2"><Label className="text-xs">Função</Label>
         <SearchableSelect value={v(filtro.funcao)} options={opcoes("funcao", noPosto)} onChange={(x) => set("funcao", x)} /></div>
-      <div className="md:col-span-2"><Label className="text-xs">Aplicação</Label>
-        <Select value={v(filtro.aplicacao)} onValueChange={(x) => set("aplicacao", x)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={TODOS}>Todas</SelectItem>
-            {aplicacoes.map((a) => <SelectItem key={a.id} value={a.id}>{a.titulo}</SelectItem>)}
-          </SelectContent>
-        </Select></div>
       <div><Label className="text-xs">De (mês)</Label>
         <Select value={v(filtro.de)} onValueChange={(x) => set("de", x)}>
           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -177,7 +207,7 @@ function Filtros({ todas, turnover, aplicacoes, filtro, setFiltro }: {
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value={TODOS}>Hoje</SelectItem>{meses.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
         </Select></div>
-      <div className="flex items-end md:col-span-2">
+      <div className="flex items-end md:col-span-4">
         <Button variant="ghost" size="sm" onClick={() => setFiltro({})} disabled={!Object.values(filtro).some(Boolean)}>Limpar filtros</Button>
       </div>
     </Card>
@@ -207,7 +237,7 @@ function Relatorios({ linhas, turnover, podeAlterar, novoPlano }: { linhas: Linh
   const periodos = useMemo(() => agrupar(linhas, "mes"), [linhas]);
 
   if (!linhas.length) {
-    return <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma resposta neste recorte ainda. Abra uma aplicação na aba <b>Aplicações</b> e mande o link/QR Code para os contratos.</Card>;
+    return <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma resposta neste recorte ainda. Publique o formulário e mande o link/QR Code (botões do card em Formulários) para os contratos.</Card>;
   }
 
   return (
@@ -478,14 +508,14 @@ function Rotatividade({ linhas, turnover, meses, podeAlterar, novoPlano }: {
 
 // ─── Plano de ação ─────────────────────────────────────────────────────────
 
-function Planos({ podeAlterar, novoPlano }: { podeAlterar: boolean; novoPlano: () => void }) {
-  const q = usePlanosPesquisa();
+function Planos({ formId, podeAlterar, novoPlano }: { formId: string; podeAlterar: boolean; novoPlano: () => void }) {
+  const q = usePlanosFormulario(formId);
   const lista = q.data ?? [];
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="font-semibold">Ações geradas pela pesquisa</h3>
+          <h3 className="font-semibold">Ações geradas por este formulário</h3>
           <p className="text-xs text-muted-foreground">Ficam no Plano de Ações (responsável, prazo, andamento e evidências são tratados lá). Gere a partir dos relatórios, da rotatividade ou daqui.</p>
         </div>
         {podeAlterar && <Button size="sm" onClick={novoPlano}><Plus className="mr-1 h-4 w-4" />Nova ação</Button>}
@@ -516,11 +546,11 @@ function Planos({ podeAlterar, novoPlano }: { podeAlterar: boolean; novoPlano: (
   );
 }
 
-function DialogPlano({ origem, fechar }: { origem: OrigemPlano; fechar: () => void }) {
+function DialogPlano({ origem, tituloForm, fechar }: { origem: OrigemPlano; tituloForm: string; fechar: () => void }) {
   const { empresa } = useEmpresaAtiva();
   const usuarios = useUsuariosEmpresa();
   const setores = useSetoresEmpresa();
-  const criar = useCriarPlanoPesquisa();
+  const criar = useCriarPlanoFormulario(tituloForm);
   const onde = [origem.contrato, origem.posto ? `${origem.posto}${origem.posto_nome ? ` · ${origem.posto_nome}` : ""}` : null, origem.funcao].filter(Boolean).join(" › ");
   const [titulo, setTitulo] = useState(onde ? `Permanência — ${onde}` : "Permanência — ");
   const [problema, setProblema] = useState(origem.motivo);
@@ -544,7 +574,7 @@ function DialogPlano({ origem, fechar }: { origem: OrigemPlano; fechar: () => vo
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Gerar plano de ação</DialogTitle>
-          <DialogDescription>{onde || "Sem recorte"} — vai para o Plano de Ações, ligado a este ponto da pesquisa.</DialogDescription>
+          <DialogDescription>{onde || "Sem recorte"} — vai para o Plano de Ações, ligado a este formulário.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div><Label>Título</Label><Input value={titulo} onChange={(e) => setTitulo(e.target.value)} /></div>
@@ -574,101 +604,23 @@ function DialogPlano({ origem, fechar }: { origem: OrigemPlano; fechar: () => vo
   );
 }
 
-// ─── Aplicações ────────────────────────────────────────────────────────────
+// ─── Assistente de I.A ─────────────────────────────────────────────────────
 
-function Aplicacoes({ lista, carregando, podeAlterar }: { lista: Aplicacao[]; carregando: boolean; podeAlterar: boolean }) {
-  const salvar = useSalvarAplicacao();
-  const [editando, setEditando] = useState<Partial<Aplicacao> | null>(null);
-  const [qr, setQr] = useState<{ titulo: string; url: string; img: string } | null>(null);
-
-  const mostrarQr = async (a: Aplicacao) => {
-    const url = linkPublico(a.token);
-    const img = await QRCode.toDataURL(url, { margin: 1, width: 640, errorCorrectionLevel: "M" });
-    setQr({ titulo: a.titulo, url, img });
-  };
-  const gravar = () => {
-    if (!editando?.titulo?.trim()) { toast.error("Dê um nome para a aplicação."); return; }
-    salvar.mutate(
-      { id: editando.id ?? null, titulo: editando.titulo, inicia_em: editando.inicia_em || null, encerra_em: editando.encerra_em || null, ativa: editando.ativa ?? true },
-      { onSuccess: () => { toast.success("Aplicação salva."); setEditando(null); }, onError: (e) => toast.error(e.message) },
-    );
-  };
-
-  return (
-    <Card className="p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Aplicações da pesquisa</h3>
-          <p className="text-xs text-muted-foreground">Cada aplicação é uma rodada com link e QR Code próprios (a pessoa responde sem login e sem nome). Comparar rodadas = relatório por período.</p>
-        </div>
-        {podeAlterar && <Button size="sm" onClick={() => setEditando({ titulo: `Pesquisa de Permanência — ${new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`, ativa: true })}><Plus className="mr-1 h-4 w-4" />Nova aplicação</Button>}
-      </div>
-      {carregando ? <Carregando /> : !lista.length ? <p className="py-6 text-center text-sm text-muted-foreground">Nenhuma aplicação ainda.</p> : (
-        <div className="space-y-2">
-          {lista.map((a) => (
-            <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
-              <div>
-                <p className="font-medium">{a.titulo} <Badge variant={a.aberta ? "default" : "secondary"} className="ml-1">{a.aberta ? "Recebendo respostas" : "Fechada"}</Badge></p>
-                <p className="text-xs text-muted-foreground">
-                  <Users className="mr-1 inline h-3 w-3" />{fmt(a.respostas)} respostas
-                  {a.inicia_em ? ` · de ${new Date(a.inicia_em + "T12:00").toLocaleDateString("pt-BR")}` : ""}
-                  {a.encerra_em ? ` até ${new Date(a.encerra_em + "T12:00").toLocaleDateString("pt-BR")}` : ""}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(linkPublico(a.token)); toast.success("Link copiado."); }}><Copy className="mr-1 h-3.5 w-3.5" />Link</Button>
-                <Button size="sm" variant="outline" onClick={() => mostrarQr(a)}><QrCode className="mr-1 h-3.5 w-3.5" />QR Code</Button>
-                <Button size="sm" variant="outline" asChild><a href={linkPublico(a.token)} target="_blank" rel="noreferrer"><Link2 className="mr-1 h-3.5 w-3.5" />Abrir</a></Button>
-                {podeAlterar && <Button size="sm" variant="ghost" onClick={() => setEditando(a)}>Editar</Button>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {editando && (
-        <Dialog open onOpenChange={(o) => !o && setEditando(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>{editando.id ? "Editar aplicação" : "Nova aplicação"}</DialogTitle>
-              <DialogDescription>Sem datas = recebe respostas enquanto estiver ativa.</DialogDescription></DialogHeader>
-            <div className="space-y-3">
-              <div><Label>Nome</Label><Input value={editando.titulo ?? ""} onChange={(e) => setEditando({ ...editando, titulo: e.target.value })} /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Início</Label><Input type="date" value={editando.inicia_em ?? ""} onChange={(e) => setEditando({ ...editando, inicia_em: e.target.value })} /></div>
-                <div><Label>Fim</Label><Input type="date" value={editando.encerra_em ?? ""} onChange={(e) => setEditando({ ...editando, encerra_em: e.target.value })} /></div>
-              </div>
-              <div className="flex items-center gap-2"><Switch checked={editando.ativa ?? true} onCheckedChange={(v) => setEditando({ ...editando, ativa: v })} /><Label>Ativa (recebendo respostas)</Label></div>
-              <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setEditando(null)}>Cancelar</Button>
-                <Button onClick={gravar} disabled={salvar.isPending}>{salvar.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Salvar</Button></div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {qr && (
-        <Dialog open onOpenChange={(o) => !o && setQr(null)}>
-          <DialogContent className="max-w-sm text-center">
-            <DialogHeader><DialogTitle>{qr.titulo}</DialogTitle><DialogDescription>Imprima e deixe no posto, ou mande no grupo do contrato.</DialogDescription></DialogHeader>
-            <img src={qr.img} alt="QR Code da pesquisa" className="mx-auto w-64" />
-            <p className="break-all text-xs text-muted-foreground">{qr.url}</p>
-            <Button asChild><a href={qr.img} download="pesquisa-permanencia-qrcode.png">Baixar imagem</a></Button>
-          </DialogContent>
-        </Dialog>
-      )}
-    </Card>
-  );
-}
-
-// ─── Assistente I.A ────────────────────────────────────────────────────────
-
-const SUGESTOES = [
+const SUGESTOES_PERMANENCIA = [
   "Por que o contrato com maior turnover perde tanta gente?",
   "Quais funções têm mais risco de saída e por quê?",
   "O que é problema dos fiscais e o que é problema nosso?",
   "Que ações dariam mais resultado nos próximos 60 dias?",
 ];
+const SUGESTOES_GERAL = [
+  "Qual é o principal problema apontado nas respostas?",
+  "O que as pessoas mais elogiam?",
+  "Quais perguntas tiveram as piores avaliações?",
+  "Que ações dariam mais resultado nos próximos 60 dias?",
+];
 
-function AssistenteIA({ filtro }: { filtro: Filtro }) {
+/** O mesmo assistente em todos os formulários; no de permanência, com rotatividade e o recorte dos filtros. */
+function AssistenteIA({ formularioId, permanencia, filtro }: { formularioId: string; permanencia: boolean; filtro: Filtro }) {
   const [msgs, setMsgs] = useState<MsgIA[]>([]);
   const [texto, setTexto] = useState("");
   const [carregando, setCarregando] = useState(false);
@@ -681,7 +633,7 @@ function AssistenteIA({ filtro }: { filtro: Filtro }) {
     else setMsgs((m) => [...m, { role: "user", content: "Gerar a análise gerencial com plano de ação sugerido." }]);
     setCarregando(true);
     try {
-      const r = await perguntarIA({ modo, pergunta, historico, filtro });
+      const r = await perguntarIA({ formularioId, modo, pergunta, historico, filtro });
       setMsgs((m) => [...m, { role: "assistant", content: r }]);
     } catch (e) {
       toast.error((e as Error).message);
@@ -694,8 +646,10 @@ function AssistenteIA({ filtro }: { filtro: Filtro }) {
     <Card className="flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="flex items-center gap-1.5 font-semibold"><Sparkles className="h-4 w-4 text-violet-500" />Assistente de rotatividade</h3>
-          <p className="text-xs text-muted-foreground">Lê os agregados da pesquisa e o turnover {recorte ? "do recorte filtrado acima" : "de todos os contratos"} e responde citando os números. Não vê respostas individuais nem nomes.</p>
+          <h3 className="flex items-center gap-1.5 font-semibold"><Sparkles className="h-4 w-4 text-violet-500" />Assistente de I.A</h3>
+          <p className="text-xs text-muted-foreground">{permanencia
+            ? <>Lê os agregados da pesquisa e o turnover {recorte ? "do recorte filtrado acima" : "de todos os contratos"} e responde citando os números. Não vê respostas individuais nem nomes.</>
+            : <>Lê os agregados das respostas que você pode ver neste formulário (contagens e textos, com nomes apagados) e responde citando os números.</>}</p>
         </div>
         <div className="flex gap-1.5">
           {msgs.length > 0 && <Button size="sm" variant="ghost" onClick={() => setMsgs([])}>Limpar</Button>}
@@ -706,7 +660,7 @@ function AssistenteIA({ filtro }: { filtro: Filtro }) {
         {!msgs.length && !carregando && (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">Exemplos:</p>
-            {SUGESTOES.map((s) => <button key={s} className="block rounded-md border bg-background px-3 py-1.5 text-left text-sm hover:bg-muted" onClick={() => enviar("pergunta", s)}>{s}</button>)}
+            {(permanencia ? SUGESTOES_PERMANENCIA : SUGESTOES_GERAL).map((s) => <button key={s} className="block rounded-md border bg-background px-3 py-1.5 text-left text-sm hover:bg-muted" onClick={() => enviar("pergunta", s)}>{s}</button>)}
           </div>
         )}
         {msgs.map((m, i) => (
@@ -720,7 +674,7 @@ function AssistenteIA({ filtro }: { filtro: Filtro }) {
         <div ref={fim} />
       </div>
       <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); enviar("pergunta", texto); }}>
-        <Textarea rows={2} value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Ex.: por que o contrato X perde tanta gente?"
+        <Textarea rows={2} value={texto} onChange={(e) => setTexto(e.target.value)} placeholder={permanencia ? "Ex.: por que o contrato X perde tanta gente?" : "Pergunte sobre as respostas deste formulário"}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar("pergunta", texto); } }} />
         <Button type="submit" disabled={carregando || !texto.trim()}><Send className="h-4 w-4" /></Button>
       </form>

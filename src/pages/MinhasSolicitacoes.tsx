@@ -124,8 +124,15 @@ const FERIAS_RESET = {
   // só na Central de Serviços (o banco recusa de quem só tem o Encarregados).
   tipo: "ferias" as "ferias" | "venda",
 };
-/** O que o colaborador já vendeu nos últimos 12 meses (ferias_saldo). */
-interface SaldoFerias { vendidos_12m: number; vendas_avulsas_12m: number; pode_vender: number; pode_tirar: number }
+/**
+ * O que o colaborador já vendeu nos últimos 12 meses (ferias_saldo) e, desde
+ * as férias fracionadas (30/10/2026, mig 20261030003300), os períodos já
+ * pedidos no ciclo e quanto sobra (férias + abono).
+ */
+interface SaldoFerias {
+  vendidos_12m: number; vendas_avulsas_12m: number; pode_vender: number; pode_tirar: number;
+  sobra?: number; periodos?: PeriodoFerias[];
+}
 const ADV_RESET = {
   colaborador_id: null as number | null, colaborador_nome: "", colaborador_cpf: "",
   colaborador_cargo: "", colaborador_filial: "", contrato: "", contrato_id: null as number | null,
@@ -150,6 +157,7 @@ const VAGA_RESET = {
 
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+import { descreverPeriodo, validarPeriodoFerias, type PeriodoFerias } from "@/lib/solicitacoes/feriasFracionamento";
 import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
 import { CredenciaisProntas } from "@/components/sistemas/CredenciaisProntas";
 import { resumoDaTroca } from "@/lib/trocaFuncao/solicitacao";
@@ -849,7 +857,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     }
     if (!ferias.data_saida) { toast("Informe a data de saída.", "err"); return; }
     if (ferias.data_saida < hojeMaisDias(0)) { toast("A data de saída não pode ficar no passado.", "err"); return; }
-    if (feriasForaDoPrazo()) { setFeriasExc(true); return; }  // card: Cancelar / Solicitar mesmo assim
+    // Férias fracionadas: o banco confere o mesmo (ferias_valida_fracionamento); aqui só avisa antes.
+    if (feriasSaldo?.periodos) {
+      const regra = validarPeriodoFerias(
+        { saida: ferias.data_saida, dias: parseInt(ferias.dias_ferias) || 30, abono: parseInt(ferias.dias_vendidos) || 0 },
+        feriasSaldo.periodos, feriasSaldo.vendas_avulsas_12m);
+      if (!regra.ok) { toast(regra.motivo, "err"); return; }
+    }
+    if (feriasForaDoPrazo()){ setFeriasExc(true); return; }  // card: Cancelar / Solicitar mesmo assim
     await doSubmitFerias(false);
   };
 
@@ -1753,6 +1768,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   : <>Nenhuma venda nos últimos 12 meses — pode vender até <b>{feriasSaldo.pode_vender} dias</b>.</>}
               </div>
             )}
+            {/* Férias fracionadas (30/10/2026): o que já foi pedido no ciclo e quanto sobra. */}
+            {ferias.colaborador_id && ferias.tipo !== "venda" && !!feriasSaldo?.periodos?.length && (
+              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, fontSize: 14, lineHeight: 1.5,
+                            background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#14532d" }}>
+                Já pedido: {feriasSaldo.periodos.map(p => `${descreverPeriodo(p)} (${p.dias} dias${p.abono ? ` + abono ${p.abono}` : ""}, #${p.id} ${p.status ?? ""})`).join("; ")}.
+                {" "}Sobram <b>{Math.max(feriasSaldo.sobra ?? feriasSaldo.pode_tirar, 0)} dia(s)</b> — até 3 períodos, um com pelo menos 14 dias e os outros com pelo menos 5.
+              </div>
+            )}
             {ferias.tipo === "venda" ? (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg"><label>Dias a vender *</label>
@@ -1775,9 +1798,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   </div>
                 )}
               </div>
-              {/* Quem já vendeu sem tirar só tira o que sobrou (vendeu 10 → até 20). */}
+              {/* Quem já vendeu sem tirar só tira o que sobrou (vendeu 10 → até 20); idem quem já pediu um período (20 → até 10). */}
               <div className="ini-fg"><label>Dias de Férias</label><select className="ini-fi" value={ferias.dias_ferias} onChange={e => setFerias(f => ({ ...f, dias_ferias: e.target.value }))}>
-                {[...new Set(["30", "20", "15", "10", ...(feriasSaldo && feriasSaldo.pode_tirar < 30 ? [String(feriasSaldo.pode_tirar)] : [])])]
+                {[...new Set(["30", "20", "15", "14", "10", "5", ...(feriasSaldo && feriasSaldo.pode_tirar < 30 ? [String(feriasSaldo.pode_tirar)] : [])])]
                   .filter(o => !feriasSaldo || Number(o) <= feriasSaldo.pode_tirar)
                   .sort((a, b) => Number(b) - Number(a))
                   .map(o => <option key={o} value={o}>{o} dias</option>)}

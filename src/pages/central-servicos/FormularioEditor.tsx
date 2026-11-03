@@ -34,6 +34,10 @@ export const TIPOS: { valor: string; rotulo: string; temOpcoes: boolean }[] = [
   { valor: "escala",           rotulo: "Escala (nota)",            temOpcoes: false },
   { valor: "data",             rotulo: "Data",                     temOpcoes: false },
   { valor: "numero",           rotulo: "Número",                   temOpcoes: false },
+  // Vieram da Pesquisa de Permanência (mig 20261030001000). Validados também
+  // no banco (trigger cs_form_resposta_tipos).
+  { valor: "local_trabalho",   rotulo: "Local de trabalho (contrato › posto › função)", temOpcoes: false },
+  { valor: "escolha_complemento", rotulo: "Escolha com complemento (até N + a mais importante)", temOpcoes: false },
 ];
 
 // Cores predefinidas para o texto informativo (o valor "" = cor padrão).
@@ -210,14 +214,28 @@ function Seguranca({ form, mudaForm, setoresErp, usuarios, alvo, setAlvo, senha,
 // coluna escondida amarrando a resposta à pessoa (migration 20260902000001).
 function Anonimato({ form, mudaForm }: { form: Formulario; mudaForm: (p: Partial<Formulario>) => void }) {
   const on = !!form.permite_anonimo;
+  const sempre = !!form.sempre_anonimo;
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", background: on ? "rgba(15,49,113,.03)" : "#fff" }}>
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-        <input type="checkbox" checked={on} onChange={e => mudaForm({ permite_anonimo: e.target.checked })} style={{ width: 15, height: 15, accentColor: "#0f3171" }} />
+        <input type="checkbox" checked={on} onChange={e => mudaForm({ permite_anonimo: e.target.checked, ...(e.target.checked ? {} : { sempre_anonimo: false }) })} style={{ width: 15, height: 15, accentColor: "#0f3171" }} />
         <span style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>🕶 Permitir resposta anônima</span>
       </label>
+      {/* Sempre anônimo (mig 20261030001000): ninguém escolhe — toda resposta
+          sai anônima, inclusive de quem está logado. Foi o que a Pesquisa de
+          Permanência pediu: o celular do encarregado passa de mão em mão no
+          posto e a resposta não pode sair no nome dele. O banco força (trigger
+          cs_form_resposta_tipos liga o anonimo antes do guard apagar a identidade). */}
+      {on && (
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 7, marginLeft: 23 }}>
+          <input type="checkbox" checked={sempre} onChange={e => mudaForm({ sempre_anonimo: e.target.checked })} style={{ width: 14, height: 14, accentColor: "#0f3171" }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#0f172a" }}>Sempre anônimo (não pergunta)</span>
+        </label>
+      )}
       <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 5, lineHeight: 1.5 }}>
-        {on
+        {on && sempre
+          ? <>Toda resposta é <b>anônima</b>, até de quem está logado: nome, e-mail, cadastro e setor <b>não são gravados</b>. Depois de enviar, aparece "Responder outra pessoa neste aparelho".</>
+          : on
           ? <>O respondente escolhe entre <b>identificado</b> e <b>anônimo</b> antes de enviar. Na anônima, nome, e-mail e cadastro <b>não são gravados</b> — só o setor, para os painéis.</>
           : <>Toda resposta sai identificada (cadastro do respondente anexado).</>}
       </div>
@@ -448,6 +466,7 @@ export default function FormularioEditor() {
       setores_acesso: restrito ? (form.setores_acesso?.length ? form.setores_acesso : null)
         : ((form.setores_acesso ?? []).some(s => s.trim().toUpperCase() === "ENCARREGADOS") ? ["ENCARREGADOS"] : null),
       permite_anonimo: !!form.permite_anonimo,
+      sempre_anonimo: !!form.permite_anonimo && !!form.sempre_anonimo,
       intervalo_horas: form.intervalo_mensal ? null : (form.intervalo_horas ?? null),
       intervalo_mensal: !!form.intervalo_mensal,
     };
@@ -684,6 +703,77 @@ export default function FormularioEditor() {
 // na página de resposta. Aqui se decide o que ela exige. Os três primeiros
 // campos são exatamente os pedidos que a tela pública e o banco aplicam:
 // mínimo de colegas, no máximo 1 por setor e "não pode ser você".
+// ── Escolha com complemento (mig 20261030001000) ─────────────────────────
+// config = { codigo?, max, itens: [{ cod, rotulo, exclusiva?, complemento? }] }
+// (ConfigEscolha no _shared/pesquisa-permanencia.ts). O cod de cada
+// alternativa NUNCA muda ao editar o texto: é por ele que as respostas e os
+// relatórios se ligam. `opcoes` acompanha os rótulos, para as telas que só
+// leem a lista de opções.
+type ItemEscolha = { cod: string; rotulo: string; exclusiva?: boolean; complemento?: { titulo: string; multipla: boolean; opcoes: { cod: string; rotulo: string }[]; texto?: { rotulo: string; max: number } } };
+function ConfigEscolhaComplemento({ p, i, muda }: { p: Pergunta; i: number; muda: (i: number, patch: Partial<Pergunta>) => void }) {
+  const itens: ItemEscolha[] = Array.isArray(p.config.itens) ? p.config.itens : [];
+  const max = Math.max(1, Number(p.config.max) || 1);
+  const salva = (novos: ItemEscolha[], novoMax = max) =>
+    muda(i, { opcoes: novos.map(x => x.rotulo), config: { ...p.config, max: novoMax, itens: novos } });
+  const novoCod = (base: string, usados: string[]) => { let k = usados.length + 1; while (usados.includes(`${base}${k}`)) k++; return `${base}${k}`; };
+  const mudaItem = (k: number, patch: Partial<ItemEscolha>) => salva(itens.map((x, j) => j === k ? { ...x, ...patch } : x));
+  const lbl: React.CSSProperties = { fontSize: 11.5, fontWeight: 700, color: "#334155" };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={lbl}>Quantas pode marcar</span>
+        <select value={max} onChange={e => salva(itens, Number(e.target.value))}
+          style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "5px 9px", fontSize: 12, outline: "none", background: "#fff", fontWeight: 600 }}>
+          {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 1 ? "1 (resposta única)" : `até ${n} + a mais importante`}</option>)}
+        </select>
+        {p.config.codigo && <span style={{ fontSize: 10.5, color: "#94a3b8" }}>código {String(p.config.codigo)} — usado pelos relatórios da Pesquisa de Permanência</span>}
+      </div>
+      {itens.map((it, k) => (
+        <div key={it.cod} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: "7px 9px" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ color: "#cbd5e1", fontSize: 13 }}>{max > 1 ? "☐" : "◯"}</span>
+            <input value={it.rotulo} onChange={e => mudaItem(k, { rotulo: e.target.value })}
+              style={{ border: "none", borderBottom: "1px solid #e2e8f0", padding: "4px 2px", fontSize: 13, outline: "none", flex: 1, maxWidth: 420 }} />
+            {max > 1 && (
+              <label title="Não combina com nenhuma outra (ex.: “Manter as condições atuais”)" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4, color: "#64748b", cursor: "pointer" }}>
+                <input type="checkbox" checked={!!it.exclusiva} onChange={e => mudaItem(k, { exclusiva: e.target.checked || undefined })} style={{ width: 13, height: 13 }} />exclusiva
+              </label>
+            )}
+            <button onClick={() => mudaItem(k, { complemento: it.complemento ? undefined : { titulo: "Por quê?", multipla: true, opcoes: [{ cod: "c1", rotulo: "Opção 1" }] } })}
+              style={{ background: "none", border: "none", color: "#0369a1", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>{it.complemento ? "− complemento" : "+ complemento"}</button>
+            <button onClick={() => salva(itens.filter((_, j) => j !== k))} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>✕</button>
+          </div>
+          {it.complemento && (
+            <div style={{ marginLeft: 22, marginTop: 6, paddingLeft: 10, borderLeft: "2px solid #d1fae5", display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <input value={it.complemento.titulo} onChange={e => mudaItem(k, { complemento: { ...it.complemento!, titulo: e.target.value } })}
+                  placeholder="Pergunta do complemento" style={{ border: "none", borderBottom: "1px solid #e2e8f0", padding: "3px 2px", fontSize: 12.5, outline: "none", flex: 1, minWidth: 180, fontWeight: 600 }} />
+                <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4, color: "#64748b", cursor: "pointer" }}>
+                  <input type="checkbox" checked={it.complemento.multipla} onChange={e => mudaItem(k, { complemento: { ...it.complemento!, multipla: e.target.checked } })} style={{ width: 13, height: 13 }} />várias
+                </label>
+              </div>
+              {it.complemento.texto && <span style={{ fontSize: 11, color: "#94a3b8" }}>+ campo de texto “{it.complemento.texto.rotulo}” (até {it.complemento.texto.max} letras)</span>}
+              {it.complemento.opcoes.map((c, ci) => (
+                <div key={c.cod} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ color: "#cbd5e1", fontSize: 12 }}>↳</span>
+                  <input value={c.rotulo} onChange={e => mudaItem(k, { complemento: { ...it.complemento!, opcoes: it.complemento!.opcoes.map((x, xi) => xi === ci ? { ...x, rotulo: e.target.value } : x) } })}
+                    style={{ border: "none", borderBottom: "1px solid #f1f5f9", padding: "3px 2px", fontSize: 12.5, outline: "none", flex: 1, maxWidth: 380 }} />
+                  <button onClick={() => mudaItem(k, { complemento: { ...it.complemento!, opcoes: it.complemento!.opcoes.filter((_, xi) => xi !== ci) } })}
+                    style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12 }}>✕</button>
+                </div>
+              ))}
+              <button onClick={() => mudaItem(k, { complemento: { ...it.complemento!, opcoes: [...it.complemento!.opcoes, { cod: novoCod("c", it.complemento!.opcoes.map(x => x.cod)), rotulo: `Opção ${it.complemento!.opcoes.length + 1}` }] } })}
+                style={{ alignSelf: "flex-start", background: "none", border: "none", color: "#0369a1", fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>+ opção do complemento</button>
+            </div>
+          )}
+        </div>
+      ))}
+      <button onClick={() => salva([...itens, { cod: novoCod("op", itens.map(x => x.cod)), rotulo: `Opção ${itens.length + 1}` }])}
+        style={{ alignSelf: "flex-start", background: "none", border: "none", color: "#0369a1", fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: "2px 0" }}>+ Adicionar alternativa</button>
+    </div>
+  );
+}
+
 function ConfigColegas({ p, i, muda }: { p: Pergunta; i: number; muda: (i: number, patch: Partial<Pergunta>) => void }) {
   const c = p.config ?? {};
   const set = (patch: Record<string, any>) => muda(i, { config: { ...c, ...patch } });
@@ -808,7 +898,17 @@ function PerguntaCard({ p, i, total, muda, move, remove, upload, setores, usuari
         <span style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", flexShrink: 0, paddingTop: 8 }}>#{i + 1}</span>
         <AutoTextarea value={p.titulo} onChange={v => muda(i, { titulo: v })} minRows={1} placeholder="Escreva a pergunta..."
           style={{ border: "none", borderBottom: "2px solid #e2e8f0", padding: "6px 2px", fontSize: 14.5, fontWeight: 700, color: "#0f172a", outline: "none", flex: 1, background: "transparent", lineHeight: 1.4 }} />
-        <select value={p.tipo} onChange={e => muda(i, { tipo: e.target.value, opcoes: TIPOS.find(t => t.valor === e.target.value)?.temOpcoes && p.opcoes.length === 0 ? ["Opção 1"] : p.opcoes })}
+        <select value={p.tipo} onChange={e => {
+          const t = e.target.value;
+          // Escolha com complemento guarda as alternativas com código em config.itens
+          // (os relatórios leem pelo código): nasce das opções que já existiam.
+          if (t === "escolha_complemento" && !Array.isArray(p.config.itens)) {
+            const ops = p.opcoes.length ? p.opcoes : ["Opção 1"];
+            muda(i, { tipo: t, opcoes: ops, config: { ...p.config, max: 1, itens: ops.map((o, k) => ({ cod: `op${k + 1}`, rotulo: o })) } });
+            return;
+          }
+          muda(i, { tipo: t, opcoes: TIPOS.find(x => x.valor === t)?.temOpcoes && p.opcoes.length === 0 ? ["Opção 1"] : p.opcoes });
+        }}
           style={{ border: "1px solid #e2e8f0", borderRadius: 9, padding: "7px 8px", fontSize: 12, outline: "none", background: "#fff", fontWeight: 600, flexShrink: 0, marginTop: 2 }}>
           {TIPOS.map(t => <option key={t.valor} value={t.valor}>{t.rotulo}</option>)}
         </select>
@@ -845,6 +945,13 @@ function PerguntaCard({ p, i, total, muda, move, remove, upload, setores, usuari
           pode ser você...) valem também no banco — o trigger da resposta relê
           esta config na hora do INSERT (migration 20260902000001). */}
       {p.tipo === "colegas" && <ConfigColegas p={p} i={i} muda={muda} />}
+      {p.tipo === "escolha_complemento" && <ConfigEscolhaComplemento p={p} i={i} muda={muda} />}
+      {p.tipo === "local_trabalho" && (
+        <div style={{ fontSize: 11.5, color: "#64748b", background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 11px", marginBottom: 10, lineHeight: 1.5 }}>
+          📍 O respondente escolhe <b>Contrato → Posto de trabalho → Função</b>, das listas da Senior (contratos com gente ativa, postos da Hierarquia de Postos).
+          Nada é digitado. Com esta pergunta e o catálogo da Pesquisa de Permanência, o formulário ganha Rotatividade e Plano de ação.
+        </div>
+      )}
 
       {p.tipo === "texto_info" ? (
         <div style={{ marginBottom: 10 }}>

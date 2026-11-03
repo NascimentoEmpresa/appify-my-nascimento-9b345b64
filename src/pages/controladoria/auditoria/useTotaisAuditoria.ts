@@ -140,7 +140,11 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
     if (!base.carregando && (idsNfs.length === 0 || itensQ.data)) {
       const itens = [...(itensQ.data?.values() ?? [])].flat() as unknown as ItemDesconto[];
       const d = descontosPorCategoria(itens);
-      t7 = { a: d.totalCategorias, b: d.totalDescontado, detalhes: d.categorias };
+      // SIS-2026-0797: desconto e retenção são coisas diferentes; a Lucratividade de Contratos mostra as retenções em "Desc. Contrato".
+      t7 = {
+        a: d.totalCategorias, b: d.totalDescontado, detalhes: d.categorias,
+        aviso: "Desconto não é retenção. Desconto é o que a nota deixou de cobrar (faltas, postos não implementados, multas, glosas e outros) e já está fora do Valor Bruto. Retenção é o imposto retido sobre o Valor Bruto (ISSQN, INSS, IR, COFINS, PIS e CSLL) e vai do Bruto ao Líquido. A coluna \"Desc. Contrato\" da Lucratividade de Contratos (Bruto − Líquido) mostra as retenções, por isso é maior que este card.",
+      };
     }
 
     const estado = (totais: TotaisCard | null, ...fontes: { isLoading?: boolean; error?: unknown }[]): EstadoCard => ({

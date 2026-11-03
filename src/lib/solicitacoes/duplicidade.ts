@@ -9,7 +9,9 @@
 //
 // O que conta como "já tem" mora no SQL, não aqui — mudar a janela das
 // férias (150 dias) ou os status que travam é mexer na função, e as telas
-// seguem.
+// seguem. Férias fracionadas (30/10/2026, mig 20261030003300): 'ferias' não
+// barra mais "já tem pedido" — só quando não cabe outro período (3 pedidos ou
+// sobra < 5 dias); a regra inteira está em feriasFracionamento.ts.
 
 /** ferias_venda (14/10/2026, mig 20261014000043): venda de dias sem tirar — trava só outra venda pendente. */
 export type TipoSolicitacaoDup = "demissao" | "ferias" | "ferias_venda" | "troca_funcao" | "advertencia";
@@ -26,7 +28,7 @@ export interface SolicitacaoEmAberto {
 /** Título do card de bloqueio, por tipo. */
 export const TITULO_DUPLICIDADE: Record<TipoSolicitacaoDup, string> = {
   demissao: "Já existe solicitação de demissão",
-  ferias: "Já existe solicitação de férias",
+  ferias: "Férias deste colaborador já estão completas",
   ferias_venda: "Já existe venda de férias aguardando o RH",
   troca_funcao: "Já existe mudança de função em andamento",
   advertencia: "Já existe advertência aguardando decisão",

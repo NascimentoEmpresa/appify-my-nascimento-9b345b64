@@ -71,6 +71,9 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   // 20261016000020): 'enviar_malote' lança despesa no Malote do Financeiro.
   // Ligar a tela para alguém conferir rateio não dá junto esse poder.
   rh_rateio_despesas: ["enviar_malote"],
+  // Fluxo de Caixa (30/10/2026, SIS-2026-0712): Editar (alterar) e Excluir passaram a ter switch próprio ao lado de Ratear (incluir).
+  // O RH só rateia e a Calita rateia e exclui; ligar a tela dá visualizar + ratear e o resto se liga de propósito.
+  "financeiro-fluxo-caixa-gestao": ["alterar", "excluir"],
 };
 
 /**

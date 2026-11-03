@@ -13,6 +13,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
 import { vagaEmAndamento, filtrarEmAndamento } from "@/lib/recrutamento/vagaEmAndamento";
+import { postoELocalDaVaga } from "@/lib/recrutamento/postoDaVaga";
 import {
   motivoLabel, fmtBr, mostraNomeReferencia,
   podeVagaAdministrativa, filtrarAdministrativas, filtrarPorEscopo, normSetorVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga,
@@ -76,6 +77,8 @@ interface Solicitacao {
   insalubridade_recebe?: string;
   insalubridade_quanto?: string;
   local_exato?: string;
+  /** Posto do catálogo (sup_posto) — é ele o "Posto de Trabalho"; ver lib/recrutamento/postoDaVaga. */
+  posto_id?: string | null;
   data_inicio_prevista?: string;
   quantidade_vagas?: number;
   req_obrigatorios?: string;
@@ -723,6 +726,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [nomesPorEmailHist, setNomesPorEmailHist] = useState<Record<string, string>>({}); // nome real (EMPREGADOS) por e-mail, p/ histórico
   const [nomeSolicitante, setNomeSolicitante] = useState("");  // nome real de quem pediu a vaga (quando só ficou o e-mail)
   const [nomeAprovador, setNomeAprovador]     = useState("");  // idem pra "Aprovado/Reprovado por" (18/09/2026)
+  const [postoCatalogo, setPostoCatalogo]     = useState("");  // nome do sup_posto de posto_id (30/10/2026)
   // Quem aprova/reprova fica gravado com nome E e-mail (mig 187): o nome do
   // metadata quando existe, senão o e-mail — e a tela traduz por EMPREGADOS.
   const carimboAprovador = () => ({
@@ -1180,6 +1184,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       sb.from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at"),
     ]);
     if (sol) setDrawerSol(sol);
+    // Posto de Trabalho pelo posto_id, não pelo local_exato — que o lápis do
+    // Recrutamento sobrescreve com endereço (#1418). Ver lib/recrutamento/postoDaVaga.
+    setPostoCatalogo("");
+    if (sol?.posto_id) {
+      const { data: posto } = await sb.from("sup_posto").select("nome").eq("id", sol.posto_id).maybeSingle();
+      setPostoCatalogo(String(posto?.nome ?? ""));
+    }
     // "Solicitado por": quando ficou gravado só com o e-mail, traduz para o
     // nome de EMPREGADOS. Só consulta quando precisa — solicitação criada por
     // quem tem nome no metadata já vem pronta.
@@ -2612,6 +2623,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Fica de fora o que é interno do processo (quem solicitou/aprovou,
   // recomendação com CPF, motivo de reprovação).
   const copiarInfoVaga = async (s: Solicitacao) => {
+    const postoLocal = postoELocalDaVaga(s.id === drawerSol?.id ? postoCatalogo : "", s.local_exato);
     const linhas: Array<[string, unknown]> = [
       ["Contrato", s.contrato],
       ["Cargo", s.cargo],
@@ -2623,7 +2635,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       ["Salário", s.salario],
       ["Benefícios", s.beneficios],
       ["Insalubridade", s.insalubridade_recebe ? s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : "") : ""],
-      ["Posto de trabalho", s.local_exato],
+      ["Posto de trabalho", postoLocal.posto || s.local_exato],
+      ["Local exato", postoLocal.posto ? postoLocal.local : ""],
       ["Data início prevista", fmtBr(s.data_inicio_prevista)],
       ["Colaborador substituído", mostraNomeReferencia(s.motivo_vaga) ? s.nome_substituido : ""],
       ["Requisitos obrigatórios", s.req_obrigatorios],
@@ -2660,6 +2673,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       </div>
     ) : null;
 
+    const postoLocal = postoELocalDaVaga(s.id === drawerSol?.id ? postoCatalogo : "", s.local_exato);
+
     // Duas colunas (27/10/2026, Convenções Coletivas): à esquerda os dados da
     // vaga; à direita os benefícios da CCT do posto e as observações. Em
     // painel estreito as colunas empilham.
@@ -2691,7 +2706,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Salário", s.salario)}
           {di("Benefícios", s.beneficios, true)}
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
-          {di("Posto de Trabalho", s.local_exato)}
+          {/* Sem posto do catálogo (vaga antiga/manual) segue o local_exato, como antes. */}
+          {di("Posto de Trabalho", postoLocal.posto || s.local_exato)}
+          {postoLocal.posto && postoLocal.local ? di("Local exato", postoLocal.local) : null}
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
           {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}

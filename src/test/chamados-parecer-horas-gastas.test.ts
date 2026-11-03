@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { precificarPorHorasGastas } from "@/lib/chamados/parecerHorasGastas";
+import {
+  precificarPorHorasGastas, valorMedioMercado, valorRealGasto, HORAS_MES_CLT, SALARIO_MENSAL_DEV,
+} from "@/lib/chamados/parecerHorasGastas";
 
 // O parecer gravado do SIS-2026-0787 antes da regra: complexidade 4 (×2),
 // freelancer 14 h, software house 20 h, interno 8 h (as gastas).
@@ -16,8 +18,24 @@ describe("parecer da I.A pelas horas gastas (30/10/2026)", () => {
     expect(r.horas).toBe(8);
     expect(r.precos.map((p) => p.horas)).toEqual([8, 8, 8]);
     expect(r.precos.map((p) => p.valor)).toEqual([3200, 5120, 2640]);
-    expect(r.valor_medio).toBe(3653.33);
+    // Média de mercado sem a equipe interna (vira o card de valor real).
+    expect(r.valor_medio).toBe(4160);
     expect(r.precos[0].perfil).toBe("freelancer"); // o resto do preço fica
+  });
+
+  it("valor real gasto: hora do salário (R$ 3.138,65 ÷ 220 h) × horas gastas, sem complexidade", () => {
+    expect(SALARIO_MENSAL_DEV / HORAS_MES_CLT).toBeCloseTo(14.27, 2);
+    expect(valorRealGasto(8)).toEqual({ valor_hora: 14.27, horas: 8, valor: 114.13 });
+    expect(valorRealGasto("12.5")?.valor).toBe(178.33);
+    expect(valorRealGasto(null)).toBeNull();
+    expect(valorRealGasto(0)).toBeNull();
+  });
+
+  it("listas: média sem a equipe interna só quando o preço é pelas horas gastas", () => {
+    const pelasGastas = precificarPorHorasGastas(precos0787, 7013.33, 14, 8).precos;
+    expect(valorMedioMercado(pelasGastas, 3653.33)).toBe(4160);
+    expect(valorMedioMercado(precos0787, 7013.33)).toBe(7013.33); // horas diferentes = estimativa
+    expect(valorMedioMercado(null, 100)).toBe(100);
   });
 
   it("aceita as horas como texto (numeric do PostgREST)", () => {
