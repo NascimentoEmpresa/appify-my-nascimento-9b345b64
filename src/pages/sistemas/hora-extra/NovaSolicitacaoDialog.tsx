@@ -29,6 +29,7 @@ import {
   limitarPercentual,
   mediaConclusao,
   mensagemErro,
+  motivoErroFuncao,
   normalizarPontoSemIntervalo,
   podeIgnorarEscalaNoFimDeSemana,
   validarSolicitacao,
@@ -38,6 +39,8 @@ import { ASSUNTO_EMERGENCIAL_SEM_CHAMADO, linhaSemChamado, NUMERO_SEM_CHAMADO } 
 import SeletorChamadoDialog from "./SeletorChamadoDialog";
 import type { ChamadoDisponivel, PrioridadeHoraExtra, SolicitacaoHoraExtra, TipoHoraExtra } from "./types";
 import { CLASSE_PRIORIDADE, LABEL_PRIORIDADE } from "./types";
+
+const PRAZO_GERAR_MS = 25_000;
 
 interface LinhaChamado extends ChamadoDisponivel {
   percentual_previsto: number;
@@ -253,15 +256,34 @@ export default function NovaSolicitacaoDialog({
       sem_chamado: !!c.sem_chamado,
     }));
     setGerando(true);
+    // Prazo de 25 s (03/11/2026, Pablo: "aqui fica só gerando e não vai"):
+    // sem ele, uma Edge/I.A que não respondia deixava o botão girando para
+    // sempre, sem toast. O `timeout` do invoke corta a requisição; a corrida
+    // com o relógio cobre o que vem antes dela (renovação do token).
+    let relogio: ReturnType<typeof setTimeout> | undefined;
     try {
-      const { data, error } = await supabase.functions.invoke("hora-extra-justificativa-ia", {
-        body: { chamados: dados },
+      const prazo = new Promise<never>((_, rejeitar) => {
+        relogio = setTimeout(() => rejeitar(new Error("A I.A demorou demais para responder.")), PRAZO_GERAR_MS);
       });
+      const { data, error } = await Promise.race([
+        supabase.functions.invoke("hora-extra-justificativa-ia", {
+          body: { chamados: dados },
+          timeout: PRAZO_GERAR_MS - 1_000,
+        }),
+        prazo,
+      ]);
       if (error) {
-        // A mensagem útil vem no corpo (403 sem acesso, 429 sem tokens).
-        const ctx = (error as { context?: Response }).context;
-        const corpo = ctx && typeof ctx.json === "function" ? await ctx.json().catch(() => null) : null;
-        throw new Error(corpo?.error ?? error.message);
+        // A mensagem útil vem no corpo — mas nem sempre em JSON com `error`:
+        // o roteador do cluster usa `erro` e o proxy devolve página em texto.
+        const ctx = (error as { context?: unknown }).context;
+        if (ctx instanceof Response) {
+          const corpo = await ctx.text().catch(() => "");
+          throw new Error(motivoErroFuncao(ctx.status, corpo));
+        }
+        if ((error as { name?: string }).name === "FunctionsFetchError") {
+          throw new Error("A função não respondeu (rede fora ou passou de 25 s).");
+        }
+        throw new Error(error.message);
       }
       if (data?.error || !data?.texto) throw new Error(data?.error ?? "A IA não devolveu texto.");
       alterar("justificativa", String(data.texto).slice(0, 500));
@@ -271,6 +293,7 @@ export default function NovaSolicitacaoDialog({
         `${mensagemErro(erro, "Não foi possível gerar com a I.A.")} Usamos um texto padrão — revise antes de enviar.`,
       );
     } finally {
+      clearTimeout(relogio);
       setGerando(false);
     }
   };
