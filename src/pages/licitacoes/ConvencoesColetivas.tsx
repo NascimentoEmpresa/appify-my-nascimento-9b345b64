@@ -24,7 +24,7 @@ import { FormDecreto } from "@/components/licitacoes/convencoes/FormDecreto";
 // Layout pela referência do chamado: 4 KPIs, filtros, tabela com situação
 // e o cadastro num painel lateral.
 //
-// 03/11/2026 (mig 20261103002100): "Novo Decreto" ao lado de "Nova
+// 03/11/2026 (mig 20261103002250): "Novo Decreto" ao lado de "Nova
 // Convenção" — o decreto municipal tem cadastro próprio (tipo 'decreto',
 // só com o Vale-Transporte), e a lista ganhou a coluna e o filtro de Tipo.
 // =====================================================================

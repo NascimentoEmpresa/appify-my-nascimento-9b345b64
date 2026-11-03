@@ -14,7 +14,7 @@ export const BUCKET_CONVENCOES = "convencoes-coletivas";
 
 export interface Convencao {
   id: string;
-  /** 'decreto' = decreto municipal em cadastro próprio (mig 20261103002100). */
+  /** 'decreto' = decreto municipal em cadastro próprio (mig 20261103002250). */
   tipo: TipoCadastro;
   /** Decreto não tem contrato: empresa/contrato só são obrigatórios na CCT. */
   empresa_id: string | null;

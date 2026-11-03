@@ -360,7 +360,7 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
           </Secao>
 
           {/* Decreto saiu para cadastro próprio ("Novo Decreto", mig
-              20261103002100). Aqui só aparece em convenção antiga que já
+              20261103002250). Aqui só aparece em convenção antiga que já
               trazia um decreto embutido — para não sumir com o dado. */}
           {decretoLegado && <Secao n={2} titulo="Decreto Municipal (cadastro antigo)">
             <div className="grid gap-3 sm:grid-cols-2">

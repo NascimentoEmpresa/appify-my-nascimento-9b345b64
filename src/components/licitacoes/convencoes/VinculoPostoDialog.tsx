@@ -29,7 +29,7 @@ export const rotuloConvencao = (c: Pick<Convencao, "identificacao" | "vigencia_i
     ? [c.decreto_numero, c.municipio].filter(Boolean).join(" · ")
     : [c.contrato?.nome, identificacaoCct(c), c.decreto_numero, c.sindicato].filter(Boolean).join(" · ");
 
-/** Decreto municipal (cadastro próprio, mig 20261103002100) só traz estes benefícios. */
+/** Decreto municipal (cadastro próprio, mig 20261103002250) só traz estes benefícios. */
 const DO_DECRETO = new Set<ChaveBeneficio>(BENEFICIOS_DECRETO);
 
 const comoReferencia = (c: Convencao): ReferenciaConvencao => ({

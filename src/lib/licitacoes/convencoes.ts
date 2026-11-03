@@ -120,7 +120,7 @@ export function normalizarBeneficios(m: MapaBeneficios): MapaBeneficios {
 
 // ── Cadastro ──────────────────────────────────────────────────────────────
 
-/** 'decreto' = cadastro próprio do decreto municipal (mig 20261103002100). */
+/** 'decreto' = cadastro próprio do decreto municipal (mig 20261103002250). */
 export type TipoCadastro = "cct" | "decreto";
 
 /** O que o decreto municipal traz: só o Vale-Transporte. */
