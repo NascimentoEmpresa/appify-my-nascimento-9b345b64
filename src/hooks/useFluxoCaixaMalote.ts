@@ -198,8 +198,40 @@ export function useFluxoCaixaCombinado() {
     // da tela. Quem edita/exclui/troca contrato já invalida esta chave, então
     // o dado do próprio usuário nunca fica velho; mudança de outra pessoa
     // aparece em até 2 min ou ao recarregar.
+    //
+    // 03/11/2026 — MEDIDO: já não são 16 MB, são **17,9 MB**, e o grosso vem de
+    // UMA fonte: v_fluxo_caixa_importado_fluxo_caixa devolve 21.650 linhas × 24
+    // colunas em 2,7 a 6,4 s (as outras cinco somadas dão < 900 kB). Separando
+    // o custo: avaliar a view leva 420–550 ms; **o resto é serializar o JSON**.
+    // Não há truque de serializador — a RPC (json_agg em PL/pgSQL) e a view
+    // direto pelo PostgREST com `Range: 0-29999` dão o mesmo tempo e o mesmo
+    // tamanho; formato colunar cairia só para 11 MB.
+    //
+    // Por que isso importa além da lentidão: a tela produz a saturação que
+    // derruba o próprio monitor de saúde. `monitorDeQueda.ts` trata qualquer
+    // resposta ≥ 500 como queda e, com duas falhas seguidas, mostra
+    // SistemaIndisponivel — que desenha um "404" grande. É daí que vem o
+    // "a Fluxo de Caixa fica caindo no 404" relatado pelos usuários.
+    //
+    // `refetchOnWindowFocus: false` AQUI (contra o padrão global `true`, que é
+    // deliberado — ver o comentário do QueryClient em App.tsx): aquele padrão
+    // foi escrito para consultas de tamanho normal. Com 17,9 MB, voltar para a
+    // aba depois de 2 min rebaixava o payload inteiro. A garantia que o
+    // comentário de App.tsx dá continua valendo: as 586 chamadas de
+    // `invalidateQueries` do projeto seguem invalidando esta chave a cada
+    // escrita, então aprovar/pagar/trocar contrato atualiza na hora. O que
+    // deixa de acontecer é só a rebusca PASSIVA por foco de janela.
+    //
+    // Isto é PALIATIVO, não conserto. O conserto exige a tela parar de precisar
+    // das 21.650 linhas: filtro por competência no servidor **e** totais no
+    // servidor — hoje FluxoCaixaGestao.tsx soma e filtra tudo no navegador
+    // (filtrarPorAbaFluxo / filtrarPorSituacaoFluxo), então limitar linhas
+    // mudaria totais financeiros. Índice não resolve (a view já avalia em
+    // 0,5 s) e paginação já foi tentada e desfeita — era pior, chegava a 24
+    // consultas (ver o comentário no topo deste arquivo).
     staleTime: 120_000,
     gcTime: 1_800_000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
       // SIS-2026-0473: Aplicações Financeiras entra como DUAS views — aplicar
