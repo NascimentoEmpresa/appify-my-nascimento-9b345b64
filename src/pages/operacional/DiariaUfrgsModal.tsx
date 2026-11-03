@@ -7,6 +7,7 @@ import {
   History,
   Info,
   PenLine,
+  RotateCcw,
   Send,
   Trash2,
   UserX,
@@ -125,7 +126,7 @@ export interface PermissoesDiaria {
   editarTarifas: boolean;
 }
 
-type DecisaoNegativa = "reprovar" | "ajuste" | "excluir";
+type DecisaoNegativa = "reprovar" | "ajuste" | "reabrir" | "excluir";
 
 interface Props {
   aberto: boolean;
@@ -145,6 +146,8 @@ interface Props {
   onDecidir: (uuid: string, status: Extract<StatusSolicitacao, "aprovada" | "reprovada">) => void;
   onEnviarMalote: (uuid: string, despesa: DespesaMaloteUfrgs) => Promise<void> | void;
   onSolicitarAjuste: (uuid: string, motivo: string) => void;
+  /** SIS-2026-0791: volta do Malote, cancelando a despesa de lá. */
+  onReabrirAjuste: (uuid: string, motivo: string) => void;
   onExcluir: (uuid: string, motivo: string) => void;
   /** Pedido de "quero editar esta" — a tela reabre o modal em modo "editar". */
   onPedirEdicao: (d: DiariaUfrgs) => void;
@@ -361,6 +364,7 @@ export function DiariaUfrgsModal({
   onDecidir,
   onEnviarMalote,
   onSolicitarAjuste,
+  onReabrirAjuste,
   onExcluir,
   onPedirEdicao,
 }: Props) {
@@ -634,6 +638,7 @@ export function DiariaUfrgsModal({
       return;
     }
     if (decisaoNegativa === "ajuste") onSolicitarAjuste(d.uuid, motivo);
+    else if (decisaoNegativa === "reabrir") onReabrirAjuste(d.uuid, motivo);
     else onExcluir(d.uuid, motivo);
   };
 
@@ -646,6 +651,7 @@ export function DiariaUfrgsModal({
    *   aprovar  → 'solicitada', e nunca a própria (diaria_ufrgs_decidir)
    *   reprovar → idem
    *   ajuste   → 'solicitada'/'reprovada' (diaria_ufrgs_solicitar_ajuste)
+   *   reabrir  → 'aprovada' COM despesa e não paga (diaria_ufrgs_reabrir_para_ajuste)
    *   malote   → 'solicitada'/'aprovada' e sem despesa ainda
    *   excluir  → tudo menos 'excluida' e o que já virou despesa
    */
@@ -661,12 +667,23 @@ export function DiariaUfrgsModal({
     (d.status === "aprovada" || (d.status === "solicitada" && permissoes.aprovar && !souOSolicitante));
   const podeExcluirAgora =
     permissoes.excluir && !!d && d.status !== "excluida" && !d.maloteDespesaId;
+  /**
+   * SIS-2026-0791. 'aprovada' aqui já significa "no Malote e NÃO paga": a
+   * lista converte a diária para o status 'paga' quando a despesa foi paga
+   * (useDiariasUfrgs, malote_despesa_paga), então não há segunda checagem a
+   * fazer. A RPC também aceita o `created_by` da despesa (regra do
+   * SIS-2026-0378), mas o botão fica com quem tem `enviar_malote`: é a
+   * Controladoria que despacha e recebe a devolução na prática.
+   */
+  const podeReabrirAgora =
+    permissoes.enviarMalote && !!d && d.status === "aprovada" && !!d.maloteDespesaId;
 
   const temAlgumaAcao =
     podeEditarAgora ||
     podeDecidirAgora ||
     podePedirAjusteAgora ||
     podeEnviarMaloteAgora ||
+    podeReabrirAgora ||
     podeExcluirAgora;
 
   const idExibido = modo === "nova" ? "—" : (d?.id ?? "");
@@ -759,6 +776,15 @@ export function DiariaUfrgsModal({
               {somenteLeitura ? (
                 <Leitura label="Contrato" valor={d?.contratoNome} />
               ) : (
+                /* SIS-2026-0791 (03/11/2026): até aqui trocar o contrato na
+                   edição era aceito pela tela e DESCARTADO pelo banco —
+                   diaria_ufrgs_editar não gravava contrato_id, então salvava
+                   sem erro e reabria com o contrato antigo. O pedido do
+                   Operacional foi justamente "às vezes foi selecionado o
+                   contrato errado e precisa ajustar". Não devolva este campo
+                   para somente-leitura: trocar o contrato muda a empresa e o
+                   orçamento onde a despesa do Malote nasce, e a troca fica
+                   nomeada na trilha ('contrato_alterado'). */
                 <Campo label="Contrato" obrigatorio erro={erro(!contratoId, "Selecione o contrato.")}>
                   <Select value={contratoId} onValueChange={setContratoId}>
                     <SelectTrigger>
@@ -1382,7 +1408,9 @@ export function DiariaUfrgsModal({
                     ? "Reprovar esta diária?"
                     : decisaoNegativa === "ajuste"
                       ? "O que precisa ser ajustado?"
-                      : "Por que esta diária está sendo excluída?"}
+                      : decisaoNegativa === "reabrir"
+                        ? "Reabrir esta diária para ajuste?"
+                        : "Por que esta diária está sendo excluída?"}
                 </p>
                 {decisaoNegativa === "reprovar" ? (
                   <p className="text-xs text-muted-foreground">
@@ -1391,6 +1419,16 @@ export function DiariaUfrgsModal({
                   </p>
                 ) : (
                   <>
+                    {/* O aviso vem ANTES da caixa de texto de propósito: a
+                        despesa do Malote é cancelada de verdade, e isso não
+                        pode ser descoberto depois de confirmar. */}
+                    {decisaoNegativa === "reabrir" && (
+                      <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+                        A despesa desta diária será <strong>cancelada no Malote</strong> e a diária
+                        volta para {d.solicitante} corrigir. Ao reenviar, uma despesa nova é criada
+                        — a cancelada continua no histórico do Malote.
+                      </p>
+                    )}
                     <Textarea
                       value={motivoDecisao}
                       maxLength={500}
@@ -1400,11 +1438,13 @@ export function DiariaUfrgsModal({
                       placeholder={
                         decisaoNegativa === "ajuste"
                           ? "Ex.: o ofício 12/2026 é de outra viagem; corrija e reenvie."
-                          : "Ex.: lançamento duplicado do mesmo ofício."
+                          : decisaoNegativa === "reabrir"
+                            ? "Ex.: o contrato está errado — é o 47/2024, não o 2021/93."
+                            : "Ex.: lançamento duplicado do mesmo ofício."
                       }
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      {decisaoNegativa === "ajuste"
+                      {decisaoNegativa === "ajuste" || decisaoNegativa === "reabrir"
                         ? `${d.solicitante} recebe este texto como notificação e corrige a diária.`
                         : "A diária sai da lista, mas continua no histórico com este motivo."}
                     </p>
@@ -1422,7 +1462,11 @@ export function DiariaUfrgsModal({
                     Voltar
                   </Button>
                   <Button
-                    variant={decisaoNegativa === "ajuste" ? "default" : "destructive"}
+                    variant={
+                      decisaoNegativa === "ajuste" || decisaoNegativa === "reabrir"
+                        ? "default"
+                        : "destructive"
+                    }
                     disabled={salvando}
                     onClick={confirmarDecisao}
                   >
@@ -1430,7 +1474,9 @@ export function DiariaUfrgsModal({
                       ? "Confirmar reprovação"
                       : decisaoNegativa === "ajuste"
                         ? "Devolver para ajuste"
-                        : "Excluir diária"}
+                        : decisaoNegativa === "reabrir"
+                          ? "Cancelar despesa e reabrir"
+                          : "Excluir diária"}
                   </Button>
                 </div>
               </div>
@@ -1449,7 +1495,11 @@ export function DiariaUfrgsModal({
                           : "Escolha uma ação para esta diária."}
                 </p>
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  {(podeEditarAgora || podePedirAjusteAgora || podeExcluirAgora || podeDecidirAgora) && (
+                  {(podeEditarAgora ||
+                    podePedirAjusteAgora ||
+                    podeReabrirAgora ||
+                    podeExcluirAgora ||
+                    podeDecidirAgora) && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="outline" disabled={salvando}>
@@ -1475,6 +1525,17 @@ export function DiariaUfrgsModal({
                               <p className="text-sm">Solicitar ajuste</p>
                               <p className="text-[11px] text-muted-foreground">
                                 Devolve a quem lançou, com o que precisa mudar.
+                              </p>
+                            </div>
+                          </DropdownMenuItem>
+                        )}
+                        {podeReabrirAgora && (
+                          <DropdownMenuItem onClick={() => setDecisaoNegativa("reabrir")}>
+                            <RotateCcw className="mr-2 h-4 w-4 text-info" />
+                            <div>
+                              <p className="text-sm">Reabrir para ajuste</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                Cancela a despesa no Malote e devolve a diária para correção.
                               </p>
                             </div>
                           </DropdownMenuItem>

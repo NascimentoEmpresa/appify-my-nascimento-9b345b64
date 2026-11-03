@@ -673,6 +673,28 @@ export function useSolicitarAjusteUfrgs() {
   });
 }
 
+/**
+ * Reabrir para ajuste uma diária JÁ enviada ao Malote (SIS-2026-0791).
+ *
+ * Diferente de useSolicitarAjusteUfrgs: aqui a diária está 'aprovada' e tem
+ * despesa no Malote, e a RPC CANCELA essa despesa para destravar a correção.
+ * Até 03/11/2026 o único caminho era cancelar a despesa à mão, excluir a
+ * diária e relançar tudo do zero.
+ */
+export function useReabrirAjusteUfrgs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; motivo: string }) => {
+      const { error } = await sb.rpc("diaria_ufrgs_reabrir_para_ajuste", {
+        p_diaria_id: input.id,
+        p_motivo: input.motivo,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["diarias_ufrgs"] }),
+  });
+}
+
 /** Excluir — LOGICAMENTE. A linha continua no banco e some da lista. */
 export function useExcluirDiariaUfrgs() {
   const qc = useQueryClient();
