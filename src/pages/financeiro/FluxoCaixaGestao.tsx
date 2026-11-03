@@ -49,6 +49,8 @@ import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { FILTRO_SEM_VALOR, casaSelecao, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
+import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
+import { fatiaDoContratoNaLinha } from "./fluxo-caixa/fatiaContrato";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -96,6 +98,7 @@ interface FiltrosExport {
   dataDe: string;
   dataAte: string;
   competencia: string;
+  competenciaAte: string;
   empresaIds: string[];
   bancoIds: string[];
   contratoIds: string[];
@@ -108,7 +111,7 @@ interface FiltrosExport {
 }
 
 const FILTROS_EXPORT_VAZIOS: FiltrosExport = {
-  dataDe: "", dataAte: "", competencia: "", empresaIds: [], bancoIds: [], contratoIds: [], classificacaoIds: [], formasPagamento: [], valor: "",
+  dataDe: "", dataAte: "", competencia: "", competenciaAte: "", empresaIds: [], bancoIds: [], contratoIds: [], classificacaoIds: [], formasPagamento: [], valor: "",
   tipo: "todos", origens: [], soRevisar: false,
 };
 
@@ -162,7 +165,8 @@ const SITUACAO_CLASSE: Record<SituacaoFluxo, string> = {
 export default function FluxoCaixaGestao() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [aba, setAba] = useState<AbaFluxo>("realizado");
+  // SIS-2026-0781: o Fechamento da Empresa conta também o que está programado para frente, então abre o Fluxo no Consolidado.
+  const [aba, setAba] = useState<AbaFluxo>(searchParams.get("aba") === "consolidado" ? "consolidado" : "realizado");
   const { data: linhasRealizadas = [], isLoading, error: erroRealizadas, refetch: recarregarRealizadas } = useFluxoCaixaCombinado();
   // SIS-2026-0611: compromissos ainda não pagos (só esta tela usa; a Conciliação não).
   // Na abertura a aba é Realizado: consultar o Projetado nesse momento só
@@ -438,7 +442,12 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0657: a Auditoria da Controladoria abre o Fluxo já no período/empresa do painel (?de=&ate=&empresa=).
   const [dataDe, setDataDe] = useState(searchParams.get("de") ?? "");
   const [dataAte, setDataAte] = useState(searchParams.get("ate") ?? "");
-  const [competencia, setCompetencia] = useState("");
+  // SIS-2026-0781: o Fechamento da Empresa abre o Fluxo com um intervalo de competências (?competenciaDe=&competenciaAte=), só saídas (?tipo=saida)
+  // e o valor que ele mostra (?esperado=), que a faixa de conferência compara com o total filtrado.
+  const [competencia, setCompetencia] = useState(searchParams.get("competenciaDe") ?? "");
+  const [competenciaAte, setCompetenciaAte] = useState(searchParams.get("competenciaAte") ?? "");
+  const [tipoFiltro, setTipoFiltro] = useState<"" | "saida">(searchParams.get("tipo") === "saida" ? "saida" : "");
+  const [conferenciaFechamento, setConferenciaFechamento] = useState(searchParams.get("origemTela") === "fechamento" ? Number(searchParams.get("esperado")) : null);
   // SIS-2026-0725: todos os filtros de lista aceitam mais de um item (lista vazia = todos); os parâmetros da URL entram como 1 item.
   const doParametro = (k: string) => (searchParams.get(k) ? [searchParams.get(k) as string] : []);
   const [empresaIds, setEmpresaIds] = useState<string[]>(() => doParametro("empresa"));
@@ -448,8 +457,9 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
   // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
   // saiu (CartaoCredito.tsx já dependia dela).
-  const [contratoIds, setContratoIds] = useState<string[]>([]);
-  const [classificacaoIds, setClassificacaoIds] = useState<string[]>([]);
+  const doParametroLista = (k: string) => (searchParams.get(k) ?? "").split(",").filter(Boolean);
+  const [contratoIds, setContratoIds] = useState<string[]>(() => doParametroLista("contrato"));
+  const [classificacaoIds, setClassificacaoIds] = useState<string[]>(() => doParametroLista("classificacao"));
   const [formasFiltro, setFormasFiltro] = useState<string[]>([]);
   const [situacoes, setSituacoes] = useState<SituacaoFluxo[]>([]);
   const [kpiAberto, setKpiAberto] = useState<KpiFluxo | null>(null);
@@ -526,6 +536,9 @@ export default function FluxoCaixaGestao() {
     setDataDe("");
     setDataAte("");
     setCompetencia("");
+    setCompetenciaAte("");
+    setTipoFiltro("");
+    setConferenciaFechamento(null);
     setEmpresaIds([]);
     setOrigensFiltro([]);
     setContratoIds([]);
@@ -546,10 +559,12 @@ export default function FluxoCaixaGestao() {
       if (valorNaLinha(l, valorNum) === null) return false;
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
-      if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
+      if (!competenciaNoIntervalo(l, competencia, competenciaAte)) return false;
+      if (tipoFiltro && l.tipo !== tipoFiltro) return false;
       if (empresaIds.length > 0 && !empresaIds.includes(l.empresa_id ?? "")) return false;
       if (origensFiltro.length > 0 && !origensFiltro.some((o) => linhaDaOrigemDoCard(l, o))) return false;
-      if (!casaSelecao(contratoIds, !!l.contrato_nome, (id) => l.contrato_id === id)) return false;
+      // Rateio com cota no contrato escolhido também entra (a fatia dele é somada abaixo).
+      if (!casaSelecao(contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) return false;
       if (!casaSelecao(classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
       if (formasFiltro.length > 0 && !formasFiltro.includes(l.forma_pagamento ?? "")) return false;
       if (bancoIds.length > 0 && !bancoIds.includes(l.banco_id ?? "")) return false;
@@ -557,8 +572,8 @@ export default function FluxoCaixaGestao() {
       // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
       if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
-    });
-  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, soInconsistentes, busca, valor]);
+    }).map((l) => fatiaDoContratoNaLinha(l, contratoIds.filter((id) => id !== FILTRO_SEM_VALOR)));
+  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tipoFiltro, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -581,7 +596,7 @@ export default function FluxoCaixaGestao() {
 
   function abrirExportacao() {
     setFx({
-      dataDe, dataAte, competencia, empresaIds, bancoIds, contratoIds, classificacaoIds, formasPagamento: formasFiltro, valor,
+      dataDe, dataAte, competencia, competenciaAte, empresaIds, bancoIds, contratoIds, classificacaoIds, formasPagamento: formasFiltro, valor,
       tipo: "todos", origens: origensFiltro.filter((o): o is FluxoCaixaMaloteLinha["origem"] => o in LABEL_ORIGEM), soRevisar: soInconsistentes,
     });
     setExportando(true);
@@ -602,7 +617,7 @@ export default function FluxoCaixaGestao() {
       if (valorNaLinha(l, valorNum) === null) return false;
       if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
       if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
-      if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
+      if (!competenciaNoIntervalo(l, fx.competencia, fx.competenciaAte)) return false;
       if (fx.empresaIds.length > 0 && !fx.empresaIds.includes(l.empresa_id ?? "")) return false;
       if (fx.bancoIds.length > 0 && !fx.bancoIds.includes(l.banco_id ?? "")) return false;
       if (!casaSelecao(fx.contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) return false;
@@ -652,7 +667,7 @@ export default function FluxoCaixaGestao() {
       }));
     const recorte: [string, string][] = [
       ["Período (data de pagamento)", fx.dataDe || fx.dataAte ? `${fx.dataDe ? dia(fx.dataDe) : "início"} a ${fx.dataAte ? dia(fx.dataAte) : "hoje"}` : "Todos"],
-      ["Competência", fx.competencia ? `${fx.competencia.slice(5, 7)}/${fx.competencia.slice(0, 4)}` : "Todas"],
+      ["Competência", fx.competencia || fx.competenciaAte ? [fx.competencia, fx.competenciaAte].filter((m, i, a) => m && a.indexOf(m) === i).map((m) => `${m.slice(5, 7)}/${m.slice(0, 4)}`).join(" a ") : "Todas"],
       ["Empresa", nomesSelecionados(empresasDisponiveis, fx.empresaIds, "Todas")],
       ["Banco", nomesSelecionados(bancosDisponiveis, fx.bancoIds, "Todos")],
       ["Contrato", nomesSelecionados(contratosDisponiveis, fx.contratoIds, "Todos")],
@@ -985,6 +1000,21 @@ export default function FluxoCaixaGestao() {
         )}
       </p>
 
+      {conferenciaFechamento !== null && Number.isFinite(conferenciaFechamento) && (() => {
+        const diferenca = Math.round((totalSaidas - conferenciaFechamento) * 100) / 100;
+        return (
+          <div className={`rounded-md border px-3 py-2 text-xs ${diferenca === 0 ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+            <p className="font-semibold">Aberto pelo Fechamento da Empresa — só saídas, na visão Consolidado.</p>
+            <p>
+              Valor no Fechamento: <strong>{formatBRL(conferenciaFechamento)}</strong> · Saídas aqui com os filtros atuais: <strong>{formatBRL(totalSaidas)}</strong>
+              {diferenca === 0
+                ? " — bate."
+                : ` — diferença de ${formatBRL(Math.abs(diferenca))} (${diferenca > 0 ? "a mais aqui" : "a menos aqui"}). Mudou algum filtro? Despesa rateada entre contratos aparece como uma linha só e entra pelo valor inteiro.`}
+            </p>
+          </div>
+        );
+      })()}
+
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -1014,8 +1044,13 @@ export default function FluxoCaixaGestao() {
               <Input type="date" className="h-8 text-xs" value={dataAte} onChange={(e) => setDataAte(e.target.value)} />
             </div>
             <div>
-              <Label className="text-xs">Competência</Label>
-              <Input type="month" className="h-8 text-xs" value={competencia} onChange={(e) => setCompetencia(e.target.value)} />
+              <Label className="text-xs">Competência{competenciaAte && competenciaAte !== competencia ? " (de … até)" : ""}</Label>
+              <div className="flex gap-1">
+                <Input type="month" className="h-8 text-xs" value={competencia} onChange={(e) => setCompetencia(e.target.value)} />
+                {competenciaAte && competenciaAte !== competencia && (
+                  <Input type="month" className="h-8 text-xs" value={competenciaAte} onChange={(e) => setCompetenciaAte(e.target.value)} />
+                )}
+              </div>
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
@@ -1240,6 +1275,9 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                     <TableCell className="text-center text-sm font-medium">
                       {formatBRL(l.valor)}
+                      {"valorLancamentoRateio" in l && l.valorLancamentoRateio !== undefined && (
+                        <div className="text-[10px] font-normal text-muted-foreground" title="Com o filtro de contrato, os totais somam só a fatia do contrato escolhido">fatia do contrato · rateio de {formatBRL(l.valorLancamentoRateio)}</div>
+                      )}
                       {l.fatura_cartao_id && l.fatura_mes && (() => {
                         // SIS-2026-0632: comparação da linha da fatura com o valor real (boleto).
                         const informado = faturasInformadas?.get(chaveFatura(l.fatura_cartao_id, l.fatura_mes));

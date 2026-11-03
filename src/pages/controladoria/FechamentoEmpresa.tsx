@@ -21,10 +21,11 @@ import { useTratamentosContrato } from "./faturamento/useTratamentosContrato";
 import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
+import { linkFluxoDoRecorte } from "./fechamento/linkFluxo";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
   admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
-  type LinhaFechamento, type StatusFechamento,
+  ROTULO_SEM_CLASSIFICACAO, type ItemDetalheClassificacao, type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
 // SIS-2026-0642: Fechamento da Empresa (Controladoria) — lucro dos contratos menos as despesas administrativas,
@@ -208,9 +209,21 @@ export default function FechamentoEmpresa() {
   const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "adm", rotulo, rubricas, mesesAlvo });
   const abrirSocio = (socio: string, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "socio", socio, mesesAlvo });
   const abrirTributos = (mesesAlvo: string[]) => setDetalheParams({ tipo: "tributos", mesesAlvo });
+  // SIS-2026-0781: contratos que entram na despesa administrativa (os "ADMINISTRATIVO - …" das empresas; os dos sócios têm coluna própria) e os de cada sócio,
+  // para o "Ver todos os lançamentos" abrir o Fluxo de Caixa com os mesmos contratos da célula.
+  const idsContratosAdm = useMemo(() => [...idsAdministrativos].filter((id) => !socioPorContrato.has(id)), [idsAdministrativos, socioPorContrato]);
   const detalhe = useMemo<DetalheAberto | null>(() => {
     const p = detalheParams;
     if (!p) return null;
+    const linkFluxo = (contratos: { contratoIds: string[]; semContrato: boolean }) => (i: ItemDetalheClassificacao) => linkFluxoDoRecorte({
+      base,
+      meses: p.mesesAlvo,
+      empresaId: empresaAdm,
+      classificacaoIds: i.classificacaoIds,
+      semClassificacao: i.classificacao === ROTULO_SEM_CLASSIFICACAO,
+      ...contratos,
+      valorEsperado: i.valor,
+    });
     const linhaDoMes = (mes: string) => linhasAno.find((l) => l.mes === mes);
     const projetado = p.mesesAlvo.some((m) => m > mesAtual);
     if (p.tipo === "adm") {
@@ -222,6 +235,7 @@ export default function FechamentoEmpresa() {
         valorCelula,
         projetado,
         mostrarRubrica: true,
+        linkFluxo: linkFluxo({ contratoIds: idsContratosAdm, semContrato: true }),
       };
     }
     if (p.tipo === "tributos") {
@@ -231,6 +245,7 @@ export default function FechamentoEmpresa() {
         itens: detalheTributosPorClassificacao(admTodas, new Set(p.mesesAlvo), ligacoes, empresaAdm),
         valorCelula: arredondar2(p.mesesAlvo.reduce((s, m) => s + (linhaDoMes(m)?.tributos ?? 0), 0)),
         projetado,
+        linkFluxo: linkFluxo({ contratoIds: idsContratosAdm, semContrato: true }),
       };
     }
     const valorCelula = arredondar2(p.mesesAlvo.reduce((s, m) => s + (linhaDoMes(m)?.socios[p.socio] ?? 0), 0));
@@ -240,9 +255,10 @@ export default function FechamentoEmpresa() {
       itens: detalheSocioPorClassificacao(linhasDosSocios, new Set(p.mesesAlvo), p.socio, socioPorContrato, ligacoes),
       valorCelula,
       projetado,
+      linkFluxo: linkFluxo({ contratoIds: [...socioPorContrato].filter(([, nome]) => nome === p.socio).map(([id]) => id), semContrato: false }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detalheParams, linhasAno, admTodas, ligacoes, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual]);
+  }, [detalheParams, linhasAno, admTodas, ligacoes, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual, base, idsContratosAdm]);
   const mesesDaTabela = linhas.map((l) => l.mes);
 
   const termo = buscaMes.trim().toLowerCase();
