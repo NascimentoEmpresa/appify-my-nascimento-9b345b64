@@ -120,7 +120,14 @@ export function normalizarBeneficios(m: MapaBeneficios): MapaBeneficios {
 
 // ── Cadastro ──────────────────────────────────────────────────────────────
 
+/** 'decreto' = cadastro próprio do decreto municipal (mig 20261103002100). */
+export type TipoCadastro = "cct" | "decreto";
+
+/** O que o decreto municipal traz: só o Vale-Transporte. */
+export const BENEFICIOS_DECRETO: ChaveBeneficio[] = ["vt"];
+
 export interface CadastroConvencao {
+  tipo?: TipoCadastro | null;
   empresa_id?: string | null;
   contrato_id?: string | null;
   categoria_profissional?: string | null;
@@ -130,6 +137,7 @@ export interface CadastroConvencao {
   cct_arquivo_path?: string | null;
   decreto_numero?: string | null;
   decreto_arquivo_path?: string | null;
+  municipio?: string | null;
   beneficios?: MapaBeneficios | null;
 }
 
@@ -137,6 +145,7 @@ const vazio = (s: unknown) => !String(s ?? "").trim();
 
 /** O que falta para o cadastro ficar "Completo". Lista vazia = completo. */
 export function pendenciasConvencao(c: CadastroConvencao): string[] {
+  if (c.tipo === "decreto") return pendenciasDecreto(c);
   const p: string[] = [];
   if (vazio(c.empresa_id)) p.push("Empresa não informada");
   if (vazio(c.contrato_id)) p.push("Contrato não informado");
@@ -153,7 +162,20 @@ export function pendenciasConvencao(c: CadastroConvencao): string[] {
   return p;
 }
 
-export const situacaoConvencao = (c: CadastroConvencao): "completo" | "pendente" =>
+/** Decreto municipal: número, município, anexo e o VT (valor ou "Não contém"). */
+export function pendenciasDecreto(c: CadastroConvencao): string[] {
+  const p: string[] = [];
+  if (vazio(c.decreto_numero)) p.push("Número do decreto não informado");
+  if (vazio(c.municipio)) p.push("Município não informado");
+  if (vazio(c.decreto_arquivo_path)) p.push("Decreto não anexado");
+  for (const chave of BENEFICIOS_DECRETO) {
+    const def = DEF_POR_CHAVE[chave];
+    if (!beneficioPreenchido(def, c.beneficios?.[chave])) p.push(`${def.nome}: preencha o valor ou marque "Não contém"`);
+  }
+  return p;
+}
+
+export const situacaoConvencao =(c: CadastroConvencao): "completo" | "pendente" =>
   pendenciasConvencao(c).length ? "pendente" : "completo";
 
 /** "CCT 2026/2027" a partir da vigência (quando a identificação não foi digitada). */
@@ -243,7 +265,7 @@ export function montarQuadro(r: RespostaReferencia | null | undefined): Quadro {
     if (!usadasIds.includes(ref.id)) usadasIds.push(ref.id);
     const v = ref.beneficios?.[def.chave];
     const texto = textoBeneficio(def, v);
-    if (!texto) pendencias.push(`${def.nome}: não preenchido em ${identificacaoCct(ref) ?? "na convenção"}.`);
+    if (!texto) pendencias.push(`${def.nome}: não preenchido em ${identificacaoCct(ref) ?? ref.decreto_numero ?? "na convenção"}.`);
     return { def, texto, naoContem: !!v?.nao_contem && !!texto, referencia: ref };
   });
   const ordem = (id: string) => (id === r.principal_id ? 0 : 1);

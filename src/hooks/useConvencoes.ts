@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import {
   normalizarBeneficios, situacaoConvencao,
-  type ChaveBeneficio, type MapaBeneficios, type RespostaReferencia,
+  type ChaveBeneficio, type MapaBeneficios, type RespostaReferencia, type TipoCadastro,
 } from "@/lib/licitacoes/convencoes";
 
 // Convenções Coletivas e Decretos Municipais (mig 20261027000930): cadastro,
@@ -14,12 +14,16 @@ export const BUCKET_CONVENCOES = "convencoes-coletivas";
 
 export interface Convencao {
   id: string;
-  empresa_id: string;
-  contrato_id: string;
+  /** 'decreto' = decreto municipal em cadastro próprio (mig 20261103002100). */
+  tipo: TipoCadastro;
+  /** Decreto não tem contrato: empresa/contrato só são obrigatórios na CCT. */
+  empresa_id: string | null;
+  contrato_id: string | null;
   identificacao: string | null;
   categoria_profissional: string | null;
   sindicato: string | null;
   municipio: string | null;
+  uf: string | null;
   vigencia_inicio: string | null;
   vigencia_fim: string | null;
   cct_arquivo_path: string | null;
@@ -98,9 +102,10 @@ export function useExcluirConvencao() {
 }
 
 /** Sobe um anexo e devolve caminho/nome/tamanho para gravar na convenção. */
-export async function enviarAnexoConvencao(contratoId: string, tipo: "cct" | "decreto", arquivo: File) {
+export async function enviarAnexoConvencao(contratoId: string | null, tipo: "cct" | "decreto", arquivo: File) {
   const ext = (arquivo.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const path = `${contratoId}/${tipo}-${Date.now()}.${ext}`;
+  // Decreto em cadastro próprio não tem contrato: pasta "decretos".
+  const path = `${contratoId ?? "decretos"}/${tipo}-${Date.now()}.${ext}`;
   const { error } = await sb.storage.from(BUCKET_CONVENCOES).upload(path, arquivo, { upsert: false, contentType: arquivo.type || undefined });
   if (error) throw error;
   return { path, nome: arquivo.name, tamanho: arquivo.size };

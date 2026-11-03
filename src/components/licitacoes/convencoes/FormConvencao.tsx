@@ -25,16 +25,16 @@ import {
 import { IconeBeneficio } from "./IconeBeneficio";
 
 // Cadastrar / Editar Convenção Coletiva (layout de referência do chamado):
-// 1. Informações do Contrato · 2. Decreto Municipal (se aplicável) ·
-// 3. Benefícios do Contrato. Salvar com pendência é permitido — o cadastro
+// 1. Informações do Contrato · 2. Benefícios do Contrato · 3. Postos. O
+// decreto municipal tem cadastro próprio (FormDecreto, 03/11/2026). Salvar com pendência é permitido — o cadastro
 // fica "Pendente" e a lista avisa; o que não pode é vazio virar "Não contém".
 
-interface Anexo { path: string | null; nome: string | null; tamanho: number | null; novo?: File | null }
+export interface Anexo { path: string | null; nome: string | null; tamanho: number | null; novo?: File | null }
 
-const ANEXO_VAZIO: Anexo = { path: null, nome: null, tamanho: null, novo: null };
+export const ANEXO_VAZIO: Anexo = { path: null, nome: null, tamanho: null, novo: null };
 const MB = (n: number | null | undefined) => (n ? `${(n / 1048576).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB` : "");
 
-function Secao({ n, titulo, children }: { n: number; titulo: string; children: ReactNode }) {
+export function Secao({ n, titulo, children }: { n: number; titulo: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
       <h3 className="flex items-center gap-2.5 text-[15px] font-bold text-[#0f3171] dark:text-blue-300">
@@ -46,7 +46,7 @@ function Secao({ n, titulo, children }: { n: number; titulo: string; children: R
   );
 }
 
-function Campo({ label, obrigatorio, children, className }: { label: string; obrigatorio?: boolean; children: ReactNode; className?: string }) {
+export function Campo({ label, obrigatorio, children, className }: { label: string; obrigatorio?: boolean; children: ReactNode; className?: string }) {
   return (
     <div className={cn("space-y-1", className)}>
       <label className="text-xs font-medium text-foreground">{label}{obrigatorio && <span className="text-red-600"> *</span>}</label>
@@ -55,7 +55,7 @@ function Campo({ label, obrigatorio, children, className }: { label: string; obr
   );
 }
 
-function CampoAnexo({ anexo, onEscolher, onRemover, somenteLeitura, rotulo }: {
+export function CampoAnexo({ anexo, onEscolher, onRemover, somenteLeitura, rotulo }: {
   anexo: Anexo; onEscolher: (f: File) => void; onRemover: () => void; somenteLeitura?: boolean; rotulo: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -92,7 +92,7 @@ function CampoAnexo({ anexo, onEscolher, onRemover, somenteLeitura, rotulo }: {
   );
 }
 
-const PERIODO_LABEL: Record<Periodo, string> = { dia: "Por dia", mes: "Por mês" };
+export const PERIODO_LABEL: Record<Periodo, string> = { dia: "Por dia", mes: "Por mês" };
 
 /** Uma linha da tabela de benefícios (Benefício | Valor | Tipo | Não contém). */
 function LinhaBeneficio({ def, v, onChange, somenteLeitura }: {
@@ -238,6 +238,8 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
   const sugestoes = (campo: "categoria_profissional" | "sindicato") =>
     Array.from(new Set(existentes.map((e) => e[campo]).filter(Boolean) as string[])).sort();
 
+  const decretoLegado = !!(convencao?.decreto_numero || convencao?.decreto_arquivo_path || convencao?.municipio);
+
   // Pendências do que está na tela (anexo novo conta como anexado).
   const pendencias = pendenciasConvencao({
     empresa_id: empresaId, contrato_id: contratoId, categoria_profissional: categoria, sindicato,
@@ -263,10 +265,11 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
       const decFinal = await subir(decreto, "decreto");
       const input: ConvencaoInput & { id?: string } = {
         id: convencao?.id,
+        tipo: "cct",
         empresa_id: empresaId, contrato_id: contratoId,
         identificacao: convencao?.identificacao ?? null,
         categoria_profissional: categoria.trim() || null, sindicato: sindicato.trim() || null,
-        municipio: municipio.trim() || null,
+        municipio: municipio.trim() || null, uf: convencao?.uf ?? null,
         vigencia_inicio: vigIni || null, vigencia_fim: vigFim || null,
         cct_arquivo_path: cctFinal.path, cct_arquivo_nome: cctFinal.nome, cct_arquivo_tamanho: cctFinal.tamanho,
         decreto_numero: decretoNum.trim() || null,
@@ -356,7 +359,10 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
             </div>
           </Secao>
 
-          <Secao n={2} titulo="Decreto Municipal (se aplicável)">
+          {/* Decreto saiu para cadastro próprio ("Novo Decreto", mig
+              20261103002100). Aqui só aparece em convenção antiga que já
+              trazia um decreto embutido — para não sumir com o dado. */}
+          {decretoLegado && <Secao n={2} titulo="Decreto Municipal (cadastro antigo)">
             <div className="grid gap-3 sm:grid-cols-2">
               <Campo label="Decreto Municipal">
                 <Input value={decretoNum} onChange={(e) => setDecretoNum(e.target.value)} placeholder="Ex.: Decreto 12.345/2024" disabled={somenteLeitura} className="h-9" />
@@ -370,9 +376,9 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
                 <Input value={municipio} onChange={(e) => setMunicipio(e.target.value)} placeholder="Quando aplicável" disabled={somenteLeitura} className="h-9" />
               </Campo>
             </div>
-          </Secao>
+          </Secao>}
 
-          <Secao n={3} titulo="Benefícios do Contrato">
+          <Secao n={decretoLegado ? 3 : 2} titulo="Benefícios do Contrato">
             <div className="overflow-x-auto">
               <div className="min-w-[520px]">
                 <div className="grid grid-cols-[minmax(150px,1.2fr)_minmax(150px,1fr)_minmax(120px,0.8fr)_64px] gap-2 pb-1 text-xs font-medium text-muted-foreground">
@@ -395,7 +401,7 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
             )}
           </Secao>
 
-          <Secao n={4} titulo="Postos que seguem esta convenção">
+          <Secao n={decretoLegado ? 4 : 3} titulo="Postos que seguem esta convenção">
             {!contratoId ? (
               <p className="text-xs text-muted-foreground">Escolha o contrato para listar os postos dele na Planilha de Custo.</p>
             ) : postosQ.isLoading ? (
