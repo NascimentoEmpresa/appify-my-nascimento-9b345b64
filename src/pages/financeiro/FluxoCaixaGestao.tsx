@@ -5,6 +5,7 @@ import { ErroDeConsulta } from "@/components/layout/ErroDeConsulta";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -50,6 +51,8 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { FILTRO_SEM_VALOR, casaSelecao, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
+import { AlteracaoEmMassaBar } from "./fluxo-caixa/AlteracaoEmMassaBar";
+import { chaveDaLinhaMassa, type LinhaMassa } from "./fluxo-caixa/alteracaoEmMassa";
 import { fatiaDoContratoNaLinha } from "./fluxo-caixa/fatiaContrato";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
@@ -588,6 +591,19 @@ export default function FluxoCaixaGestao() {
     [filtradas, hoje],
   );
 
+  // SIS-2026-0780: alteração em massa de Centro de Custo / Classificação (só quem tem o menu fantasma da barra + Editar).
+  const [massaAtiva, setMassaAtiva] = useState(false);
+  const [chavesMassa, setChavesMassa] = useState<Set<string>>(new Set());
+  const selecionadasMassa = useMemo(() => (massaAtiva ? (filtradas.filter((l) => chavesMassa.has(chaveDaLinhaMassa(l))) as unknown as LinhaMassa[]) : []), [massaAtiva, filtradas, chavesMassa]);
+  function alternarMassa(chave: string, marcar: boolean) {
+    setChavesMassa((prev) => {
+      const proximo = new Set(prev);
+      if (marcar) proximo.add(chave);
+      else proximo.delete(chave);
+      return proximo;
+    });
+  }
+
   // Exportação com escolha do recorte: o diálogo já abre com os filtros que a
   // tela está usando, e a pessoa ajusta o que quiser (período, empresa, banco,
   // tipo, origem...). A 2ª aba do arquivo registra o recorte e os totais.
@@ -670,7 +686,7 @@ export default function FluxoCaixaGestao() {
       ["Competência", fx.competencia || fx.competenciaAte ? [fx.competencia, fx.competenciaAte].filter((m, i, a) => m && a.indexOf(m) === i).map((m) => `${m.slice(5, 7)}/${m.slice(0, 4)}`).join(" a ") : "Todas"],
       ["Empresa", nomesSelecionados(empresasDisponiveis, fx.empresaIds, "Todas")],
       ["Banco", nomesSelecionados(bancosDisponiveis, fx.bancoIds, "Todos")],
-      ["Contrato", nomesSelecionados(contratosDisponiveis, fx.contratoIds, "Todos")],
+      ["Centro de Custo", nomesSelecionados(contratosDisponiveis, fx.contratoIds, "Todos")],
       ["Classificação", nomesSelecionados(classificacoesDisponiveis, fx.classificacaoIds, "Todas")],
       ["Forma de pagamento", fx.formasPagamento.length > 0 ? fx.formasPagamento.join(", ") : "Todas"],
       ["Valor (exato)", parseValorBR(fx.valor) !== null ? fx.valor.trim() : "Todos"],
@@ -801,8 +817,8 @@ export default function FluxoCaixaGestao() {
               <SearchableMultiSelect value={fx.bancoIds} onChange={(v) => setFx((f) => ({ ...f, bancoIds: v }))} options={opcoesDe(bancosDisponiveis)} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Contrato</Label>
-              <SearchableMultiSelect value={fx.contratoIds} onChange={(v) => setFx((f) => ({ ...f, contratoIds: v }))} options={opcoesDe(contratosDisponiveis, "Sem contrato (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
+              <Label className="text-xs">Centro de Custo</Label>
+              <SearchableMultiSelect value={fx.contratoIds} onChange={(v) => setFx((f) => ({ ...f, contratoIds: v }))} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Classificação</Label>
@@ -1057,8 +1073,8 @@ export default function FluxoCaixaGestao() {
               <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={setEmpresaIds} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
-              <Label className="text-xs">Contrato</Label>
-              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDisponiveis, "Sem contrato (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+              <Label className="text-xs">Centro de Custo</Label>
+              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             {aba !== "realizado" && (
               <div>
@@ -1116,6 +1132,12 @@ export default function FluxoCaixaGestao() {
         </CardContent>
       </Card>
 
+      <AcessoGate menu="financeiro-fluxo-caixa-alteracao-massa" acao="visualizar">
+        <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+          <AlteracaoEmMassaBar ativo={massaAtiva} onAtivo={setMassaAtiva} selecionadas={selecionadasMassa} onSelecionadas={setChavesMassa} />
+        </AcessoGate>
+      </AcessoGate>
+
       <Card>
         <CardContent className="p-4 space-y-3">
           <div>
@@ -1140,7 +1162,19 @@ export default function FluxoCaixaGestao() {
                     SIS-2026-0489, pedido de volta — a coluna na view nunca
                     saiu (CartaoCredito.tsx já dependia dela). */}
                 <TableRow>
-                  <TableHead className="w-8" />
+                  <TableHead className={massaAtiva ? "w-14" : "w-8"}>
+                    {massaAtiva && (
+                      <Checkbox
+                        aria-label="Marcar todas as linhas desta página"
+                        checked={pageRows.length > 0 && pageRows.every((l) => chavesMassa.has(chaveDaLinhaMassa(l)))}
+                        onCheckedChange={(v) => setChavesMassa((prev) => {
+                          const proximo = new Set(prev);
+                          for (const l of pageRows) { if (v === true) proximo.add(chaveDaLinhaMassa(l)); else proximo.delete(chaveDaLinhaMassa(l)); }
+                          return proximo;
+                        })}
+                      />
+                    )}
+                  </TableHead>
                   <TableHead className="text-center">ID</TableHead>
                   <TableHead className="text-center">Data de Pagamento</TableHead>
                   <TableHead className="text-center">Tipo</TableHead>
@@ -1148,7 +1182,7 @@ export default function FluxoCaixaGestao() {
                   <TableHead className="text-center">Descrição</TableHead>
                   <TableHead className="text-center">Competência</TableHead>
                   <TableHead className="text-center">Empresa</TableHead>
-                  <TableHead className="text-center">Contrato</TableHead>
+                  <TableHead className="text-center">Centro de Custo</TableHead>
                   <TableHead className="text-center">Banco</TableHead>
                   <TableHead className="text-center">Forma de Pagamento</TableHead>
                   <TableHead className="text-center">Valor (R$)</TableHead>
@@ -1186,16 +1220,25 @@ export default function FluxoCaixaGestao() {
                   <>
                   <TableRow key={chave} onDoubleClick={() => setItemHistorico(l)}>
                     <TableCell className="text-center">
-                      {temRateio && (
-                        <button
-                          type="button"
-                          className="inline-flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
-                          title={expandida ? "Recolher rateio" : "Ver rateio por contrato"}
-                          onClick={() => alternarExpansao(chave)}
-                        >
-                          {expandida ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        </button>
-                      )}
+                      <div className="flex items-center justify-center gap-1">
+                        {massaAtiva && (
+                          <Checkbox
+                            aria-label={`Marcar ${l.id_malote ?? "linha"} para alteração em massa`}
+                            checked={chavesMassa.has(chaveDaLinhaMassa(l))}
+                            onCheckedChange={(v) => alternarMassa(chaveDaLinhaMassa(l), v === true)}
+                          />
+                        )}
+                        {temRateio && (
+                          <button
+                            type="button"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
+                            title={expandida ? "Recolher rateio" : "Ver rateio por centro de custo"}
+                            onClick={() => alternarExpansao(chave)}
+                          >
+                            {expandida ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-center font-mono text-[11px]">
                       <span className="mx-auto block max-w-[110px] break-words">{l.id_malote}</span>
@@ -1276,7 +1319,7 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-center text-sm font-medium">
                       {formatBRL(l.valor)}
                       {"valorLancamentoRateio" in l && l.valorLancamentoRateio !== undefined && (
-                        <div className="text-[10px] font-normal text-muted-foreground" title="Com o filtro de contrato, os totais somam só a fatia do contrato escolhido">fatia do contrato · rateio de {formatBRL(l.valorLancamentoRateio)}</div>
+                        <div className="text-[10px] font-normal text-muted-foreground" title="Com o filtro de centro de custo, os totais somam só a fatia do centro de custo escolhido">fatia do centro de custo · rateio de {formatBRL(l.valorLancamentoRateio)}</div>
                       )}
                       {l.fatura_cartao_id && l.fatura_mes && (() => {
                         // SIS-2026-0632: comparação da linha da fatura com o valor real (boleto).
