@@ -28,12 +28,25 @@
 
 name: erp-pilha
 
+# 03/11/2026 — LOG COM TETO. Sem isto o Docker grava json-file sem limite: o
+# log do Kong chegou a 4,8 GB, e um `docker logs` nele ocupou 38-46 % de um
+# núcleo do banco1 em plena queda (docs/incidentes/2026-11-03-post-mortem.md).
+# 5 arquivos de 100 MB por container: ~1 dia de Kong em horário de pico, e o
+# arquivo vivo nunca passa de 100 MB. O histórico longo vai para o Grafana
+# Cloud (infra/observabilidade/), não para o disco do nó.
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "5"
+
 services:
   auth:
     # GoTrue: o mesmo servico que valida as senhas hoje. O JWT_SECRET tem que
     # ser o MESMO usado para gerar ANON_KEY e SERVICE_ROLE_KEY, senao nenhum
     # token e aceito.
     image: supabase/gotrue:v2.158.1
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -73,6 +86,7 @@ services:
     # PostgREST: transforma o schema do Postgres em API REST. E ele que aplica
     # a RLS - por isso a replica precisa das policies carregadas.
     image: postgrest/postgrest:v12.2.3
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -105,6 +119,7 @@ services:
     # ("unlock-object-versioning") e mudaria o schema para alem da producao.
     # Ao atualizar: conferir a contagem de migrations da tag ANTES de subir.
     image: supabase/storage-api:v1.80.2
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -139,6 +154,7 @@ services:
     # e ele le o MESMO supabase/config.toml da producao para saber quais
     # funcoes sao publicas - por isso o config.toml e montado aqui.
     image: supabase/edge-runtime:v1.77.2
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -163,6 +179,12 @@ services:
       - ../../supabase/functions:/home/deno/functions:ro
       - ../../supabase/config.toml:/home/deno/config.toml:ro
       - ./functions-main:/home/deno/main:ro
+    # Segredos das Edge Functions (chaves de terceiros): o arquivo mora SÓ nos
+    # nós (/opt/erp/infra/failover/segredos-functions.env), nunca no git.
+    # required: false para o compose não recusar subir num nó novo sem ele.
+    env_file:
+      - path: ./segredos-functions.env
+        required: false
     command: ["start", "--main-service", "/home/deno/main"]
 
   kong:
@@ -171,6 +193,7 @@ services:
     # URL da Supabase hoje. E por isso que trocar de backend um dia sera
     # trocar UM endereco, nao reescrever o frontend.
     image: kong:2.8.1
+    logging: *logs
     restart: unless-stopped
     depends_on: [auth, rest, storage, functions]
     ports:
