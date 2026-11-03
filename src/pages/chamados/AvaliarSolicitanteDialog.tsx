@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CheckCircle2, Clock, MessageSquareWarning, Send, SkipForward, Star, UserCheck } from "lucide-react";
+import { CheckCircle2, Clock, Send, SkipForward, Star, UserCheck } from "lucide-react";
 import { lerHorasGastas } from "@/lib/chamados/horasGastas";
 import { CRITERIOS_AVALIACAO_SOLICITANTE, iniciais, type CriterioSolicitanteKey } from "./types";
 
@@ -16,9 +16,14 @@ import { CRITERIOS_AVALIACAO_SOLICITANTE, iniciais, type CriterioSolicitanteKey 
 // O DESENVOLVEDOR AVALIA QUEM PEDIU (20/10/2026, mig 20261020000070).
 //
 // Mesma mecânica da avaliação do solicitante (AvaliarChamadoDialog): 1 a 5
-// por critério e comentário obrigatório quando a nota não é cheia — o CHECK
-// do banco repete a regra. A diferença é que aqui cada pessoa tem a sua:
-// o solicitante e cada participante extra, numa aba por pessoa.
+// por critério. A diferença é que aqui cada pessoa tem a sua: o solicitante
+// e cada participante extra, numa aba por pessoa.
+//
+// COMENTÁRIO OPCIONAL (03/11/2026, mig 20261103005400 — Pablo: "tira essa
+// obrigatoriedade de precisar comentar se não der 5 estrelas, somente pro
+// desenvolvedor"): até ali nota menor que 5 exigia 10+ caracteres, aqui e
+// num CHECK do banco. Saiu dos dois. A avaliação que o SOLICITANTE faz
+// (AvaliarChamadoDialog) continua exigindo.
 //
 // Dois modos:
 //   · "concluir" — aberto pelo botão Concluir. O dev avalia e conclui, ou
@@ -33,8 +38,6 @@ import { CRITERIOS_AVALIACAO_SOLICITANTE, iniciais, type CriterioSolicitanteKey 
 // em QUALQUER saída (avaliar e concluir, concluir sem avaliar, concluir sem
 // ninguém). O banco repete a regra e recusa concluir sem horas.
 // =====================================================================
-
-const MIN_COMENTARIO = 10;
 
 type Notas = Partial<Record<CriterioSolicitanteKey, number>>;
 interface Pessoa { user_id: string; nome: string; papel: "solicitante" | "participante" }
@@ -91,25 +94,22 @@ export function AvaliarSolicitanteDialog({
     if (open && lista.length && (!aba || !lista.some((p) => p.user_id === aba))) setAba(lista[0].user_id);
   }, [open, lista, aba]);
 
-  /** Situação de cada pessoa: não começou, incompleta, falta comentário ou pronta. */
+  /** Situação de cada pessoa: não começou, incompleta ou pronta. */
   const situacao = useMemo(() => {
-    const m: Record<string, "vazia" | "incompleta" | "falta_comentario" | "pronta"> = {};
+    const m: Record<string, "vazia" | "incompleta" | "pronta"> = {};
     lista.forEach((p) => {
       const n = notas[p.user_id] ?? {};
       const c = (comentarios[p.user_id] ?? "").trim();
       const preenchidos = CRITERIOS_AVALIACAO_SOLICITANTE.filter((k) => (n[k.key] ?? 0) >= 1).length;
       if (preenchidos === 0 && !c) m[p.user_id] = "vazia";
       else if (preenchidos < CRITERIOS_AVALIACAO_SOLICITANTE.length) m[p.user_id] = "incompleta";
-      else {
-        const cheia = CRITERIOS_AVALIACAO_SOLICITANTE.every((k) => n[k.key] === 5);
-        m[p.user_id] = cheia || c.length >= MIN_COMENTARIO ? "pronta" : "falta_comentario";
-      }
+      else m[p.user_id] = "pronta";
     });
     return m;
   }, [lista, notas, comentarios]);
 
   const prontas = lista.filter((p) => situacao[p.user_id] === "pronta");
-  const pendentesDeAcerto = lista.filter((p) => situacao[p.user_id] === "incompleta" || situacao[p.user_id] === "falta_comentario");
+  const pendentesDeAcerto = lista.filter((p) => situacao[p.user_id] === "incompleta");
 
   const sacudir = () => { setTremer(true); setTimeout(() => setTremer(false), 500); };
 
@@ -140,10 +140,8 @@ export function AvaliarSolicitanteDialog({
       const p = pendentesDeAcerto[0];
       setAba(p.user_id); sacudir();
       toast({
-        title: situacao[p.user_id] === "incompleta" ? `Falta nota para ${p.nome}` : `Conte o que faltou — ${p.nome}`,
-        description: situacao[p.user_id] === "incompleta"
-          ? "Dê de 1 a 5 em todos os critérios, ou apague as notas dessa pessoa."
-          : `Notas abaixo de 5 pedem um comentário de pelo menos ${MIN_COMENTARIO} caracteres.`,
+        title: `Falta nota para ${p.nome}`,
+        description: "Dê de 1 a 5 em todos os critérios, ou apague as notas dessa pessoa.",
         variant: "destructive",
       });
       return;
@@ -165,12 +163,7 @@ export function AvaliarSolicitanteDialog({
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO_DEV").insert(linhas);
     if (error) {
       setEnviando(false);
-      const violou = error.message?.includes("chamado_avaliacao_comentario_obrigatorio_dev");
-      toast({
-        title: violou ? "Conte o que faltou" : "Erro ao gravar a avaliação",
-        description: violou ? `Notas abaixo de 5 exigem um comentário de pelo menos ${MIN_COMENTARIO} caracteres.` : error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Erro ao gravar a avaliação", description: error.message, variant: "destructive" });
       return;
     }
     invalidar();
@@ -195,8 +188,6 @@ export function AvaliarSolicitanteDialog({
   const notasAtual = (atual && notas[atual.user_id]) || {};
   const comentarioAtual = (atual && comentarios[atual.user_id]) || "";
   const sitAtual = atual ? situacao[atual.user_id] : "vazia";
-  const precisaComentario = sitAtual === "falta_comentario" || (sitAtual === "pronta" && !CRITERIOS_AVALIACAO_SOLICITANTE.every((k) => notasAtual[k.key] === 5));
-  const abaixoDe5 = CRITERIOS_AVALIACAO_SOLICITANTE.filter((k) => (notasAtual[k.key] ?? 0) >= 1 && (notasAtual[k.key] ?? 0) < 5);
 
   return (
     <Dialog open={open} onOpenChange={fechar}>
@@ -314,28 +305,15 @@ export function AvaliarSolicitanteDialog({
 
                 <div className="space-y-1">
                   <p className="text-[13px] font-semibold">
-                    Comentário{" "}
-                    {precisaComentario
-                      ? <span className="text-destructive">(obrigatório)</span>
-                      : <span className="font-normal text-muted-foreground">(opcional)</span>}
+                    Comentário <span className="font-normal text-muted-foreground">(opcional)</span>
                   </p>
-                  {precisaComentario && (
-                    <p className="flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">
-                      <MessageSquareWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>Menos de 5 em <b>{abaixoDe5.map((k) => k.titulo).join(", ")}</b>. Conte o que faltou — é o que ajuda a pessoa a pedir melhor da próxima vez.</span>
-                    </p>
-                  )}
                   <Textarea
                     rows={2} maxLength={500} className="min-h-[56px] text-sm"
-                    placeholder={precisaComentario
-                      ? "Ex.: a descrição não dizia qual relatório, demorou dias para responder a dúvida…"
-                      : "Algo que vale registrar sobre como foi o atendimento com esta pessoa…"}
+                    placeholder="Algo que vale registrar sobre como foi o atendimento com esta pessoa…"
                     value={comentarioAtual}
                     onChange={(e) => setComentarios((cur) => ({ ...cur, [atual.user_id]: e.target.value }))}
                   />
-                  <p className={`text-right text-[11px] ${sitAtual === "falta_comentario" ? "font-semibold text-destructive" : "text-muted-foreground"}`}>
-                    {sitAtual === "falta_comentario" ? `Faltam ${MIN_COMENTARIO - comentarioAtual.trim().length} caracteres` : `${comentarioAtual.length}/500`}
-                  </p>
+                  <p className="text-right text-[11px] text-muted-foreground">{comentarioAtual.length}/500</p>
                 </div>
               </div>
             )}

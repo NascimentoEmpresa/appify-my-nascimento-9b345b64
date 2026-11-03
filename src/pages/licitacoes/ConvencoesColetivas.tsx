@@ -12,6 +12,7 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useConvencoes, useExcluirConvencao, nomeEmpresa, type Convencao } from "@/hooks/useConvencoes";
 import { dataBr, identificacaoCct, pendenciasConvencao } from "@/lib/licitacoes/convencoes";
 import { FormConvencao } from "@/components/licitacoes/convencoes/FormConvencao";
+import { FormDecreto } from "@/components/licitacoes/convencoes/FormDecreto";
 
 // =====================================================================
 // Licitações › Convenções Coletivas e Decretos Municipais (27/10/2026,
@@ -22,6 +23,10 @@ import { FormConvencao } from "@/components/licitacoes/convencoes/FormConvencao"
 // ao posto; na Abertura de Vagas o quadro de benefícios aparece sozinho.
 // Layout pela referência do chamado: 4 KPIs, filtros, tabela com situação
 // e o cadastro num painel lateral.
+//
+// 03/11/2026 (mig 20261103002250): "Novo Decreto" ao lado de "Nova
+// Convenção" — o decreto municipal tem cadastro próprio (tipo 'decreto',
+// só com o Vale-Transporte), e a lista ganhou a coluna e o filtro de Tipo.
 // =====================================================================
 
 const MENU = "licitacoes_convencoes";
@@ -53,16 +58,18 @@ export default function ConvencoesColetivas() {
   const [fEmpresa, setFEmpresa] = useState(TODOS);
   const [fContrato, setFContrato] = useState(TODOS);
   const [fSituacao, setFSituacao] = useState(TODOS);
+  const [fTipo, setFTipo] = useState(TODOS);
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(10);
-  const [form, setForm] = useState<{ conv: Convencao | null; ler: boolean } | null>(null);
+  const [form, setForm] = useState<{ conv: Convencao | null; ler: boolean; tipo: Convencao["tipo"] } | null>(null);
 
   // ?editar=<id> / ?ver=<id> — o "Editar se necessário" do quadro da vaga
   // abre aqui direto no cadastro de origem.
   const alvo = params.get("editar") ?? params.get("ver");
   const deLink = alvo ? lista.find((c) => c.id === alvo) ?? null : null;
-  const formAberto = form ?? (deLink ? { conv: deLink, ler: !params.get("editar") || !podeAlterar } : null);
+  const formAberto = form ?? (deLink ? { conv: deLink, ler: !params.get("editar") || !podeAlterar, tipo: deLink.tipo } : null);
+  const abrir = (c: Convencao, ler: boolean) => setForm({ conv: c, ler, tipo: c.tipo });
   const fechar = () => {
     setForm(null);
     if (alvo) { params.delete("editar"); params.delete("ver"); setParams(params, { replace: true }); }
@@ -70,12 +77,12 @@ export default function ConvencoesColetivas() {
 
   const empresas = useMemo(() => {
     const m = new Map<string, string>();
-    for (const c of lista) m.set(c.empresa_id, nomeEmpresa(c.empresa));
+    for (const c of lista) if (c.empresa_id) m.set(c.empresa_id, nomeEmpresa(c.empresa));
     return [...m].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [lista]);
   const contratos = useMemo(() => {
     const m = new Map<string, string>();
-    for (const c of lista) if (fEmpresa === TODOS || c.empresa_id === fEmpresa) m.set(c.contrato_id, c.contrato?.nome ?? "—");
+    for (const c of lista) if (c.contrato_id && (fEmpresa === TODOS || c.empresa_id === fEmpresa)) m.set(c.contrato_id, c.contrato?.nome ?? "—");
     return [...m].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [lista, fEmpresa]);
 
@@ -85,23 +92,28 @@ export default function ConvencoesColetivas() {
       (fEmpresa === TODOS || c.empresa_id === fEmpresa)
       && (fContrato === TODOS || c.contrato_id === fContrato)
       && (fSituacao === TODOS || c.situacao === fSituacao)
+      && (fTipo === TODOS || c.tipo === fTipo)
       && (!t || [c.contrato?.nome, c.categoria_profissional, c.sindicato, identificacaoCct(c), c.decreto_numero, c.municipio, nomeEmpresa(c.empresa)]
         .some((x) => String(x ?? "").toLowerCase().includes(t))));
-  }, [lista, fEmpresa, fContrato, fSituacao, busca]);
+  }, [lista, fEmpresa, fContrato, fSituacao, fTipo, busca]);
 
   const total = lista.length;
-  const comCct = lista.filter((c) => !!c.cct_arquivo_path).length;
+  const comCct = lista.filter((c) => c.tipo !== "decreto" && !!c.cct_arquivo_path).length;
+  // Decreto em cadastro próprio + o que ainda vem embutido em convenção antiga.
   const comDecreto = lista.filter((c) => !!c.decreto_numero).length;
   const pendentes = lista.filter((c) => c.situacao === "pendente").length;
 
   const paginas = Math.max(1, Math.ceil(filtrados.length / porPagina));
   const pag = Math.min(pagina, paginas);
   const visiveis = filtrados.slice((pag - 1) * porPagina, pag * porPagina);
-  const limpar = () => { setFEmpresa(TODOS); setFContrato(TODOS); setFSituacao(TODOS); setBusca(""); setPagina(1); };
+  const limpar = () => { setFEmpresa(TODOS); setFContrato(TODOS); setFSituacao(TODOS); setFTipo(TODOS); setBusca(""); setPagina(1); };
 
   const apagar = async (c: Convencao) => {
-    if (!confirm(`Excluir a convenção de ${c.contrato?.nome ?? "contrato"}? Os anexos também saem.`)) return;
-    try { await excluir.mutateAsync(c); toast.success("Convenção excluída."); }
+    const decreto = c.tipo === "decreto";
+    if (!confirm(decreto
+      ? `Excluir o ${c.decreto_numero ?? "decreto"} (${c.municipio ?? "município"})? O anexo também sai.`
+      : `Excluir a convenção de ${c.contrato?.nome ?? "contrato"}? Os anexos também saem.`)) return;
+    try { await excluir.mutateAsync(c); toast.success(decreto ? "Decreto excluído." : "Convenção excluída."); }
     catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
   };
 
@@ -120,16 +132,22 @@ export default function ConvencoesColetivas() {
             <p className="mt-1 text-sm text-muted-foreground">Cadastro e consulta das convenções coletivas, decretos municipais e benefícios por contrato.</p>
           </div>
           {podeIncluir && (
-            <Button onClick={() => setForm({ conv: null, ler: false })} className="bg-[#0f3171] hover:bg-[#0c2860]">
-              <Plus className="mr-1 h-4 w-4" />Nova convenção
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => setForm({ conv: null, ler: false, tipo: "decreto" })}
+                className="font-semibold text-[#0f3171] dark:text-blue-300">
+                <Plus className="mr-1 h-4 w-4" />Novo Decreto
+              </Button>
+              <Button onClick={() => setForm({ conv: null, ler: false, tipo: "cct" })} className="bg-[#0f3171] hover:bg-[#0c2860]">
+                <Plus className="mr-1 h-4 w-4" />Nova Convenção
+              </Button>
+            </div>
           )}
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi icone={<FileSpreadsheet className="h-5 w-5 text-[#0f3171] dark:text-blue-300" />} cor="bg-blue-50 dark:bg-blue-950/40"
-          titulo="Total de Registros" valor={total} sub={`${total === 1 ? "contrato cadastrado" : "contratos cadastrados"}`} />
+          titulo="Total de Registros" valor={total} sub={`${total === 1 ? "registro cadastrado" : "registros cadastrados"}`} />
         <Kpi icone={<FileText className="h-5 w-5 text-emerald-600" />} cor="bg-emerald-50 dark:bg-emerald-950/40"
           titulo="Com Convenção Coletiva" valor={comCct} sub={`${pct(comCct, total)} dos contratos`} />
         <Kpi icone={<Landmark className="h-5 w-5 text-amber-600" />} cor="bg-amber-50 dark:bg-amber-950/40"
@@ -153,6 +171,14 @@ export default function ConvencoesColetivas() {
             {contratos.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={fTipo} onValueChange={(v) => { setFTipo(v); setPagina(1); }}>
+          <SelectTrigger className="h-9 w-[130px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={TODOS}>Tipo</SelectItem>
+            <SelectItem value="cct">CCT</SelectItem>
+            <SelectItem value="decreto">Decreto</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={fSituacao} onValueChange={(v) => { setFSituacao(v); setPagina(1); }}>
           <SelectTrigger className="h-9 w-[140px]"><SelectValue placeholder="Situação" /></SelectTrigger>
           <SelectContent>
@@ -163,17 +189,18 @@ export default function ConvencoesColetivas() {
         </Select>
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Buscar por contrato, CCT, categoria, sindicato…" className="h-9 pl-9" />
+          <Input value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Buscar por contrato, CCT, decreto, município…" className="h-9 pl-9" />
         </div>
         <Button variant="outline" onClick={limpar} className="h-9 font-semibold text-[#0f3171] dark:text-blue-300">Limpar filtros</Button>
       </Card>
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full min-w-[1040px] text-sm">
             <thead>
               <tr className="border-b text-left text-xs font-medium text-muted-foreground">
-                <th className="px-4 py-3">Contrato</th>
+                <th className="px-4 py-3">Tipo</th>
+                <th className="px-4 py-3">Contrato / Município</th>
                 <th className="px-4 py-3">Empresa</th>
                 <th className="px-4 py-3">Categoria Profissional</th>
                 <th className="px-4 py-3">Sindicato</th>
@@ -186,17 +213,27 @@ export default function ConvencoesColetivas() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={9} className="p-4"><Skeleton className="h-32 w-full" /></td></tr>
+                <tr><td colSpan={10} className="p-4"><Skeleton className="h-32 w-full" /></td></tr>
               ) : error ? (
-                <tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">Não foi possível carregar: {String((error as Error).message ?? error)}</td></tr>
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground">Não foi possível carregar: {String((error as Error).message ?? error)}</td></tr>
               ) : visiveis.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">{total ? "Nada com esses filtros." : "Nenhuma convenção cadastrada ainda."}</td></tr>
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground">{total ? "Nada com esses filtros." : "Nenhuma convenção ou decreto cadastrado ainda."}</td></tr>
               ) : visiveis.map((c) => {
-                const ident = c.cct_arquivo_path || c.vigencia_inicio ? identificacaoCct(c) : null;
+                const ehDecreto = c.tipo === "decreto";
+                const ident = !ehDecreto && (c.cct_arquivo_path || c.vigencia_inicio) ? identificacaoCct(c) : null;
                 const pend = c.situacao === "pendente" ? pendenciasConvencao(c) : [];
                 return (
                   <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-semibold uppercase text-foreground">{c.contrato?.nome ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn("rounded-md px-2.5 py-1 text-xs font-semibold",
+                        ehDecreto ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300")}>
+                        {ehDecreto ? "Decreto" : "CCT"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-semibold uppercase text-foreground">
+                      {ehDecreto ? [c.municipio, c.uf].filter(Boolean).join(" / ") || "—" : c.contrato?.nome ?? "—"}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{nomeEmpresa(c.empresa)}</td>
                     <td className="max-w-[160px] px-4 py-3 text-muted-foreground">{c.categoria_profissional || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{c.sindicato || "—"}</td>
@@ -217,10 +254,10 @@ export default function ConvencoesColetivas() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-1.5">
-                        <button onClick={() => setForm({ conv: c, ler: true })} title="Visualizar"
+                        <button onClick={() => abrir(c, true)} title="Visualizar"
                           className="flex h-8 w-8 items-center justify-center rounded-md border text-[#0f3171] hover:bg-muted dark:text-blue-300"><Eye className="h-4 w-4" /></button>
                         {podeAlterar && (
-                          <button onClick={() => setForm({ conv: c, ler: false })} title="Editar"
+                          <button onClick={() => abrir(c, false)} title="Editar"
                             className="flex h-8 w-8 items-center justify-center rounded-md border text-[#0f3171] hover:bg-muted dark:text-blue-300"><Pencil className="h-4 w-4" /></button>
                         )}
                         {podeExcluir && (
@@ -258,8 +295,10 @@ export default function ConvencoesColetivas() {
         </div>
       </Card>
 
-      <FormConvencao aberto={!!formAberto} onFechar={fechar} convencao={formAberto?.conv ?? null}
+      <FormConvencao aberto={!!formAberto && formAberto.tipo !== "decreto"} onFechar={fechar} convencao={formAberto?.conv ?? null}
         somenteLeitura={formAberto?.ler} existentes={lista} />
+      <FormDecreto aberto={formAberto?.tipo === "decreto"} onFechar={fechar} decreto={formAberto?.conv ?? null}
+        somenteLeitura={formAberto?.ler} />
     </div>
   );
 }
