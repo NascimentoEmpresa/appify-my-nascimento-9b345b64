@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { BUCKET_CHAMADOS, ehImagemAnexo, opcoesDownloadAnexo, type Anexo } from "./types";
+import { BUCKET_CHAMADOS, abreNaAbaAnexo, ehImagemAnexo, motivoFalhaAnexo, nomeSalvarAnexo, type Anexo } from "./types";
 
 // =====================================================================
 // Abrir anexo de chamado (23/10/2026, pedido do Pablo: "ao abrir uma imagem
@@ -106,10 +106,36 @@ export function useAnexoChamado() {
       setImg((cur) => { if (cur?.url.startsWith("blob:")) URL.revokeObjectURL(cur.url); return { anexo: a, url: r.url }; });
       return;
     }
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS)
-      .createSignedUrl(a.storage_path, 3600, opcoesDownloadAnexo(a.storage_path));
-    if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    // Resto pelo DOWNLOAD AUTENTICADO, não pela URL assinada (03/11/2026): o
+    // .docx da abertura do chamado da HELENA "clico e nada acontece". A
+    // assinatura sai mesmo sem os bytes no nó que respondeu (só falha ao
+    // abrir) e o window.open depois do `await` cai no bloqueador de pop-up —
+    // nos dois casos, nenhum aviso. Agora: PDF/texto abrem numa aba reservada
+    // AINDA no clique (antes do await, para o bloqueador não barrar); Word,
+    // planilha, HTML etc. baixam com o nome original; e, se o Storage não
+    // entregar, o toast diz por quê (motivoFalhaAnexo).
+    const aba = abreNaAbaAnexo(a) ? window.open("", "_blank") : null;
+    const { data: blob, error } = await supabase.storage.from(BUCKET_CHAMADOS).download(a.storage_path)
+      .catch((e: unknown) => ({ data: null, error: e }));
+    if (error || !blob || blob.size === 0) {
+      aba?.close();
+      toast({
+        title: `Não foi possível abrir "${nomeSalvarAnexo(a)}"`,
+        description: blob && blob.size === 0 ? "O arquivo está vazio no servidor." : motivoFalhaAnexo(error),
+        variant: "destructive",
+      });
+      return;
+    }
+    const url = URL.createObjectURL(a.mime_type && !blob.type ? new Blob([blob], { type: a.mime_type }) : blob);
+    if (aba) {
+      aba.opener = null;
+      aba.location.href = url;
+    } else {
+      const link = document.createElement("a");
+      link.href = url; link.download = nomeSalvarAnexo(a);
+      document.body.appendChild(link); link.click(); link.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }, [toast]);
 
   // "Baixar" pede um link com download forçado: o da imagem abre no navegador.
