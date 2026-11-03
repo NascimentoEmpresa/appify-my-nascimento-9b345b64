@@ -96,6 +96,7 @@ function montar(modo: "visualizar" | "editar") {
       onDecidir={noop}
       onEnviarMalote={noop}
       onSolicitarAjuste={noop}
+      onReabrirAjuste={noop}
       onExcluir={noop}
       onPedirEdicao={noop}
     />,
