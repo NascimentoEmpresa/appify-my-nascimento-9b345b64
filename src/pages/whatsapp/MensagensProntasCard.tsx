@@ -45,7 +45,7 @@ interface StatusMeta { status: string; motivo?: string; categoria?: string; ante
 
 const STATUS: Record<string, { txt: string; cls: string; ajuda: string }> = {
   APPROVED:     { txt: "aprovada",    cls: "bg-success/15 text-success",              ajuda: "Pode ser enviada para qualquer contato." },
-  PENDING:      { txt: "em revisão",  cls: "bg-warning/15 text-warning-foreground",   ajuda: "A Meta ainda está revisando. Só funciona dentro das 24h." },
+  PENDING:      { txt: "em revisão",  cls: "bg-warning/15 text-amber-800 dark:text-amber-200",   ajuda: "A Meta ainda está revisando. Só funciona dentro das 24h." },
   REJECTED:     { txt: "reprovada",   cls: "bg-destructive/15 text-destructive",      ajuda: "A Meta recusou o texto. Ajuste e submeta de novo com outro nome." },
   NAO_CRIADO:   { txt: "não enviada", cls: "bg-muted text-muted-foreground",          ajuda: "Ainda não foi submetida à Meta." },
   SEM_TEMPLATE: { txt: "só em 24h",   cls: "bg-muted text-muted-foreground",          ajuda: "Sem nome de template: só alcança quem escreveu nas últimas 24h." },
@@ -204,7 +204,7 @@ export function MensagensProntasCard() {
           )}
         </div>
       </div>
-      <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
+      <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
         A Meta precisa aprovar cada mensagem — <b>pode levar alguns dias</b>. Até lá ela só chega a quem escreveu nas últimas 24h.
         Mensagem nova ou com texto alterado volta para a fila de aprovação.
       </p>
@@ -230,7 +230,7 @@ export function MensagensProntasCard() {
                 <Badge variant="secondary" className={`text-[10px] ${st.cls}`} title={st.ajuda}>{st.txt}</Badge>
                 {/* Marketing (14/10/2026): a Meta limita por pessoa (131049/130472) — explica o "não chega pra ninguém". */}
                 {status[l.codigo]?.categoria === "MARKETING" && (
-                  <Badge variant="secondary" className="bg-warning/15 text-[10px] text-warning-foreground"
+                  <Badge variant="secondary" className="bg-warning/15 text-[10px] text-amber-800 dark:text-amber-200"
                     title="A Meta classificou como marketing: ela limita quantas mensagens assim cada pessoa recebe (erro 131049). Reescreva como aviso de serviço (UTILITY).">
                     marketing na Meta
                   </Badge>
@@ -258,7 +258,7 @@ export function MensagensProntasCard() {
               {motivo && <p className="text-[11px] text-destructive">Motivo da recusa: {motivo}</p>}
               {/* Enquanto o novo não é aprovado, sai o reserva — e se ele é marketing, a Meta barra (131049). */}
               {status[l.codigo]?.anterior && status[l.codigo]?.status !== "APPROVED" && (
-                <p className="text-[11px] text-warning-foreground">
+                <p className="text-[11px] text-amber-800 dark:text-amber-200">
                   Enquanto esta não é aprovada, sai a versão anterior (<code>{status[l.codigo]!.anterior!.nome}</code>
                   {status[l.codigo]!.anterior!.categoria ? `, ${status[l.codigo]!.anterior!.categoria === "MARKETING" ? "marketing" : status[l.codigo]!.anterior!.categoria!.toLowerCase()}` : ""})
                   {status[l.codigo]!.anterior!.categoria === "MARKETING" ? " — a Meta limita a entrega dela por pessoa, por isso parte não chega." : "."}

@@ -205,3 +205,10 @@ verify_jwt = true
 # entra só como "existe um anexo sigiloso".
 [functions.denuncia-parecer-ia]
 verify_jwt = true
+
+# Hora Extra › Nova Solicitação › "Gerar mensagem" na justificativa
+# (03/11/2026): texto curto a partir dos chamados da tela, sem gravar nada.
+# Só JWT de usuário, conferido por has_screen_access em sistemas_hora_extra
+# (incluir/alterar/aprovar) antes de gastar token.
+[functions.hora-extra-justificativa-ia]
+verify_jwt = true

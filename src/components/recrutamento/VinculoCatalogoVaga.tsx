@@ -92,7 +92,8 @@ export function VinculoCatalogoVaga({ contratoNome, valor, onChange, onFuncaoNom
           ? <span style={{ color: "#dc2626" }}> *</span>
           : <span style={{ color: "#94a3b8", fontWeight: 600 }}> — sem posto no catálogo</span>}
       </label>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
+      {/* Em tela estreita os três quebram em coluna (03/11/2026). */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         <input className={classeInput} readOnly style={travado}
           title="É o contrato da vaga — não pode ser trocado aqui."
           value={contratoCatalogo?.nome ?? ""}

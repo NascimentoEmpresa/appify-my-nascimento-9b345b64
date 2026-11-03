@@ -21,6 +21,7 @@ import {
   PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
   podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
 } from "./patrimonio/vinculoMalote";
+import { nomeDespesaMalote } from "./patrimonio/nomeMalote";
 
 // JUR_PATRIMONIO* e SISTEMA_COMENTARIOS não estão no types.ts gerado; mesmo
 // padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -508,13 +509,13 @@ export default function Patrimonios() {
   // dinheiro sai. A conta vira despesa lá, passa pela aprovação de lá e só
   // então é paga — por isso a tela leva os dados prontos em vez de duplicar o
   // formulário do Malote aqui.
-  const MESES_COMP = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
   const pagarConta = (o: Obrigacao) => {
     const venc = o.vencimento || hoje();
     const [ano, mes] = venc.slice(0, 10).split("-");
     const q = new URLSearchParams({
       rubrica: o.categoria || "",
-      nome: `${o.categoria || "Despesa"}${sel ? " · " + sel.descricao : ""} — ${MESES_COMP[Number(mes) - 1] ?? mes}/${ano}`,
+      // O nome da conta, não "tipo — mês": a competência vai no campo dela.
+      nome: nomeDespesaMalote(o, pats.find(p => p.id === o.patrimonio_id)?.descricao),
       valor: o.valor != null ? String(o.valor) : "",
       pagamento: venc.slice(0, 10),
       competencia: `${ano}-${mes}`,

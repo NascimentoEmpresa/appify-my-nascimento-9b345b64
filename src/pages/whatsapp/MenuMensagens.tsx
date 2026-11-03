@@ -74,7 +74,7 @@ type StatusMeta = Record<string, { status: string; motivo?: string }>;
 
 const ROTULO_STATUS: Record<string, { txt: string; cls: string }> = {
   APPROVED:     { txt: "aprovada",      cls: "bg-success/15 text-success" },
-  PENDING:      { txt: "em revisão",    cls: "bg-warning/15 text-warning-foreground" },
+  PENDING:      { txt: "em revisão",    cls: "bg-warning/15 text-amber-800 dark:text-amber-200" },
   REJECTED:     { txt: "reprovada",     cls: "bg-destructive/15 text-destructive" },
   NAO_CRIADO:   { txt: "não enviada",   cls: "bg-muted text-muted-foreground" },
   SEM_TEMPLATE: { txt: "só em 24h",     cls: "bg-muted text-muted-foreground" },
@@ -252,7 +252,7 @@ export function MenuMensagens({ filtro, itens, status, onEscolher, onFechar, reg
               </span>
             )}
             {item.tipo === "bot" && item.bot.aviso && (
-              <span className="text-[11px] text-warning-foreground">{item.bot.aviso}</span>
+              <span className="text-[11px] text-amber-800 dark:text-amber-200">{item.bot.aviso}</span>
             )}
 
             {item.tipo === "pronta" && item.pronta.variaveis.length > 0 && (

@@ -154,7 +154,7 @@ export interface ChatChamadoProps {
   solicitanteId: string;
   /** Quem está olhando: a equipe pode escrever mensagem interna, o solicitante não. */
   perfil: "equipe" | "solicitante";
-  /** Chamado concluído/reprovado → conversa fechada (a equipe ainda registra interno). */
+  /** Reprovado/cancelado → conversa fechada (a equipe ainda registra interno). Concluído segue aberto (conversaChamadoFechada). */
   encerrado?: boolean;
   /** Sem permissão para escrever (ex.: gestor só observando) — a conversa fica só de leitura. */
   somenteLeitura?: boolean;
@@ -733,7 +733,7 @@ export function ChatChamado({
             <Textarea
               ref={areaRef} rows={1} maxLength={LIMITE_TEXTO} value={texto} disabled={!podeEscrever}
               placeholder={
-                !podeEscrever ? "Chamado encerrado — a conversa está fechada."
+                !podeEscrever ? "Chamado reprovado ou cancelado — a conversa está fechada."
                 : interno ? "Observação visível só à equipe…"
                 : "Escreva para o grupo do chamado…  (Ctrl+V cola print)"
               }
