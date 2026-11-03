@@ -152,12 +152,30 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
     if (error) return; // recado entre a equipe: falhar aqui não pode travar a tela
     setEtiquetas(new Map((data ?? []).map((e: Etiqueta) => [chaveDoContrato(e), e])));
   }, [mes]);
+  // 03/11/2026: aqui havia uma assinatura de Realtime (`postgres_changes` em
+  // TABELA_ETIQUETA). O cluster NÃO tem o serviço de Realtime — não existe
+  // container e o Kong não tem rota `/realtime` —, então a assinatura nunca
+  // disparou desde a virada: o "aparece na tela dos outros sem recarregar" já
+  // estava quebrado, em silêncio, e ninguém notou porque falhar aqui não trava
+  // a tela.
+  //
+  // O que ela produzia de fato era `GET /realtime/v1/websocket` devolvendo
+  // **404 a cada ~10 s, para sempre**, em toda aba com o painel aberto (75
+  // ocorrências numa amostra de 11 min do log do Kong — eram 75 dos 82 404 do
+  // período inteiro).
+  //
+  // Reler a cada 20 s faz MENOS pedidos que a retentativa do 404 e, ao
+  // contrário dela, funciona de verdade. O custo é desprezível: a tabela tem 7
+  // linhas / 64 kB e a policy `scp_etiqueta_gate` já está em InitPlan
+  // (`(SELECT can_access(...))`), então não há avaliação por linha.
+  //
+  // Se o Realtime subir um dia, isto volta a ser um canal — mas leia antes o
+  // comentário de `useSupCatalogo.ts`, que explica o que cada canal custa em
+  // conexões num banco com poucas vagas livres.
   useEffect(() => {
     carregarEtiquetas();
-    const canal = sb.channel(`scp_etiqueta_${mes}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: TABELA_ETIQUETA }, () => carregarEtiquetas())
-      .subscribe();
-    return () => { sb.removeChannel(canal); };
+    const t = window.setInterval(carregarEtiquetas, 20_000);
+    return () => window.clearInterval(t);
   }, [carregarEtiquetas, mes]);
 
   /** O cadastro + o andamento do mês, na mesma linha. */
