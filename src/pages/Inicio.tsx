@@ -9,6 +9,7 @@ import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
 import { AvisosCard } from "@/components/notificacoes/AvisosCard";
+import { ReconhecimentoCard } from "@/components/reconhecimento/ReconhecimentoCard";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
   CircleUserRound, Megaphone, Quote, Star, Search,
@@ -476,6 +477,13 @@ export default function Inicio() {
               dentro de [data-reveal]: o observer roda uma vez na montagem, e
               um bloco que aparece depois ficaria preso em opacity:0. */}
           <AvisosCard />
+
+          {/* ════════ Reconhecimento e Convivência Profissional ════════ */}
+          {/* Recados positivos do mês anterior, liberados no formulário
+              (30/10/2026). Some sem nada liberado; fora do [data-reveal]
+              pelo mesmo motivo do Quadro de Avisos — e anima a própria
+              entrada. Encarregado externo não vota, não vê. */}
+          {!externo && <ReconhecimentoCard />}
         </div>
       </div>
     </div>

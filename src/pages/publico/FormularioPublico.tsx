@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import logoNascimento from "@/assets/logo-nascimento-icon.png";
+import { EscolhaComplemento, LocalTrabalho, errosEscolha, localRespondido } from "@/components/formularios/PerguntasEspeciais";
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - página PÚBLICA de resposta (/formularios/:slug)
@@ -20,6 +21,8 @@ interface Form {
   pergunta_setor_id?: string | null; pergunta_nome_id?: string | null; setores_acesso?: string[] | null;
   seguranca?: "liberado" | "restrito"; exige_senha?: boolean;
   permite_anonimo?: boolean; intervalo_horas?: number | null; intervalo_mensal?: boolean | null;
+  /** Nunca guarda quem respondeu, nem logado (mig 20261030001000). */
+  sempre_anonimo?: boolean;
 }
 /**
  * O `config` jsonb da pergunta. Cada tipo usa um punhado destas chaves e
@@ -165,7 +168,7 @@ function Aviso({ emoji, titulo, texto, acao, children }: {
   );
 }
 
-function SuccessScreen() {
+function SuccessScreen({ outraPessoa }: { outraPessoa?: () => void }) {
   return (
     <div className="fp-bg" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overflow: "hidden" }}>
       <AnimStyles /><Blobs />
@@ -178,6 +181,13 @@ function SuccessScreen() {
         </svg>
         <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginTop: 16 }}>Resposta enviada!</div>
         <div style={{ fontSize: 14, color: "#64748b", marginTop: 8, lineHeight: 1.6 }}>Muito obrigado por responder. 💙<br />Você já pode fechar esta página.</div>
+        {/* Formulário sempre anônimo: o celular do encarregado passa de mão em
+            mão no posto — a próxima pessoa responde no mesmo aparelho. */}
+        {outraPessoa && (
+          <button onClick={outraPessoa} style={{ marginTop: 18, padding: "10px 16px", borderRadius: 11, border: "1px solid #cbd5e1", background: "#fff", color: "#0f3171", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}>
+            Responder outra pessoa neste aparelho
+          </button>
+        )}
         <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 22 }}>Nascimento Formulários · Grupo Nascimento</div>
       </div>
     </div>
@@ -415,7 +425,14 @@ const linhasColegas = (v: any): LinhaColega[] =>
 const respondida = (p: { tipo: string }, v: any) =>
   p.tipo === "colegas"
     ? linhasColegas(v).length > 0
+    : p.tipo === "local_trabalho" ? localRespondido(v)
+    : p.tipo === "escolha_complemento" ? (v?.marcadas ?? []).length > 0
     : !(v == null || v === "" || (Array.isArray(v) && v.length === 0));
+
+/** Número de cada pergunta na tela: sem os textos informativos e sem o bloco
+ *  "local de trabalho" (ele é o cabeçalho "Onde você trabalha", não uma pergunta
+ *  numerada — como na Pesquisa de Permanência, onde a pergunta 1 vem depois dele). */
+const numerada = (p: { tipo: string }) => p.tipo !== "texto_info" && p.tipo !== "local_trabalho";
 
 /** Setores do cadastro (RPC cs_form_setores). Uma carga por sessão.
  *
@@ -671,6 +688,7 @@ export default function FormularioPublico() {
   const [faltando, setFaltando] = useState<Set<string>>(new Set());  // obrigatórias vazias no envio
   const [anexando, setAnexando] = useState<Record<string, boolean>>({});  // upload de anexo em curso
   const [anonimo, setAnonimo] = useState(false);   // escolha do respondente (só se o form permite)
+  const [tentouEnviar, setTentouEnviar] = useState(false);  // mostra os erros das perguntas de escolha com complemento
   // Intervalo entre respostas (cs_form_prazo): quando já respondeu há pouco, a
   // tela explica quando libera - a trava de verdade é a policy de INSERT.
   const [prazo, setPrazo] = useState<{ pode: boolean; proxima_em?: string | null; intervalo_horas?: number | null; intervalo_mensal?: boolean | null } | null>(null);
@@ -806,7 +824,12 @@ export default function FormularioPublico() {
         ? `Este formulário aceita ${regra}. Você poderá responder de novo a partir de ${quando}.`
         : `Este formulário aceita ${regra}.`} />;
   }
-  if (enviado) return <SuccessScreen />;
+  // Sempre anônimo: a escolha nem aparece e nada que identifique vai junto.
+  const anonimoEf = anonimo || !!form.sempre_anonimo;
+  if (enviado) return <SuccessScreen outraPessoa={form.sempre_anonimo ? () => {
+    setValores({}); setFaltando(new Set()); setTentouEnviar(false); setErro(""); setEnviado(false);
+    abertoEm.current = Date.now(); window.scrollTo({ top: 0 });
+  } : undefined} />;
 
   const setVal = (pid: string, v: any) => {
     setValores(x => ({ ...x, [pid]: v }));
@@ -824,6 +847,8 @@ export default function FormularioPublico() {
     return (!!empregado && s.includes(empregado.setor)) || (!!user && u.includes(user.id));
   };
   const pergsVisiveis = pergs.filter(perguntaVisivel);
+  const numeroDe = new Map<string, number>();
+  pergsVisiveis.filter(numerada).forEach((p, i) => numeroDe.set(p.id, i + 1));
 
   // Erro da pergunta de colegas, na ordem em que a pessoa entende: primeiro o
   // que falta, depois o que está repetido. As mesmas regras rodam no banco -
@@ -862,6 +887,7 @@ export default function FormularioPublico() {
   };
 
   const enviar = async () => {
+    setTentouEnviar(true);
     // Junta TODAS as obrigatórias vazias p/ destacar de uma vez e levar à primeira.
     const faltantes = pergsVisiveis.filter(p => {
       if (p.tipo === "texto_info" || !p.obrigatoria) return false;
@@ -883,7 +909,19 @@ export default function FormularioPublico() {
         return;
       }
     }
-    if (form.coleta_identificacao && !empregado && !anonimo && !nome.trim()) { setErro("Informe seu nome."); return; }
+    // Escolha com complemento: até N, a mais importante, exclusiva, complemento
+    // (as mesmas regras rodam no banco, no trigger cs_form_resposta_tipos).
+    for (const p of pergsVisiveis.filter(p => p.tipo === "escolha_complemento")) {
+      if (!respondida(p, valores[p.id]) && !p.obrigatoria) continue;
+      const msg = errosEscolha(p.id, p.titulo, numeroDe.get(p.id) ?? 0, p.config as any, valores[p.id])[0];
+      if (msg) {
+        setFaltando(new Set([p.id]));
+        setErro(msg);
+        document.getElementById(`perg-${p.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
+    if (form.coleta_identificacao && !empregado && !anonimoEf && !nome.trim()) { setErro("Informe seu nome."); return; }
     setEnviando(true);
     // Perguntas de colegas: guarda só as linhas preenchidas, já limpas (as
     // linhas em branco da tela não viram resposta).
@@ -909,32 +947,32 @@ export default function FormularioPublico() {
     // (o trigger apaga criado_por/nome/e-mail/cadastro), mas nem enviar a gente
     // envia. O SETOR continua indo — é dele que vivem os painéis e ele não
     // aponta para ninguém.
-    const cadastro = anonimo ? null : cadastroCompleto;
+    const cadastro = anonimoEf ? null : cadastroCompleto;
     // Setor (p/ Administrativo × Operacional): cadastro tem prioridade; senão o
     // valor da pergunta de setor indicada no formulário.
     const setorRaw = form.pergunta_setor_id ? valores[form.pergunta_setor_id] : null;
     const setorPergunta = Array.isArray(setorRaw) ? (setorRaw[0] ? String(setorRaw[0]).trim() : null) : (setorRaw != null && setorRaw !== "" ? String(setorRaw).trim() : null);
-    const setor = (cadastroCompleto?.setor?.trim() || setorPergunta) || null;
+    const setor = ((form.sempre_anonimo ? null : cadastroCompleto?.setor?.trim()) || setorPergunta) || null;
     // Nome de quem respondeu: cadastro > campo de identificação > pergunta que
     // identifica o respondente (pergunta_nome_id) — senão fica anônimo.
     const nomeRaw = form.pergunta_nome_id ? valores[form.pergunta_nome_id] : null;
     const nomePergunta = Array.isArray(nomeRaw) ? (nomeRaw[0] ? String(nomeRaw[0]).trim() : "") : (nomeRaw != null ? String(nomeRaw).trim() : "");
-    const nomeResp = anonimo ? null : (cadastro?.nome?.trim() || (form.coleta_identificacao ? nome.trim() : "") || nomePergunta || null);
-    const emailResp = anonimo ? null : (cadastro?.email?.trim() || (form.coleta_identificacao ? email.trim() : "") || null);
+    const nomeResp = anonimoEf ? null : (cadastro?.nome?.trim() || (form.coleta_identificacao ? nome.trim() : "") || nomePergunta || null);
+    const emailResp = anonimoEf ? null : (cadastro?.email?.trim() || (form.coleta_identificacao ? email.trim() : "") || null);
     // criado_por é carimbado pelo default do banco (auth.uid()) quando quem envia
     // está logado; anônimo (link público sem login) fica sem dono. Quem não bate
     // por criado_por é reconhecido pela identidade do cadastro na leitura das
     // respostas (cs_form_minha_resposta), então não precisa setar aqui.
     const duracao_seg = Math.max(0, Math.round((Date.now() - abertoEm.current) / 1000));  // tempo de conclusão
     const base = { formulario_id: form.id, respondente_nome: nomeResp, respondente_email: emailResp, itens };
-    let { error } = await (supabase as any).from("CS_FORM_RESPOSTAS").insert({ ...base, setor, respondente_cadastro: cadastro, duracao_seg, anonimo });
+    let { error } = await (supabase as any).from("CS_FORM_RESPOSTAS").insert({ ...base, setor, respondente_cadastro: cadastro, duracao_seg, anonimo: anonimoEf });
     // Banco ainda sem as colunas novas (setor/cadastro/duração/anônimo): reenvia só o básico.
     if (error && /column|schema cache/i.test(error.message)) ({ error } = await (supabase as any).from("CS_FORM_RESPOSTAS").insert(base));
     setEnviando(false);
     if (error) {
       // As regras do banco (trigger) já falam português — mostra a mensagem
       // como veio em vez de "Erro ao enviar: ...".
-      const daRegra = /^(Em "|Este formulário não aceita)/.test(error.message ?? "");
+      const daRegra = /^(Em "|Este formulário não aceita|Responda "|Escolha o|Escolha a|"|Resposta grande)/.test(error.message ?? "");
       setErro(daRegra ? error.message
         : /row-level security/i.test(error.message)
           ? "Este formulário não está aceitando a sua resposta agora (prazo, limite de respostas ou intervalo entre respostas)."
@@ -975,7 +1013,7 @@ export default function FormularioPublico() {
         </div>
 
         {/* Identificação - cadastro puxado automaticamente quando logado */}
-        {empregado ? (
+        {form.sempre_anonimo ? null : empregado ? (
           <div className="fp-in fp-card-h" style={{ ...card, borderLeft: "4px solid #0f3171", animationDelay: ".08s" }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: "#0f3171" }}>👤 Respondendo como {empregado.nome}</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
@@ -991,7 +1029,7 @@ export default function FormularioPublico() {
                 : "Seus dados de cadastro são anexados automaticamente à resposta - não precisa preencher de novo."}
             </div>
           </div>
-        ) : form.coleta_identificacao && !anonimo ? (
+        ) : form.coleta_identificacao && !anonimoEf ? (
           <div className="fp-in fp-card-h" style={{ ...card, animationDelay: ".08s" }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: "#0f172a", marginBottom: 10 }}>Sua identificação <span style={{ color: "#dc2626" }}>*</span></div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1004,7 +1042,7 @@ export default function FormularioPublico() {
         {/* Identificado × anônimo. Só aparece se o formulário permitir; a
             escolha vale no banco (o trigger apaga a identidade da resposta
             anônima antes de gravar). */}
-        {form.permite_anonimo && (
+        {form.permite_anonimo && !form.sempre_anonimo && (
           <div className="fp-in fp-card-h" style={{ ...card, animationDelay: ".1s" }}>
             <div style={{ fontSize: 14.5, fontWeight: 800, color: "#0f172a", marginBottom: 11 }}>👤 Como você gostaria de enviar esta pesquisa?</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1042,12 +1080,12 @@ export default function FormularioPublico() {
               {p.imagem_url && <img src={p.imagem_url} alt="" style={{ maxWidth: "100%", maxHeight: 280, borderRadius: 10, marginTop: 10, border: "1px solid #f1f5f9" }} />}
             </div>
           );
-          nq++;
+          if (numerada(p)) nq++;
           const falta = faltando.has(p.id);
           return (
           <div key={p.id} id={`perg-${p.id}`} className="fp-in fp-card-h" style={{ ...card, animationDelay: delay, border: falta ? "1.5px solid #dc2626" : card.border, boxShadow: falta ? "0 0 0 3px rgba(220,38,38,.12)" : card.boxShadow }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
-              {nq}. {p.titulo} {p.obrigatoria && <span style={{ color: "#dc2626" }}>*</span>}
+              {numerada(p) ? `${nq}. ` : ""}{p.titulo} {p.obrigatoria && <span style={{ color: "#dc2626" }}>*</span>}
             </div>
             {p.descricao && <div style={{ fontSize: 12.5, color: "#94a3b8", marginTop: 3 }}>{p.descricao}</div>}
             {falta && <div style={{ fontSize: 12, color: "#dc2626", fontWeight: 700, marginTop: 6 }}>⚠️ Esta pergunta é obrigatória.</div>}
@@ -1059,6 +1097,13 @@ export default function FormularioPublico() {
               {p.tipo === "texto_curto" && <input value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} style={inp} placeholder="Sua resposta" />}
               {p.tipo === "texto_longo" && <textarea value={valores[p.id] ?? ""} onChange={e => setVal(p.id, e.target.value)} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="Sua resposta" />}
               {p.tipo === "colaborador" && <ColaboradorSelect value={valores[p.id] ?? ""} onChange={v => setVal(p.id, v)} />}
+              {p.tipo === "local_trabalho" && (
+                <LocalTrabalho formularioId={form.id} value={valores[p.id]} onChange={v => setVal(p.id, v)} />
+              )}
+              {p.tipo === "escolha_complemento" && (
+                <EscolhaComplemento id={p.id} titulo={p.titulo} numero={nq} config={p.config as any}
+                  value={valores[p.id]} onChange={v => setVal(p.id, v)} mostrarErro={tentouEnviar && (falta || respondida(p, valores[p.id]))} />
+              )}
               {p.tipo === "colegas" && (
                 <ColegasGrid p={p} valor={valores[p.id]} meuNome={empregado?.nome ?? ""}
                   onChange={linhas => setVal(p.id, linhas)} />

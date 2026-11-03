@@ -74,10 +74,11 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias, Parecer Jurídico, Hora Extra e Rateio do RH são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH e Fluxo de Caixa são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "duvidas",
       "encarregados_diarias",
+      "financeiro-fluxo-caixa-gestao",
       "financeiro_diarias",
       "operacional_diarias",
       "rh_rateio_despesas",
@@ -89,6 +90,18 @@ describe("catálogo de exceções", () => {
     // Enviar o rateio cria despesa no Malote do Financeiro (mig 20261016000020).
     expect(acoesGravadasPeloToggle("rh_rateio_despesas", true)).not.toContain("enviar_malote");
     expect(acoesGravadasPeloToggle("rh_rateio_despesas", false)).toContain("enviar_malote");
+  });
+
+  it("Fluxo de Caixa (SIS-2026-0712): ligar a tela dá ratear, mas NÃO editar nem excluir; desligar revoga os dois", () => {
+    // RH só rateia; Calita rateia e exclui. Editar e Excluir têm switch próprio.
+    const ligadas = acoesGravadasPeloToggle("financeiro-fluxo-caixa-gestao", true);
+    expect(ligadas).toContain("visualizar");
+    expect(ligadas).toContain("incluir");
+    expect(ligadas).not.toContain("alterar");
+    expect(ligadas).not.toContain("excluir");
+    const revogadas = acoesGravadasPeloToggle("financeiro-fluxo-caixa-gestao", false);
+    expect(revogadas).toContain("alterar");
+    expect(revogadas).toContain("excluir");
   });
 
   it("Hora Extra: ligar a tela NÃO concede editar_concluida, desligar revoga", () => {

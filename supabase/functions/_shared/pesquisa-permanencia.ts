@@ -19,14 +19,18 @@
  *   alternativa SIGNIFICA (problema da empresa × dos fiscais × do órgão) — em
  *   formulário genérico a opção é um texto livre que qualquer edição renomeia.
  *   Por isso o questionário é fixo, aqui, com código por alternativa.
+ *   (30/10/2026: o Formulários ganhou essas peças e a pesquisa virou um
+ *   formulário de lá — ver "Dentro do Formulários" no fim deste arquivo. O
+ *   catálogo continua aqui pelo mesmo motivo: o significado de cada código.)
  *
  * QUEM USA ESTE ARQUIVO
- *   · a página pública da pesquisa (src/pages/publico/PesquisaPermanenciaPublica.tsx);
- *   · a tela de relatórios (src/pages/rh/PesquisaPermanencia.tsx);
- *   · a Edge Function pesquisa-permanencia-ia (o contexto que vai para a I.A);
+ *   · a página pública do Formulários (src/pages/publico/FormularioPublico.tsx),
+ *     nas perguntas local_trabalho / escolha_complemento;
+ *   · a análise do formulário (src/pages/central-servicos/FormularioAnalise.tsx);
+ *   · a Edge Function formulario-assistente-ia (o contexto que vai para a I.A);
  *   · os testes (src/test/pesquisa-permanencia.test.ts).
- *   O banco valida a MESMA regra (pp_regras() na migration) — o teste confere
- *   que o JSON de lá é igual a regrasParaBanco() daqui.
+ *   O banco valida a MESMA regra (cs_form_valida_escolha, mig 20261030001000)
+ *   e grava as perguntas de perguntasDoFormulario() — o teste confere o JSON.
  *
  * Sem import de Deno, Supabase ou de outro arquivo do _shared, para rodar no
  * Vitest e no navegador sem rede (mesmo arranjo de painel-indice.ts).
@@ -788,4 +792,129 @@ export function contextoIA(linhas: LinhaResposta[], turnover: LinhaTurnover[], m
     turnover_geral_pct: taxaTurnover(tv.flatMap((l) => l.trab), tv.flatMap((l) => l.dem)),
     contratos_com_turnover: porContratoT.size,
   };
+}
+
+// ─── Dentro do Formulários (mig 20261030001000) ───────────────────────────
+//
+// Pablo, 30/10/2026: "tem que ficar exatamente igual, não precisa ter um
+// sistema novo de formulário" e "tira do RH essa pesquisa permanência, vai
+// ficar só no formulários". A pesquisa virou um formulário comum da Central
+// de Serviços (CS_FORMULARIOS, id fixo abaixo), com dois tipos de pergunta
+// que o Formulários ganhou para isso e que qualquer formulário pode usar:
+//   · "local_trabalho" — Contrato → Posto de trabalho → Função, da Senior;
+//   · "escolha_complemento" — até N escolhas + a MAIS importante, alternativa
+//     exclusiva e complemento que abre embaixo da alternativa escolhida.
+// O catálogo (PERGUNTAS, com tom/categoria/sinal de cada alternativa) continua
+// aqui: os relatórios leem a resposta pelo `config.codigo` da pergunta (p1..p8)
+// e pelo `cod` da alternativa, então renomear o texto de uma opção no editor
+// não muda o que ela significa. A migration grava perguntasDoFormulario() e o
+// teste confere que o JSON de lá é este.
+
+export const FORMULARIO_PERMANENCIA_ID = "6990cfd5-d0b1-4c59-bcde-48d0f88e70cb";
+export const SLUG_PERMANENCIA = "pesquisa-permanencia";
+export const TIPO_LOCAL = "local_trabalho";
+export const TIPO_ESCOLHA = "escolha_complemento";
+export const TITULO_LOCAL = "Onde você trabalha";
+
+/** Id fixo de cada pergunta no formulário (a migração das respostas antigas usa os mesmos). */
+export const ID_PERGUNTA_FORM: Record<string, string> = {
+  local: "65c6c19d-a958-47fb-8b66-1b07bd7a58dc",
+  p1: "4e5df533-32eb-4940-baff-4d573e864846",
+  p2: "2c95e9da-12d2-467b-bdee-f6501cac74f8",
+  p3: "88b052b7-3136-4f4e-a8ad-69cf968afe98",
+  p4: "37a1620a-e8cd-4fff-aaba-2ab6e7d4b80e",
+  p5: "81f8233e-fbba-4069-86bb-66573f72896f",
+  p6: "d077e8ec-8b72-4949-80e4-da39a7000cce",
+  p7: "cdc477b0-f272-491b-bb14-dfa03b5c57be",
+  p8: "231250a9-8a01-4b26-bf21-536963f38561",
+};
+
+/** O `config` de uma pergunta "escolha_complemento" (o banco valida a mesma forma). */
+export interface ConfigEscolha {
+  /** Código da pergunta para os relatórios (p1..p8 na pesquisa de permanência). */
+  codigo?: string;
+  /** 1 = resposta única; >1 = até N escolhas + a mais importante. */
+  max: number;
+  itens: { cod: string; rotulo: string; exclusiva?: boolean; complemento?: Complemento }[];
+}
+
+/** Valor gravado pela pergunta "local_trabalho" (o banco reescreve contrato/posto_nome pelo cadastro). */
+export interface ValorLocal {
+  empresa: number; filial: number; contrato: string;
+  /** null = "Não sei qual é o meu posto". */
+  posto: string | null; posto_nome: string | null;
+  funcao: string;
+}
+
+/** Pergunta do Formulários → a forma que alternar/errosDaPergunta entendem. */
+export function paraPergunta(id: string, titulo: string, numero: number, cfg: ConfigEscolha): Pergunta {
+  return {
+    id, numero, titulo, tema: titulo, max: Math.max(1, Number(cfg?.max) || 1),
+    opcoes: (cfg?.itens ?? []).map((o) => ({ cod: o.cod, rotulo: o.rotulo, exclusiva: o.exclusiva, complemento: o.complemento })),
+  };
+}
+
+/** As perguntas do formulário, na ordem do documento (o que a migration grava). */
+export function perguntasDoFormulario() {
+  const limpo = <T>(o: T): T => JSON.parse(JSON.stringify(o));
+  return [
+    { id: ID_PERGUNTA_FORM.local, tipo: TIPO_LOCAL, titulo: TITULO_LOCAL, descricao: null, obrigatoria: true, imagem_url: null, opcoes: [], config: {} },
+    ...PERGUNTAS.map((p) => ({
+      id: ID_PERGUNTA_FORM[p.id], tipo: TIPO_ESCOLHA, titulo: p.titulo, descricao: null, obrigatoria: true, imagem_url: null,
+      opcoes: p.opcoes.map((o) => o.rotulo),
+      config: limpo({
+        codigo: p.id, max: p.max,
+        itens: p.opcoes.map((o) => ({
+          cod: o.cod, rotulo: o.rotulo,
+          ...(o.exclusiva ? { exclusiva: true } : {}),
+          ...(o.complemento ? { complemento: o.complemento } : {}),
+        })),
+      } satisfies ConfigEscolha),
+    })),
+  ];
+}
+
+interface PerguntaFormMin { id: string; tipo: string; config?: Record<string, unknown> | null }
+
+/** O formulário tem o recorte (local de trabalho) e as perguntas do catálogo? Aí os relatórios de permanência valem. */
+export function ehFormularioPermanencia(perguntas: PerguntaFormMin[] | null | undefined): boolean {
+  const ps = perguntas ?? [];
+  if (!ps.some((p) => p.tipo === TIPO_LOCAL)) return false;
+  const codigos = new Set(ps.filter((p) => p.tipo === TIPO_ESCOLHA).map((p) => String(p.config?.codigo ?? "")));
+  return PERGUNTAS.every((p) => codigos.has(p.id));
+}
+
+/**
+ * Respostas do Formulários (CS_FORM_RESPOSTAS, lidas pela RLS de quem pede)
+ * → as linhas dos relatórios. Só o mês sai daqui, como na pesquisa antiga.
+ * Resposta sem local de trabalho fica de fora (não tem como recortar).
+ */
+export function linhasDoFormulario(
+  perguntas: PerguntaFormMin[],
+  respostas: { formulario_id?: string; enviado_em: string; itens: Record<string, unknown> | null }[],
+): LinhaResposta[] {
+  const local = perguntas.find((p) => p.tipo === TIPO_LOCAL);
+  if (!local) return [];
+  const porCodigo = perguntas
+    .filter((p) => p.tipo === TIPO_ESCOLHA && p.config?.codigo)
+    .map((p) => [String(p.config!.codigo), p.id] as const);
+  const out: LinhaResposta[] = [];
+  for (const r of respostas) {
+    const l = r.itens?.[local.id] as ValorLocal | undefined;
+    if (!l || typeof l !== "object" || l.empresa == null || l.filial == null) continue;
+    const rr: Respostas = {};
+    for (const [cod, pid] of porCodigo) {
+      const v = r.itens?.[pid] as RespostaPergunta | undefined;
+      if (v && Array.isArray(v.marcadas)) rr[cod] = v;
+    }
+    const d = new Date(r.enviado_em);
+    // Mês no fuso de Brasília, como o pp_respostas fazia (to_char … America/Sao_Paulo).
+    const mes = isNaN(+d) ? "" : new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 7);
+    out.push({
+      aplicacao_id: r.formulario_id ?? "", mes,
+      empresa: Number(l.empresa), filial: Number(l.filial), contrato: String(l.contrato ?? ""),
+      posto: l.posto ?? null, posto_nome: l.posto_nome ?? null, funcao: normFuncao(l.funcao), r: rr,
+    });
+  }
+  return out;
 }

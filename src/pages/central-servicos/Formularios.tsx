@@ -7,6 +7,7 @@ import { parseSurveyMonkey, ImportResultado } from "@/utils/surveyMonkeyImporter
 import { useFormPerms } from "@/hooks/useFormPerms";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { FormularioAcesso } from "./FormularioAcesso";
+import { ehFormularioPermanencia } from "../../../supabase/functions/_shared/pesquisa-permanencia";
 import QRCode from "qrcode";
 
 // =====================================================================
@@ -50,6 +51,9 @@ export interface Formulario {
   // no banco: o trigger cs_form_resposta_guard apaga criado_por/nome/e-mail/
   // cadastro antes de gravar (migration 20260902000001).
   permite_anonimo?: boolean;
+  // Nunca guarda quem respondeu, nem logado — some a escolha identificado ×
+  // anônimo (mig 20261030001000; o celular do encarregado passa de mão em mão).
+  sempre_anonimo?: boolean;
   // Intervalo mínimo entre duas respostas da MESMA pessoa (em horas; null =
   // sem limite). Só vale para quem responde logado - link liberado não tem
   // identidade p/ contar o prazo.
@@ -313,7 +317,7 @@ export default function Formularios() {
     // que se repete todo mês não deve perder as regras). Banco sem as colunas
     // novas: reenvia sem elas em vez de falhar a duplicação.
     let { error } = await (supabase as any).from("CS_FORMULARIOS")
-      .insert({ ...base, permite_anonimo: !!f.permite_anonimo, intervalo_horas: f.intervalo_horas ?? null, intervalo_mensal: !!f.intervalo_mensal })
+      .insert({ ...base, permite_anonimo: !!f.permite_anonimo, sempre_anonimo: !!f.sempre_anonimo, intervalo_horas: f.intervalo_horas ?? null, intervalo_mensal: !!f.intervalo_mensal })
       .select("id").single();
     if (error && /column|schema cache/i.test(error.message))
       ({ error } = await (supabase as any).from("CS_FORMULARIOS").insert(base).select("id").single());
@@ -500,7 +504,9 @@ export default function Formularios() {
                         {seg.icone} <b style={{ color: seg.c }}>{seg.rotulo}</b>
                       </span>
                       <span>🗓 {f.inicia_em || f.encerra_em ? `${f.inicia_em ? "de " + fmtDt(f.inicia_em) : ""} ${f.encerra_em ? "até " + fmtDt(f.encerra_em) : ""}` : "sem prazo definido"}</span>
-                      {f.permite_anonimo && <span title="O respondente escolhe enviar sem se identificar">🕶 Aceita resposta anônima</span>}
+                      {f.sempre_anonimo
+                        ? <span title="Nada que identifique quem respondeu é gravado, nem de quem está logado">🕶 Sempre anônimo</span>
+                        : f.permite_anonimo && <span title="O respondente escolhe enviar sem se identificar">🕶 Aceita resposta anônima</span>}
                       {f.intervalo_mensal && <span title="Uma resposta por mês civil: respondeu dia 30, dia 1 pode de novo">⏱ <b style={{ color: "#0f172a" }}>1 resposta por mês</b></span>}
                       {!f.intervalo_mensal && f.intervalo_horas != null && (
                         <span title="Intervalo mínimo entre duas respostas da mesma pessoa (só p/ quem responde logado)">
@@ -514,6 +520,14 @@ export default function Formularios() {
                       {can("responder") && <a href={urlPublica(f.slug)} target="_blank" rel="noopener noreferrer" style={{ ...btn("#16a34a"), textDecoration: "none", display: "inline-block" }}>↗ Abrir</a>}
                       {podeEditar(f) && <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}`)} style={btn("#0f3171")}>✏️ Editar</button>}
                       {podeVerRespostas(f) && <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}/respostas`)} style={btn("rgba(59,130,246,.1)", "#2563eb", "1px solid rgba(59,130,246,.3)")}>📊 Respostas</button>}
+                      {/* Vieram da Pesquisa de Permanência do RH (mig 20261030001000):
+                          Rotatividade e Plano de ação no formulário com local de trabalho
+                          + o catálogo dela; o Assistente de I.A em todos. */}
+                      {podeVerRespostas(f) && can("rotatividade") && ehFormularioPermanencia(f.perguntas) && <>
+                        <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}/analise?aba=rotatividade`)} style={btn("rgba(220,38,38,.07)", "#b91c1c", "1px solid rgba(220,38,38,.25)")}>📉 Rotatividade</button>
+                        <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}/analise?aba=planos`)} style={btn("rgba(22,163,74,.08)", "#15803d", "1px solid rgba(22,163,74,.3)")}>✅ Plano de ação</button>
+                      </>}
+                      {podeVerRespostas(f) && can("assistente_ia") && <button onClick={() => nav(`/app/central-servicos/formularios/${f.id}/analise?aba=ia`)} style={btn("rgba(124,58,237,.08)", "#6d28d9", "1px solid rgba(124,58,237,.3)")}>✨ Assistente de I.A</button>}
                       {podeAcesso(f) && (
                         <button onClick={() => setAcessoForm(f)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>
                           {temLista(f) ? `🔒 Acesso (${acessos[f.id].pessoas})` : "🔓 Acesso"}

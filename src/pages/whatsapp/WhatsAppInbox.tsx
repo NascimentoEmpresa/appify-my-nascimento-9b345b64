@@ -22,7 +22,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History, MessageCirclePlus, Tag, Clock, Ban } from "lucide-react";
 import {
-  fmtHora, fmtTelefone, iniciais, motivoFalha, nomeContato, MENU_TODAS, EMOJIS_REACAO,
+  fmtHora, fmtTelefone, iniciais, motivoFalha, nomeContato, MENU_TODAS, EMOJIS_REACAO, avisoPendente, avisoForaDaJanela,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
 } from "./types";
 
@@ -264,6 +264,13 @@ export default function WhatsAppInbox() {
     anexar(arquivo);
   };
 
+  // Fora da janela a mensagem fica guardada; o toast diz se a saudação saiu,
+  // pode não chegar (marketing) ou foi barrada — e o que fazer (03/11/2026).
+  const avisarForaDaJanela = (saudacao?: Parameters<typeof avisoForaDaJanela>[0]) => {
+    const a = avisoForaDaJanela(saudacao);
+    toast({ title: a.titulo, description: a.descricao, ...(a.grave ? { variant: "destructive" as const } : {}) });
+  };
+
   const enviar = async () => {
     if (!sel || enviando) return;
     if (!texto.trim() && !anexo) return;
@@ -287,7 +294,7 @@ export default function WhatsAppInbox() {
         body: { conversa_id: sel.id, texto: texto.trim(), ...(midia ? { midia } : {}) },
       });
       if (error) throw new Error(await erroDaFunction(error));
-      if (data?.pendente) toast({ title: "Fora da janela de 24h", description: "Enviamos a saudação (modelo aprovado). Sua mensagem sai sozinha, com os botões, assim que o contato responder." });
+      if (data?.pendente) avisarForaDaJanela(data?.saudacao);
       setTexto("");
       setAnexo(null);
       qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
@@ -335,7 +342,7 @@ export default function WhatsAppInbox() {
         body: { conversa_id: sel.id, texto: b.texto, ...(b.botoes.length ? { botoes: b.botoes } : {}) },
       });
       if (error) throw new Error(await erroDaFunction(error));
-      if (data?.pendente) toast({ title: "Fora da janela de 24h", description: "Enviamos a saudação (modelo aprovado). Sua mensagem sai sozinha, com os botões, assim que o contato responder." });
+      if (data?.pendente) avisarForaDaJanela(data?.saudacao);
       setTexto("");
       qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
       qc.invalidateQueries({ queryKey: ["wa-conversas"] });
@@ -683,12 +690,17 @@ export default function WhatsAppInbox() {
                           ))}
                         </div>
                       ) : null}
-                      {m.status === "pendente" && (
-                        <p className="mt-1 flex items-start gap-1 rounded bg-black/10 px-1.5 py-1 text-[10px] leading-snug">
-                          <Clock className="mt-px h-3 w-3 shrink-0" />
-                          <span>Fora da janela de 24h: enviamos a saudação. Esta mensagem sai sozinha (com os botões) assim que o contato responder.</span>
-                        </p>
-                      )}
+                      {m.status === "pendente" && (() => {
+                        // Saudação barrada pela Meta (131049): a recrutadora precisa
+                        // saber que ninguém foi avisado — e o que fazer (03/11/2026).
+                        const aviso = avisoPendente(m, mensagens);
+                        return (
+                          <p className={`mt-1 flex items-start gap-1 rounded px-1.5 py-1 text-[10px] leading-snug ${aviso.barrada ? "bg-destructive/25" : "bg-black/10"}`}>
+                            {aviso.barrada ? <AlertTriangle className="mt-px h-3 w-3 shrink-0" /> : <Clock className="mt-px h-3 w-3 shrink-0" />}
+                            <span>{aviso.texto}</span>
+                          </p>
+                        );
+                      })()}
                       {m.status === "cancelada" && (
                         <p className="mt-1 flex items-start gap-1 rounded bg-black/10 px-1.5 py-1 text-[10px] leading-snug">
                           <Ban className="mt-px h-3 w-3 shrink-0" /><span>Não saiu: o contato não respondeu em 7 dias.</span>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CAMPOS_ASO, EDITAVEIS_ASO, dataBrDaFicha, faltandoNaFicha, rotuloAso, textoChecklistAso, type FichaAso as Ficha } from "@/lib/recrutamento/fichaAso";
+import { CAMPOS_ASO, EDITAVEIS_ASO, dataBrDaFicha, faltandoNaFicha, localExatoDaFicha, rotuloAso, textoChecklistAso, type FichaAso as Ficha } from "@/lib/recrutamento/fichaAso";
 import { createPortal } from "react-dom";
 import { ChevronRight, Stethoscope, X } from "lucide-react";
 
@@ -93,6 +93,8 @@ export function FichaAso({ candidatoId, editar, compacto, onMudou }: {
     return v == null ? "" : String(v);
   };
 
+  const localExato = localExatoDaFicha(ficha);
+
   const corpo = (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "10px 18px" }}>
@@ -115,6 +117,14 @@ export function FichaAso({ candidatoId, editar, compacto, onMudou }: {
             </div>
           );
         })}
+        {/* Endereço da vaga (30/10/2026, #1418): o posto do catálogo não diz
+            onde a pessoa trabalha. Opcional — sem ele não aparece nem falta. */}
+        {!!localExato && (
+          <div style={{ fontSize: 12.5, minWidth: 0, gridColumn: "1 / -1" }}>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".3px", marginBottom: 2 }}>Endereço / Local exato</div>
+            <div style={{ color: "#0f172a", fontWeight: 600, overflowWrap: "anywhere" }}>{localExato}</div>
+          </div>
+        )}
       </div>
 
       {/* SIS-2026-0667: o "CHECKLIST ASO" que o Recrutamento digitava no

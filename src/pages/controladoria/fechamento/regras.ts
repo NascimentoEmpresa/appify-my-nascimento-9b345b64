@@ -339,24 +339,46 @@ export function admSemClassificacao(linhas: LinhaFluxoCusto[], empresaId?: strin
 // Mesma seleção de linhas e mesmo mês das colunas do resumo mensal, só que agrupada pela classificação do lançamento no Fluxo.
 // A soma do detalhe é o valor da célula; nos meses projetados o que a célula mostra pode passar do lançado (média dos últimos
 // meses): a diferença vem à parte em `complementoProjecao`, para o total do modal sempre bater com o número clicado.
+// SIS-2026-0781: um lançamento do Fluxo dentro do detalhe, para a seta de cada classificação abrir a lista (ID, descrição, data e valor).
+export interface LancamentoDoDetalhe {
+  idMalote: string | null;
+  descricao: string;
+  /** Data do pagamento (sem ela, a competência). */
+  data: string | null;
+  valor: number;
+}
+
 export interface ItemDetalheClassificacao {
   // SIS-2026-0755: id da classificação (null = lançamento sem classificação), para trocar a rubrica dela direto no modal
   classificacaoId: string | null;
   classificacao: string;
   valor: number;
   lancamentos: number;
+  // SIS-2026-0781: todos os ids que caem neste nome (duas classificações com o mesmo nome somam numa linha só) e os lançamentos, por data.
+  classificacaoIds: string[];
+  itens: LancamentoDoDetalhe[];
 }
 
-function agruparPorClassificacao(linhas: { classificacao_id?: string | null; classificacao_nome: string | null; valor: number }[]): ItemDetalheClassificacao[] {
+// Nome do grupo dos lançamentos sem classificação (o link para o Fluxo usa a opção "Sem classificação" do filtro).
+export const ROTULO_SEM_CLASSIFICACAO = "(sem classificação)";
+
+type LinhaAgrupavel = Pick<LinhaFluxoCusto, "classificacao_nome" | "valor"> & Partial<Pick<LinhaFluxoCusto, "classificacao_id" | "id_malote" | "descricao" | "data_pagamento" | "competencia">>;
+
+function agruparPorClassificacao(linhas: LinhaAgrupavel[]): ItemDetalheClassificacao[] {
   const mapa = new Map<string, ItemDetalheClassificacao>();
   for (const l of linhas) {
-    const nome = (l.classificacao_nome ?? "").trim() || "(sem classificação)";
-    const atual = mapa.get(nome) ?? { classificacaoId: l.classificacao_id ?? null, classificacao: nome, valor: 0, lancamentos: 0 };
+    const nome = (l.classificacao_nome ?? "").trim() || ROTULO_SEM_CLASSIFICACAO;
+    const atual = mapa.get(nome) ?? { classificacaoId: l.classificacao_id ?? null, classificacao: nome, valor: 0, lancamentos: 0, classificacaoIds: [], itens: [] };
     atual.valor += l.valor || 0;
     atual.lancamentos += 1;
+    if (l.classificacao_id && !atual.classificacaoIds.includes(l.classificacao_id)) atual.classificacaoIds.push(l.classificacao_id);
+    atual.itens.push({ idMalote: l.id_malote ?? null, descricao: (l.descricao ?? "").trim(), data: l.data_pagamento || l.competencia || null, valor: l.valor || 0 });
     mapa.set(nome, atual);
   }
-  return [...mapa.values()].map((x) => ({ ...x, valor: r2(x.valor) })).sort((a, b) => b.valor - a.valor || a.classificacao.localeCompare(b.classificacao, "pt-BR"));
+  const porData = (a: LancamentoDoDetalhe, b: LancamentoDoDetalhe) => (a.data ?? "").localeCompare(b.data ?? "") || a.descricao.localeCompare(b.descricao, "pt-BR");
+  return [...mapa.values()]
+    .map((x) => ({ ...x, valor: r2(x.valor), itens: [...x.itens].sort(porData) }))
+    .sort((a, b) => b.valor - a.valor || a.classificacao.localeCompare(b.classificacao, "pt-BR"));
 }
 
 /** Despesa administrativa lançada nos meses, por classificação. `rubricas` = só essas colunas (null = todas, para o Total Desp. Adm). */

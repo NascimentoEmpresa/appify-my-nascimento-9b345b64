@@ -411,6 +411,17 @@ const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, strin
   // Parecer Jurídico (28/09/2026, mig 253): duas respostas por dúvida, cada
   // uma com seu switch de quem ESCREVE. Ler, todos leem — não se gerencia aqui.
   duvidas: { responder: "Responder (resposta simples)", fundamentar: "Responder embasamento jurídico" },
+  // SIS-2026-0712: o Fluxo separa o que cada botão da linha faz.
+  "financeiro-fluxo-caixa-gestao": { incluir: "Ratear", alterar: "Editar", excluir: "Excluir" },
+};
+
+// O que cada switch libera, em uma frase, mostrado ao lado do rótulo. Só nos menus em que o rótulo sozinho não diz o suficiente.
+const ACAO_DESCRICAO_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, string>>>> = {
+  "financeiro-fluxo-caixa-gestao": {
+    incluir: "Botão Ratear: divide a linha entre contratos (a soma das cotas fecha o valor da linha).",
+    alterar: "Botão Editar: muda data, banco, classificação, valor etc. só no Fluxo; o lançamento de origem não muda.",
+    excluir: "Botão Excluir: manda a linha para a lixeira e permite restaurá-la.",
+  },
 };
 
 const rotuloAcao = (menuCodigo: string, acao: AppAcao) =>
@@ -856,7 +867,14 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                                         onCheckedChange={() => stageAcao(mn.codigo, acao, !on)}
                                         aria-label={`${rotuloAcao(mn.codigo, acao)} em ${mn.nome}`}
                                       />
-                                      {rotuloAcao(mn.codigo, acao)}
+                                      {ACAO_DESCRICAO_POR_MENU[mn.codigo]?.[acao] ? (
+                                        <span className="flex max-w-[260px] flex-col">
+                                          <span className="font-medium">{rotuloAcao(mn.codigo, acao)}</span>
+                                          <span className="text-[11px] leading-tight text-muted-foreground">{ACAO_DESCRICAO_POR_MENU[mn.codigo]?.[acao]}</span>
+                                        </span>
+                                      ) : (
+                                        rotuloAcao(mn.codigo, acao)
+                                      )}
                                     </label>
                                   );
                                 })}
@@ -1665,6 +1683,9 @@ const CAPS: { papel: FormCap; rotulo: string; desc: string }[] = [
   { papel: "ver_lixeira",      rotulo: "Lixeira de formularios",   desc: "Ver e restaurar formularios apagados (30 dias)" },
   { papel: "diagnostico_feedback", rotulo: "Diagnóstico IA dos feedbacks", desc: "Gerar e ler o diagnóstico automático por setor" },
   { papel: "chat_ia_painel",   rotulo: "Chat IA do painel",          desc: "Perguntar à IA onde estão colaboradores e setores no Painel Gerencial" },
+  // mig 20261030001000 — nascem só com quem tinha a Pesquisa de Permanência no RH.
+  { papel: "assistente_ia",    rotulo: "Assistente de I.A",          desc: "Botão Assistente de I.A em todos os formulários (lê só as respostas que a pessoa já vê)" },
+  { papel: "rotatividade",     rotulo: "Rotatividade e plano de ação", desc: "Rotatividade por contrato/posto/função e plano de ação nos formulários com local de trabalho (Pesquisa de Permanência)" },
 ];
 
 // Lista de capacidades como linhas com Switch à direita (mesmo padrão dos menus).
