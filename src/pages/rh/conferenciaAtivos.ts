@@ -253,6 +253,8 @@ export interface ConferenciaContrato {
   rt: PessoaContrato[];
   /** Vagas de RT, se a planilha tiver um posto "Renda técnica"; senão 0. */
   rtPrevisto: number;
+  /** De atestado HOJE (situação da Senior), RT inclusive — fora da conta, não. */
+  atestados: PessoaContrato[];
 }
 
 /**
@@ -344,7 +346,60 @@ export function conferirContrato(cOriginal: ContratoAtivos): ConferenciaContrato
     sobra: postos.reduce((s, p) => s + Math.max(0, p.saldo), 0),
     afastados: dentro.filter((p) => !p.conta).sort(porNome),
     rt, rtPrevisto,
+    atestados: cOriginal.pessoas.filter((p) => !p.fora && ehAtestado(p.situacao)).sort(porNome),
   };
+}
+
+// ---- Atestados por dia (03/11/2026) -----------------------------------------
+
+/**
+ * Situação de atestado na Senior: "Atestado (dias)", "Atestado Filho"… A
+ * mesma régua do SST (sst_afa_tipo_da_situacao: ~* 'ATEST'), para o "hoje"
+ * desta tela e a série do SST_AFASTAMENTO contarem a mesma coisa.
+ */
+export const ehAtestado = (situacao: string | null | undefined) => /atest/i.test(situacao ?? "");
+
+/** Dias de `inicio` a `fim` (ISO, inclusive). */
+export function diasEntre(inicio: string, fim: string): string[] {
+  const out: string[] = [];
+  const d = new Date(`${inicio}T12:00:00Z`);
+  const f = new Date(`${fim}T12:00:00Z`);
+  while (d <= f && out.length < 400) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
+export interface AtestadoDia {
+  contrato_id: string;
+  /** ISO (AAAA-MM-DD). */
+  dia: string;
+  nomes: string[];
+}
+
+/**
+ * Série por contrato × dia. Os dias passados vêm do SST_AFASTAMENTO (o
+ * histórico que a captura da Senior monta de hora em hora); HOJE vem do
+ * painel — a situação atual da EMPREGADOS, a mesma de "Afastados" —, para a
+ * coluna e o último dia do gráfico nunca discordarem.
+ */
+export function montarSerieAtestados(
+  historico: AtestadoDia[],
+  hojeIso: string,
+  hojePorContrato: Map<string, string[]>,
+): Map<string, Map<string, string[]>> {
+  const m = new Map<string, Map<string, string[]>>();
+  const por = (cid: string) => {
+    if (!m.has(cid)) m.set(cid, new Map());
+    return m.get(cid)!;
+  };
+  for (const h of historico) {
+    if (h.dia >= hojeIso) continue;
+    por(h.contrato_id).set(h.dia, h.nomes);
+  }
+  hojePorContrato.forEach((nomes, cid) => { if (nomes.length) por(cid).set(hojeIso, nomes); });
+  return m;
 }
 
 /** Rótulo curto do saldo: "+3", "−2", "0". */

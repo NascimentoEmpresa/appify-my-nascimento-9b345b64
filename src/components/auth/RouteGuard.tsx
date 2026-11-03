@@ -1,10 +1,10 @@
 import { ReactNode, useEffect, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { supabase } from "@/integrations/supabase/client";
 import { SemAcesso } from "@/components/layout/SemAcesso";
 import { useFeatureFlag } from "@/lib/featureFlags";
-import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 import { registrarUsoTela } from "@/hooks/useChecklistModulos";
 
@@ -23,7 +23,10 @@ const PHASE_FLAGGED_ROUTES: { prefix: string; flag: "triagemIA" }[] = [
 ];
 
 export function RouteGuard({ children }: { children: ReactNode }) {
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
+  // Tela que mudou de endereço (ROTAS_MOVIDAS): redireciona antes de checar
+  // permissão — a rota antiga não tem mais app_menu e seria negada.
+  const movida = rotaMovida(pathname);
   const { data: access, isLoading } = useAccessibleMenus("visualizar");
   const loggedRef = useRef<string>("");
 
@@ -82,7 +85,7 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Externo não tem grant em access_audit_log e o bloqueio dele não é um
     // evento de permissão a auditar — é a allowlist funcionando.
-    if (isLoading || allowed || externo) return;
+    if (isLoading || allowed || externo || movida) return;
     const key = `${pathname}|${menuCode}`;
     if (loggedRef.current === key) return;
     loggedRef.current = key;
@@ -100,12 +103,13 @@ export function RouteGuard({ children }: { children: ReactNode }) {
           : "route_guard_block",
       });
     })();
-  }, [isLoading, allowed, externo, pathname, menuCode, phaseFlagEnabled, phaseFlagged]);
+  }, [isLoading, allowed, externo, movida, pathname, menuCode, phaseFlagEnabled, phaseFlagged]);
 
   // Só bloqueia o render na primeira carga (sem dados ainda). Com dados em
   // cache (staleTime 30s), mantém children montado entre navegações.
   // Externo não depende de list_accessible_menus — a decisão dele é a
   // allowlist, então esperar essa query só atrasaria a tela.
+  if (movida) return <Navigate to={movida + search + hash} replace />;
   if (!externo && !ACESSO_ABERTO_SEM_PERMISSOES && !access) return null;
   if (allowed) return <>{children}</>;
 
