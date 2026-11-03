@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
+import { rotaMovida } from "@/lib/acesso";
 
 /**
  * Returns the set of menu codes the current user can VIEW.
@@ -81,7 +82,16 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 
       const routes: MenuRoute[] = menus
         .filter((m) => !!m.rota)
-        .map((m) => ({ codigo: m.codigo, rota: m.rota as string, ativo: m.ativo }));
+        .map((m) => ({ codigo: m.codigo, rota: m.rota as string, ativo: m.ativo }))
+        // Menu ainda cadastrado no endereço antigo de uma tela que mudou de
+        // lugar (ROTAS_MOVIDAS): o endereço novo vale pelo mesmo código. Assim
+        // o front pode ir ao ar antes ou depois da migration que troca a rota
+        // em app_menu — sem isto, front antes da migration = tela nova sem
+        // cadastro = "Acesso negado" para todo mundo.
+        .flatMap((r) => {
+          const nova = rotaMovida(r.rota);
+          return nova ? [r, { ...r, rota: nova }] : [r];
+        });
 
       // Códigos desativados no Catálogo: o RouteGuard nega, e a Sidebar não
       // lista. Um menu desativado é uma tela fora do ar, não uma tela pública.

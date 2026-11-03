@@ -68,6 +68,32 @@ export const ROTAS_SEMPRE_LIBERADAS = [
 export const ROTAS_LIBERADAS_EXATAS = ["/app"];
 
 /**
+ * Telas que mudaram de endereço: rota antiga → rota nova (prefixo, cobre
+ * subrotas e a querystring segue junto).
+ *
+ * O RouteGuard resolve isto ANTES de checar permissão, e é por isso que não
+ * basta um <Navigate> no App.tsx: a rota antiga deixou de ter app_menu, o
+ * guard nega rota sem cadastro, e o favorito/link antigo dava "Acesso negado"
+ * em vez de chegar à tela nova. O redirect não revela nada — a rota nova
+ * passa pelo guard normalmente.
+ *
+ * 03/11/2026 (mig 20261103005100): Colaboradores e Ativos/Contratos saíram do
+ * RH para o Operacional, com os MESMOS códigos de menu (quem tinha, continua).
+ */
+export const ROTAS_MOVIDAS: Record<string, string> = {
+  "/app/rh/colaboradores": "/app/operacional/colaboradores",
+  "/app/rh/ativos-contratos": "/app/operacional/ativos-contratos",
+};
+
+/** Endereço novo de uma rota que mudou de lugar; null se não mudou. */
+export function rotaMovida(pathname: string): string | null {
+  for (const [antiga, nova] of Object.entries(ROTAS_MOVIDAS)) {
+    if (pathname === antiga || pathname.startsWith(antiga + "/")) return nova + pathname.slice(antiga.length);
+  }
+  return null;
+}
+
+/**
  * Prefixo para ROTAS_SEMPRE_LIBERADAS (cobre subrotas e /:id), exato para
  * ROTAS_LIBERADAS_EXATAS.
  */
