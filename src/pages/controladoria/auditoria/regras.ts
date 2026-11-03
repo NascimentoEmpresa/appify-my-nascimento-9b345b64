@@ -416,6 +416,17 @@ export interface ItemDesconto {
   outros_descontos_pos_emissao: number;
   vlr_materiais: number;
   total_descontos: number;
+  // SIS-2026-0797: valor do contrato e bruto do item. bruto = exec − descontos; o total_descontos gravado vem 0 nas notas importadas da planilha.
+  valor_contrato_exec?: number;
+  vlr_bruto?: number;
+}
+
+// SIS-2026-0797: total descontado de um item = valor do contrato − bruto (o que a nota de fato deixou de cobrar). Faltas, postos, multas, glosas e
+// outros entram nesse bruto; pós-emissão e materiais não. O total_descontos gravado só vale quando o item não traz exec/bruto: nas notas
+// importadas ele ficou em 0 mesmo com faltas lançadas (Veranópolis jan/26: categorias 11.738,45 × total gravado 0,00).
+function totalDescontadoDoItem(i: ItemDesconto): number {
+  if (i.valor_contrato_exec !== undefined && i.vlr_bruto !== undefined) return (Number(i.valor_contrato_exec) || 0) - (Number(i.vlr_bruto) || 0);
+  return Number(i.total_descontos) || 0;
 }
 
 export function descontosPorCategoria(itens: ItemDesconto[]): { categorias: NonNullable<TotaisCard["detalhes"]>; totalCategorias: number; totalDescontado: number } {
@@ -434,7 +445,7 @@ export function descontosPorCategoria(itens: ItemDesconto[]): { categorias: NonN
   return {
     categorias,
     totalCategorias: r2(categorias.filter((c) => c.somaNoTotal).reduce((s, c) => s + c.valor, 0)),
-    totalDescontado: soma((i) => i.total_descontos),
+    totalDescontado: soma(totalDescontadoDoItem),
   };
 }
 
