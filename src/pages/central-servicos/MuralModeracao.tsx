@@ -181,7 +181,9 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             const pend = p.itens.filter((i) => i.status === "pendente");
             const med = MEDALHA[p.posicao];
             return (
-              <div key={p.colaborador} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 4px 14px rgba(15,23,42,.05)", overflow: "hidden" }}>
+              // flexShrink 0: com overflow hidden o cartão perde o min-height
+              // automático e a coluna espremia as 55 pessoas em tracinhos (03/11/2026).
+              <div key={p.colaborador} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 4px 14px rgba(15,23,42,.05)", overflow: "hidden", flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", flexWrap: "wrap" }}>
                   <span title={`${p.posicao}º lugar`}
                     style={{ minWidth: 38, textAlign: "center", fontSize: 13, fontWeight: 900, padding: "4px 6px", borderRadius: 9, background: med?.bg ?? "#f1f5f9", color: med?.c ?? "#475569" }}>
