@@ -263,6 +263,13 @@ export const BUCKET_CHAMADOS = "chamados-sistemas";
 export const STATUS_ENCERRADOS = ["concluido", "reprovado", "cancelado"] as const;
 export const chamadoEncerrado = (status: string) => (STATUS_ENCERRADOS as readonly string[]).includes(status);
 
+/**
+ * Conversa com o grupo fechada: só reprovado e cancelado (03/11/2026). O
+ * concluído segue aberto — é quando o solicitante testa e volta com dúvida.
+ * Mesma lista de chamado_enviar_mensagem (mig 20261103001700).
+ */
+export const conversaChamadoFechada = (status: string) => status === "reprovado" || status === "cancelado";
+
 /** Chamado ativo = ainda está na fila (não foi concluído, reprovado nem cancelado). */
 export const chamadoAtivo = (status: string) => !chamadoEncerrado(status);
 

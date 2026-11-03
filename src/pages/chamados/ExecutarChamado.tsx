@@ -34,7 +34,7 @@ import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValid
 import {
   StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
+  labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado, conversaChamadoFechada,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
@@ -354,7 +354,7 @@ export default function ExecutarChamado() {
             chamadoId={chamado.id}
             solicitanteId={chamado.solicitante_id}
             perfil={podeAgir || !ehParticipante ? "equipe" : "solicitante"}
-            encerrado={encerrado}
+            encerrado={conversaChamadoFechada(chamado.status)}
             somenteLeitura={!podeAgir && !ehParticipante}
           />
         </div>
