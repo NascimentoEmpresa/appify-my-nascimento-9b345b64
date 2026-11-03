@@ -87,6 +87,14 @@ arquivos-da-pr.txt
 /Classificacoes-Malote-o-que-cada-uma-contempla.xlsx
 /HANDOFF-seletor-empresa-licitacao.md
 
+# SIS-2026-0769: exports do ERP antigo usados para reconstruir o contrato das
+# saídas de estoque (migracao-sistema-antigo/gerar-depara-saidas-orfas.mjs).
+# Têm nome de colaborador e este repositório é público — só o de-para gerado,
+# que tem protocolo e contrato, entra na migration.
+/ATÉ*.xlsx
+/Pedidos_Todos*.xlsx
+/pedidos-materiais-*.xlsx
+
 # Lixo do CLI do Supabase (gerado ao rodar qualquer comando logado)
 supabase/.temp/
 
