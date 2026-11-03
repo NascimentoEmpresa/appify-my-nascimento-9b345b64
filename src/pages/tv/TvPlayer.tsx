@@ -126,17 +126,24 @@ export default function TvPlayer() {
     }
   }, [chaveFixa]);
 
+  // 03/11/2026 — TV SEM BUSCA AUTOMÁTICA (item 5 da revisão de infraestrutura,
+// src/lib/atualizarTela.ts): decisão do Eduardo, sem exceção para TV. A TV
+// carrega estado, playlist e relatórios AO ABRIR a página e não fala mais com
+// o servidor sozinha — nem ping, nem batimento do "ao vivo", nem conferência
+// de versão, nem cão de guarda. Conteúdo novo entra quando a TV é recarregada
+// (F5/religar). Para voltar ao comportamento anterior, o histórico do git
+// deste arquivo tem os quatro setInterval que saíram.
   useEffect(() => {
     if (chaveFixa) gravarToken(chaveFixa);
     consultar();
-    const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
-    return () => window.clearInterval(t);
   }, [consultar]);
 
   // AO VIVO: avisa o ERP do item que entrou na tela (null = relógio/pausada).
   // Fogo e esquece — nunca atrapalha a reprodução.
-  const reportarLigado = useRef(true);
-  const batimentoLigado = useRef(true);
+  // Desligados em 03/11/2026 (ver "TV SEM BUSCA AUTOMÁTICA" acima): cada troca
+  // de slide era uma requisição, sem ninguém pedir.
+  const reportarLigado = useRef(false);
+  const batimentoLigado = useRef(false);
   // O que está na tela agora (undefined = ainda nada desenhado: sem batimento).
   const naTela = useRef<string | null | undefined>(undefined);
   const reportar = useCallback((itemId: string | null) => {
@@ -157,31 +164,13 @@ export default function TvPlayer() {
   };
 
   // Versão publicada mudou → recarrega (o JS da página aberta fica velho para sempre sem isso).
-  useEffect(() => {
-    const minha = scriptPrincipal(document.documentElement.outerHTML);
-    if (!minha) return;   // dev (vite serve /src/main.tsx)
-    const t = window.setInterval(async () => {
-      try {
-        const r = await fetch(`${window.location.origin}/?tv-versao=${Date.now()}`, { cache: "no-store" });
-        const publicada = r.ok ? scriptPrincipal(await r.text()) : null;
-        if (publicada && publicada !== minha) recarregarTv();
-      } catch { /* sem rede: o cão de guarda cuida */ }
-    }, CONFERE_VERSAO_MS);
-    return () => window.clearInterval(t);
-  }, []);
+  // (conferência de versão a cada CONFERE_VERSAO_MS: removida em 03/11/2026 —
+  // ver "TV SEM BUSCA AUTOMÁTICA" acima.)
 
   // Cão de guarda: sem falar com o ERP há 3 min, ou de madrugada depois de
   // 20 h no ar, recarrega a página inteira (rede caiu, navegador travou).
-  useEffect(() => {
-    const t = window.setInterval(() => {
-      const h = new Date().getHours();
-      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) recarregarTv();
-      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) recarregarTv();
-    }, 30_000);
-    const voltou = () => consultar();
-    window.addEventListener("online", voltou);
-    return () => { window.clearInterval(t); window.removeEventListener("online", voltou); };
-  }, [consultar]);
+  // (cão de guarda de 30 s: removido em 03/11/2026 — sem ping não há "sem
+  // contato" para vigiar; ver "TV SEM BUSCA AUTOMÁTICA" acima.)
 
   // Tela não apaga (onde o navegador deixa) e o cursor some.
   useEffect(() => {

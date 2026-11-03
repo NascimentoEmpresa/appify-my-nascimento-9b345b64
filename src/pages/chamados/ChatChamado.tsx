@@ -193,7 +193,7 @@ export function ChatChamado({
   const { data: eventosDesc = [] } = useQuery({
     queryKey: ["chamado-eventos", chamadoId],
     enabled: !!chamadoId,
-    refetchInterval: 15000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data } = await (supabase as any)
         .from("CHAMADO_SISTEMA_EVENTO").select("*").eq("chamado_id", chamadoId)
@@ -215,7 +215,7 @@ export function ChatChamado({
   const { data: participantes = [] } = useQuery({
     queryKey: ["chamado-participantes", chamadoId],
     enabled: !!chamadoId,
-    refetchInterval: 15000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamado_participantes", { p_chamado_id: chamadoId });
       return (data ?? []) as Participante[];

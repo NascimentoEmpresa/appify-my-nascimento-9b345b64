@@ -417,6 +417,9 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
 // recebe dado fresco ao voltar — que é o comportamento certo para um sistema
 // com pagamento e aprovação.
+// 03/11/2026: SUPERADO. staleTime virou 5 min e refetchOnWindowFocus virou
+// false — no ERP, dado novo só quando o usuário pede (botão "Atualizar", ver
+// src/lib/atualizarTela.ts e docs/infra/sem-busca-automatica.md).
 // /app/login não existe — o login é /login. Mesmo assim, em 19/10/2026 parte
 // do pessoal caía em app.grpnascimento.com.br/app/login?next=/app/whatsapp
 // (favorito/link salvo; nada no código monta esse endereço) e via o 404.
@@ -438,6 +441,10 @@ const queryClient = new QueryClient({
       // é a regra do item 5 (requisição só quando o usuário pede).
       staleTime: 5 * 60_000,
       gcTime: 30 * 60_000,
+      // 03/11/2026: voltar para a aba do navegador NÃO refaz as consultas (era o
+      // padrão do React Query: toda query velha da tela ia ao servidor a cada
+      // alt-tab). Dado novo é no botão "Atualizar" — src/lib/atualizarTela.ts.
+      refetchOnWindowFocus: false,
       // A ordem das checagens importa: auth PRIMEIRO. 401/403 é token vencido
       // (transitório, local, merece insistência), não sobrecarga.
       retry: (failureCount, error) => {

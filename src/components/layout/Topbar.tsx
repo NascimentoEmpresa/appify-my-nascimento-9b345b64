@@ -1,4 +1,4 @@
-import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact } from "lucide-react";
+import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { supabase } from "@/integrations/supabase/client";
 import { lerMeuPerfil } from "@/lib/meuPerfil";
+import { atualizarTela } from "@/lib/atualizarTela";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -42,6 +43,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   // já é 100% por usuário) e só limitava a visão de grupo.
   const { empresa } = useEmpresaAtiva();
   const [openNotif, setOpenNotif] = useState(false);
+  const [atualizando, setAtualizando] = useState(false);
   const [openHelp, setOpenHelp] = useState(false);
   const [openSettings, setOpenSettings] = useState(false);
   const [openProfile, setOpenProfile] = useState(false);
@@ -93,7 +95,9 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
     // Postgres por esgotamento de conexões, passou para 180s: é bolinha de
     // aviso, não dado transacional, e quem AGE na notificação continua vendo
     // o resultado na hora, porque a mutation invalida a query.
-    refetchInterval: 180_000,
+    //
+    // 03/11/2026: sem intervalo nenhum. Busca ao montar, ao ABRIR o sino
+    // (onClick abaixo) e no botão "Atualizar". Ver src/lib/atualizarTela.ts.
     queryFn: async () => {
       const { data, error } = await supabase
         .from("notificacoes" as any)
@@ -270,9 +274,20 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
             trabalho dela, novidade é sobre o ERP. */}
         <NovidadesSino aoAbrir={fecharTodos} />
 
+        {/* Atualizar — a única busca de dado novo sem navegar (03/11/2026,
+            src/lib/atualizarTela.ts). Nenhuma tela busca sozinha. */}
+        <IconBtn
+          aria-label="Atualizar esta tela"
+          title="Atualizar os dados desta tela"
+          onClick={async () => { setAtualizando(true); try { await atualizarTela(qc); } finally { setAtualizando(false); } }}
+          disabled={atualizando}
+        >
+          <RefreshCw className={cn("h-4 w-4", atualizando && "animate-spin")} />
+        </IconBtn>
+
         {/* Notificações */}
         <div className="relative" data-topbar-menu>
-          <IconBtn aria-label="Notificações" onClick={() => { fecharTodos(); setOpenNotif((o) => !o); }}>
+          <IconBtn aria-label="Notificações" onClick={() => { fecharTodos(); setOpenNotif((o) => { if (!o) void notifQ.refetch(); return !o; }); }}>
             <Bell className="h-4 w-4" />
             {naoLidas > 0 && (
               <span className="absolute right-0.5 top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold text-accent-foreground">

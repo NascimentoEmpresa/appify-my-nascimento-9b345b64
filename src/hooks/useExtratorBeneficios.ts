@@ -39,13 +39,8 @@ export function useJobsExtratorBeneficios() {
       if (error) throw error;
       return (data ?? []) as JobExtratorBeneficios[];
     },
-    // Só repete enquanto existir job em andamento — evita poll infinito
-    // depois que tudo já foi processado.
-    refetchInterval: (query) => {
-      const jobs = (query.state.data ?? []) as JobExtratorBeneficios[];
-      const temPendente = jobs.some((j) => j.status === "pendente" || j.status === "processando");
-      return temPendente ? 5000 : false;
-    },
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
+    // Job em andamento: o andamento aparece ao clicar em Atualizar.
   });
 }
 
