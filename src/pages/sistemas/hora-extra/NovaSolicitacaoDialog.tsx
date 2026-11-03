@@ -39,6 +39,8 @@ import SeletorChamadoDialog from "./SeletorChamadoDialog";
 import type { ChamadoDisponivel, PrioridadeHoraExtra, SolicitacaoHoraExtra, TipoHoraExtra } from "./types";
 import { CLASSE_PRIORIDADE, LABEL_PRIORIDADE } from "./types";
 
+const PRAZO_GERAR_MS = 25_000;
+
 interface LinhaChamado extends ChamadoDisponivel {
   percentual_previsto: number;
   prioridade_he: PrioridadeHoraExtra;
@@ -253,10 +255,22 @@ export default function NovaSolicitacaoDialog({
       sem_chamado: !!c.sem_chamado,
     }));
     setGerando(true);
+    // Prazo de 25 s (03/11/2026, Pablo: "aqui fica só gerando e não vai"):
+    // sem ele, uma Edge/I.A que não respondia deixava o botão girando para
+    // sempre, sem toast. O `timeout` do invoke corta a requisição; a corrida
+    // com o relógio cobre o que vem antes dela (renovação do token).
+    let relogio: ReturnType<typeof setTimeout> | undefined;
     try {
-      const { data, error } = await supabase.functions.invoke("hora-extra-justificativa-ia", {
-        body: { chamados: dados },
+      const prazo = new Promise<never>((_, rejeitar) => {
+        relogio = setTimeout(() => rejeitar(new Error("A I.A demorou demais para responder.")), PRAZO_GERAR_MS);
       });
+      const { data, error } = await Promise.race([
+        supabase.functions.invoke("hora-extra-justificativa-ia", {
+          body: { chamados: dados },
+          timeout: PRAZO_GERAR_MS - 1_000,
+        }),
+        prazo,
+      ]);
       if (error) {
         // A mensagem útil vem no corpo (403 sem acesso, 429 sem tokens).
         const ctx = (error as { context?: Response }).context;
@@ -271,6 +285,7 @@ export default function NovaSolicitacaoDialog({
         `${mensagemErro(erro, "Não foi possível gerar com a I.A.")} Usamos um texto padrão — revise antes de enviar.`,
       );
     } finally {
+      clearTimeout(relogio);
       setGerando(false);
     }
   };

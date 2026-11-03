@@ -32,6 +32,17 @@ const respostaJson = (corpo: Record<string, unknown>, status = 200) =>
 
 const ERRO_SEM_TOKENS = "Acabou os tokens da IA, é necessário aguardar a IA renovar os tokens.";
 
+// PRAZOS (03/11/2026, Pablo: "aqui fica só gerando e não vai"): nenhum fetch
+// tinha timeout, e um provedor que não responde segurava o botão em
+// "Gerando…" sem fim. Cada tentativa de I.A tem 9 s, o conjunto 18 s, e as
+// idas ao banco (getUser/has_screen_access) 8 s — tudo abaixo dos 25 s em
+// que a tela desiste e cai no texto por modelo.
+const PRAZO_TENTATIVA_MS = 9_000;
+const PRAZO_IA_MS = 18_000;
+const PRAZO_BANCO_MS = 8_000;
+const fetchComPrazo = (ms: number): typeof fetch => (url, opcoes) =>
+  fetch(url, { ...opcoes, signal: AbortSignal.timeout(ms) });
+
 type Provedor = { nome: string; url: string; chave: string; modelo: string };
 
 function provedores(): Provedor[] {
@@ -54,13 +65,21 @@ const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[]):
   Promise<{ texto?: string; erro?: string; status?: number }> {
   let ultimo: { erro: string; status: number } = { erro: "Não foi possível gerar a mensagem agora.", status: 502 };
+  const inicio = Date.now();
   for (const prov of provs) {
     for (let tentativa = 1; tentativa <= 2; tentativa++) {
-      const r = await fetch(prov.url, {
+      const resta = PRAZO_IA_MS - (Date.now() - inicio);
+      if (resta < 2_000) return { erro: "A IA demorou demais para responder.", status: 504 };
+      const r = await fetchComPrazo(Math.min(PRAZO_TENTATIVA_MS, resta))(prov.url, {
         method: "POST",
         headers: { Authorization: `Bearer ${prov.chave}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: prov.modelo, temperature: 0.5, messages }),
-      }).catch((e) => { console.error("IA rede", prov.nome, e); return null; });
+      }).catch((e) => {
+        console.error("IA rede", prov.nome, e);
+        return e instanceof DOMException && e.name === "TimeoutError" ? ("prazo" as const) : null;
+      });
+      // Estourou o prazo: não insiste no mesmo provedor, passa ao próximo.
+      if (r === "prazo") { ultimo = { erro: `A IA (${prov.nome}) não respondeu a tempo.`, status: 504 }; break; }
       if (r && r.ok) {
         const dados = await r.json().catch(() => null);
         if (/quota|rate limit|resource_exhausted/i.test(String(dados?.error?.message ?? ""))) { ultimo = { erro: ERRO_SEM_TOKENS, status: 429 }; break; }
@@ -89,7 +108,7 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization") ?? "";
     if (!authHeader.startsWith("Bearer ")) return respostaJson({ error: "Faça login." }, 401);
     const supa = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
+      global: { headers: { Authorization: authHeader }, fetch: fetchComPrazo(PRAZO_BANCO_MS) },
       auth: { persistSession: false },
     });
     const { data: userData, error: userErr } = await supa.auth.getUser();
