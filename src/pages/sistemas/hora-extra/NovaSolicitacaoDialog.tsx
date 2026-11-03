@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronDown, Clock3, FileText, Info, Send, Trash2, UserRound, UsersRound, Zap } from "lucide-react";
+import {
+  CalendarDays, ChevronDown, Clock3, FileText, Info, Loader2, Send, Sparkles, Trash2, UserRound, UsersRound, Zap,
+} from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { gerarJustificativaModelo } from "../../../../supabase/functions/_shared/hora-extra-justificativa";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -234,6 +238,41 @@ export default function NovaSolicitacaoDialog({
       },
     ]);
     setForm((atual) => ({ ...atual, tipo: "emergencial" }));
+  };
+  // "Gerar mensagem" (03/11/2026): a Edge hora-extra-justificativa-ia escreve
+  // a justificativa a partir dos chamados da tabela. Se a I.A falhar, o
+  // motivo vai num toast e o texto sai por modelo — o botão nunca fica mudo.
+  const [gerando, setGerando] = useState(false);
+  const gerarMensagem = async () => {
+    const dados = chamados.map((c) => ({
+      numero: c.sem_chamado ? null : c.numero,
+      assunto: c.assunto,
+      setor: c.setor,
+      prioridade: c.prioridade_he,
+      percentual_previsto: c.percentual_previsto,
+      sem_chamado: !!c.sem_chamado,
+    }));
+    setGerando(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("hora-extra-justificativa-ia", {
+        body: { chamados: dados },
+      });
+      if (error) {
+        // A mensagem útil vem no corpo (403 sem acesso, 429 sem tokens).
+        const ctx = (error as { context?: Response }).context;
+        const corpo = ctx && typeof ctx.json === "function" ? await ctx.json().catch(() => null) : null;
+        throw new Error(corpo?.error ?? error.message);
+      }
+      if (data?.error || !data?.texto) throw new Error(data?.error ?? "A IA não devolveu texto.");
+      alterar("justificativa", String(data.texto).slice(0, 500));
+    } catch (erro: unknown) {
+      alterar("justificativa", gerarJustificativaModelo(dados));
+      toast.error(
+        `${mensagemErro(erro, "Não foi possível gerar com a I.A.")} Usamos um texto padrão — revise antes de enviar.`,
+      );
+    } finally {
+      setGerando(false);
+    }
   };
   const enviar = async () => {
     const erros = validarSolicitacao({
@@ -619,6 +658,24 @@ export default function NovaSolicitacaoDialog({
                 </div>
               </SecaoForm>
               <SecaoForm titulo="4. Justificativa da solicitação" icone={<FileText className="h-5 w-5" />}>
+                <div className="-mt-10 mb-3 flex justify-end">
+                  <span title={chamados.length ? undefined : "Adicione ao menos um chamado na seção 3."}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!chamados.length || gerando}
+                      onClick={gerarMensagem}
+                    >
+                      {gerando ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="mr-2 h-4 w-4 text-violet-600" />
+                      )}
+                      {gerando ? "Gerando…" : "Gerar mensagem"}
+                    </Button>
+                  </span>
+                </div>
                 <Textarea
                   maxLength={500}
                   rows={3}

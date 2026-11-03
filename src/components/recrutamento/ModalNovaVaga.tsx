@@ -24,6 +24,7 @@
 // foi criada para isto.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -194,7 +195,16 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     style.textContent = `
       .nvg-modal-ov{position:fixed;inset:0;z-index:700;background:rgba(15,23,42,.42);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px}
       /* Legibilidade (17/09/2026): mesmo ajuste dos modais de Minhas Solicitações — maior, rótulo escuro, campo com borda visível. */
-      .nvg-modal{background:#fff;border:1px solid #cbd5e1;border-radius:18px;padding:28px 30px;width:100%;max-width:760px;max-height:92vh;overflow-y:auto;position:relative;box-shadow:0 20px 50px rgba(15,23,42,.22);color:#0f172a}
+      /* Cabeçalho e rodapé fixos, só o corpo rola (03/11/2026): no MacBook da
+         Fernanda (1440×900 com zoom) o modal era mais alto que a tela e o
+         "Próximo" ficava longe. dvh desconta a barra do navegador; vh é o
+         fallback de navegador antigo. */
+      .nvg-modal{background:#fff;border:1px solid #cbd5e1;border-radius:18px;width:100%;max-width:760px;max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);display:flex;flex-direction:column;overflow:hidden;position:relative;box-shadow:0 20px 50px rgba(15,23,42,.22);color:#0f172a}
+      .nvg-cabeca{flex:none;padding:24px 30px 0}
+      .nvg-corpo{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 30px 4px}
+      .nvg-rodape{flex:none;padding:12px 30px 18px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px}
+      .nvg-2col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+      @media (max-width:640px){.nvg-2col{grid-template-columns:minmax(0,1fr);gap:0}.nvg-cabeca{padding:20px 18px 0}.nvg-corpo{padding:0 18px 4px}.nvg-rodape{padding:12px 18px 16px}}
       .nvg-fi{width:100%;background:#fff;border:1.5px solid #94a3b8;border-radius:12px;color:#0f172a;font-size:14.5px;padding:11px 13px;outline:none;font-family:inherit;transition:.15s}
       .nvg-fi::placeholder{color:#64748b}
       .nvg-fi[readonly]{background:#f1f5f9;color:#334155}
@@ -633,9 +643,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
   if (!aberto) return null;
 
-  return (
+  // Portal no <body>: o wrapper de rota (`sh-entra`, AppShell) anima com
+  // `transform`, e transform num ancestral vira o containing block do
+  // `position: fixed`. No Chrome do Mac o overlay ficava preso na área do
+  // conteúdo (só o card da página escurecia) e o modal, centrado nela,
+  // estourava para cima da tela — sem como rolar até o topo (03/11/2026).
+  return createPortal(
     <div className="nvg-modal-ov">
       <div className="nvg-modal" onClick={e => e.stopPropagation()}>
+        <div className="nvg-cabeca">
         <button onClick={onFechar} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
 
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
@@ -651,6 +667,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i < vagaStep ? "#16a34a" : i === vagaStep ? "#0f3171" : "#dbe4f0", transition: "background .2s" }}></div>
           ))}
         </div>
+        </div>
+
+        <div className="nvg-corpo">
 
         {/* Botão VISÍVEL, não mais escondido atrás de três pontinhos (04/09/2026).
             Ninguém procura uma opção que não se vê: quem abre vaga do escritório
@@ -913,7 +932,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               <QuadroBeneficiosDoPosto contratoId={vaga.contrato_id} posto={postoNomeEscolhido} />
             </div>
           )}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="nvg-2col">
             <div className="nvg-fg">
               <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
               <select className="nvg-fi" value={vaga.estado} onChange={e => setVaga(v => ({ ...v, estado: e.target.value, cidade: "" }))}>
@@ -981,7 +1000,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
         {/* Step 2 */}
         {vagaStep === 2 && (<>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="nvg-2col">
             {/* Substituicao repoe UMA pessoa: a vaga aponta para um
                 colaborador especifico (substituido_id), e o banco usa esse id
                 para travar a pessoa numa vaga so. Pedir 3 vagas para repor um
@@ -1030,7 +1049,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               </div>
             )}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="nvg-2col">
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
             {camposEditaveis ? (
               <div className="nvg-fg">
@@ -1078,7 +1097,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
         {/* Step 3 */}
         {vagaStep === 3 && (<>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="nvg-2col">
             {/* Grau não é mais escolhido: sai do prazo da data de início. */}
             <div className="nvg-fg">
               <label>Grau de Urgência — calculado pelo prazo</label>
@@ -1118,7 +1137,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               <div className="nvg-fg"><label>Nome completo *</label>
                 <input className="nvg-fi" placeholder="Nome completo da pessoa indicada"
                   value={vaga.recomendacao_nome} onChange={e => setVaga(v => ({ ...v, recomendacao_nome: e.target.value }))} /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div className="nvg-2col">
                 <div className="nvg-fg"><label>CPF *</label>
                   <input className="nvg-fi" inputMode="numeric" placeholder="000.000.000-00"
                     value={vaga.recomendacao_cpf} onChange={e => setVaga(v => ({ ...v, recomendacao_cpf: maskCpf(e.target.value) }))} />
@@ -1134,9 +1153,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           <div className="nvg-fg"><label>Observação Importante</label><textarea className="nvg-fi" rows={2} placeholder="Opcional..." value={vaga.observacao_importante} onChange={e => setVaga(v => ({ ...v, observacao_importante: e.target.value }))} /></div>
         </>)}
 
+        </div>
+
         {/* Navegação */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
-          <div />
+        <div className="nvg-rodape">
           <div style={{ display: "flex", gap: 8 }}>
             {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
             {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
@@ -1158,7 +1178,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           ))}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
