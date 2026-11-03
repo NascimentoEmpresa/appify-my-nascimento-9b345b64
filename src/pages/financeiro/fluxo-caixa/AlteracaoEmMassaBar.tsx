@@ -8,8 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useAlteracaoEmMassaFluxo, type ResultadoAlteracaoEmMassa } from "@/hooks/useFluxoCaixaMalote";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
+import { useContasBanco } from "@/hooks/useContasBanco";
+import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
+import { rotuloConta } from "@/lib/contaBanco";
 import {
-  chaveDaLinhaMassa, contarMotivos, planejarTrocaDeCentroDeCusto, planejarTrocaDeClassificacao, type LinhaMassa, type PlanoMassa, type TipoMassa,
+  chaveDaLinhaMassa, contarMotivos, planejarAtribuicaoDeConta, planejarTrocaDeCentroDeCusto, planejarTrocaDeClassificacao, type LinhaMassa, type PlanoMassa, type TipoMassa,
 } from "./alteracaoEmMassa";
 
 // SIS-2026-0780: barra "Alteração em massa" do Fluxo de Caixa. Quem usa (Controladoria e Financeiro) liga o modo, marca as linhas na tabela,
@@ -18,6 +21,7 @@ import {
 const ROTULO_TIPO: Record<TipoMassa, string> = {
   centro_custo: "Trocar Centro de Custo em massa",
   classificacao: "Trocar Classificação em massa",
+  conta_banco: "Definir Conta do banco em massa",
 };
 
 export function AlteracaoEmMassaBar({
@@ -40,17 +44,29 @@ export function AlteracaoEmMassaBar({
 
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
   const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
+  const { data: contasBanco = [] } = useContasBanco();
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const opcoesConta = useMemo(
+    () => contasBanco.filter((c) => c.ativo).map((c) => ({ ...c, rotulo: `${empresas.find((e) => e.id === c.empresa_id)?.nome ?? "Empresa"} · ${rotuloConta(c)}` })).sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR")),
+    [contasBanco, empresas],
+  );
   const opcoesCentro = useMemo(() => [...contratos].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [contratos]);
   const opcoesClassificacao = useMemo(() => classificacoes.filter((c) => c.ativo).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [classificacoes]);
 
   const plano: PlanoMassa | null = useMemo(() => {
     if (!tipo || !destinoId) return null;
     if (tipo === "classificacao") return planejarTrocaDeClassificacao(selecionadas, destinoId);
+    if (tipo === "conta_banco") {
+      const conta = contasBanco.find((c) => c.id === destinoId);
+      return conta ? planejarAtribuicaoDeConta(selecionadas, conta) : null;
+    }
     const novo = contratos.find((c) => c.id === destinoId);
     return novo ? planejarTrocaDeCentroDeCusto(selecionadas, { id: novo.id, empresa_id: novo.empresa_id }) : null;
-  }, [tipo, destinoId, selecionadas, contratos]);
+  }, [tipo, destinoId, selecionadas, contratos, contasBanco]);
 
-  const nomeDestino = tipo === "classificacao" ? opcoesClassificacao.find((c) => c.id === destinoId)?.nome : contratos.find((c) => c.id === destinoId)?.nome;
+  const nomeDestino = tipo === "classificacao" ? opcoesClassificacao.find((c) => c.id === destinoId)?.nome
+    : tipo === "conta_banco" ? opcoesConta.find((c) => c.id === destinoId)?.rotulo
+    : contratos.find((c) => c.id === destinoId)?.nome;
   const mexeNoOrcamento = tipo === "centro_custo" && !!plano?.aplicar.some((l) => l.origem === "malote");
   const podeAplicar = ativo && !!plano && selecionadas.length > 0 && !massa.isPending;
 
@@ -100,14 +116,17 @@ export function AlteracaoEmMassaBar({
           <SelectContent>
             <SelectItem value="centro_custo">{ROTULO_TIPO.centro_custo}</SelectItem>
             <SelectItem value="classificacao">{ROTULO_TIPO.classificacao}</SelectItem>
+            {opcoesConta.length > 0 && <SelectItem value="conta_banco">{ROTULO_TIPO.conta_banco}</SelectItem>}
           </SelectContent>
         </Select>
 
         <Select value={destinoId || undefined} onValueChange={setDestinoId} disabled={!ativo || !tipo}>
-          <SelectTrigger className="h-9 w-[300px] bg-background text-sm"><SelectValue placeholder="Selecione o novo Centro de Custo / Classificação" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[300px] bg-background text-sm"><SelectValue placeholder="Selecione o novo valor (Centro de Custo, Classificação ou Conta)" /></SelectTrigger>
           <SelectContent>
             {tipo === "classificacao"
               ? opcoesClassificacao.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)
+              : tipo === "conta_banco"
+              ? opcoesConta.map((c) => <SelectItem key={c.id} value={c.id}>{c.rotulo}</SelectItem>)
               : opcoesCentro.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}{c.status !== "ativo" ? ` (${c.status})` : ""}</SelectItem>)}
           </SelectContent>
         </Select>
@@ -135,7 +154,7 @@ export function AlteracaoEmMassaBar({
           <DialogHeader>
             <DialogTitle>Confirmar alteração em massa</DialogTitle>
             <DialogDescription>
-              {tipo === "classificacao" ? "Trocar a Classificação" : "Trocar o Centro de Custo"} para <strong>{nomeDestino ?? "—"}</strong>.
+              {tipo === "classificacao" ? "Trocar a Classificação" : tipo === "conta_banco" ? "Definir a Conta do banco" : "Trocar o Centro de Custo"} para <strong>{nomeDestino ?? "—"}</strong>.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
@@ -148,7 +167,9 @@ export function AlteracaoEmMassaBar({
                 </ul>
               </div>
             )}
-            {tipo === "classificacao" ? (
+            {tipo === "conta_banco" ? (
+              <p className="text-xs text-muted-foreground">Só liga o lançamento à conta do banco, para conciliar cada conta separada. Valor, data, classificação e centro de custo não mudam, e dá para trocar a conta depois.</p>
+            ) : tipo === "classificacao" ? (
               <p className="text-xs text-muted-foreground">A classificação muda só neste Fluxo de Caixa (como o lápis); o lançamento original não é alterado. Cada linha fica no histórico.</p>
             ) : (
               <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900">

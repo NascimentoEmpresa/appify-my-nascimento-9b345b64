@@ -23,6 +23,8 @@ export interface EscopoConciliacao {
   empresaIds: string[];
   dataDe: string;
   dataAte: string;
+  /** SIS-2026-0777: só os lançamentos ligados a esta conta do banco. Vazio/ausente = banco + empresa, como sempre foi. */
+  contaBancoId?: string | null;
 }
 
 /** Lançamentos do Fluxo do período que são do banco (e das empresas escolhidas) — o lado "Fluxo" da conciliação. */
@@ -31,6 +33,7 @@ export function linhasDoFluxoParaConciliacao(linhasBrutas: FluxoCaixaMaloteLinha
     if (!l.data_pagamento) return false;
     if (e.dataDe && l.data_pagamento < e.dataDe) return false;
     if (e.dataAte && l.data_pagamento > e.dataAte) return false;
+    if (e.contaBancoId && l.conta_banco_id !== e.contaBancoId) return false;
     return l.banco_id === e.bancoId && (e.todasEmpresas || (!!l.empresa_id && e.empresaIds.includes(l.empresa_id)));
   });
 }
