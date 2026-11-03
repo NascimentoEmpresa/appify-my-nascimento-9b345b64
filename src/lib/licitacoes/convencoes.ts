@@ -16,8 +16,32 @@
 // e pela vaga (quadro "Benefícios e adicionais da vaga").
 // =====================================================================
 
+//
+// 03/11/2026 (ajustes do cadastro da CCT):
+//   • Insalubridade, Periculosidade e Líder em porcentagem: o percentual é
+//     DIGITADO (sem lista fixa) e leva a "Base de cálculo" — obrigatória
+//     quando o adicional está preenchido. A base é sobre o que o percentual
+//     incide, não uma terceira modalidade: o Líder continua Valor OU
+//     Porcentagem (no Valor não há base);
+//   • VA ganha o desconto do colaborador (valor ou porcentagem, digitado,
+//     ou "Não contém");
+//   • VT saiu da CCT: vem do decreto municipal (BENEFICIOS_DECRETO).
+//   Cadastro antigo com percentual e sem base fica Pendente até informar.
+
 export type Periodo = "dia" | "mes";
 export type ModoLider = "valor" | "porcentagem";
+
+/** Sobre o que o percentual incide. */
+export type BaseCalculo = "salario_base" | "salario_normativo" | "minimo_regional" | "minimo_nacional";
+
+export const BASES_CALCULO: { valor: BaseCalculo; nome: string }[] = [
+  { valor: "salario_base", nome: "Salário base" },
+  { valor: "salario_normativo", nome: "Salário normativo" },
+  { valor: "minimo_regional", nome: "Salário mínimo regional" },
+  { valor: "minimo_nacional", nome: "Salário mínimo nacional" },
+];
+
+export const NOME_BASE = Object.fromEntries(BASES_CALCULO.map((b) => [b.valor, b.nome])) as Record<BaseCalculo, string>;
 
 /** Como cada benefício é preenchido. */
 export type TipoBeneficio = "valor" | "percentual" | "lider";
@@ -28,8 +52,8 @@ export interface DefBeneficio {
   tipo: TipoBeneficio;
   /** Periodicidades aceitas (tipo valor/lider). Uma só = fixa, sem escolha. */
   periodos?: Periodo[];
-  /** Percentuais aceitos (percentual, ou lider em "porcentagem"). */
-  percentuais?: number[];
+  /** Pede o desconto do colaborador (VA). */
+  desconto?: boolean;
 }
 
 export type ChaveBeneficio =
@@ -38,19 +62,30 @@ export type ChaveBeneficio =
 
 /** A ordem é a do chamado — Vale-Lanche logo abaixo do Vale-Alimentação. */
 export const BENEFICIOS: DefBeneficio[] = [
-  { chave: "va", nome: "Vale-Alimentação (VA)", tipo: "valor", periodos: ["dia", "mes"] },
+  { chave: "va", nome: "Vale-Alimentação (VA)", tipo: "valor", periodos: ["dia", "mes"], desconto: true },
   { chave: "vl", nome: "Vale Lanche (VL)", tipo: "valor", periodos: ["dia", "mes"] },
   { chave: "vt", nome: "Vale-Transporte (VT)", tipo: "valor", periodos: ["dia", "mes"] },
-  { chave: "insalubridade", nome: "Insalubridade", tipo: "percentual", percentuais: [20, 40] },
-  { chave: "periculosidade", nome: "Periculosidade", tipo: "percentual", percentuais: [30] },
+  { chave: "insalubridade", nome: "Insalubridade", tipo: "percentual" },
+  { chave: "periculosidade", nome: "Periculosidade", tipo: "percentual" },
   { chave: "assiduidade", nome: "Prêmio Assiduidade", tipo: "valor", periodos: ["dia", "mes"] },
   { chave: "cesta_basica", nome: "Cesta Básica", tipo: "valor", periodos: ["dia", "mes"] },
   { chave: "plano_saude", nome: "Plano de Saúde", tipo: "valor", periodos: ["mes"] },
   { chave: "auxilio_creche", nome: "Auxílio Creche", tipo: "valor", periodos: ["mes"] },
-  { chave: "adicional_lider", nome: "Adicional de Líder", tipo: "lider", periodos: ["dia", "mes"], percentuais: [10, 20, 30] },
+  { chave: "adicional_lider", nome: "Adicional de Líder", tipo: "lider", periodos: ["dia", "mes"] },
 ];
 
 export const DEF_POR_CHAVE = Object.fromEntries(BENEFICIOS.map((b) => [b.chave, b])) as Record<ChaveBeneficio, DefBeneficio>;
+
+/** O que a CCT cadastra — o VT vem do decreto municipal. */
+export const BENEFICIOS_CCT: DefBeneficio[] = BENEFICIOS.filter((b) => b.chave !== "vt");
+
+/** Desconto do colaborador (VA): valor ou porcentagem, ou "Não contém". */
+export interface DescontoColaborador {
+  nao_contem?: boolean;
+  modo?: ModoLider | null;
+  valor?: number | null;
+  percentual?: number | null;
+}
 
 /** O que fica em `beneficios[chave]` no banco. */
 export interface ValorBeneficio {
@@ -59,19 +94,33 @@ export interface ValorBeneficio {
   periodo?: Periodo | null;
   percentual?: number | null;
   modo?: ModoLider | null;
+  /** Percentual (insalubridade, periculosidade, líder em %): sobre o quê. */
+  base?: BaseCalculo | null;
+  desconto?: DescontoColaborador | null;
 }
 
 export type MapaBeneficios = Partial<Record<ChaveBeneficio, ValorBeneficio>>;
+
+const percentualOk = (p: unknown) => Number(p) > 0 && Number(p) <= 100;
+const baseOk = (b: unknown) => BASES_CALCULO.some((x) => x.valor === b);
+
+export function descontoPreenchido(d: DescontoColaborador | null | undefined): boolean {
+  if (!d) return false;
+  if (d.nao_contem) return true;
+  if (d.modo === "valor") return Number(d.valor) > 0;
+  if (d.modo === "porcentagem") return percentualOk(d.percentual);
+  return false;
+}
 
 /** Benefício com informação suficiente (ou "Não contém" marcado). */
 export function beneficioPreenchido(def: DefBeneficio, v: ValorBeneficio | null | undefined): boolean {
   if (!v) return false;
   if (v.nao_contem) return true;
   const periodoOk = (p: Periodo | null | undefined) => !!p && (def.periodos ?? []).includes(p);
-  if (def.tipo === "valor") return Number(v.valor) > 0 && periodoOk(periodoEfetivo(def, v));
-  if (def.tipo === "percentual") return (def.percentuais ?? []).includes(Number(v.percentual));
+  if (def.tipo === "valor") return Number(v.valor) > 0 && periodoOk(periodoEfetivo(def, v)) && (!def.desconto || descontoPreenchido(v.desconto));
+  if (def.tipo === "percentual") return percentualOk(v.percentual) && baseOk(v.base);
   if (v.modo === "valor") return Number(v.valor) > 0 && periodoOk(v.periodo);
-  if (v.modo === "porcentagem") return (def.percentuais ?? []).includes(Number(v.percentual)) && periodoOk(v.periodo);
+  if (v.modo === "porcentagem") return percentualOk(v.percentual) && baseOk(v.base) && periodoOk(v.periodo);
   return false;
 }
 
@@ -85,14 +134,30 @@ export function periodoEfetivo(def: DefBeneficio, v: ValorBeneficio): Periodo | 
 const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).replace(/\s/g, " ");
 const rotuloPeriodo = (p: Periodo | null) => (p === "dia" ? " / dia" : p === "mes" ? " / mês" : "");
 
-/** "R$ 461,82 / mês", "20%", "Não contém" — ou null se não preenchido. */
+const pct = (n: number) => `${n.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+const sobre = (b: BaseCalculo | null | undefined) => (b ? ` sobre o ${NOME_BASE[b].toLowerCase()}` : "");
+
+/** "20%", "R$ 50,00", "não contém" — o desconto do colaborador. */
+export function textoDesconto(d: DescontoColaborador | null | undefined): string | null {
+  if (!descontoPreenchido(d)) return null;
+  if (d!.nao_contem) return "não contém";
+  return d!.modo === "porcentagem" ? pct(Number(d!.percentual)) : brl(Number(d!.valor));
+}
+
+/**
+ * "R$ 461,82 / mês", "20% sobre o salário mínimo regional", "Não contém" —
+ * ou null se não preenchido. O percentual nunca sai sem a base.
+ */
 export function textoBeneficio(def: DefBeneficio, v: ValorBeneficio | null | undefined): string | null {
   if (!beneficioPreenchido(def, v)) return null;
   if (v!.nao_contem) return "Não contém";
-  if (def.tipo === "percentual") return `${Number(v!.percentual)}%`;
-  if (def.tipo === "lider" && v!.modo === "porcentagem") return `${Number(v!.percentual)}%${rotuloPeriodo(v!.periodo ?? null)}`;
-  return `${brl(Number(v!.valor))}${rotuloPeriodo(periodoEfetivo(def, v!))}`;
+  if (def.tipo === "percentual") return `${pct(Number(v!.percentual))}${sobre(v!.base)}`;
+  if (def.tipo === "lider" && v!.modo === "porcentagem") return `${pct(Number(v!.percentual))}${sobre(v!.base)}${rotuloPeriodo(v!.periodo ?? null)}`;
+  const texto = `${brl(Number(v!.valor))}${rotuloPeriodo(periodoEfetivo(def, v!))}`;
+  return def.desconto ? `${texto} · desconto do colaborador: ${textoDesconto(v!.desconto)}` : texto;
 }
+
+const numOuNull = (n: unknown) => (Number(n) > 0 ? Number(n) : null);
 
 /** Normaliza o que vai pro banco: "Não contém" limpa o resto; periodicidade fixa entra sozinha. */
 export function normalizarBeneficios(m: MapaBeneficios): MapaBeneficios {
@@ -103,15 +168,22 @@ export function normalizarBeneficios(m: MapaBeneficios): MapaBeneficios {
     if (v.nao_contem) { out[def.chave] = { nao_contem: true }; continue; }
     const limpo: ValorBeneficio = { nao_contem: false };
     if (def.tipo === "valor") {
-      limpo.valor = Number(v.valor) > 0 ? Number(v.valor) : null;
+      limpo.valor = numOuNull(v.valor);
       limpo.periodo = periodoEfetivo(def, v);
+      if (def.desconto && v.desconto) {
+        const d = v.desconto;
+        limpo.desconto = d.nao_contem ? { nao_contem: true }
+          : { nao_contem: false, modo: d.modo ?? null, ...(d.modo === "valor" ? { valor: numOuNull(d.valor) } : d.modo === "porcentagem" ? { percentual: numOuNull(d.percentual) } : {}) };
+      }
     } else if (def.tipo === "percentual") {
-      limpo.percentual = (def.percentuais ?? []).includes(Number(v.percentual)) ? Number(v.percentual) : null;
+      limpo.percentual = numOuNull(v.percentual);
+      limpo.base = v.base ?? null;
     } else {
       limpo.modo = v.modo ?? null;
       limpo.periodo = v.periodo ?? null;
-      if (v.modo === "valor") limpo.valor = Number(v.valor) > 0 ? Number(v.valor) : null;
-      if (v.modo === "porcentagem") limpo.percentual = (def.percentuais ?? []).includes(Number(v.percentual)) ? Number(v.percentual) : null;
+      if (v.modo === "valor") limpo.valor = numOuNull(v.valor);
+      // Base só existe na porcentagem — no Valor ela não é guardada.
+      if (v.modo === "porcentagem") { limpo.percentual = numOuNull(v.percentual); limpo.base = v.base ?? null; }
     }
     out[def.chave] = limpo;
   }
@@ -147,19 +219,27 @@ const vazio = (s: unknown) => !String(s ?? "").trim();
 export function pendenciasConvencao(c: CadastroConvencao): string[] {
   if (c.tipo === "decreto") return pendenciasDecreto(c);
   const p: string[] = [];
+  // Contrato e posto saíram da CCT (03/11/2026): o vínculo é na Planilha de Custo.
   if (vazio(c.empresa_id)) p.push("Empresa não informada");
-  if (vazio(c.contrato_id)) p.push("Contrato não informado");
   if (vazio(c.categoria_profissional)) p.push("Categoria profissional não informada");
   if (vazio(c.sindicato)) p.push("Sindicato não informado");
   if (vazio(c.vigencia_inicio) || vazio(c.vigencia_fim)) p.push("Vigência da CCT incompleta");
   else if (String(c.vigencia_fim) < String(c.vigencia_inicio)) p.push("Vigência da CCT termina antes de começar");
   if (vazio(c.cct_arquivo_path)) p.push("Convenção coletiva não anexada");
-  if (!vazio(c.decreto_numero) && vazio(c.decreto_arquivo_path)) p.push("Decreto municipal informado sem o anexo");
-  if (vazio(c.decreto_numero) && !vazio(c.decreto_arquivo_path)) p.push("Anexo do decreto sem o número do decreto");
-  for (const def of BENEFICIOS) {
-    if (!beneficioPreenchido(def, c.beneficios?.[def.chave])) p.push(`${def.nome}: preencha o valor ou marque "Não contém"`);
-  }
+  for (const def of BENEFICIOS_CCT) p.push(...pendenciaBeneficio(def, c.beneficios?.[def.chave]));
   return p;
+}
+
+/** O aviso diz o que falta — a base e o desconto têm mensagem própria. */
+function pendenciaBeneficio(def: DefBeneficio, v: ValorBeneficio | null | undefined): string[] {
+  if (beneficioPreenchido(def, v)) return [];
+  const temPercentual = def.tipo === "percentual" || (def.tipo === "lider" && v?.modo === "porcentagem");
+  if (v && temPercentual && percentualOk(v.percentual) && !baseOk(v.base)) return [`${def.nome}: escolha a base de cálculo`];
+  if (v && def.desconto && Number(v.valor) > 0 && !descontoPreenchido(v.desconto)) {
+    return [`${def.nome}: informe o desconto do colaborador ou marque "Não contém"`];
+  }
+  if (v && temPercentual && Number(v.percentual) > 100) return [`${def.nome}: percentual acima de 100%`];
+  return [`${def.nome}: preencha o valor ou marque "Não contém"`];
 }
 
 /** Decreto municipal: número, município, anexo e o VT (valor ou "Não contém"). */
@@ -265,7 +345,9 @@ export function montarQuadro(r: RespostaReferencia | null | undefined): Quadro {
     if (!usadasIds.includes(ref.id)) usadasIds.push(ref.id);
     const v = ref.beneficios?.[def.chave];
     const texto = textoBeneficio(def, v);
-    if (!texto) pendencias.push(`${def.nome}: não preenchido em ${identificacaoCct(ref) ?? ref.decreto_numero ?? "na convenção"}.`);
+    // VT sai do decreto municipal: CCT sem VT pede o decreto, não o VT na CCT.
+    if (!texto && def.chave === "vt" && !ref.decreto_numero) pendencias.push(`${def.nome}: o posto não tem decreto municipal para o VT — vincule na Planilha de Custo.`);
+    else if (!texto) pendencias.push(`${def.nome}: não preenchido em ${identificacaoCct(ref) ?? ref.decreto_numero ?? "na convenção"}.`);
     return { def, texto, naoContem: !!v?.nao_contem && !!texto, referencia: ref };
   });
   const ordem = (id: string) => (id === r.principal_id ? 0 : 1);

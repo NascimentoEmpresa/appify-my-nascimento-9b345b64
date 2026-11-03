@@ -24,7 +24,7 @@ import { IconeBeneficio } from "./IconeBeneficio";
 // separado da convenção coletiva. 1. Informações do Decreto · 2. Benefício do
 // Decreto (Vale-Transporte) · 3. Observações. O decreto é do município, não
 // do contrato — quem liga o VT dele a um posto é o vínculo da Planilha de
-// Custo ("Mais de uma referência", benefício Vale-Transporte).
+// Custo (campo "Decreto municipal (Vale-Transporte)", grava regras.vt).
 
 const UF_PADRAO = "RS";
 const VT = DEF_POR_CHAVE.vt;
@@ -169,7 +169,7 @@ export function FormDecreto({ aberto, onFechar, decreto, somenteLeitura }: {
           <Secao n={3} titulo="Observações (opcional)">
             <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={4} placeholder="Digite observações, se necessário…" disabled={somenteLeitura} />
             <p className="text-[11px] text-muted-foreground">
-              Para o posto usar o VT deste decreto: Planilha de Custo › CCT do posto › "Mais de uma referência" › Vale-Transporte.
+              Para o posto usar o VT deste decreto: Planilha de Custo › CCT do posto › "Decreto municipal (Vale-Transporte)".
             </p>
           </Secao>
         </div>

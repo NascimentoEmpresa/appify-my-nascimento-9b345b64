@@ -104,8 +104,8 @@ export function useExcluirConvencao() {
 /** Sobe um anexo e devolve caminho/nome/tamanho para gravar na convenção. */
 export async function enviarAnexoConvencao(contratoId: string | null, tipo: "cct" | "decreto", arquivo: File) {
   const ext = (arquivo.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
-  // Decreto em cadastro próprio não tem contrato: pasta "decretos".
-  const path = `${contratoId ?? "decretos"}/${tipo}-${Date.now()}.${ext}`;
+  // Sem contrato (decreto próprio e, desde 03/11/2026, a CCT): pasta pelo tipo.
+  const path = `${contratoId ?? (tipo === "decreto" ? "decretos" : "convencoes")}/${tipo}-${Date.now()}.${ext}`;
   const { error } = await sb.storage.from(BUCKET_CONVENCOES).upload(path, arquivo, { upsert: false, contentType: arquivo.type || undefined });
   if (error) throw error;
   return { path, nome: arquivo.name, tamanho: arquivo.size };

@@ -10,7 +10,7 @@ import {
   useConvencoes, useRemoverVinculoPosto, useSalvarVinculoPosto, useVinculosPosto, vinculoDe, type Convencao,
 } from "@/hooks/useConvencoes";
 import {
-  BENEFICIOS, BENEFICIOS_DECRETO, identificacaoCct, vigenciaTxt,
+  BENEFICIOS_CCT, identificacaoCct, vigenciaTxt,
   type ChaveBeneficio, type ReferenciaConvencao, type RespostaReferencia,
 } from "@/lib/licitacoes/convencoes";
 import { IconeBeneficio } from "./IconeBeneficio";
@@ -28,9 +28,6 @@ export const rotuloConvencao = (c: Pick<Convencao, "identificacao" | "vigencia_i
   c.tipo === "decreto"
     ? [c.decreto_numero, c.municipio].filter(Boolean).join(" · ")
     : [c.contrato?.nome, identificacaoCct(c), c.decreto_numero, c.sindicato].filter(Boolean).join(" · ");
-
-/** Decreto municipal (cadastro próprio, mig 20261103002100) só traz estes benefícios. */
-const DO_DECRETO = new Set<ChaveBeneficio>(BENEFICIOS_DECRETO);
 
 const comoReferencia = (c: Convencao): ReferenciaConvencao => ({
   id: c.id, versao: c.versao, identificacao: c.identificacao, categoria_profissional: c.categoria_profissional,
@@ -53,13 +50,23 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
   const [principal, setPrincipal] = useState("");
   const [varias, setVarias] = useState(false);
   const [regras, setRegras] = useState<Partial<Record<ChaveBeneficio, string>>>({});
+  // VT do posto (03/11/2026): a CCT não traz mais VT — ele sai do decreto
+  // municipal, gravado como regras.vt. Sem decreto, fica o da principal
+  // (CCT antiga que ainda tinha VT) ou a pendência.
+  const [decretoVt, setDecretoVt] = useState("");
+  const ehDecreto = (id: string | undefined) => !!id && convencoes.some((c) => c.id === id && c.tipo === "decreto");
 
   useEffect(() => {
     if (!alvo) return;
+    const r = { ...(atual?.regras ?? {}) };
+    const vt = ehDecreto(r.vt) ? r.vt! : "";
+    delete r.vt;
     setPrincipal(atual?.convencao_id ?? "");
-    setRegras(atual?.regras ?? {});
-    setVarias(!!atual && Object.keys(atual.regras ?? {}).length > 0);
-  }, [alvo, atual]);
+    setDecretoVt(vt);
+    setRegras(r);
+    setVarias(Object.keys(r).length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alvo, atual, convencoes]);
 
   // As do mesmo contrato primeiro; as outras continuam escolhíveis (uma CCT
   // de sindicato pode ter sido cadastrada em outro contrato).
@@ -75,19 +82,27 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
   // O decreto só tem o VT: não serve de principal (o resto ficaria pendente);
   // entra como fonte do benefício por benefício.
   const opcoesPrincipal = useMemo(() => opcoes.filter((o) => !o.decreto), [opcoes]);
+  const opcoesDecreto = useMemo(() => opcoes.filter((o) => o.decreto), [opcoes]);
+
+  // Regra igual à principal não é regra; o VT do decreto entra por cima.
+  const regrasFinais = (): Partial<Record<ChaveBeneficio, string>> => ({
+    ...Object.fromEntries(Object.entries(varias ? regras : {}).filter(([k, id]) => k !== "vt" && id && id !== principal)),
+    ...(decretoVt ? { vt: decretoVt } : {}),
+  });
 
   // Prévia com o que está na tela, montada pela mesma regra da vaga.
-  const previa: RespostaReferencia | null = principal ? {
-    status: "vinculado", posto: alvo?.posto, principal_id: principal,
-    regras: varias ? regras : {},
-    referencias: convencoes.filter((c) => c.id === principal || (varias && Object.values(regras).includes(c.id))).map(comoReferencia),
-  } : null;
+  const previa: RespostaReferencia | null = principal ? (() => {
+    const r = regrasFinais();
+    return {
+      status: "vinculado", posto: alvo?.posto, principal_id: principal, regras: r,
+      referencias: convencoes.filter((c) => c.id === principal || Object.values(r).includes(c.id)).map(comoReferencia),
+    };
+  })() : null;
 
   const confirmar = async () => {
     if (!alvo?.contrato_id) return;
-    if (!principal) { toast.error("Escolha a CCT/decreto do posto."); return; }
-    // Regra igual à principal não é regra.
-    const limpas = Object.fromEntries(Object.entries(varias ? regras : {}).filter(([, id]) => id && id !== principal));
+    if (!principal) { toast.error("Escolha a CCT do posto."); return; }
+    const limpas = regrasFinais();
     try {
       await salvar.mutateAsync({ id: atual?.id, contrato_id: alvo.contrato_id, posto: alvo.posto, convencao_id: principal, regras: limpas });
       toast.success(`CCT/decreto vinculado ao posto ${alvo.posto}.`);
@@ -118,8 +133,8 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
         ) : (
           <div className="space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-medium">CCT / decreto do posto <span className="text-red-600">*</span></label>
-              <SearchableSelect value={principal} onChange={setPrincipal} options={opcoesPrincipal}disabled={!podeAlterar || isLoading}
+              <label className="text-xs font-medium">Convenção coletiva (CCT) do posto <span className="text-red-600">*</span></label>
+              <SearchableSelect value={principal} onChange={setPrincipal} options={opcoesPrincipal} disabled={!podeAlterar || isLoading}
                 placeholder={isLoading ? "Carregando…" : "Selecione a convenção cadastrada"} searchPlaceholder="Buscar por contrato, CCT, sindicato…"
                 emptyLabel="Nenhuma convenção cadastrada" />
               <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -131,21 +146,31 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
             </div>
 
             {principal && (
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 text-xs font-medium"><IconeBeneficio chave="vt" tamanho="sm" />Decreto municipal (Vale-Transporte)</label>
+                <SearchableSelect value={decretoVt} onChange={setDecretoVt} options={opcoesDecreto} disabled={!podeAlterar || isLoading}
+                  allowClear placeholder="Selecione o decreto do município do posto" searchPlaceholder="Buscar por decreto, município…"
+                  emptyLabel="Nenhum decreto cadastrado" />
+                <p className="text-[11px] text-muted-foreground">O VT não vem da CCT: sai do decreto municipal. Sem decreto, o VT da vaga fica pendente.</p>
+              </div>
+            )}
+
+            {principal && (
               <div className="rounded-lg border p-3">
                 <label className="flex items-center justify-between gap-3 text-sm font-medium">
-                  <span>Mais de uma referência neste posto
-                    <span className="block text-[11px] font-normal text-muted-foreground">Escolha de qual CCT/decreto sai cada benefício (o decreto municipal entra no Vale-Transporte). Nada é somado.</span>
+                  <span>Mais de uma convenção neste posto
+                    <span className="block text-[11px] font-normal text-muted-foreground">Escolha de qual CCT sai cada benefício. Nada é somado.</span>
                   </span>
                   <Switch checked={varias} onCheckedChange={setVarias} disabled={!podeAlterar} />
                 </label>
                 {varias && (
                   <div className="mt-3 space-y-1.5">
-                    {BENEFICIOS.map((def) => (
+                    {BENEFICIOS_CCT.map((def) => (
                       <div key={def.chave} className="grid grid-cols-[minmax(160px,0.8fr)_1.2fr] items-center gap-2">
                         <span className="flex items-center gap-2 text-xs font-medium"><IconeBeneficio chave={def.chave} tamanho="sm" />{def.nome}</span>
                         <SearchableSelect value={regras[def.chave] || PRINCIPAL} disabled={!podeAlterar}
                           onChange={(v) => setRegras((r) => ({ ...r, [def.chave]: v === PRINCIPAL ? undefined : v }))}
-                          options={[{ value: PRINCIPAL, label: "Mesma da principal" }, ...opcoes.filter((o) => o.value !== principal && (!o.decreto || DO_DECRETO.has(def.chave)))]}
+                          options={[{ value: PRINCIPAL, label: "Mesma da principal" }, ...opcoesPrincipal.filter((o) => o.value !== principal)]}
                           triggerClassName="h-8 text-xs" />
                       </div>
                     ))}
