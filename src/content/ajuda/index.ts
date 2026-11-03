@@ -274,7 +274,7 @@ export const ARTIGOS: ArtigoMeta[] = [
     titulo: "Como cadastro um colaborador?",
     resumo: "Ficha do colaborador, dados bancários e vínculo com postos.",
     tags: ["colaborador", "rh", "ficha"],
-    rotasRelacionadas: ["/app/rh/colaboradores"],
+    rotasRelacionadas: ["/app/operacional/colaboradores"],
     updatedAt: "2026-05-18",
     conteudo: cadastroColaborador,
     personas: ["rh", "admin"],

@@ -1,6 +1,7 @@
 // =====================================================================
-// RH › ATIVOS/CONTRATOS (/app/rh/ativos-contratos) — migs 20260930000279
-// e 20261005000001
+// OPERACIONAL › ATIVOS/CONTRATOS (/app/operacional/ativos-contratos; até
+// 03/11/2026 em /app/rh/ativos-contratos, que hoje redireciona) — migs
+// 20260930000279, 20261005000001 e 20261103005000 (atestados por dia)
 //
 // Por contrato e por posto da Planilha de Custo: PREVISTO ("QT. PESSOAS")
 // × TEM (colaboradores ativos da EMPREGADOS que estão no posto e contam —
@@ -33,17 +34,18 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
-  ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send,
+  ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send, Stethoscope,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import {
   usePainelAtivosContratos, usePessoasAtivas, usePessoasSemContrato, useVincularPostos, useVincularFilial,
-  useMoverColaborador, useObservacoesAtivos, useSalvarObservacaoAtivos, useExcluirObservacaoAtivos,
+  useMoverColaborador, useObservacoesAtivos, useAtestadosPorDia, useSalvarObservacaoAtivos, useExcluirObservacaoAtivos,
   type ObservacaoAtivos,
 } from "@/hooks/useAtivosContratos";
 import {
   conferirContrato, limparPostoSenior, fmtSaldo, sugerirContrato, ehPostoRT, POSTO_RT,
+  diasEntre, montarSerieAtestados,
   type ContratoAtivos, type ConferenciaContrato, type ConferenciaPosto, type PessoaContrato,
   type PendenteSenior, type Situacao, type PainelAtivos,
 } from "./conferenciaAtivos";
@@ -163,6 +165,8 @@ export default function AtivosContratos() {
   const [filtro, setFiltro] = useState<Filtro>("todos");
   const [aberto, setAberto] = useState<string | null>(null);
   const [pessoasDe, setPessoasDe] = useState<{ filial: string } | null>(null);
+  // Atestados dia a dia (03/11/2026): null = fechado; contratoId null = todos.
+  const [atestadosDe, setAtestadosDe] = useState<{ contratoId: string | null } | null>(null);
 
   const linhas: Linha[] = useMemo(
     () => (data?.contratos ?? []).map((c) => ({ c, conf: conferirContrato(c) })),
@@ -235,6 +239,9 @@ export default function AtivosContratos() {
       afastados: com.reduce((s, l) => s + l.conf.afastados.length, 0),
       // Renda técnica (20/10/2026): fora do previsto/tem; aparece na dica do "Tem".
       rt: linhas.reduce((s, l) => s + l.conf.rt.length, 0),
+      // Todos os contratos, com ou sem planilha: atestado é da pessoa, não do posto.
+      atestados: linhas.reduce((s, l) => s + l.conf.atestados.length, 0),
+      contratosComAtestado: linhas.filter((l) => l.conf.atestados.length).length,
       semContrato: (data?.filiais_sem_contrato ?? []).reduce((s, f) => s + f.qtd, 0),
     };
   }, [linhas, data]);
@@ -245,7 +252,7 @@ export default function AtivosContratos() {
   if (error && !data) {
     return (
       <div>
-        <PageHeader title="Ativos/Contratos" module="Recursos Humanos" breadcrumb={["Recursos Humanos", "Ativos/Contratos"]} />
+        <PageHeader title="Ativos/Contratos" module="Operacional" breadcrumb={["Operacional", "Ativos/Contratos"]} />
         <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground">
           <ShieldAlert className="h-5 w-5 text-warning" /> {(error as Error).message}
         </Card>
@@ -258,8 +265,8 @@ export default function AtivosContratos() {
       <PageHeader
         title="Ativos/Contratos"
         subtitle="Quantas pessoas cada posto tem implantado (previsto na Planilha de Custo, ajustado pela Licitação) e quantas tem de fato."
-        module="Recursos Humanos"
-        breadcrumb={["Recursos Humanos", "Ativos/Contratos"]}
+        module="Operacional"
+        breadcrumb={["Operacional", "Ativos/Contratos"]}
       />
 
       {error && data && (
@@ -273,7 +280,7 @@ export default function AtivosContratos() {
         <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</Card>
       ) : (
         <>
-          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Kpi icon={Users} valor={tot.implantado.toLocaleString("pt-BR")} rotulo="Implantado"
                  dica={tot.implantado === tot.previsto ? "igual ao previsto da planilha" : `previsto na planilha: ${tot.previsto.toLocaleString("pt-BR")}`} tom="info" />
             <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando · ${tot.afastados} afastado(s) fora${tot.rt ? ` · ${tot.rt} em renda técnica` : ""}`} tom="success" />
@@ -285,6 +292,11 @@ export default function AtivosContratos() {
                  tom="destructive" />
             <Kpi icon={UserMinus} valor={tot.semPosto.toLocaleString("pt-BR")} rotulo="Pessoas sem posto definido"
                  dica={`${tot.contratosSemPosto} contrato(s) — defina para a conta fechar`} tom="warning" />
+            <button type="button" className="text-left" onClick={() => setAtestadosDe({ contratoId: null })}
+              title="Ver os atestados dia a dia, por contrato">
+              <Kpi icon={Stethoscope} valor={tot.atestados.toLocaleString("pt-BR")} rotulo="Atestados hoje"
+                   dica={`${tot.contratosComAtestado} contrato(s) · ver dia a dia →`} tom="destructive" />
+            </button>
           </div>
 
           {tot.semContrato > 0 && (
@@ -342,6 +354,7 @@ export default function AtivosContratos() {
                     <th className="w-24 py-2 pr-3 text-right">Tem</th>
                     <th className="w-24 py-2 pr-3 text-right">Saldo</th>
                     <th className="w-24 py-2 pr-3 text-right">Afastados</th>
+                    <th className="w-24 py-2 pr-3 text-right" title="De atestado hoje (já contados em Afastados)">Atestados</th>
                     <th className="w-56 py-2 pr-3" />
                     <th className="w-72 py-2 pr-3">Justificativa da diferença</th>
                   </tr>
@@ -351,11 +364,12 @@ export default function AtivosContratos() {
                     const exp = aberto === c.id;
                     return (
                       <LinhaContrato key={c.id} c={c} conf={conf} aberto={exp} podeVincular={podeVincular}
-                        achados={achados.get(c.id)} onToggle={() => setAberto(exp ? null : c.id)} />
+                        achados={achados.get(c.id)} onToggle={() => setAberto(exp ? null : c.id)}
+                        onAtestados={() => setAtestadosDe({ contratoId: c.id })} />
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <tr><td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    <tr><td colSpan={9}className="py-8 text-center text-sm text-muted-foreground">
                       {achadosSemContrato.length ? "Nenhum contrato — a pessoa está em filial sem contrato ligado (acima)."
                         : buscaPessoa && semContrato.carregando ? "Procurando…" : "Nenhum contrato neste filtro."}
                     </td></tr>
@@ -384,16 +398,20 @@ export default function AtivosContratos() {
       )}
 
       <DialogPessoasFilial filial={pessoasDe?.filial ?? null} onClose={() => setPessoasDe(null)} />
+      <DialogAtestadosPorDia aberto={!!atestadosDe} contratoId={atestadosDe?.contratoId ?? null}
+        linhas={linhas} onContrato={(id) => setAtestadosDe({ contratoId: id })} onClose={() => setAtestadosDe(null)} />
     </div>
   );
 }
 
 // ---- Linha do contrato ---------------------------------------------------------
 
-function LinhaContrato({ c, conf, aberto, podeVincular, achados, onToggle }: {
+function LinhaContrato({ c, conf, aberto, podeVincular, achados, onToggle, onAtestados }: {
   c: ContratoAtivos; conf: ConferenciaContrato; aberto: boolean; podeVincular: boolean;
   /** Pessoas deste contrato que batem com a busca por nome. */
   achados?: PessoaContrato[]; onToggle: () => void;
+  /** Abre os atestados dia a dia deste contrato. */
+  onAtestados: () => void;
 }) {
   const temPlanilha = c.postos.length > 0;
   return (
@@ -411,6 +429,13 @@ function LinhaContrato({ c, conf, aberto, podeVincular, achados, onToggle }: {
           {temPlanilha ? fmtSaldo(conf.saldo) : "—"}
         </td>
         <td className="py-2.5 pr-3 text-right tabular-nums"><Afastados pessoas={conf.afastados} mostrarPosto /></td>
+        <td className="py-2.5 pr-3 text-right tabular-nums">
+          <button type="button" onClick={(e) => { e.stopPropagation(); onAtestados(); }}
+            title={conf.atestados.length ? conf.atestados.map((p) => `${p.nome} — ${p.situacao ?? ""}`).join("\n") + "\n\nClique: dia a dia" : "Ninguém de atestado hoje — clique para o dia a dia"}
+            className={`rounded px-1.5 font-medium underline decoration-dotted underline-offset-4 ${conf.atestados.length ? "text-destructive hover:bg-destructive/10" : "text-muted-foreground/50 hover:bg-muted"}`}>
+            {conf.atestados.length || "—"}
+          </button>
+        </td>
         <td className="py-2.5 pr-3">
           <div className="flex items-center gap-1 whitespace-nowrap">
             {temPlanilha
@@ -425,7 +450,7 @@ function LinhaContrato({ c, conf, aberto, podeVincular, achados, onToggle }: {
       </tr>
       {aberto && (
         <tr className="border-b border-border">
-          <td colSpan={8} className="bg-muted/10 p-4">
+          <td colSpan={9} className="bg-muted/10 p-4">
             <DetalheContrato c={c} conf={conf} podeVincular={podeVincular} />
           </td>
         </tr>
@@ -1110,5 +1135,184 @@ function CelulaJustificativa({ c, posto, diferenca }: { c: ContratoAtivos; posto
         </PopoverContent>
       </Popover>
     </div>
+  );
+}
+
+// ---- Atestados por dia (03/11/2026, mig 20261103005000) -------------------------
+// Pedido do Pablo: "quantos estão de atestado em cada dia", por contrato e no
+// total. Hoje = situação atual (a mesma de Afastados); dias passados = o
+// histórico do SST_AFASTAMENTO (montarSerieAtestados explica a costura).
+
+type Periodo = "14d" | "mes" | "mes_anterior";
+
+const PERIODOS: { k: Periodo; label: string }[] = [
+  { k: "14d", label: "Últimos 14 dias" },
+  { k: "mes", label: "Mês atual" },
+  { k: "mes_anterior", label: "Mês anterior" },
+];
+
+/** Data local (não UTC): às 22h de Brasília o UTC já é amanhã. */
+const isoLocal = (d: Date) => d.toLocaleDateString("sv-SE");
+
+function intervaloDe(p: Periodo, hojeIso: string): [string, string] {
+  const hoje = new Date(`${hojeIso}T12:00:00`);
+  if (p === "14d") {
+    const ini = new Date(hoje); ini.setDate(ini.getDate() - 13);
+    return [isoLocal(ini), hojeIso];
+  }
+  if (p === "mes") return [isoLocal(new Date(hoje.getFullYear(), hoje.getMonth(), 1)), hojeIso];
+  return [
+    isoLocal(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)),
+    isoLocal(new Date(hoje.getFullYear(), hoje.getMonth(), 0)),
+  ];
+}
+
+const DIA_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+const rotuloDia = (iso: string) => {
+  const d = new Date(`${iso}T12:00:00`);
+  return { dia: iso.slice(8, 10), semana: DIA_SEMANA[d.getDay()], fds: d.getDay() === 0 || d.getDay() === 6 };
+};
+const dataBr = (iso: string) => iso.split("-").reverse().join("/");
+
+function DialogAtestadosPorDia({ aberto, contratoId, linhas, onContrato, onClose }: {
+  aberto: boolean; contratoId: string | null; linhas: Linha[];
+  onContrato: (id: string | null) => void; onClose: () => void;
+}) {
+  const [periodo, setPeriodo] = useState<Periodo>("14d");
+  const hojeIso = isoLocal(new Date());
+  const [ini, fim] = intervaloDe(periodo, hojeIso);
+  const dias = useMemo(() => diasEntre(ini, fim), [ini, fim]);
+  const { data: historico = [], isLoading, error } = useAtestadosPorDia(ini, fim, aberto);
+
+  const nomeDe = useMemo(() => new Map(linhas.map((l) => [l.c.id, l.c.nome])), [linhas]);
+  const serie = useMemo(() => {
+    const hoje = new Map(linhas.map((l) => [l.c.id, l.conf.atestados.map((p) => p.nome)]));
+    return montarSerieAtestados(historico, hojeIso, hoje);
+  }, [historico, linhas, hojeIso]);
+
+  const contratos = useMemo(() => {
+    const ids = contratoId ? [contratoId] : [...serie.keys()];
+    return ids
+      .map((id) => {
+        const porDia = serie.get(id) ?? new Map<string, string[]>();
+        const total = dias.reduce((s, d) => s + (porDia.get(d)?.length ?? 0), 0);
+        return { id, nome: nomeDe.get(id) ?? "(contrato encerrado)", porDia, total };
+      })
+      .filter((c) => contratoId || c.total > 0)
+      .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [serie, contratoId, dias, nomeDe]);
+
+  const totalDia = dias.map((d) => contratos.reduce((s, c) => s + (c.porDia.get(d)?.length ?? 0), 0));
+  const maxDia = Math.max(1, ...totalDia);
+  const media = totalDia.length ? totalDia.reduce((s, n) => s + n, 0) / totalDia.length : 0;
+  const hojeDoContrato = contratoId ? linhas.find((l) => l.c.id === contratoId)?.conf.atestados ?? [] : [];
+
+  return (
+    <Dialog open={aberto} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-6xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Stethoscope className="h-5 w-5 text-destructive" />
+            Atestados por dia{contratoId ? ` — ${nomeDe.get(contratoId) ?? ""}` : ""}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {PERIODOS.map(({ k, label }) => (
+            <Button key={k} size="sm" variant={periodo === k ? "default" : "outline"} className="h-8 text-xs" onClick={() => setPeriodo(k)}>{label}</Button>
+          ))}
+          {contratoId && (
+            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => onContrato(null)}>Ver todos os contratos</Button>
+          )}
+          <span className="ml-auto text-xs text-muted-foreground">
+            média {media.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}/dia · pico {Math.max(0, ...totalDia)}
+          </span>
+        </div>
+
+        {error ? (
+          <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><ShieldAlert className="h-4 w-4 text-warning" /> {(error as Error).message}</p>
+        ) : isLoading ? (
+          <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</p>
+        ) : (
+          <div className="max-h-[65vh] overflow-auto rounded-lg border border-border">
+            <table className="w-full border-collapse text-xs">
+              <thead className="sticky top-0 z-10 bg-background">
+                {/* Gráfico do total: uma barra por dia, em cima da própria coluna. */}
+                <tr>
+                  <th className="sticky left-0 z-20 min-w-64 bg-background px-3 pt-2 text-left align-bottom text-[11px] font-semibold text-muted-foreground">Total do dia</th>
+                  {dias.map((d, i) => (
+                    <th key={d} className="px-0.5 pt-2 align-bottom" title={`${dataBr(d)}: ${totalDia[i]} de atestado`}>
+                      <div className="mx-auto flex h-16 w-5 flex-col justify-end">
+                        <div className={`rounded-sm ${d === hojeIso ? "bg-destructive" : "bg-destructive/50"}`}
+                             style={{ height: `${Math.max(totalDia[i] ? 6 : 0, (totalDia[i] / maxDia) * 100)}%` }} />
+                      </div>
+                      <div className="text-[10px] font-bold tabular-nums">{totalDia[i]}</div>
+                    </th>
+                  ))}
+                  <th className="px-2" />
+                </tr>
+                <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
+                  <th className="sticky left-0 z-20 bg-background px-3 py-1 text-left">Contrato</th>
+                  {dias.map((d) => {
+                    const r = rotuloDia(d);
+                    return (
+                      <th key={d} className={`px-0.5 py-1 text-center font-medium ${r.fds ? "text-muted-foreground/60" : ""} ${d === hojeIso ? "text-destructive" : ""}`}>
+                        <div className="tabular-nums">{r.dia}</div><div className="normal-case">{d === hojeIso ? "hoje" : r.semana}</div>
+                      </th>
+                    );
+                  })}
+                  <th className="px-2 py-1 text-right" title="Soma de pessoas-dia no período">Dias</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contratos.map((c) => (
+                  <tr key={c.id} className="border-b border-border/50 hover:bg-muted/30">
+                    <td className="sticky left-0 bg-background px-3 py-1.5">
+                      {contratoId ? <span className="font-medium">{c.nome}</span> : (
+                        <button type="button" className="text-left font-medium hover:underline" onClick={() => onContrato(c.id)}>{c.nome}</button>
+                      )}
+                    </td>
+                    {dias.map((d) => {
+                      const nomes = c.porDia.get(d) ?? [];
+                      return (
+                        <td key={d} className="px-0.5 py-1 text-center tabular-nums"
+                            title={nomes.length ? `${dataBr(d)}\n${nomes.join("\n")}` : undefined}>
+                          {nomes.length ? (
+                            <span className={`inline-block min-w-5 rounded px-1 font-semibold ${nomes.length >= 3 ? "bg-destructive text-destructive-foreground" : "bg-destructive/15 text-destructive"}`}>{nomes.length}</span>
+                          ) : <span className="text-muted-foreground/30">·</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1 text-right font-semibold tabular-nums">{c.total}</td>
+                  </tr>
+                ))}
+                {contratos.length === 0 && (
+                  <tr><td colSpan={dias.length + 2} className="py-8 text-center text-sm text-muted-foreground">Nenhum atestado no período.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {hojeDoContrato.length > 0 && (
+          <div className="rounded-lg border border-border p-3 text-xs">
+            <p className="mb-1 font-semibold">De atestado hoje ({hojeDoContrato.length})</p>
+            {hojeDoContrato.map((p) => (
+              <p key={p.id} className="flex justify-between gap-2 py-0.5">
+                <span>{p.nome} <span className="text-muted-foreground">· {p.posto ?? limparPostoSenior(p.posto_senior)}</span></span>
+                <span className="shrink-0 text-destructive">{p.situacao}</span>
+              </p>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[11px] text-muted-foreground">
+          Hoje = situação atual na Senior (a mesma de Afastados). Dias anteriores = o histórico de atestados do SST
+          (Afastamentos e Telemedicina), que a captura da Senior monta de hora em hora desde 29/10/2026 — antes disso
+          só aparece o que foi importado da planilha de telemedicina ou registrado na Efetividade. Passe o mouse no
+          número para ver quem é.
+        </p>
+      </DialogContent>
+    </Dialog>
   );
 }

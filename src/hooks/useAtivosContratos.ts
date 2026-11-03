@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { PainelAtivos } from "@/pages/rh/conferenciaAtivos";
+import type { AtestadoDia, PainelAtivos } from "@/pages/rh/conferenciaAtivos";
 
 // =====================================================================
 // RH › Ativos/Contratos — acesso a dados (RPCs rh_ac_*, migs 20260930000279 e 20261005000001).
@@ -43,6 +43,25 @@ export function usePainelAtivosContratos() {
         todos_contratos: data?.todos_contratos ?? [],
         filiais_sem_contrato: data?.filiais_sem_contrato ?? [],
       };
+    },
+  });
+}
+
+/**
+ * Atestados por dia, por contrato (mig 20261103005000): o histórico do
+ * SST_AFASTAMENTO. Só abre quando alguém pede o "dia a dia" — o painel
+ * continua numa RPC só. Hoje a tela conta pelo painel (montarSerieAtestados).
+ */
+export function useAtestadosPorDia(inicio: string, fim: string, ativo: boolean) {
+  return useQuery({
+    queryKey: ["rh-ativos-contratos", "atestados-dias", inicio, fim],
+    enabled: ativo,
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    queryFn: async (): Promise<AtestadoDia[]> => {
+      const { data, error } = await sb.rpc<AtestadoDia[]>("rh_ac_atestados_dias", { p_inicio: inicio, p_fim: fim });
+      if (error) throw error;
+      return data ?? [];
     },
   });
 }

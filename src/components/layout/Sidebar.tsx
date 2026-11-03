@@ -578,7 +578,7 @@ const rhModule: ModuleDef = {
       label: "Pessoas",
       defaultOpen: true,
       items: [
-        { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
+        // Colaboradores foi para o Operacional em 03/11/2026 (mig 20261103005000).
         // SIS-2026-0599: dimensionamento de pessoas do contrato novo.
         { label: "Início de Contrato", to: "/app/rh/inicio-de-contrato", icon: Database },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
@@ -619,7 +619,7 @@ const rhModule: ModuleDef = {
       label: "Contratos",
       defaultOpen: true,
       items: [
-        { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
+        // Ativos/Contratos foi para o Operacional em 03/11/2026 (mig 20261103005000).
         // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
         { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
         // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
@@ -1266,6 +1266,18 @@ const operacionalModule: ModuleDef = {
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
         // telas ficam em abas dentro dela; menu ope_efetividade.
         { label: "Efetividade e Coberturas", to: "/app/operacional/efetividade", icon: UserCheck },
+      ],
+    },
+    {
+      // Vieram do RH em 03/11/2026 (mig 20261103005000), a pedido do Pablo:
+      // centralizar no Operacional. Mesmos códigos de menu (colaboradores,
+      // rh_ativos_contratos) — quem tinha acesso continua tendo.
+      label: "Efetivo",
+      defaultOpen: true,
+      items: [
+        { label: "Colaboradores", to: "/app/operacional/colaboradores", icon: Users2 },
+        // Ativos/Contratos (30/09/2026, mig 279): efetivo × Planilha de Custo, e atestados por dia (03/11/2026).
+        { label: "Ativos/Contratos", to: "/app/operacional/ativos-contratos", icon: ClipboardCheck },
       ],
     },
     {

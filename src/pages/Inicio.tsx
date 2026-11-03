@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
-import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
 import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
@@ -117,7 +117,7 @@ const DESC_ROTA: Record<string, string> = {
   "/app/malote/meus-itens": "Despesas e aprovações",
   "/app/suprimentos/requisicoes": "Requisições e compras",
   "/app/suprimentos/patrimonio": "Bens e manutenções",
-  "/app/rh/colaboradores": "Cadastro e documentos",
+  "/app/operacional/colaboradores": "Cadastro e documentos",
   "/app/rh/hierarquia": "Setores e lideranças",
   "/app/rh/ferias": "Programação e saldos",
   "/app/sst/aso": "Saúde e segurança",
@@ -191,7 +191,7 @@ const FAVORITOS_PADRAO = [
   "/app/editais",
   "/app/contratos/ativos",
   "/app/controladoria",
-  "/app/rh/colaboradores",
+  "/app/operacional/colaboradores",
   "/app/suprimentos/requisicoes",
   "/app/bi",
   "/app/rh/recrutamento",
@@ -237,7 +237,11 @@ export default function Inicio() {
     try {
       const bruto = localStorage.getItem(chaveFavoritos(user?.id));
       const lido = bruto ? JSON.parse(bruto) : null;
-      setFavoritos(Array.isArray(lido) ? lido.filter((t) => typeof t === "string") : FAVORITOS_PADRAO);
+      // Favorito salvo com o endereço antigo de uma tela que mudou de lugar
+      // (ROTAS_MOVIDAS) segue valendo pelo endereço novo.
+      setFavoritos(Array.isArray(lido)
+        ? [...new Set(lido.filter((t): t is string => typeof t === "string").map((t) => rotaMovida(t) ?? t))]
+        : FAVORITOS_PADRAO);
     } catch {
       setFavoritos(FAVORITOS_PADRAO);
     }

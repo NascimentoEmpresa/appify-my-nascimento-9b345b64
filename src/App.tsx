@@ -572,6 +572,10 @@ const App = () => (
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
+            {/* Vieram do RH em 03/11/2026 (mig 20261103005000), mesmos códigos de menu. */}
+            <Route path="operacional/colaboradores" element={<Colaboradores />} />
+            {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
+            <Route path="operacional/ativos-contratos" element={<AtivosContratos />} />
             {/* Sistemas */}
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Checklist de Módulos (02/10/2026, mig 291): status, uso, bugs e chamados de cada módulo/tela. */}
@@ -935,9 +939,13 @@ const App = () => (
             <Route path="contabil/dre-gerencial-real" element={<DREGerencialReal />} />
             <Route path="contabil/conciliacao-eventos" element={<ConciliacaoEventos />} />
             {/* RH */}
-            <Route path="rh/colaboradores" element={<Colaboradores />} />
-            {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
-            <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
+            {/* Colaboradores e Ativos/Contratos moram no Operacional desde 03/11/2026
+                (mig 20261103005000). Os endereços antigos são redirecionados pelo
+                RouteGuard (ROTAS_MOVIDAS em src/lib/acesso.ts), antes da checagem de
+                permissão. As duas rotas abaixo precisam continuar existindo: sem
+                elas o caminho cai no 404 de fora do AppShell e o guard nem roda. */}
+            <Route path="rh/colaboradores" element={<Navigate to="/app/operacional/colaboradores" replace />} />
+            <Route path="rh/ativos-contratos" element={<Navigate to="/app/operacional/ativos-contratos" replace />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
             {/* A Pesquisa de Permanência saiu do RH: agora é um formulário (mig 20261030001000). */}
@@ -950,7 +958,7 @@ const App = () => (
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}
-            <Route path="rh/hierarquia" element={<Navigate to="/app/rh/colaboradores" replace />} />
+            <Route path="rh/hierarquia" element={<Navigate to="/app/operacional/colaboradores" replace />} />
             <Route path="rh/novas-admissoes" element={<NovasAdmissoes />} />
             <Route path="rh/banco-talentos" element={<BancoTalentos />} />
             {/* Check-in dos recém-admitidos (25/09/2026, mig 245) — o Excel CONTRATOS_VIGENTES do RH. */}
