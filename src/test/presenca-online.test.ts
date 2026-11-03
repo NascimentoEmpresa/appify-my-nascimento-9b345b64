@@ -10,6 +10,7 @@ import {
   PREFERENCIAS_VAZIAS,
   reordenarPessoa,
   reordenarSetor,
+  rotuloSetor,
   SEM_SETOR,
   type UsuarioElenco,
   estaAtivo,
@@ -165,6 +166,20 @@ describe("painel por setor com favoritos", () => {
     expect(
       normalizarPreferencias({ favoritos: ["a", "a", 3, ""], ordemPessoas: { RH: ["x"], X: "y" }, recolhidos: "RH" }),
     ).toEqual({ favoritos: ["a"], ordemSetores: [], ordemPessoas: { RH: ["x"] }, recolhidos: [] });
+  });
+
+  it("setor PADRAO aparece como ENCARREGADOS (grupo e card)", () => {
+    expect(rotuloSetor("PADRAO")).toBe("ENCARREGADOS");
+    expect(rotuloSetor(" Padrão ")).toBe("ENCARREGADOS");
+    expect(rotuloSetor("RH")).toBe("RH");
+    expect(rotuloSetor("  ")).toBeNull();
+    const gs = montarGruposPresenca(
+      [{ user_id: "x", nome: "Jose", avatar_url: null, setor: "PADRAO" }],
+      [],
+      AGORA,
+      PREFERENCIAS_VAZIAS,
+    );
+    expect(gs.map((g) => `${g.titulo}:${g.pessoas[0].setor}`)).toEqual(["ENCARREGADOS:ENCARREGADOS"]);
   });
 
   it("moverItem não mexe quando o item não existe", () => {
