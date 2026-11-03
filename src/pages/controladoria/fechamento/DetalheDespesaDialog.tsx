@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { SeletorRubricaClassificacao } from "../faturamento/SeletorRubricaClassificacao";
 import { ComposicaoAdmSecoes, type ComposicaoAdmAberta } from "./ComposicaoAdm";
+import { AvisoCriterioReceitas, ReceitasForaDaColuna, SeletorContaReceita, type ComposicaoReceitaAberta } from "./ComposicaoReceita";
 import { SeletorRubricaFechamento } from "./SeletorRubricaFechamento";
 import { complementoProjecao, type ItemDetalheClassificacao } from "./regras";
 
@@ -28,6 +29,8 @@ export interface DetalheAberto {
   linkFluxo?: (item: ItemDetalheClassificacao) => string;
   // Total Desp. Adm e colunas de rubrica: ajustar o que compõe a coluna SÓ no Fechamento (contratos, classificações fora e rubrica de cada uma).
   composicaoAdm?: ComposicaoAdmAberta;
+  // SIS-2026-0793: Receitas Extras (entradas dos administrativos): aviso do critério e ajuste do que conta, só no Fechamento.
+  receitaExtra?: ComposicaoReceitaAberta;
 }
 
 export function DetalheDespesaDialog({ detalhe, onClose }: { detalhe: DetalheAberto | null; onClose: () => void }) {
@@ -55,6 +58,8 @@ export function DetalheDespesaDialog({ detalhe, onClose }: { detalhe: DetalheAbe
                 <Badge variant="outline" className="shrink-0 border-sky-300 bg-sky-50 text-sky-700">{nClass} {nClass === 1 ? "classificação" : "classificações"}</Badge>
               </div>
             </DialogHeader>
+
+            {detalhe.receitaExtra && <AvisoCriterioReceitas />}
 
             <div className="overflow-hidden rounded-md border border-border">
               <Table>
@@ -92,7 +97,9 @@ export function DetalheDespesaDialog({ detalhe, onClose }: { detalhe: DetalheAbe
                           </TableCell>
                           {detalhe.mostrarRubrica && (
                             <TableCell>
-                              {detalhe.composicaoAdm
+                              {detalhe.receitaExtra
+                                ? <SeletorContaReceita classificacaoId={i.classificacaoId} composicao={detalhe.receitaExtra} />
+                                : detalhe.composicaoAdm
                                 ? <SeletorRubricaFechamento classificacaoId={i.classificacaoId} nome={i.classificacao} globais={detalhe.composicaoAdm.globais} doFechamento={detalhe.composicaoAdm.doFechamento} podeAlterar={detalhe.composicaoAdm.podeAlterar} />
                                 : <SeletorRubricaClassificacao classificacaoId={i.classificacaoId} nome={i.classificacao} />}
                             </TableCell>
@@ -152,7 +159,12 @@ export function DetalheDespesaDialog({ detalhe, onClose }: { detalhe: DetalheAbe
                 </TableBody>
               </Table>
             </div>
-            {detalhe.composicaoAdm ? (
+            {detalhe.receitaExtra ? (
+              <>
+                <p className="text-xs text-muted-foreground">Os ajustes feitos aqui valem só no Fechamento da Empresa, para todos os meses: o Fluxo de Caixa e as demais telas não mudam. “Conta (padrão)” segue o critério adotado; “Não conta” tira a classificação da coluna.</p>
+                <ReceitasForaDaColuna composicao={detalhe.receitaExtra} />
+              </>
+            ) : detalhe.composicaoAdm ? (
               <>
                 <p className="text-xs text-muted-foreground">Os ajustes feitos aqui valem só no Fechamento da Empresa, para todos os meses: a Lucratividade, o Faturamento e o Lucro dos Contratos não mudam. “Seguir a Lucratividade” desfaz o ajuste da classificação.</p>
                 <ComposicaoAdmSecoes composicao={detalhe.composicaoAdm} />

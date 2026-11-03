@@ -146,6 +146,8 @@ export interface EntradasMes {
   sociosPorMes?: Map<string, Map<string, number>>;
   // SIS-2026-0749: IRPJ + CSLL por mês (Tributos sobre o Resultado).
   tributosPorMes?: Map<string, number>;
+  // SIS-2026-0793: entradas dos contratos ADMINISTRATIVO e sem contrato por mês (Receitas Extras). Meses projetados: só o que já está lançado/programado.
+  receitasExtrasPorMes?: Map<string, number>;
 }
 
 export interface LinhaFechamento {
@@ -160,7 +162,10 @@ export interface LinhaFechamento {
   // SIS-2026-0709: despesas de cada sócio no mês, o total e o Lucro Líquido Final (resultado − sócios).
   socios: Record<string, number>;
   totalSocios: number;
-  // = Resultado Gerencial após Ajustes (resultado operacional − sócios − Investimentos − Obras Adm; os dois últimos vêm junto em `socios`).
+  // SIS-2026-0793: Receitas Extras (entradas dos administrativos) e o Resultado após Outras Receitas (resultado operacional + receitas extras).
+  receitasExtras: number;
+  resultadoAposOutrasReceitas: number;
+  // = Resultado Gerencial após Ajustes (resultado após outras receitas − sócios − Investimentos − Obras Adm; os dois últimos vêm junto em `socios`).
   lucroLiquido: number;
   // SIS-2026-0749: Tributos sobre o Resultado (IRPJ + CSLL) e o Resultado Gerencial Líquido (lucroLiquido − tributos). Margem e status são deste último.
   tributos: number;
@@ -221,14 +226,17 @@ export function montarFechamento(e: EntradasMes): LinhaFechamento[] {
       socios[socio] = r2(projetado ? Math.max(lancado, media((m) => porMes.get(m) ?? 0)) : lancado);
     }
     const totalSocios = r2(Object.values(socios).reduce((s, v) => s + v, 0));
-    const lucroLiquido = r2(resultado - totalSocios);
+    // SIS-2026-0793: as receitas extras entram depois do Resultado Operacional (que não muda) e antes dos sócios; projetado = só o lançado.
+    const receitasExtras = r2(e.receitasExtrasPorMes?.get(mes) ?? 0);
+    const resultadoAposOutrasReceitas = r2(resultado + receitasExtras);
+    const lucroLiquido = r2(resultadoAposOutrasReceitas - totalSocios);
     // Tributos: nos meses projetados vale o lançado ou a média dos últimos meses, o maior (como as demais despesas).
     const tributosLancados = e.tributosPorMes?.get(mes) ?? 0;
     const tributos = r2(projetado ? Math.max(tributosLancados, mediaTributos) : tributosLancados);
     const resultadoGerencialLiquido = r2(lucroLiquido - tributos);
     return {
       mes, projetado, lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado),
-      socios, totalSocios, lucroLiquido, tributos, resultadoGerencialLiquido,
+      socios, totalSocios, receitasExtras, resultadoAposOutrasReceitas, lucroLiquido, tributos, resultadoGerencialLiquido,
       margemLiquida: margemFinal(resultadoGerencialLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, resultadoGerencialLiquido),
     };
   });
@@ -246,6 +254,9 @@ export interface TotalFechamento {
   // SIS-2026-0709
   socios: Record<string, number>;
   totalSocios: number;
+  // SIS-2026-0793
+  receitasExtras: number;
+  resultadoAposOutrasReceitas: number;
   lucroLiquido: number;
   // SIS-2026-0749
   tributos: number;
@@ -256,10 +267,11 @@ export interface TotalFechamento {
 
 export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
   let adm = custosVazios();
-  let lucro = 0, lucroRealizado = 0, lucroProjetado = 0, tributosSoma = 0;
+  let lucro = 0, lucroRealizado = 0, lucroProjetado = 0, tributosSoma = 0, receitasSoma = 0;
   const socios: Record<string, number> = {};
   for (const l of linhas) {
     tributosSoma += l.tributos;
+    receitasSoma += l.receitasExtras;
     for (const [s, v] of Object.entries(l.socios)) socios[s] = (socios[s] ?? 0) + v;
     adm = somaRubricas(adm, l.adm);
     lucro += l.lucroContratos;
@@ -270,13 +282,15 @@ export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
   const resultado = r2(lucroContratos - totalAdm);
   for (const s of Object.keys(socios)) socios[s] = r2(socios[s]);
   const totalSocios = r2(Object.values(socios).reduce((t, v) => t + v, 0));
-  const lucroLiquido = r2(resultado - totalSocios);
+  const receitasExtras = r2(receitasSoma);
+  const resultadoAposOutrasReceitas = r2(resultado + receitasExtras);
+  const lucroLiquido = r2(resultadoAposOutrasReceitas - totalSocios);
   const tributos = r2(tributosSoma);
   const resultadoGerencialLiquido = r2(lucroLiquido - tributos);
   return {
     lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado),
     lucroRealizado: r2(lucroRealizado), lucroProjetado: r2(lucroProjetado),
-    socios, totalSocios, lucroLiquido, tributos, resultadoGerencialLiquido,
+    socios, totalSocios, receitasExtras, resultadoAposOutrasReceitas, lucroLiquido, tributos, resultadoGerencialLiquido,
     margemLiquida: margemFinal(resultadoGerencialLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, resultadoGerencialLiquido),
   };
 }
@@ -460,6 +474,53 @@ export function despesaAdmPorContrato(
     mapa.set(l.contrato_id, atual);
   }
   return [...mapa.values()].map((x) => ({ ...x, valor: r2(x.valor) })).sort((a, b) => b.valor - a.valor);
+}
+
+// ── SIS-2026-0793: Receitas Extras (entradas dos administrativos) ──────────────────────────────────────────────────────────
+// O chamado pede "todas as entradas" dos administrativos de todas as empresas, sem dizer quais valores contribuem. Critério adotado (ajustável):
+//   · entradas dos contratos "ADMINISTRATIVO - …" das empresas (não os dos sócios) e entradas sem contrato;
+//   · ficam de fora as classificações que já não são custo (transferência, aplicação, resgate, empréstimo, financiamento, recebimento de nota,
+//     distribuição) e as marcadas "Não é custo" na Lucratividade, que também não são receita;
+//   · a Controladoria pode forçar uma classificação para dentro ou para fora (fechamento_receita_extra_classificacao), só no Fechamento.
+// Quem chama já separou as linhas (entradas dos contratos administrativos e sem contrato); aqui só se decide se a entrada conta.
+
+/** classificação → true (conta sempre) / false (não conta nunca). Sem ajuste vale o critério padrão. */
+export type AjustesReceitaExtra = Map<string, boolean>;
+
+export function receitaExtraConta(l: Pick<LinhaFluxoCusto, "tipo" | "classificacao_id" | "classificacao_nome">, ligacoes?: LigacoesRubrica, ajustes?: AjustesReceitaExtra): boolean {
+  if (l.tipo !== "entrada") return false;
+  const ajuste = l.classificacao_id ? ajustes?.get(l.classificacao_id) : undefined;
+  if (ajuste !== undefined) return ajuste;
+  if (!(l.classificacao_nome ?? "").trim()) return true; // sem classificação: "todas as entradas"; a tela destaca para a Controladoria classificar
+  return rubricaDaLinha(l, ligacoes) !== null;
+}
+
+function entradaNoRecorte(l: LinhaFluxoCusto, meses: Set<string> | null, empresaId?: string | null): string | null {
+  const mes = mesDoCusto(l);
+  if (l.tipo !== "entrada" || !mes || (meses && !meses.has(mes))) return null;
+  if (empresaId && l.empresa_id !== empresaId) return null;
+  return mes;
+}
+
+/** mês ("YYYY-MM") → total das entradas que contam como Receitas Extras. */
+export function receitasExtrasPorMes(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesRubrica, ajustes?: AjustesReceitaExtra, empresaId?: string | null): Map<string, number> {
+  const mapa = new Map<string, number>();
+  for (const l of linhas) {
+    const mes = entradaNoRecorte(l, null, empresaId);
+    if (!mes || !receitaExtraConta(l, ligacoes, ajustes)) continue;
+    mapa.set(mes, (mapa.get(mes) ?? 0) + (l.valor || 0));
+  }
+  return mapa;
+}
+
+/** Entradas que compõem as Receitas Extras nos meses, por classificação. */
+export function detalheReceitasExtras(linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes?: LigacoesRubrica, ajustes?: AjustesReceitaExtra, empresaId?: string | null): ItemDetalheClassificacao[] {
+  return agruparPorClassificacao(linhas.filter((l) => !!entradaNoRecorte(l, meses, empresaId) && receitaExtraConta(l, ligacoes, ajustes)));
+}
+
+/** Entradas do período que NÃO contam como Receitas Extras (de onde se adiciona uma classificação). Sem classificação não entra: conta por padrão. */
+export function receitasForaDaColuna(linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes?: LigacoesRubrica, ajustes?: AjustesReceitaExtra, empresaId?: string | null): ItemDetalheClassificacao[] {
+  return agruparPorClassificacao(linhas.filter((l) => !!entradaNoRecorte(l, meses, empresaId) && !receitaExtraConta(l, ligacoes, ajustes)));
 }
 
 /** IRPJ/CSLL lançados nos meses, por classificação (mesma seleção de tributosPorMes). */
