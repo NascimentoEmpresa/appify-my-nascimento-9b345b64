@@ -103,6 +103,19 @@ export function iniciais(nome: string | null | undefined): string {
 export const CHAVE_FAVORITOS = "__favoritos";
 export const SEM_SETOR = "Sem setor";
 
+/**
+ * Setor como o painel mostra. `PADRAO` é o valor genérico que a importação
+ * da Senior carimba em Setor_ERP (ImportarColaboradores, 547 de 630 pessoas
+ * em 30/09/2026) — quem tem login com ele é, na prática, o encarregado de
+ * campo. O Pablo pediu (03/11/2026): "esse padrao era pra ser encarregados".
+ * Só rótulo do painel; o banco continua com PADRAO.
+ */
+export function rotuloSetor(setor: string | null | undefined): string | null {
+  const s = setor?.trim();
+  if (!s) return null;
+  return normalizarBusca(s) === "padrao" ? "ENCARREGADOS" : s;
+}
+
 export interface UsuarioElenco {
   user_id: string;
   nome: string | null;
@@ -235,10 +248,11 @@ export function montarGruposPresenca(
     const p = presencaPorId.get(u.user_id);
     const pessoa: PessoaPainel = {
       ...u,
+      setor: rotuloSetor(u.setor),
       status: p ? statusPresenca(p.visto_em, p.ativo_em, agora) : "offline",
       favorito: favoritos.has(u.user_id),
     };
-    const chave = pessoa.favorito ? CHAVE_FAVORITOS : u.setor?.trim() || SEM_SETOR;
+    const chave = pessoa.favorito ? CHAVE_FAVORITOS : pessoa.setor || SEM_SETOR;
     const lista = porGrupo.get(chave);
     if (lista) lista.push(pessoa);
     else porGrupo.set(chave, [pessoa]);
