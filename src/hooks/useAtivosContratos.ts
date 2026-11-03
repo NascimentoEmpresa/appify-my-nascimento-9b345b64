@@ -48,7 +48,7 @@ export function usePainelAtivosContratos() {
 }
 
 /**
- * Atestados por dia, por contrato (mig 20261103005000): o histórico do
+ * Atestados por dia, por contrato (mig 20261103005100): o histórico do
  * SST_AFASTAMENTO. Só abre quando alguém pede o "dia a dia" — o painel
  * continua numa RPC só. Hoje a tela conta pelo painel (montarSerieAtestados).
  */

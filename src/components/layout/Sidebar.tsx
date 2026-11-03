@@ -578,7 +578,7 @@ const rhModule: ModuleDef = {
       label: "Pessoas",
       defaultOpen: true,
       items: [
-        // Colaboradores foi para o Operacional em 03/11/2026 (mig 20261103005000).
+        // Colaboradores foi para o Operacional em 03/11/2026 (mig 20261103005100).
         // SIS-2026-0599: dimensionamento de pessoas do contrato novo.
         { label: "Início de Contrato", to: "/app/rh/inicio-de-contrato", icon: Database },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
@@ -619,7 +619,7 @@ const rhModule: ModuleDef = {
       label: "Contratos",
       defaultOpen: true,
       items: [
-        // Ativos/Contratos foi para o Operacional em 03/11/2026 (mig 20261103005000).
+        // Ativos/Contratos foi para o Operacional em 03/11/2026 (mig 20261103005100).
         // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
         { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
         // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
@@ -1269,7 +1269,7 @@ const operacionalModule: ModuleDef = {
       ],
     },
     {
-      // Vieram do RH em 03/11/2026 (mig 20261103005000), a pedido do Pablo:
+      // Vieram do RH em 03/11/2026 (mig 20261103005100), a pedido do Pablo:
       // centralizar no Operacional. Mesmos códigos de menu (colaboradores,
       // rh_ativos_contratos) — quem tinha acesso continua tendo.
       label: "Efetivo",

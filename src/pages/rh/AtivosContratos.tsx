@@ -1,7 +1,7 @@
 // =====================================================================
 // OPERACIONAL › ATIVOS/CONTRATOS (/app/operacional/ativos-contratos; até
 // 03/11/2026 em /app/rh/ativos-contratos, que hoje redireciona) — migs
-// 20260930000279, 20261005000001 e 20261103005000 (atestados por dia)
+// 20260930000279, 20261005000001 e 20261103005100 (atestados por dia)
 //
 // Por contrato e por posto da Planilha de Custo: PREVISTO ("QT. PESSOAS")
 // × TEM (colaboradores ativos da EMPREGADOS que estão no posto e contam —
@@ -1138,7 +1138,7 @@ function CelulaJustificativa({ c, posto, diferenca }: { c: ContratoAtivos; posto
   );
 }
 
-// ---- Atestados por dia (03/11/2026, mig 20261103005000) -------------------------
+// ---- Atestados por dia (03/11/2026, mig 20261103005100) -------------------------
 // Pedido do Pablo: "quantos estão de atestado em cada dia", por contrato e no
 // total. Hoje = situação atual (a mesma de Afastados); dias passados = o
 // histórico do SST_AFASTAMENTO (montarSerieAtestados explica a costura).

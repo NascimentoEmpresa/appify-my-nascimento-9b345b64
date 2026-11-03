@@ -6,7 +6,7 @@ import {
 import { rotaMovida } from "@/lib/acesso";
 
 // =====================================================================
-// Ativos/Contratos › atestados por dia (03/11/2026, mig 20261103005000) e a
+// Ativos/Contratos › atestados por dia (03/11/2026, mig 20261103005100) e a
 // mudança das telas do RH para o Operacional (ROTAS_MOVIDAS).
 // =====================================================================
 

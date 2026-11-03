@@ -77,7 +77,7 @@ export const ROTAS_LIBERADAS_EXATAS = ["/app"];
  * em vez de chegar à tela nova. O redirect não revela nada — a rota nova
  * passa pelo guard normalmente.
  *
- * 03/11/2026 (mig 20261103005000): Colaboradores e Ativos/Contratos saíram do
+ * 03/11/2026 (mig 20261103005100): Colaboradores e Ativos/Contratos saíram do
  * RH para o Operacional, com os MESMOS códigos de menu (quem tinha, continua).
  */
 export const ROTAS_MOVIDAS: Record<string, string> = {

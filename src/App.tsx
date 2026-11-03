@@ -572,7 +572,7 @@ const App = () => (
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
-            {/* Vieram do RH em 03/11/2026 (mig 20261103005000), mesmos códigos de menu. */}
+            {/* Vieram do RH em 03/11/2026 (mig 20261103005100), mesmos códigos de menu. */}
             <Route path="operacional/colaboradores" element={<Colaboradores />} />
             {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
             <Route path="operacional/ativos-contratos" element={<AtivosContratos />} />
@@ -940,7 +940,7 @@ const App = () => (
             <Route path="contabil/conciliacao-eventos" element={<ConciliacaoEventos />} />
             {/* RH */}
             {/* Colaboradores e Ativos/Contratos moram no Operacional desde 03/11/2026
-                (mig 20261103005000). Os endereços antigos são redirecionados pelo
+                (mig 20261103005100). Os endereços antigos são redirecionados pelo
                 RouteGuard (ROTAS_MOVIDAS em src/lib/acesso.ts), antes da checagem de
                 permissão. As duas rotas abaixo precisam continuar existindo: sem
                 elas o caminho cai no 404 de fora do AppShell e o guard nem roda. */}
