@@ -19,6 +19,8 @@ export interface RecorteFluxo {
   semContrato?: boolean;
   /** Valor que o Fechamento mostra para este recorte, para o Fluxo conferir. */
   valorEsperado?: number;
+  /** Saídas (padrão: despesas) ou entradas (Receitas Extras, SIS-2026-0793). */
+  tipo?: "saida" | "entrada";
 }
 
 function ultimoDiaDoMes(anoMes: string): string {
@@ -30,7 +32,7 @@ export function linkFluxoDoRecorte(r: RecorteFluxo): string {
   const q = new URLSearchParams();
   // Os meses futuros (projetados) só aparecem na visão Consolidado do Fluxo; as saídas são as únicas que o Fechamento conta.
   q.set("aba", "consolidado");
-  q.set("tipo", "saida");
+  q.set("tipo", r.tipo ?? "saida");
   q.set("origemTela", "fechamento");
   const meses = [...r.meses].sort();
   if (meses.length > 0) {

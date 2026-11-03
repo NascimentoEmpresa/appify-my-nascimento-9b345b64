@@ -64,3 +64,36 @@ export function useTirarContratoAdm() {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY_CONTRATO }),
   });
 }
+
+// SIS-2026-0793: ajuste das classificações que contam (true) ou não (false) como Receitas Extras. Sem linha vale o padrão.
+const KEY_RECEITA = ["fechamento_receita_extra_classificacao"];
+
+export function useAjustesReceitaExtra() {
+  return useQuery({
+    queryKey: KEY_RECEITA,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Map<string, boolean>> => {
+      const { data, error } = await (supabase as any).from("fechamento_receita_extra_classificacao").select("classificacao_id, conta");
+      if (error) {
+        if (semTabela(error)) return new Map();
+        throw error;
+      }
+      return new Map((data ?? []).map((r: { classificacao_id: string; conta: boolean }) => [r.classificacao_id, r.conta]));
+    },
+  });
+}
+
+/** conta = null volta ao padrão (apaga o ajuste). */
+export function useSalvarAjusteReceitaExtra() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ classificacaoId, conta }: { classificacaoId: string; conta: boolean | null }) => {
+      const t = (supabase as any).from("fechamento_receita_extra_classificacao");
+      const { error } = conta === null
+        ? await t.delete().eq("classificacao_id", classificacaoId)
+        : await t.upsert({ classificacao_id: classificacaoId, conta }, { onConflict: "classificacao_id" });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY_RECEITA }),
+  });
+}
