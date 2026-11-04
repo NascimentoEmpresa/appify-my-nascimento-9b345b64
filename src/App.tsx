@@ -895,7 +895,14 @@ const App = () => (
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/estoque-mapa" element={<Suspense fallback={null}><EstoqueMapa /></Suspense>} />
-            <Route path="suprimentos/relatorios/saidas-por-contrato" element={<Suspense fallback={null}><SaidasPorContrato /></Suspense>} />
+            {/* Saídas por Contrato (SIS-2026-0769) mora em Suprimentos, não em
+                "relatórios", desde 03/11/2026 (mig 20261103009200, pedido do
+                Eduardo). O endereço antigo é redirecionado pelo RouteGuard
+                (ROTAS_MOVIDAS em src/lib/acesso.ts) e a rota antiga continua
+                aqui pelo mesmo motivo de rh/colaboradores: sem ela o caminho
+                cai no 404 de fora do AppShell e o guard nem roda. */}
+            <Route path="suprimentos/saidas-por-contrato" element={<Suspense fallback={null}><SaidasPorContrato /></Suspense>} />
+            <Route path="suprimentos/relatorios/saidas-por-contrato" element={<Navigate to="/app/suprimentos/saidas-por-contrato" replace />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/solicitacoes-manutencoes" element={<SolicitacoesManutencoes />} />
