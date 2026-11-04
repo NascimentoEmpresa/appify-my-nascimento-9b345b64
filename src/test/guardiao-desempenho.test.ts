@@ -2,7 +2,6 @@
 // derrubou a produção e aprova a forma certa. Se uma regra mudar, estes
 // testes dizem se ela ainda pega o caso real.
 import { describe, expect, it } from "vitest";
-// @ts-expect-error módulo .mjs sem tipos, fora de src/
 import { analisarArquivo, tirarSelects } from "../../.github/scripts/guardiao-desempenho.mjs";
 
 type Achado = { regra: string; linha: number; liberado: string | null };

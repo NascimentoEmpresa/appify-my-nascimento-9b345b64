@@ -28,7 +28,7 @@ describe("limite de anexo", () => {
   });
 
   it("upload acima do limite NÃO chama o servidor e devolve erro no formato do supabase-js", async () => {
-    const upload = vi.fn(async () => ({ data: { path: "x" }, error: null }));
+    const upload = vi.fn(async (_caminho: string, _corpo: unknown) => ({ data: { path: "x" }, error: null }));
     const storage = { from: (_b: string) => ({ upload, update: upload }) };
     limitarUploads(storage);
     const r = await storage.from("malote-anexos").upload("a/b.pdf", arquivo(30));
@@ -38,7 +38,7 @@ describe("limite de anexo", () => {
   });
 
   it("upload dentro do limite segue normal", async () => {
-    const upload = vi.fn(async () => ({ data: { path: "x" }, error: null }));
+    const upload = vi.fn(async (_caminho: string, _corpo: unknown) => ({ data: { path: "x" }, error: null }));
     const storage = { from: (_b: string) => ({ upload, update: upload }) };
     limitarUploads(storage);
     const r = await storage.from("malote-anexos").upload("a/b.pdf", arquivo(2));
