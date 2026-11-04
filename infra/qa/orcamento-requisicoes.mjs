@@ -129,8 +129,10 @@ async function testar(rota) {
   pagina.on("requestfailed", (r) => {
     // Requisição da própria página que nem saiu (script quebrado, chunk que
     // não existe). A API falsa nunca falha, então aqui só sobra defeito real.
+    // ERR_ABORTED fica de fora: é o que acontece quando a página é fechada ou
+    // navega no meio de uma requisição, e isso não é defeito da tela.
     const falha = r.failure()?.errorText ?? "";
-    if (!/ERR_ABORTED|net::ERR_FAILED$/.test(falha) || !ehApi(r.url())) anotarErro(`requisição falhou (${falha}): ${r.url().slice(0, 120)}`);
+    if (!/ERR_ABORTED/.test(falha)) anotarErro(`requisição falhou (${falha}): ${r.url().slice(0, 120)}`);
   });
   pagina.on("response", (r) => { if (r.status() >= 400 && !ehApi(r.url())) anotarErro(`HTTP ${r.status()} em ${r.url().replace(BASE, "").slice(0, 120)}`); });
 
