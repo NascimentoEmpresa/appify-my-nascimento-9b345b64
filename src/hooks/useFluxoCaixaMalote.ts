@@ -137,7 +137,7 @@ export interface FluxoCaixaMaloteLinha {
   // despesa_id só pra aplicar (id da APLICACAO_FINANCEIRA); resgate usa o
   // id do próprio resgate (não tem edição/exclusão pela tela de Fluxo, só
   // pela tela de Aplicações Financeiras).
-  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica";
+  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
   // SIS-2026-0489: true quando existe uma linha em
   // financeiro_fluxo_caixa_ajuste pra este lançamento — os campos exibidos
   // já vêm resolvidos pela view (COALESCE(ajuste, original)), este flag é
@@ -257,7 +257,7 @@ export function useFluxoCaixaCombinado() {
       // representar as duas pontas de uma "aplicação com resgate" numa
       // linha só (datas e tipos diferentes), mesma ideia da Movimentação
       // Financeira do Débito Automático (2 linhas ligadas por par).
-      const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao, importacaoHistorica] = await Promise.all([
+      const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao, importacaoHistorica, contaGarantida] = await Promise.all([
         // SIS-2026-0632: cartão com "fatura consolidada no Fluxo" (2719) vira 1 linha
         // por fatura, no vencimento. Migration 20261008000005 ainda não aplicada
         // (view/coluna ausente) -> cai na view de sempre, 1 linha por despesa.
@@ -279,6 +279,12 @@ export function useFluxoCaixaCombinado() {
             if (e?.code === "PGRST205" || e?.code === "42P01") return [];
             throw e;
           }),
+        // SIS-2026-0798: resgate, amortização e juros lançados na Conta Garantida. Migration 20261104004000 ainda não aplicada: a view não existe
+        // (PGRST205/42P01) ou a leitura única ainda não a conhece (22023) -> sem essas linhas, o Fluxo abre como sempre.
+        buscarTodasLinhas("v_conta_garantida_fluxo_caixa", ORDEM_FONTES, executar).catch((e: any) => {
+          if (e?.code === "PGRST205" || e?.code === "42P01" || e?.code === "22023") return [];
+          throw e;
+        }),
       ]);
       // Débito Automático no cartão com fatura consolidada já veio DENTRO da fatura (view consolidada):
       // sai daqui para não somar duas vezes.
@@ -292,6 +298,7 @@ export function useFluxoCaixaCombinado() {
         ...aplicacaoFinanceira,
         ...resgateAplicacao,
         ...importacaoHistorica,
+        ...contaGarantida,
       ] as FluxoCaixaMaloteLinha[];
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;

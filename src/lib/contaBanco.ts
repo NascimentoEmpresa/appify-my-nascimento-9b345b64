@@ -12,7 +12,7 @@ export interface ContaBanco {
   ativo: boolean;
 }
 
-export type OrigemFluxo = "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica";
+export type OrigemFluxo = "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
 
 export interface LinhaComChaveDeConta {
   origem: OrigemFluxo;
