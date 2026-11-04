@@ -4,6 +4,7 @@ import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitaco
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
@@ -147,6 +148,10 @@ export default function Ferias() {
   const [docMalote, setDocMalote] = useState("");
   const [docRetorno, setDocRetorno] = useState("");
   const [salvandoDoc, setSalvandoDoc] = useState(false);
+  // Só o RH define malote e retorno (04/11/2026) — o banco confere o mesmo
+  // (trg_ferias_documentacao_so_rh, mig 20261104002300). Sem o "alterar": só lê.
+  const { can } = usePermissoes();
+  const podeDoc = can("alterar", undefined, "rh_ferias");
   useEffect(() => {
     setDocMalote(sol?.data_malote ? String(sol.data_malote).slice(0, 10) : "");
     setDocRetorno(sol?.retorno_documentacao ?? "");
@@ -468,16 +473,17 @@ export default function Ferias() {
                 <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "end" }}>
                   <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
                     Enviado ao malote em
-                    <input type="date" value={docMalote} onChange={e => setDocMalote(e.target.value)}
+                    <input type="date" value={docMalote} onChange={e => setDocMalote(e.target.value)} disabled={!podeDoc}
                       style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13, fontFamily: "inherit" }} />
                   </label>
                   <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
                     Retorno da documentação
-                    <input type="text" value={docRetorno} onChange={e => setDocRetorno(e.target.value)} placeholder="Ex.: RETORNOU ZAPSIGN - 02/10/2026"
+                    <input type="text" value={docRetorno} onChange={e => setDocRetorno(e.target.value)} disabled={!podeDoc} placeholder="Ex.: RETORNOU ZAPSIGN - 02/10/2026"
                       style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13, fontFamily: "inherit" }} />
                   </label>
                 </div>
-                {(docMalote !== (sol.data_malote ? String(sol.data_malote).slice(0, 10) : "") || docRetorno.trim() !== (sol.retorno_documentacao ?? "")) && (
+                {!podeDoc && <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Só quem tem "alterar" na Gestão de Férias (RH) edita estes campos.</div>}
+                {podeDoc && (docMalote !== (sol.data_malote ? String(sol.data_malote).slice(0, 10) : "") || docRetorno.trim() !== (sol.retorno_documentacao ?? "")) && (
                   <button onClick={salvarDocumentacao} disabled={salvandoDoc}
                     style={{ marginTop: 8, padding: "6px 14px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: salvandoDoc ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {salvandoDoc ? "Salvando…" : "Salvar documentação"}
