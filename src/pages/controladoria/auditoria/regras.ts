@@ -135,7 +135,7 @@ export interface LancamentoFaltaDistribuir extends LancamentoSemCentro {
   responsaveis: string[];
 }
 // SIS-2026-0802: o que compõe cada linha nova do item 3 (os 3 maiores lançamentos e quantos são ao todo), para a Controladoria não ficar na dúvida.
-export type LinhaComposta = "outrasMovimentacoes" | "estoque" | "investimentos" | "obras" | "tributosResultado" | "contratosForaLucratividade";
+export type LinhaComposta = "outrasMovimentacoes" | "contratos" | "contratosForaLucratividade" | "administrativo" | "socios" | "estoque" | "investimentos" | "obras" | "tributosResultado";
 export interface ItemComposicao {
   numero: string | null;
   descricao: string;
@@ -367,7 +367,8 @@ export function totaisCentrosFluxo(
   nomeDoContrato: (contratoId: string) => string | null | undefined = () => null,
 ): PainelCentrosFluxo {
   const compor: Record<LinhaComposta, Map<string, ItemComposicao>> = {
-    outrasMovimentacoes: new Map(), estoque: new Map(), investimentos: new Map(), obras: new Map(), tributosResultado: new Map(), contratosForaLucratividade: new Map(),
+    outrasMovimentacoes: new Map(), contratos: new Map(), contratosForaLucratividade: new Map(), administrativo: new Map(), socios: new Map(),
+    estoque: new Map(), investimentos: new Map(), obras: new Map(), tributosResultado: new Map(),
   };
   // Mesmo lançamento rateado/parcelado entra uma vez, com as fatias somadas.
   const anota = (linha: LinhaComposta, l: LinhaFluxoAud & { numero_parcela?: number | null }, v: number, i: number) => {
@@ -394,18 +395,18 @@ export function totaisCentrosFluxo(
     if (ehTransferenciaEntreContas(l)) { transferencias += v; return; }
     if (l.contrato_id) {
       const t = tipoDoContrato(l.contrato_id);
-      if (t === "socio") socios += v;
-      else if (t === "administrativo") administrativo += v;
+      if (t === "socio") { socios += v; anota("socios", l, v, i); }
+      else if (t === "administrativo") { administrativo += v; anota("administrativo", l, v, i); }
       else if (t === "movimentacao_financeira") { outrasMovimentacoes += v; anota("outrasMovimentacoes", l, v, i); }
       else if (t === "estoque") { estoque += v; anota("estoque", l, v, i); }
       else if (t === "investimento") { investimentos += v; anota("investimentos", l, v, i); }
       else if (t === "obra") { obras += v; anota("obras", l, v, i); }
-      else if (contaNaLucratividade(l)) contratos += v;
+      else if (contaNaLucratividade(l)) { contratos += v; anota("contratos", l, v, i); }
       else { contratosForaLucratividade += v; anota("contratosForaLucratividade", l, v, i); }
       return;
     }
     if (ehTributoResultado(l)) { tributosResultado += v; anota("tributosResultado", l, v, i); return; }
-    if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") { administrativo += v; return; }
+    if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") { administrativo += v; anota("administrativo", l, v, i); return; }
     // Sem contrato e sem classificação administrativa: não está em nenhum centro. Um lançamento rateado entra uma vez, com as fatias somadas.
     const parcela = l.numero_parcela ?? null;
     const chave = l.despesa_id ? `${l.origem}|${l.despesa_id}|${parcela ?? ""}|${l.data_pagamento ?? ""}` : `${l.origem}|#${i}`;
@@ -433,8 +434,9 @@ export function totaisCentrosFluxo(
   return {
     kind: "centros_fluxo",
     composicao: {
-      outrasMovimentacoes: resumir(compor.outrasMovimentacoes), estoque: resumir(compor.estoque), investimentos: resumir(compor.investimentos),
-      obras: resumir(compor.obras), tributosResultado: resumir(compor.tributosResultado), contratosForaLucratividade: resumir(compor.contratosForaLucratividade),
+      outrasMovimentacoes: resumir(compor.outrasMovimentacoes), contratos: resumir(compor.contratos), contratosForaLucratividade: resumir(compor.contratosForaLucratividade),
+      administrativo: resumir(compor.administrativo), socios: resumir(compor.socios), estoque: resumir(compor.estoque), investimentos: resumir(compor.investimentos),
+      obras: resumir(compor.obras), tributosResultado: resumir(compor.tributosResultado),
     },
     saidaTotal: r2(saidaTotal),
     aplicacoes: r2(aplicacoes),

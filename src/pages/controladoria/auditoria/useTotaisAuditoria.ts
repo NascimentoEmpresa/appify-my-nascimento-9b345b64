@@ -103,16 +103,15 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
       const tipoDoContrato = (id: string): TipoCentro => {
         const nome = base.contratoPorId.get(id)?.nome;
         if (socioDoContrato(nome)) return "socio";
-        if (ehContratoAdministrativo(nome)) return "administrativo";
         // SIS-2026-0802: o que a Lucratividade não conta como contrato vira centro próprio, pelo tratamento efetivo do contrato (exceção gravada ou nome).
         const t = tratamentoEfetivo(nome, tratamentos?.get(id));
+        const n = semAcento(nome);
+        // Estoque é o contrato que COMEÇA ou TERMINA com ESTOQUE ("ESTOQUE HAGG", "ADMINISTRATIVO - HAGG ESTOQUE"); vale antes do administrativo.
+        if (t === "fora_das_despesas" && (n.startsWith("ESTOQUE") || n.endsWith("ESTOQUE"))) return "estoque";
+        if (ehContratoAdministrativo(nome)) return "administrativo";
         if (t === "investimento") return "investimento";
         if (t === "obra_administrativa") return "obra";
-        if (t === "fora_das_despesas") {
-          const n = semAcento(nome);
-          if (n.startsWith("ESTOQUE")) return "estoque";
-          if (n.startsWith("MOVIMENTACAO FINANCEIRA")) return "movimentacao_financeira";
-        }
+        if (t === "fora_das_despesas" && n.startsWith("MOVIMENTACAO FINANCEIRA")) return "movimentacao_financeira";
         return "contrato";
       };
       const contaNaLucratividade = (l: { contrato_id: string | null; classificacao_id?: string | null; classificacao_nome: string | null }) => {

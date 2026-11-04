@@ -403,6 +403,9 @@ function LinhaValor({ rotulo, valor, forte, tom, dica, composicao }: { rotulo: s
         <span className="tabular-nums">{fmtMoney(valor)}</span>
       </div>
       {/* SIS-2026-0802: o que compõe a linha (os 3 maiores lançamentos); só aparece com "Mostrar composição" marcado. */}
+      {composicao && composicao.itens.length === 0 && (
+        <p className="border-t border-dashed bg-muted/20 px-3 py-1 text-[11px] text-muted-foreground">Nenhum lançamento neste período.</p>
+      )}
       {composicao && composicao.itens.length > 0 && (
         <ul className="space-y-0.5 border-t border-dashed bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
           {composicao.itens.map((it, i) => (
@@ -467,7 +470,7 @@ export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo
       <div className="rounded-lg border overflow-hidden">
         <p className="border-b bg-muted/40 px-3 py-1.5 text-xs font-semibold">Centros de custo</p>
         <div className="divide-y">
-          <LinhaValor rotulo="Contratos" valor={p.contratos} dica="Mesmo valor do Total de custos da Lucratividade de Contratos (no mesmo período e base)." />
+          <LinhaValor rotulo="Contratos" valor={p.contratos} composicao={comp("contratos")} dica="Mesmo valor do Total de custos da Lucratividade de Contratos (no mesmo período e base)." />
           {p.contratosForaLucratividade !== 0 && (
             <LinhaValor
               rotulo="Contratos — outras saídas que a Lucratividade não conta"
@@ -476,9 +479,9 @@ export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo
               dica="Saídas de contrato comum que a Lucratividade não conta como custo e que não são de Estoque, Investimentos, Obras nem Tributos: classificações que não são custo (financiamento, distribuição…), contrato com tratamento 'fora das despesas' de outro nome e lançamentos sem classificação."
             />
           )}
-          <LinhaValor rotulo="Administrativo" valor={p.administrativo} />
-          <LinhaValor rotulo="Sócios" valor={p.socios} />
-          <LinhaValor rotulo="Estoque" valor={p.estoque} composicao={comp("estoque")} dica="Contratos de estoque (nome começa com ESTOQUE, tratamento 'fora das despesas')." />
+          <LinhaValor rotulo="Administrativo" valor={p.administrativo} composicao={comp("administrativo")} />
+          <LinhaValor rotulo="Sócios" valor={p.socios} composicao={comp("socios")} />
+          <LinhaValor rotulo="Estoque" valor={p.estoque} composicao={comp("estoque")} dica="Contratos de estoque: o nome começa ou termina com ESTOQUE (ex.: ESTOQUE HAGG, ADMINISTRATIVO - HAGG ESTOQUE), com tratamento fora das despesas." />
           <LinhaValor rotulo="Investimentos" valor={p.investimentos} composicao={comp("investimentos")} dica="Contratos com tratamento Investimento (nome começa com INVESTIMENTO ou exceção gravada)." />
           <LinhaValor rotulo="Obras" valor={p.obras} composicao={comp("obras")} dica="Contratos com tratamento Obra administrativa (OBRAS ADM - …)." />
           <LinhaValor rotulo="Tributos sobre o Resultado" valor={p.tributosResultado} composicao={comp("tributosResultado")} dica="IRPJ e CSLL lançados sem contrato (mesma regra do Fechamento da Empresa); não entram em Administrativo." />
