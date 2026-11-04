@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { FOLGA_AVISO_S, type AoVivoTv, type LayoutAviso, type TipoItem } from "@/lib/tv/tv";
+import { FOLGA_AVISO_S, ajustarDefasagem, medirDefasagem, type AoVivoTv, type LayoutAviso, type TipoItem } from "@/lib/tv/tv";
 
 // =====================================================================
 // Sistemas › TV's — gestão (mig 20261007000012). Tabelas TV_* com RLS por
@@ -43,7 +43,14 @@ export const useTvDispositivos = () => useQuery({
   // O online/offline vem do ping da TV (a cada 15 s): revalida no mesmo ritmo.
   refetchInterval: 15_000, staleTime: 10_000,
   queryFn: async (): Promise<TvDispositivo[]> => {
-    const { data, error } = await sb.from("TV_DISPOSITIVO").select(COLS_DISP).not("pareado_em", "is", null).order("nome");
+    // Junto, a hora do banco: o online/offline compara com ela, não com o
+    // relógio deste computador (ver agoraServidor). Sem a RPC, fica como antes.
+    const enviadoEm = Date.now();
+    const [{ data, error }, hora] = await Promise.all([
+      sb.from("TV_DISPOSITIVO").select(COLS_DISP).not("pareado_em", "is", null).order("nome"),
+      sb.rpc("tv_hora_servidor").then((r: { data: string | null }) => ({ ...r, recebidoEm: Date.now() }), () => null),
+    ]);
+    if (hora?.data) ajustarDefasagem(medirDefasagem(hora.data, enviadoEm, hora.recebidoEm));
     if (error) throw error;
     return data ?? [];
   },

@@ -24,7 +24,7 @@ import {
   useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, fimDoAviso, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, agoraServidor, aoVivoFresco, corAviso, duracaoTotal, fimDoAviso, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type LayoutAviso, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
@@ -774,8 +774,8 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
   const tvId = escolhida ?? padrao;
   const tv = tvs.find((t) => t.id === tvId) ?? null;
   const aoVivo = useTvAoVivo(tvId);
-  const [agora, setAgora] = useState(() => new Date());
-  useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
+  const [agora, setAgora] = useState(() => agoraServidor());
+  useEffect(() => { const t = window.setInterval(() => setAgora(agoraServidor()), 1000); return () => window.clearInterval(t); }, []);
   const simulacaoDesde = useRef(Date.now());
 
   const playlistDaTv = playlists.find((x) => x.id === tv?.playlist_id) ?? null;

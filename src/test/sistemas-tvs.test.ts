@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { corAviso, duracaoTotal, haQuanto, normalizarChaveTv, periodoTv, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed } from "@/lib/tv/tv";
+import { ajustarDefasagem, corAviso, medirDefasagem, duracaoTotal, haQuanto, normalizarChaveTv, periodoTv, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed } from "@/lib/tv/tv";
 
 // Sistemas › TV's (mig 20261007000012).
 
@@ -10,6 +10,19 @@ describe("TVs — regras", () => {
     expect(statusTv("2026-10-07T11:59:20Z", agora)).toBe("online");
     expect(statusTv("2026-10-07T11:58:00Z", agora)).toBe("offline");
     expect(statusTv(null, agora)).toBe("nunca");
+  });
+
+  it("relógio do computador adiantado não derruba as TVs: compara com a hora do servidor", () => {
+    // Computador 3 min adiantado; o banco respondeu 12:00:00 no meio da ida e volta.
+    const pc = Date.parse("2026-10-07T12:03:00Z");
+    const def = medirDefasagem("2026-10-07T12:00:00Z", pc - 100, pc + 100);
+    expect(def).toBe(-180_000);
+    ajustarDefasagem(def);
+    try {
+      const ping = new Date(Date.now() - 180_000 - 10_000).toISOString(); // 10 s atrás, no relógio do banco
+      expect(statusTv(ping)).toBe("online");
+      expect(haQuanto(ping)).toBe("agora");
+    } finally { ajustarDefasagem(0); }
   });
 
   it("há quanto tempo", () => {

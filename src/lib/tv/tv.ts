@@ -135,13 +135,28 @@ export function fimDoAviso(a: { inicio: string; fim: string; duracao_seg?: numbe
   return a.duracao_seg ? Math.min(fim, new Date(a.inicio).getTime() + a.duracao_seg * 1000) : fim;
 }
 
-export function statusTv(ultimoPing: string | null | undefined, agora: Date = new Date()): "online" | "offline" | "nunca" {
+/**
+ * Relógio do servidor. O ultimo_ping é now() do banco; comparar com o relógio
+ * do computador de quem olha deixava tudo "offline" para quem tinha o relógio
+ * adiantado mais de OFFLINE_APOS_S (chamado da Helena, 04/11/2026). useTvs
+ * mede a diferença pela RPC tv_hora_servidor e grava aqui; sem medida, zero.
+ */
+let defasagemMs = 0;
+
+/** Diferença servidor − computador, com a hora do banco tomada no meio da ida e volta. */
+export function medirDefasagem(servidorIso: string, enviadoEm: number, recebidoEm: number): number {
+  return new Date(servidorIso).getTime() - (enviadoEm + recebidoEm) / 2;
+}
+export function ajustarDefasagem(ms: number) { if (Number.isFinite(ms)) defasagemMs = ms; }
+export const agoraServidor = () => new Date(Date.now() + defasagemMs);
+
+export function statusTv(ultimoPing: string | null | undefined, agora: Date = agoraServidor()): "online" | "offline" | "nunca" {
   if (!ultimoPing) return "nunca";
   return (agora.getTime() - new Date(ultimoPing).getTime()) / 1000 <= OFFLINE_APOS_S ? "online" : "offline";
 }
 
 /** "há 3 min", "há 2 h", "há 4 dias" — para a coluna "visto por último". */
-export function haQuanto(iso: string | null | undefined, agora: Date = new Date()): string {
+export function haQuanto(iso: string | null | undefined, agora: Date = agoraServidor()): string {
   if (!iso) return "nunca";
   const s = Math.max(0, Math.round((agora.getTime() - new Date(iso).getTime()) / 1000));
   if (s < 60) return "agora";
@@ -236,7 +251,7 @@ export interface AoVivoTv { suportado: boolean; atual_item_id: string | null; at
  * offline, ela está com o player antigo (só avisa na troca de item) ou o
  * aviso está falhando. `null` = o banco não tem atual_em (não dá pra saber).
  */
-export function aoVivoFresco(a: AoVivoTv | null | undefined, agora: Date = new Date()): boolean | null {
+export function aoVivoFresco(a: AoVivoTv | null | undefined, agora: Date = agoraServidor()): boolean | null {
   if (!a?.suportado || a.atual_em === undefined) return null;
   if (!a.atual_em) return false;
   return (agora.getTime() - new Date(a.atual_em).getTime()) / 1000 <= OFFLINE_APOS_S;
