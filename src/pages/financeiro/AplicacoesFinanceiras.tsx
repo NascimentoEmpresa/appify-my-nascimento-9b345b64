@@ -202,7 +202,7 @@ export default function AplicacoesFinanceiras() {
   }, [linhas, resgatesCaixa, historico, empresaFiltro, dataDe, dataAte, somenteSemBanco, bancoPorId]);
 
   // Resgates visíveis (todas as páginas) e quantos ainda estão sem banco: é o que a barra de "definir banco" trabalha.
-  const resgatesVisiveis = useMemo(() => movimentacoes.filter((m: any) => m.resgate).map((m: any) => m.resgate as AplicacaoFinanceiraResgateCaixa), [movimentacoes]);
+  const resgatesVisiveis = useMemo(() => movimentacoes.flatMap((m) => (m.resgate ? [m.resgate] : [])), [movimentacoes]);
   const resgatesSemBancoVisiveis = useMemo(() => resgatesVisiveis.filter((r) => !r.banco_id), [resgatesVisiveis]);
   const totalSemBanco = useMemo(() => resgatesCaixa.filter((r) => !r.banco_id).length, [resgatesCaixa]);
   const idsSelecionados = useMemo(() => resgatesVisiveis.filter((r) => selecionados.has(r.id)).map((r) => r.id), [resgatesVisiveis, selecionados]);
@@ -222,8 +222,8 @@ export default function AplicacoesFinanceiras() {
       toast.success(`Banco definido em ${qtd} resgate${qtd === 1 ? "" : "s"}.`);
       setSelecionados(new Set());
       setBancoMassa("");
-    } catch (e: any) {
-      toast.error(e.message ?? "Não foi possível definir o banco.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível definir o banco.");
     }
   }
 

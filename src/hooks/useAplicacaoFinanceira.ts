@@ -332,7 +332,9 @@ export function useDefinirBancoResgates() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ ids, bancoId }: { ids: string[]; bancoId: string }) => {
-      const { data, error } = await (supabase as any).rpc("aplicacao_financeira_resgate_definir_banco", { _ids: ids, _banco_id: bancoId });
+      // A função é nova e não está nos tipos gerados do Supabase: tipa só o que usa, sem any (a catraca do lint não deixa subir).
+      const cliente = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: Error | null }> };
+      const { data, error } = await cliente.rpc("aplicacao_financeira_resgate_definir_banco", { _ids: ids, _banco_id: bancoId });
       if (error) throw error;
       return Number(data ?? 0);
     },
