@@ -10,7 +10,7 @@ import {
   useConvencoes, useRemoverVinculoPosto, useSalvarVinculoPosto, useVinculosPosto, vinculoDe, type Convencao,
 } from "@/hooks/useConvencoes";
 import {
-  BENEFICIOS, identificacaoCct, vigenciaTxt,
+  BENEFICIOS, BENEFICIOS_DECRETO, identificacaoCct, vigenciaTxt,
   type ChaveBeneficio, type ReferenciaConvencao, type RespostaReferencia,
 } from "@/lib/licitacoes/convencoes";
 import { IconeBeneficio } from "./IconeBeneficio";
@@ -24,8 +24,13 @@ import { QuadroBeneficios } from "./QuadroBeneficios";
 
 const PRINCIPAL = "__principal";
 
-export const rotuloConvencao = (c: Pick<Convencao, "identificacao" | "vigencia_inicio" | "vigencia_fim" | "decreto_numero" | "sindicato"> & { contrato?: { nome: string } | null }) =>
-  [c.contrato?.nome, identificacaoCct(c), c.decreto_numero, c.sindicato].filter(Boolean).join(" · ");
+export const rotuloConvencao = (c: Pick<Convencao, "identificacao" | "vigencia_inicio" | "vigencia_fim" | "decreto_numero" | "sindicato"> & { contrato?: { nome: string } | null; tipo?: Convencao["tipo"]; municipio?: string | null }) =>
+  c.tipo === "decreto"
+    ? [c.decreto_numero, c.municipio].filter(Boolean).join(" · ")
+    : [c.contrato?.nome, identificacaoCct(c), c.decreto_numero, c.sindicato].filter(Boolean).join(" · ");
+
+/** Decreto municipal (cadastro próprio, mig 20261103002250) só traz estes benefícios. */
+const DO_DECRETO = new Set<ChaveBeneficio>(BENEFICIOS_DECRETO);
 
 const comoReferencia = (c: Convencao): ReferenciaConvencao => ({
   id: c.id, versao: c.versao, identificacao: c.identificacao, categoria_profissional: c.categoria_profissional,
@@ -63,9 +68,13 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
     .map((c) => ({
       value: c.id,
       label: rotuloConvencao(c),
-      hint: `${vigenciaTxt(c.vigencia_inicio, c.vigencia_fim)}${c.situacao === "pendente" ? " · PENDENTE" : ""}`,
-      muted: c.contrato_id !== alvo?.contrato_id,
+      hint: `${c.tipo === "decreto" ? "Decreto municipal" : vigenciaTxt(c.vigencia_inicio, c.vigencia_fim)}${c.situacao === "pendente" ? " · PENDENTE" : ""}`,
+      muted: c.tipo !== "decreto" && c.contrato_id !== alvo?.contrato_id,
+      decreto: c.tipo === "decreto",
     })), [convencoes, alvo?.contrato_id]);
+  // O decreto só tem o VT: não serve de principal (o resto ficaria pendente);
+  // entra como fonte do benefício por benefício.
+  const opcoesPrincipal = useMemo(() => opcoes.filter((o) => !o.decreto), [opcoes]);
 
   // Prévia com o que está na tela, montada pela mesma regra da vaga.
   const previa: RespostaReferencia | null = principal ? {
@@ -110,7 +119,7 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
           <div className="space-y-4">
             <div className="space-y-1">
               <label className="text-xs font-medium">CCT / decreto do posto <span className="text-red-600">*</span></label>
-              <SearchableSelect value={principal} onChange={setPrincipal} options={opcoes} disabled={!podeAlterar || isLoading}
+              <SearchableSelect value={principal} onChange={setPrincipal} options={opcoesPrincipal}disabled={!podeAlterar || isLoading}
                 placeholder={isLoading ? "Carregando…" : "Selecione a convenção cadastrada"} searchPlaceholder="Buscar por contrato, CCT, sindicato…"
                 emptyLabel="Nenhuma convenção cadastrada" />
               <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -125,7 +134,7 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
               <div className="rounded-lg border p-3">
                 <label className="flex items-center justify-between gap-3 text-sm font-medium">
                   <span>Mais de uma referência neste posto
-                    <span className="block text-[11px] font-normal text-muted-foreground">Escolha de qual CCT/decreto sai cada benefício. Nada é somado.</span>
+                    <span className="block text-[11px] font-normal text-muted-foreground">Escolha de qual CCT/decreto sai cada benefício (o decreto municipal entra no Vale-Transporte). Nada é somado.</span>
                   </span>
                   <Switch checked={varias} onCheckedChange={setVarias} disabled={!podeAlterar} />
                 </label>
@@ -136,7 +145,7 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
                         <span className="flex items-center gap-2 text-xs font-medium"><IconeBeneficio chave={def.chave} tamanho="sm" />{def.nome}</span>
                         <SearchableSelect value={regras[def.chave] || PRINCIPAL} disabled={!podeAlterar}
                           onChange={(v) => setRegras((r) => ({ ...r, [def.chave]: v === PRINCIPAL ? undefined : v }))}
-                          options={[{ value: PRINCIPAL, label: "Mesma da principal" }, ...opcoes.filter((o) => o.value !== principal)]}
+                          options={[{ value: PRINCIPAL, label: "Mesma da principal" }, ...opcoes.filter((o) => o.value !== principal && (!o.decreto || DO_DECRETO.has(def.chave)))]}
                           triggerClassName="h-8 text-xs" />
                       </div>
                     ))}

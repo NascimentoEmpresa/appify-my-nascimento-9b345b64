@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BENEFICIOS, DEF_POR_CHAVE, beneficioPreenchido, identificacaoCct, montarQuadro, normalizarBeneficios,
-  pendenciasConvencao, situacaoConvencao, textoBeneficio,
+  pendenciasConvencao, pendenciasDecreto, situacaoConvencao, textoBeneficio,
   type MapaBeneficios, type ReferenciaConvencao,
 } from "@/lib/licitacoes/convencoes";
 
@@ -115,5 +115,31 @@ describe("quadro da vaga", () => {
   it("avisa quando a convenção já tem versão mais nova que a da vaga", () => {
     const q = montarQuadro({ status: "vinculado", principal_id: "a", referencias: [ref("a", completos(), 2)], versoes_atuais: { a: 3 } });
     expect(q.desatualizada).toBe(true);
+  });
+});
+
+describe("decreto municipal em cadastro próprio", () => {
+  const decreto = (b: MapaBeneficios = { vt: { valor: 4.8, periodo: "dia" } }) => ({
+    tipo: "decreto" as const, decreto_numero: "Decreto 12.345/2024", municipio: "Bento Gonçalves",
+    decreto_arquivo_path: "decretos/decreto.pdf", beneficios: b,
+  });
+
+  it("sem contrato, sem CCT e só com o VT fica completo", () => {
+    expect(pendenciasConvencao(decreto())).toEqual([]);
+    expect(situacaoConvencao(decreto())).toBe("completo");
+  });
+
+  it("VT vazio é pendência; \"Não contém\" vale", () => {
+    expect(pendenciasDecreto(decreto({}))).toEqual(['Vale-Transporte (VT): preencha o valor ou marque "Não contém"']);
+    expect(pendenciasDecreto(decreto({ vt: { nao_contem: true } }))).toEqual([]);
+  });
+
+  it("cobra número, município e anexo", () => {
+    expect(pendenciasDecreto({ tipo: "decreto", beneficios: { vt: { nao_contem: true } } }))
+      .toEqual(["Número do decreto não informado", "Município não informado", "Decreto não anexado"]);
+  });
+
+  it("a CCT continua com as regras dela", () => {
+    expect(pendenciasConvencao({ ...cadastro(), tipo: "cct" })).toEqual([]);
   });
 });
