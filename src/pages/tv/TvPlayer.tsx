@@ -147,6 +147,7 @@ export default function TvPlayer() {
   useEffect(() => {
     if (chaveFixa) gravarToken(chaveFixa);
     consultar();
+    // guardiao-ok: ping da TV a cada 2 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega)
     const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
     return () => window.clearInterval(t);
   }, [consultar]);
@@ -185,6 +186,7 @@ export default function TvPlayer() {
   // navegador travou). Removido em 03/11 junto com o ping; volta com ele em
   // 04/11/2026. Só olha o relógio local: não faz requisição.
   useEffect(() => {
+    // guardiao-ok: cão de guarda só lê o relógio local; recarrega a página quando a TV perde o ERP (sem requisição)
     const t = window.setInterval(() => {
       const h = new Date().getHours();
       if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) recarregarTv();
