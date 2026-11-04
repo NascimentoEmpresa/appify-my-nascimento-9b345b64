@@ -393,8 +393,28 @@ nome. Cobrar a história inteira deixaria todo merge vermelho.
 
 O job `guardiao` (`.github/workflows/qualidade.yml`) já REPROVA polling, Realtime,
 lista sem limite e `select("*")` em tabela grande, `Promise.all` de N requisições,
-policy com função por linha e FK sem índice — não repita esses achados aqui. O que
-fica para o revisor, porque exige entender a tela:
+policy com função por linha e FK sem índice — não repita esses achados aqui.
+
+Desde 04/11/2026 ele também reprova, com o mesmo peso (não repita nenhum deles):
+
+| Regra | Reprova |
+|---|---|
+| D8 | chave JWT ou URL do Supabase escrita no código (a deriva do Lovable) |
+| W1 | temporizador abaixo de 60 s em `worker/**` |
+| M4 | `CREATE OR REPLACE TRIGGER`/`POLICY` — o Postgres não suporta |
+| M5 | migration que mexe em schema e não termina com `NOTIFY pgrst` |
+| M6 | bloco `DO` que consulta dado e dá `RAISE EXCEPTION` (aborta e para a fila) |
+
+E as regras de código (D2–D7) passaram a valer também para `supabase/functions/**`
+e `worker/**`, que antes ficavam fora de qualquer regra. Além disso, o job
+`qa-requisicoes` abre todas as telas e reprova: tela que escreve erro no console,
+tela que não pinta nada, lista de tabela grande pedida sem `limit`/`Range` e
+`select=*` **observados na rede** (pega o que o regex não vê: nome de tabela em
+variável, chamada dentro de hook), e tela que piorou em requisições em relação à
+main. O job `migracao-roda` aplica as migrations da PR num Postgres 18 vazio e
+reprova erro de sintaxe.
+
+O que fica para o revisor, porque exige entender a tela:
 
 - **Total/KPI calculado no navegador** sobre uma lista inteira (`reduce`, `filter`
   sobre milhares de linhas para somar). Pede RPC que devolve o agregado. Foi a raiz

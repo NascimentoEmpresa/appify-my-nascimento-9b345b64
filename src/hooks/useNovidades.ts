@@ -49,13 +49,25 @@ export function useNovidades() {
     },
   });
 
+  // 04/11/2026: a marca de leitura passou a ser pedida SÓ para as novidades
+  // que a lista acima carregou. Antes vinha a marca de tudo que a pessoa já
+  // leu na vida — e SISTEMA_NOVIDADES_LIDAS tem 33.676 linhas, numa consulta
+  // que acontecia em TODA tela do ERP (o megafone fica no topo). Como a lista
+  // tem teto de 200, a marca de leitura de uma 201ª novidade não serve para
+  // nada: ela não está na tela para ficar com bolinha.
+  const idsDaLista = useMemo(() => (listaQ.data ?? []).map((n) => n.id), [listaQ.data]);
+
   const lidasQ = useQuery({
-    queryKey: ["novidades-lidas", user?.id],
-    enabled: !!user?.id,
+    // O id mais recente entra na chave: novidade publicada muda a lista, e com
+    // ela o conjunto de marcas que precisa ser lido.
+    queryKey: ["novidades-lidas", user?.id, idsDaLista.length, idsDaLista[0] ?? 0],
+    enabled: !!user?.id && idsDaLista.length > 0,
     staleTime: 30 * 60_000,
     queryFn: async (): Promise<number[]> => {
       const { data, error } = await sb.from(TABELA_LIDAS)
-        .select("novidade_id").eq("user_id", user!.id);
+        .select("novidade_id").eq("user_id", user!.id)
+        .in("novidade_id", idsDaLista)
+        .limit(idsDaLista.length);
       if (error) throw error;
       return (data ?? []).map((r: any) => Number(r.novidade_id));
     },

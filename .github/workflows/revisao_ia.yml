@@ -1,7 +1,7 @@
 name: Revisão de PR por IA
 
-# Terceira trava da main, ao lado de validar-chamado (título com chamado) e do
-# ruleset que exige 1 aprovação humana. Esta olha o CONTEÚDO do diff.
+# Uma das travas obrigatórias da main (desde 04/11/2026 todos os checks de PR
+# são obrigatórios e não há bypass). Esta olha o CONTEÚDO do diff.
 #
 # Duas camadas, de propósito:
 #   portaria   — script determinístico, regras absolutas (segredo, DROP TABLE,
@@ -19,25 +19,39 @@ name: Revisão de PR por IA
 # certo: fork vira revisão humana. Não afeta o time, que trabalha em branches
 # deste repositório.
 
-# SEM `synchronize` de propósito — este é o maior corte de custo do arquivo.
+# ---------------------------------------------------------------------------
+# 04/11/2026 — `synchronize` voltou, e por que ele TEM que estar aqui
 #
-# Com ele, a revisão rodava a cada push. Medido em 19/08: 32 execuções para 12
-# PRs mergeadas, quase 3x. Numa assinatura isso só gastava cota; numa API paga
-# é a maior linha da fatura, e revisar de novo um código que o autor ainda está
-# mexendo raramente muda o veredito.
+# Até hoje este arquivo disparava só em opened/reopened/ready_for_review, para
+# cortar custo: medido em 19/08, `synchronize` dava 32 execuções para 12 PRs.
+# A economia era real, mas abria um buraco que anula o arquivo inteiro: as
+# regras absolutas (R1–R8) eram verificadas SÓ NO PRIMEIRO PUSH da PR.
 #
-# Consequência que o time precisa saber: se você corrigir um achado e empurrar
-# o commit, a revisão NÃO roda sozinha de novo. Para forçar, use um destes:
-#   • marcar a PR como rascunho e tirar de rascunho (dispara ready_for_review);
-#   • fechar e reabrir a PR (dispara reopened);
-#   • Actions → a execução da sua PR → "Re-run all jobs".
+# Ou seja: abre-se a PR com uma linha inofensiva, a portaria fica verde, e todo
+# o código real entra nos pushes seguintes sem passar por regra nenhuma.
+# `DISABLE ROW LEVEL SECURITY`, `service_role` em `src/**`, chave vazada,
+# migration antiga editada — nada era conferido de novo. Com os checks virando
+# obrigatórios (04/11/2026), esse buraco passaria a ser o caminho mais fácil
+# para o merge, e um check obrigatório que se contorna com um segundo push é
+# pior que nenhum: dá a sensação de porta trancada.
 #
-# Se o time sentir falta da revisão automática a cada push, o caminho não é
-# devolver `synchronize` cru: é medir quanto ele custa de fato com o número da
-# API em mãos e decidir com dado.
+# A economia foi preservada onde ela realmente estava — no MODELO, não no
+# script:
+#
+#   portaria   roda em TODO push. É `node` sobre o diff: ~15 s, custo zero.
+#   revisao-ia chama o modelo em opened/reopened/ready_for_review sempre; em
+#              `synchronize`, só quando o diff é de ALTO risco (migration,
+#              Edge Function, policy, telas de acesso — ver o step
+#              "Classificar o risco"). Push que mexe em tela comum não paga
+#              revisão nova; push que mexe em RLS paga, e é exatamente o que
+#              não pode entrar sem julgamento.
+#
+# O `concurrency` abaixo cancela a execução anterior da mesma PR, então uma
+# sequência de pushes custa uma revisão, não uma por push.
+# ---------------------------------------------------------------------------
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # Segunda revisão da mesma PR cancela a anterior ainda em andamento. Continua
 # valendo para reopened/ready_for_review em sequência rápida.
@@ -53,10 +67,18 @@ jobs:
   portaria:
     name: portaria
     runs-on: ubuntu-latest
-    # Mesma válvula de escape da label sem-chamado que já existe no repo.
-    if: >-
-      github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' &&
-      !contains(github.event.pull_request.labels.*.name, 'pular-revisao-ia')
+    # 04/11/2026 — a label `pular-revisao-ia` SAIU daqui.
+    #
+    # Ela existe para poupar cota de modelo. A portaria não usa modelo: é um
+    # script de 15 s. Com a label no `if:` deste job, qualquer pessoa que
+    # pudesse etiquetar a PR desligava R1–R8 — e, como job PULADO conta como
+    # SUCESSO na proteção de branch, ficava verde. Era a maneira mais barata
+    # de mergear com RLS desligada ou segredo no diff.
+    #
+    # A label continua valendo para o job `revisao-ia` abaixo, que é onde o
+    # custo mora. Regra absoluta não tem válvula: é o que "absoluta" quer
+    # dizer.
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
     permissions:
       contents: read
       # Necessário para comentar a reprovação na PR (step abaixo).
@@ -232,19 +254,75 @@ jobs:
             RISCO=baixo;  TURNOS=25
           fi
 
+          # --------------------------------------------------------------
+          # 04/11/2026 — quem paga o modelo num push intermediário
+          #
+          # O workflow agora dispara também em `synchronize` (ver o cabeçalho:
+          # sem isso as regras absolutas só valiam no primeiro push). O modelo,
+          # porém, não precisa rodar a cada push: num push de ALTO risco sim,
+          # porque é onde mora o estrago e onde o julgamento vale o preço; num
+          # push de tela comum, a revisão de abertura já cobriu.
+          #
+          # Efeito prático para o dev: corrigiu um achado de RLS/migration e
+          # empurrou? A revisão roda sozinha de novo e o check pode ficar
+          # verde. Em PR de tela comum, use "Re-run all jobs" ou a label
+          # `revisar-de-novo`.
+          # --------------------------------------------------------------
+          ACAO='${{ github.event.action }}'
+          PEDIU_DE_NOVO='${{ contains(github.event.pull_request.labels.*.name, 'revisar-de-novo') }}'
+          RODAR=1
+          if [ "$RISCO" = "nenhum" ]; then
+            RODAR=0
+          elif [ "$ACAO" = "synchronize" ] && [ "$RISCO" != "alto" ] && [ "$PEDIU_DE_NOVO" != "true" ]; then
+            RODAR=0
+            echo "::notice::Push intermediário de risco $RISCO: o modelo não é chamado de novo (economia). A portaria rodou normalmente."
+          fi
+
+          # --------------------------------------------------------------
+          # 04/11/2026 — o único caso em que "não revisou" NÃO pode reprovar
+          #
+          # A claude-code-action se recusa a rodar quando o workflow da PR
+          # difere do que está na main (proteção dela contra PR que muda o
+          # workflow para vazar o token). Ela não falha: sai com SUCESSO sem
+          # revisar nada. Log da PR #1123, que é a PR que escreveu estas
+          # linhas:
+          #
+          #   Skipping action due to workflow validation: ... must have
+          #   identical content to the version on the default branch
+          #   Exiting due to workflow validation skip
+          #   end-action id=claude.run;outcome=success
+          #
+          # Sem esta detecção, TODA PR que mexe neste arquivo fica com o
+          # check vermelho para sempre — e, com o check obrigatório e sem
+          # bypass, nunca mergeia. Inclusive a PR que fosse consertar o
+          # próprio arquivo. É impasse, não rigor.
+          #
+          # O preço: quem tocar neste arquivo passa sem julgamento de IA. Não
+          # é porta aberta sem aviso — a portaria (R1–R8) roda igual, `.github/`
+          # é sempre risco ALTO, e o comentário na PR diz em negrito que a
+          # revisão não aconteceu e que a mudança precisa de leitura humana.
+          # --------------------------------------------------------------
+          MEXE_NO_WORKFLOW=0
+          if git diff --name-only "origin/${BASE}...HEAD" | grep -qx '\.github/workflows/revisao_ia\.yml'; then
+            MEXE_NO_WORKFLOW=1
+            echo "::notice::Esta PR altera o próprio revisao_ia.yml: a ação do Claude se recusa a rodar nesse caso (proteção dela). O julgamento por IA vai faltar e isso NÃO vai reprovar o check — leia a mudança do workflow à mão."
+          fi
+
           {
             echo "risco=$RISCO"
             echo "modelo=$MODELO"
             echo "turnos=$TURNOS"
+            echo "rodar=$RODAR"
+            echo "mexe_no_workflow=$MEXE_NO_WORKFLOW"
           } >> "$GITHUB_OUTPUT"
-          echo "Risco: $RISCO — modelo $MODELO, teto de $TURNOS turnos. ($ALTO arquivo(s) de alto risco, $CODIGO de código.)"
+          echo "Risco: $RISCO — modelo $MODELO, teto de $TURNOS turnos, chamar modelo: $RODAR. ($ALTO arquivo(s) de alto risco, $CODIGO de código.)"
 
       # As instruções vão para um ARQUIVO, não para o campo `prompt`. Duas
       # razões: os dois steps de revisão (1ª e 2ª tentativa) usam exatamente o
       # mesmo texto sem duplicá-lo no YAML, e nada de terceiro é interpolado
       # dentro do bloco de instruções.
       - name: Montar as instruções do revisor
-        if: steps.diff.outputs.vazio != 'true' && steps.risco.outputs.risco != 'nenhum'
+        if: steps.diff.outputs.vazio != 'true' && steps.risco.outputs.rodar == '1'
         run: |
           set -euo pipefail
           cat > instrucoes.md <<'FIM'
@@ -349,7 +427,7 @@ jobs:
 
       - name: Revisar
         id: claude
-        if: steps.diff.outputs.vazio != 'true' && steps.risco.outputs.risco != 'nenhum'
+        if: steps.diff.outputs.vazio != 'true' && steps.risco.outputs.rodar == '1'
         # Falha da ação não derruba o job: quem decide o resultado é o step
         # seguinte, que distingue "modelo reprovou" de "infra caiu".
         continue-on-error: true
@@ -394,7 +472,7 @@ jobs:
         id: claude_retry
         if: >-
           steps.diff.outputs.vazio != 'true' &&
-          steps.risco.outputs.risco != 'nenhum' &&
+          steps.risco.outputs.rodar == '1' &&
           steps.claude.outcome == 'failure'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
@@ -436,6 +514,8 @@ jobs:
           CLAUDE_RESULTADO: ${{ steps.claude.outcome }}
           CLAUDE_RETRY: ${{ steps.claude_retry.outcome }}
           RISCO: ${{ steps.risco.outputs.risco }}
+          RODAR: ${{ steps.risco.outputs.rodar }}
+          MEXE_NO_WORKFLOW: ${{ steps.risco.outputs.mexe_no_workflow }}
           # Modelo da 1ª tentativa vem do classificador; o da 2ª é fixo no
           # step de retry. Mantenha os dois em sincronia se trocar de modelo.
           MODELO_1: ${{ steps.risco.outputs.modelo }}
@@ -467,6 +547,34 @@ jobs:
           pessoal, e gastá-la revisando README é o que faz ele morrer bem na
           PR seguinte, a que mexe em RLS. As regras absolutas (portaria)
           rodaram normalmente.
+          MSG
+          elif [ "${RODAR:-1}" != "1" ]; then
+            cat > corpo.md <<'MSG'
+          ## Revisão de IA não repetida neste push
+
+          Este é um push intermediário cujo diff **não** é de alto risco (não
+          encosta em migration, Edge Function, policy nem nas telas de acesso).
+          A revisão feita na abertura da PR continua valendo, e as regras
+          absolutas (portaria) rodaram normalmente **neste** push.
+
+          Para forçar uma revisão nova: aplique a label `revisar-de-novo`, ou
+          Actions → esta execução → "Re-run all jobs".
+          MSG
+          elif [ "${MEXE_NO_WORKFLOW:-0}" = "1" ]; then
+            cat > corpo.md <<'MSG'
+          ## ⚠️ A revisão por IA NÃO rodou — e esta PR precisa de leitura humana
+
+          Esta PR altera o próprio `.github/workflows/revisao_ia.yml`. A ação do
+          Claude se recusa a rodar quando o workflow da PR difere do que está na
+          `main` — é uma proteção dela contra PR que muda o workflow para vazar o
+          token. Ela não falha: **sai com sucesso sem revisar nada**.
+
+          O check passa de propósito, porque reprovar aqui criaria uma PR que
+          nunca mergeia (inclusive a PR que fosse consertar este arquivo). Mas
+          **ninguém julgou este diff**: alguém precisa ler a mudança do workflow
+          à mão antes do merge.
+
+          As regras absolutas (portaria R1–R8) rodaram normalmente e valem.
           MSG
           else
             # A causa real está no JSON que a ação grava — inclusive o campo
@@ -578,7 +686,7 @@ jobs:
             cat corpo.md
             echo
             echo "---"
-            echo "_${CREDITO} — regras em \`.github/REGRAS-PR.md\`. Para pular, use a label \`pular-revisao-ia\`._"
+            echo "_${CREDITO} — regras em \`.github/REGRAS-PR.md\`. A label \`pular-revisao-ia\` dispensa só o julgamento por IA; as regras absolutas (portaria) não têm válvula._"
           } > comentario.md
           gh pr comment "$PR" --edit-last --create-if-none --body-file comentario.md \
             || gh pr comment "$PR" --body-file comentario.md
@@ -586,15 +694,21 @@ jobs:
       - name: Aplicar o veredito
         if: always()
         env:
-          # Interruptor do rollout. Ausente ou "false" → modo aviso: comenta
-          # mas nunca fica vermelho. Ligar a Fase 2 é criar esta variable com
-          # "true" em Settings → Secrets and variables → Actions → Variables,
-          # sem precisar de PR nova.
-          BLOQUEIA: ${{ vars.REVISAO_IA_BLOQUEIA }}
+          # 04/11/2026 — o interruptor saiu, o padrão agora é BLOQUEAR.
+          #
+          # Era `vars.REVISAO_IA_BLOQUEIA`, ausente, ou seja: veredito
+          # BLOQUEADO/AJUSTES nunca ficava vermelho. Um revisor que reprova e
+          # deixa passar não é revisor, é comentarista. O modo aviso existia
+          # porque, sem `synchronize`, uma reprovação era beco sem saída: o
+          # autor corrigia, empurrava e a revisão não rodava de novo. Agora
+          # roda (ver o cabeçalho), então reprovar tem saída: corrija e
+          # empurre.
           CLAUDE_RESULTADO: ${{ steps.claude.outcome }}
           CLAUDE_RETRY: ${{ steps.claude_retry.outcome }}
           DIFF_VAZIO: ${{ steps.diff.outputs.vazio }}
           RISCO: ${{ steps.risco.outputs.risco }}
+          RODAR: ${{ steps.risco.outputs.rodar }}
+          MEXE_NO_WORKFLOW: ${{ steps.risco.outputs.mexe_no_workflow }}
         run: |
           set -uo pipefail
 
@@ -608,18 +722,34 @@ jobs:
             exit 0
           fi
 
-          if [ ! -f veredito.json ]; then
-            # Sem veredito não dá para saber se o código está bom. Falha ABERTO,
-            # igual ao chamado_pr_sync.yml faz quando o Supabase não responde:
-            # instabilidade nossa não pode travar merge de toda a empresa.
-            #
-            # Chegar aqui ficou raro de propósito: o modelo grava veredito.json
-            # provisório logo no primeiro turno, e ainda existe uma 2ª tentativa
-            # antes deste ponto. Se mesmo assim não há arquivo, as duas
-            # tentativas foram recusadas na porta (cota) — nunca "o modelo
-            # analisou e o resultado se perdeu", que era o caso comum antes.
-            echo "::warning::A revisão por IA não produziu veredito (1ª tentativa: $CLAUDE_RESULTADO; 2ª: ${CLAUDE_RETRY:-não rodou}). Passando o check para não travar a PR — revise à mão. O motivo foi explicado num comentário na própria PR."
+          if [ "${RODAR:-1}" != "1" ]; then
+            echo "::notice::Push intermediário de risco $RISCO: o modelo não foi chamado de novo, de propósito (economia). A revisão da abertura vale, e a portaria rodou neste push."
             exit 0
+          fi
+
+          if [ ! -f veredito.json ] && [ "${MEXE_NO_WORKFLOW:-0}" = "1" ]; then
+            echo "::warning::A revisão por IA NÃO rodou porque esta PR altera o próprio .github/workflows/revisao_ia.yml — a ação do Claude se recusa a rodar quando o workflow da PR difere do da main. O check passa para não criar impasse (seria uma PR que nunca mergeia), mas esta mudança precisa de leitura humana. A portaria rodou normalmente."
+            exit 0
+          fi
+
+          if [ ! -f veredito.json ]; then
+            # 04/11/2026 — deixou de falhar ABERTO.
+            #
+            # Até hoje este caso passava o check com um `::warning::`, para não
+            # travar o time quando a infra do revisor caía. Na prática isso
+            # virou o furo mais perigoso do arquivo: com a cota da assinatura
+            # pessoal esgotada, a ação era recusada na porta (custo 0, 1 turno)
+            # e a PR ficava VERDE sem uma linha de revisão — e ninguém lê
+            # comentário de check verde. Foi assim na PR #374 e na #1115.
+            #
+            # Agora é vermelho. Isso é sustentável porque o secret
+            # ANTHROPIC_API_KEY está cadastrado (crédito pré-pago, não compete
+            # com o uso pessoal de ninguém) e a ação lhe dá precedência sobre a
+            # assinatura. Se este check ficar vermelho, a causa está no
+            # comentário que o step anterior publicou na PR — e é problema de
+            # infraestrutura a resolver, não PR a liberar.
+            echo "::error::A revisão por IA não produziu veredito (1ª tentativa: $CLAUDE_RESULTADO; 2ª: ${CLAUDE_RETRY:-não rodou}). 'Não revisou' agora reprova: o motivo está no comentário da PR."
+            exit 1
           fi
 
           VEREDITO=$(node -p "JSON.parse(require('fs').readFileSync('veredito.json','utf8')).veredito || 'DESCONHECIDO'")
@@ -631,11 +761,5 @@ jobs:
             exit 0
           fi
 
-          if [ "${BLOQUEIA:-false}" != "true" ]; then
-            echo "::warning::Veredito $VEREDITO. Modo aviso ativo, então o check passa mesmo assim."
-            echo "::warning::Para bloquear merge nestes casos, defina a variable REVISAO_IA_BLOQUEIA=true."
-            exit 0
-          fi
-
-          echo "::error::Revisão reprovou com veredito $VEREDITO. Veja o comentário na PR."
+          echo "::error::Revisão reprovou com veredito $VEREDITO. Veja o comentário na PR, corrija e empurre o commit — em diff de alto risco a revisão roda de novo sozinha."
           exit 1
