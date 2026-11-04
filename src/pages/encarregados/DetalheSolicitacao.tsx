@@ -109,6 +109,7 @@ const ROTULO: Record<string, string> = {
   aprovador_motivo: "Retorno de quem aprovou",
   refeita_em: "Refeita em", data_saida: "Data de saída", data_retorno: "Retorno previsto",
   dias_ferias: "Dias de férias", dias_vendidos: "Abono (dias vendidos)", observacoes: "Observações",
+  data_malote: "Enviado ao malote em", retorno_documentacao: "Retorno da documentação",
   sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
   sst_observacao: "Observação do SST",
   // Demissão: o ASO demissional, com os mesmos nomes de coluna do ASO de
@@ -319,7 +320,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo",
         "posto_atual_nome", "posto_atual_contrato", "posto_novo_nome", "posto_novo_contrato"].includes(k);
   const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_|cancelado_)/.test(k)
-    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em"].includes(k);
+    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em", "data_malote", "retorno_documentacao"].includes(k);
   const grupos: { titulo: string; icone: string; itens: [string, string, string][] }[] = [
     { titulo: "Colaborador", icone: "👤", itens: linhas.filter(([k]) => ehColaborador(k)) },
     { titulo: "Solicitação", icone: "📝", itens: linhas.filter(([k]) => !ehColaborador(k) && !ehDecisao(k)) },
