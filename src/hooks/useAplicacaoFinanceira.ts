@@ -327,6 +327,23 @@ export function useEditarResgate() {
   });
 }
 
+// Define o banco de vários resgates de uma vez (RPC aplicacao_financeira_resgate_definir_banco); devolve quantos mudaram.
+export function useDefinirBancoResgates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ ids, bancoId }: { ids: string[]; bancoId: string }) => {
+      const { data, error } = await (supabase as any).rpc("aplicacao_financeira_resgate_definir_banco", { _ids: ids, _banco_id: bancoId });
+      if (error) throw error;
+      return Number(data ?? 0);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+    },
+  });
+}
+
 export function useExcluirResgate() {
   const qc = useQueryClient();
   return useMutation({
