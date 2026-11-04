@@ -1314,6 +1314,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
           status={detalhe.status}
           onFechar={() => setDetalhe(null)}
           onRefazer={detalhe.tipo === "Férias" ? abrirRefazerFerias : undefined}
+          onCancelada={detalhe.tipo === "Férias" ? carregarMinhasSols : undefined}
         />
       )}
 

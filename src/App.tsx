@@ -300,6 +300,7 @@ import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
 import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
 import Denuncia from "./pages/publico/Denuncia";
+import Site from "./pages/publico/Site";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
 // Portal do Colaborador (/colaborador) — login por CPF, sessão própria, fora do Auth.
@@ -514,6 +515,8 @@ const App = () => (
           {/* Fornecedor abre pelo link do e-mail, sem login: o token e a credencial. */}
           <Route path="/pedido/confirmar/:token" element={<PedidoConfirmar />} />
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
+          {/* Site institucional público — aponta para /vagas, /denuncia e /login */}
+          <Route path="/site" element={<Site />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
           {/* Player das TVs da empresa (Sistemas › TV's, mig 20261007000012): público,
