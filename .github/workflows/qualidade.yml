@@ -30,9 +30,15 @@ name: Qualidade (desempenho)
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Push na main não reprova nada (a main já passou por isto na PR): serve só
+  # para MEDIR as telas da main e publicar o número de cada uma como baseline
+  # da catraca (ver o job qa-requisicoes). Sem esta semeadura, PR nenhuma teria
+  # com o que comparar: cache criado dentro de uma PR só é visível para ela.
+  push:
+    branches: [main]
 
 concurrency:
-  group: qualidade-${{ github.event.pull_request.number }}
+  group: qualidade-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -45,7 +51,7 @@ jobs:
     name: guardiao
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    if: github.event_name == 'pull_request' && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
     permissions:
       contents: read
     steps:
@@ -71,14 +77,32 @@ jobs:
           fetch-depth: 0
 
       # PR só de migration/doc não muda o comportamento da tela: não gasta 10 min.
+      # No push da main roda sempre: é a medição que vira baseline.
       - name: A PR mexe no frontend?
         id: mexe
         run: |
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/|index.html|vite.config|package)'; then
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "sim=1" >> "$GITHUB_OUTPUT"
+            echo "Push na main: medindo as telas para publicar o baseline da catraca."
+          elif git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/|index.html|vite.config|package)'; then
             echo "sim=1" >> "$GITHUB_OUTPUT"
           else
             echo "PR sem mudança de frontend — QA de requisições não se aplica." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # Baseline da main para a catraca por tela. `restore` só: quem grava é o
+      # push da main, no fim deste job. Ausente (primeira vez, ou cache
+      # expirado) = catraca desligada e só o teto absoluto vale — o script diz
+      # isso no resumo. Baseline que falta nunca reprova PR.
+      - name: Restaurar o baseline da main
+        if: steps.mexe.outputs.sim && github.event_name == 'pull_request'
+        id: baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: orcamento-main.json
+          key: orcamento-main-nunca-acerta
+          restore-keys: |
+            orcamento-main-
 
       - uses: actions/setup-node@v4
         if: steps.mexe.outputs.sim
@@ -117,7 +141,11 @@ jobs:
         run: |
           npx vite preview --port 4173 --strictPort &
           for i in $(seq 1 30); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
-          PLAYWRIGHT=playwright node infra/qa/orcamento-requisicoes.mjs --base http://localhost:4173 --paralelo 6 --saida orcamento.json
+          CATRACA=""
+          [ -f orcamento-main.json ] && CATRACA="--baseline orcamento-main.json"
+          # shellcheck disable=SC2086
+          PLAYWRIGHT=playwright node infra/qa/orcamento-requisicoes.mjs \
+            --base http://localhost:4173 --paralelo 6 --saida orcamento.json $CATRACA
 
       - uses: actions/upload-artifact@v4
         if: always() && steps.mexe.outputs.sim
@@ -125,3 +153,162 @@ jobs:
           name: orcamento-requisicoes
           path: orcamento.json
           retention-days: 14
+
+      # Publica o resultado da main como BASELINE da catraca por tela. Cache
+      # escrito na main é visível para todas as PRs; cache escrito numa PR só
+      # vale para ela — por isso a semeadura precisa ser aqui.
+      - name: Preparar o baseline (só na main)
+        if: github.event_name == 'push' && steps.mexe.outputs.sim
+        run: cp orcamento.json orcamento-main.json
+
+      - name: Publicar o baseline da main
+        if: github.event_name == 'push' && steps.mexe.outputs.sim
+        uses: actions/cache/save@v4
+        with:
+          # MESMO caminho do restore na PR: cache guarda o caminho literal.
+          path: orcamento-main.json
+          key: orcamento-main-${{ github.sha }}
+
+  # ==========================================================================
+  # A migration RODA antes do merge (04/11/2026)
+  #
+  # Até hoje uma migration era LIDA por regex (M1–M6 do guardião) e aplicada
+  # DIRETO NA PRODUÇÃO no merge (cluster_pos_merge.yml). Entre as duas coisas
+  # não existia nenhuma execução de verdade — e, como o aplicador roda uma
+  # transação por arquivo e para no primeiro erro, uma migration que não roda
+  # não é problema de quem a escreveu: é a fila do time inteiro parada, com o
+  # banco no meio do caminho e a R4 (append-only) proibindo consertar o
+  # arquivo.
+  #
+  # O QUE ESTE JOB PROVA: que o Postgres 18 ACEITA o texto. Erro de sintaxe,
+  # resto de conflito de merge, `CREATE OR REPLACE TRIGGER`, dólar-quote não
+  # fechado, âncora quebrada por CRLF — tudo isso aparece aqui, em 40 s, em vez
+  # de aparecer no merge.
+  #
+  # O QUE ELE NÃO PROVA: que a migration faz a coisa certa no schema de
+  # verdade. O banco do runner nasce VAZIO (as 1.247 migrations não aplicam do
+  # zero: o schema real divergiu do repositório), então erro de "tabela não
+  # existe" é esperado e NÃO reprova — só erro de sintaxe/recurso inexistente
+  # reprova. Para o ensaio completo falta um dump só de schema da produção
+  # publicado todo dia; isso depende de um subcomando novo na chave restrita
+  # do cluster (hoje ela só aceita `functions` e `migrations`), que é mudança
+  # nos nós, não no CI. Está anotado em docs/infra/pipeline-qualidade.md §5.
+  #
+  # Por que sem ON_ERROR_STOP: assim o psql reporta TODOS os erros do arquivo
+  # em vez de parar no primeiro. Com ele, um "tabela não existe" na linha 3
+  # esconderia o erro de sintaxe da linha 90.
+  # ==========================================================================
+  migracao-roda:
+    name: migracao-roda
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request' && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    permissions:
+      contents: read
+    services:
+      pg:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: prova
+          POSTGRES_DB: prova
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Quais migrations esta PR traz?
+        id: novas
+        run: |
+          set -uo pipefail
+          BASE="origin/${{ github.base_ref || 'main' }}"
+          git diff --name-only --diff-filter=AM "$BASE...HEAD" -- 'supabase/migrations/*.sql' > novas.txt || true
+          if [ ! -s novas.txt ]; then
+            echo "PR sem migration nova — nada a aplicar." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "tem=1" >> "$GITHUB_OUTPUT"
+          echo "Migrations desta PR:"; sed 's/^/  /' novas.txt
+
+      - name: Instalar o psql 18
+        if: steps.novas.outputs.tem
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-18
+
+      - name: Aplicar cada migration e separar erro de sintaxe de erro de schema
+        if: steps.novas.outputs.tem
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: prova
+          PGDATABASE: prova
+        run: |
+          set -uo pipefail
+
+          # Os papéis que as migrations do projeto mencionam. Sem eles, GRANT e
+          # policy falhariam por motivo que não é defeito da migration.
+          psql -q -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            CREATE ROLE anon NOLOGIN;            EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN
+            CREATE ROLE authenticated NOLOGIN;   EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN
+            CREATE ROLE service_role NOLOGIN;    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN
+            CREATE ROLE authenticator NOINHERIT; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE SCHEMA IF NOT EXISTS storage;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          SQL
+
+          # Códigos que são DEFEITO DO ARQUIVO, em qualquer banco:
+          #   42601 syntax_error        texto que o Postgres não entende
+          #   0A000 feature_not_supported   ex.: CREATE OR REPLACE TRIGGER
+          #   42P13 invalid_function_definition
+          # O resto (42P01 tabela não existe, 42883 função não existe, 3F000
+          # schema, 42703 coluna, 58P01 extensão que o runner não tem) é
+          # consequência de o banco nascer vazio, não defeito do arquivo.
+          FATAIS='42601|0A000|42P13'
+          FALHOU=0
+          : > achados.txt
+
+          while IFS= read -r ARQ; do
+            [ -n "$ARQ" ] || continue
+            echo "::group::$ARQ"
+            # VERBOSITY=verbose faz o psql imprimir o SQLSTATE junto do erro,
+            # que é o que permite separar "defeito" de "banco vazio".
+            psql -v VERBOSITY=verbose -f "$ARQ" > saida.txt 2>&1 || true
+            grep -E '^psql:.*(ERROR|FATAL)' saida.txt | sed 's/^/  /' || echo "  sem erro nenhum."
+            if grep -qE "^psql:.*(ERROR|FATAL):  ($FATAIS):" saida.txt; then
+              FALHOU=1
+              LINHA=$(grep -E "^psql:.*(ERROR|FATAL):  ($FATAIS):" saida.txt | head -3)
+              printf -- '- `%s`\n```\n%s\n```\n' "$ARQ" "$LINHA" >> achados.txt
+              echo "::error file=$ARQ::O Postgres 18 não aceita este arquivo. $(echo "$LINHA" | head -1)"
+            fi
+            echo "::endgroup::"
+          done < novas.txt
+
+          {
+            echo "## A migration roda?"
+            if [ "$FALHOU" = "1" ]; then
+              echo "❌ **O Postgres recusou o texto de pelo menos uma migration.** Mergeada assim, ela PARA A FILA de aplicação do time inteiro."
+              echo
+              cat achados.txt
+            else
+              echo "✅ O Postgres 18 aceitou o texto de todas as migrations desta PR."
+              echo
+              echo "_Erro de \"não existe\" no log é esperado: o banco do runner nasce vazio. Este job prova a sintaxe, não o efeito no schema real._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $FALHOU

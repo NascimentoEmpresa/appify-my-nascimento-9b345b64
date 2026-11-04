@@ -91,8 +91,14 @@ SQL
   # 03/11/2026 um `docker logs` agravou a queda). Medido na instalação: 234 MB
   # no banco2 e 317 MB no banco1. Passou de 400 MB, o systemd o reinicia; CPU
   # no máximo 25 % de um núcleo.
+  #
+  # User=root: o cAdvisor lê os cgroups e os diretórios do Docker direto no
+  # disco, não pelo socket. Como usuário `alloy` ele subia sem erro nenhum e
+  # só enxergava o cgroup raiz (04/11/2026: 0 containers reconhecidos, painel
+  # "CPU por container" vazio). Se um dia voltar a rodar como `alloy`, limpe
+  # /var/lib/alloy antes: os arquivos ficam de root e ele não sobe.
   $S 'mkdir -p /etc/systemd/system/alloy.service.d \
-      && printf "%s\n" "[Service]" "MemoryHigh=350M" "MemoryMax=400M" "CPUQuota=25%" > /etc/systemd/system/alloy.service.d/limite.conf \
+      && printf "%s\n" "[Service]" "User=root" "Group=root" "MemoryHigh=350M" "MemoryMax=400M" "CPUQuota=25%" > /etc/systemd/system/alloy.service.d/limite.conf \
       && systemctl daemon-reload && echo "limite do alloy: $(systemctl show alloy -p MemoryMax --value | numfmt --to=iec) de memória, CPU $(systemctl show alloy -p CPUQuotaPerSecUSec --value)/s"'
   $S 'usermod -aG docker,systemd-journal alloy
       systemctl enable alloy >/dev/null 2>&1; systemctl restart alloy; sleep 20
