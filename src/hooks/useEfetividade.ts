@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   prepararColaborador,
-  type BaseEfet, type ColaboradorPrep, type Diarista, type EventoOcorrencia, type MotivoOcorrencia,
+  type BaseEfet, type ColaboradorPrep, type Diarista, type EventoOcorrencia, type ImplantadoContrato, type MotivoOcorrencia,
   type Ocorrencia, type StatusCobertura,
 } from "@/lib/efetividade";
 
@@ -110,7 +110,8 @@ export function useEfetDiaristas(ini: string | null = null, fim: string | null =
 
 /** Previsto da Planilha de Custo por contrato, na chave Empresa+Filial (mig 20261026000090) — o mesmo do Ativos/Contratos. */
 /** previsto = Planilha de Custo; implantado = o que a Licitação registrou como de fato implantado (mig 20261027000020; ausente = banco antigo). */
-export interface PrevistoPlanilha { empresa: number; filial: number; contrato_id: string; contrato: string; previsto: number; implantado?: number }
+/** 04/11/2026 (mig 20261104001300): uma linha por contrato, com o "tem" do Ativos/Contratos — ver implantadoPorFilial. */
+export type PrevistoPlanilha = ImplantadoContrato;
 
 export function useEfetPrevistoPlanilha() {
   return useQuery({

@@ -465,6 +465,87 @@ export const chaveContrato = (empresa: number | null | undefined, filial: number
 export const chavePosto = (c: Pick<ColaboradorEfet, "empresa" | "filial" | "posto_codigo" | "posto_nome">) =>
   `${c.empresa}-${c.filial}-${c.posto_codigo || c.posto_nome}`;
 
+// ---- Postos implantados × tem (04/11/2026) -----------------------------------
+//
+// Chamado da Operação: "o Painel de efetividade do dia não bate com o
+// Ativos/Contratos [...] o que deve aparecer para os supervisores é o
+// implantado". ope_efet_previsto_planilha (mig 20261104001300) devolve UMA
+// linha por contrato do ERP — a mesma conta do Ativos/Contratos (implantado
+// sem renda técnica; tem = Trabalhando, dentro da conta) — com a filial
+// "casa" do contrato. Aqui a Efetividade, que é por filial da Senior, soma
+// os contratos que caem na mesma filial: até 03/11 o banco ligava um
+// contrato a uma filial só e o contrato menor da filial sumia do painel.
+
+/** Uma linha de ope_efet_previsto_planilha. Campos opcionais = banco antigo. */
+export interface ImplantadoContrato {
+  empresa: number | null;
+  filial: number | null;
+  contrato_id: string;
+  contrato: string;
+  /** Tem posto na Planilha de Custo (até a mig 20261104001300, sempre). */
+  com_planilha?: boolean;
+  previsto: number;
+  implantado?: number;
+  implantado_registrado?: boolean;
+  /** Trabalhando no contrato agora (Senior) — o "Tem" do Ativos/Contratos. */
+  tem?: number;
+  afastados?: number;
+}
+
+export interface ImplantadoFilial {
+  previsto: number;
+  implantado: number;
+  /** null = banco antigo, sem o "tem". */
+  tem: number | null;
+  /** tem − implantado (negativo = posto sem gente). */
+  saldo: number | null;
+  contratos: { nome: string; previsto: number; implantado: number; tem: number | null }[];
+}
+
+const temPlanilha = (c: ImplantadoContrato) => c.com_planilha ?? true;
+const implantadoDeContrato = (c: ImplantadoContrato) => Number(c.implantado ?? c.previsto) || 0;
+const temDe = (c: ImplantadoContrato) => (c.tem == null ? null : Number(c.tem) || 0);
+
+/**
+ * Por chave Empresa+Filial (chaveContrato), a soma dos contratos com planilha
+ * que têm ali a sua filial casa. Contrato sem filial (ninguém ativo) fica de
+ * fora daqui — entra só em totalImplantado.
+ */
+export function implantadoPorFilial(lista: ImplantadoContrato[]): Map<string, ImplantadoFilial> {
+  const m = new Map<string, ImplantadoFilial>();
+  for (const c of lista) {
+    if (c.empresa == null || c.filial == null || !temPlanilha(c)) continue;
+    const k = chaveContrato(c.empresa, c.filial);
+    const g = m.get(k) ?? { previsto: 0, implantado: 0, tem: null, saldo: null, contratos: [] };
+    const tem = temDe(c);
+    g.previsto += Number(c.previsto) || 0;
+    g.implantado += implantadoDeContrato(c);
+    if (tem != null) g.tem = (g.tem ?? 0) + tem;
+    g.saldo = g.tem == null ? null : g.tem - g.implantado;
+    g.contratos.push({ nome: c.contrato, previsto: Number(c.previsto) || 0, implantado: implantadoDeContrato(c), tem });
+    m.set(k, g);
+  }
+  return m;
+}
+
+/**
+ * Total do painel — o mesmo do KPI "Implantado"/"Tem" do Ativos/Contratos
+ * (contratos com planilha). `chaves` = só as filiais visíveis (filtro
+ * ativo); null = todos, inclusive o contrato que ainda não tem ninguém.
+ */
+export function totalImplantado(lista: ImplantadoContrato[], chaves: Set<string> | null = null) {
+  const t = { previsto: 0, implantado: 0, tem: 0, semTem: false };
+  for (const c of lista) {
+    if (!temPlanilha(c)) continue;
+    if (chaves && (c.empresa == null || c.filial == null || !chaves.has(chaveContrato(c.empresa, c.filial)))) continue;
+    t.previsto += Number(c.previsto) || 0;
+    t.implantado += implantadoDeContrato(c);
+    const tem = temDe(c);
+    if (tem == null) t.semTem = true; else t.tem += tem;
+  }
+  return { previsto: t.previsto, implantado: t.implantado, tem: t.semTem ? null : t.tem, saldo: t.semTem ? null : t.tem - t.implantado };
+}
+
 /** Linha da avaliação: colaborador + o dia + a ocorrência de cobertura (se houver). */
 export interface LinhaDia {
   p: ColaboradorPrep;
