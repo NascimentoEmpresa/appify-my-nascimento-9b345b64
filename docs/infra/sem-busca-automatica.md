@@ -76,7 +76,7 @@ notificação.
 | `pages/admin/MigracaoFcr.tsx` | 2,5 s com lote em andamento | Atualizar |
 | `hooks/usePresencaOnline.ts` (presença) | **60 s por aba** | quando a pessoa age (abrir, voltar à aba, clicar/teclar), no máximo 1 a cada 5 min |
 | `pages/colaborador/CursoColaborador.tsx` (tempo de aula) | 60 s | ao esconder a aba e ao sair da aula (o tempo contado é o mesmo) |
-| `pages/tv/TvPlayer.tsx` | ping, versão, cão de guarda e batimento | **só ao abrir a página da TV** |
+| `pages/tv/TvPlayer.tsx` | ping, versão, cão de guarda e batimento | ao abrir + **tv_estado a cada 2 min** (exceção de 04/11/2026: sem ping toda TV aparecia offline); versão e batimento seguem fora, `tv_reportar` saiu do banco |
 | `pages/tv/TvRelatorio.tsx` | reconsulta periódica | só ao abrir |
 
 **Realtime:** o hook `useContratosCatalogoRealtime` (único `.channel(` do
@@ -92,7 +92,7 @@ contagem regressiva, troca de slide, animação do login.
 | Sininho / badges | atualizam ao abrir a tela, ao abrir o sino e no ⟳ |
 | Chats (chamados, solicitações, WhatsApp, recrutamento) | mensagem do outro lado aparece no ⟳ ou ao reabrir; a sua aparece na hora |
 | Quem está online | some da lista quem não mexe no ERP há 10 min; o "ausente" (aba aberta e parada) deixou de existir, porque detectá-lo exige o temporizador |
-| **TVs** | **mostram o conteúdo de quando foram ligadas.** Playlist, aviso ou relatório novo entram quando a TV é recarregada (F5 ou religar). O comando "recarregar" e o "ao vivo" de Sistemas › TV's não chegam mais sozinhos à TV |
+| **TVs** | **ping a cada 2 min** (exceção de 04/11/2026, pedido do Pablo: sem ele toda TV aparecia offline mesmo tocando). Playlist, aviso e "recarregar" chegam em até 2 min; o "ao vivo" de Sistemas › TV's é aproximado (sem `tv_reportar`) |
 | Job em andamento (extrator, catálogo CA, parecer IA, migração FCR) | o andamento aparece no ⟳ |
 
 ## Como foi validado

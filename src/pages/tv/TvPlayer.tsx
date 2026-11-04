@@ -13,7 +13,7 @@ import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_
 //   1. sem token → tv_registrar: ganha token (fica só neste navegador) e um
 //      código de 6 dígitos, mostrado em tela cheia até alguém parear em
 //      Sistemas › TV's;
-//   2. a cada 15 s → tv_estado(token): playlist, aviso geral e comando
+//   2. a cada 2 min (era 15 s) → tv_estado(token): playlist, aviso geral e comando
 //      ("recarregar"). Cada consulta é o "ping" que mostra a TV online;
 //   3. toca os itens em sequência (imagem/aviso/página/YouTube pelo tempo
 //      cadastrado; vídeo até acabar). O aviso geral cobre tudo enquanto
@@ -93,7 +93,8 @@ const lerToken = () => { try { return localStorage.getItem(CHAVE_TOKEN); } catch
 const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE_TOKEN, t) : localStorage.removeItem(CHAVE_TOKEN); } catch { /* modo privado */ } };
 const midiaPublica = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
 
-const SEM_CONTATO_RECARREGA_MS = 3 * 60_000;
+// 3 pings sem resposta (era 3 min com ping de 15 s).
+const SEM_CONTATO_RECARREGA_MS = 3 * INTERVALO_PING_S * 1000 + 30_000;
 const CONFERE_VERSAO_MS = 10 * 60_000;
 const ABERTA_EM = Date.now();
 
@@ -138,9 +139,16 @@ export default function TvPlayer() {
 // de versão, nem cão de guarda. Conteúdo novo entra quando a TV é recarregada
 // (F5/religar). Para voltar ao comportamento anterior, o histórico do git
 // deste arquivo tem os quatro setInterval que saíram.
+  // 04/11/2026 — EXCEÇÃO ao "sem busca automática": sem ping toda TV aparecia
+  // offline em Sistemas › TV's mesmo tocando, e o "Recarregar" não chegava.
+  // Volta só o tv_estado, a cada INTERVALO_PING_S (2 min, não mais 15 s), e o
+  // cão de guarda abaixo. Reportar/batimento e conferência de versão seguem
+  // fora (tv_reportar saiu do banco na mig 20261104001500).
   useEffect(() => {
     if (chaveFixa) gravarToken(chaveFixa);
     consultar();
+    const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
+    return () => window.clearInterval(t);
   }, [consultar]);
 
   // AO VIVO: avisa o ERP do item que entrou na tela (null = relógio/pausada).
@@ -172,10 +180,20 @@ export default function TvPlayer() {
   // (conferência de versão a cada CONFERE_VERSAO_MS: removida em 03/11/2026 —
   // ver "TV SEM BUSCA AUTOMÁTICA" acima.)
 
-  // Cão de guarda: sem falar com o ERP há 3 min, ou de madrugada depois de
-  // 20 h no ar, recarrega a página inteira (rede caiu, navegador travou).
-  // (cão de guarda de 30 s: removido em 03/11/2026 — sem ping não há "sem
-  // contato" para vigiar; ver "TV SEM BUSCA AUTOMÁTICA" acima.)
+  // Cão de guarda: sem falar com o ERP há SEM_CONTATO_RECARREGA_MS, ou de
+  // madrugada depois de 20 h no ar, recarrega a página inteira (rede caiu,
+  // navegador travou). Removido em 03/11 junto com o ping; volta com ele em
+  // 04/11/2026. Só olha o relógio local: não faz requisição.
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      const h = new Date().getHours();
+      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) recarregarTv();
+      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) recarregarTv();
+    }, 30_000);
+    const voltou = () => consultar();
+    window.addEventListener("online", voltou);
+    return () => { window.clearInterval(t); window.removeEventListener("online", voltou); };
+  }, [consultar]);
 
   // Tela não apaga e o cursor some. 04/11/2026 — "algumas TVs estão
   // desligando a tela / entrando em modo soneca": o pedido de wake lock que
@@ -390,7 +408,7 @@ function Reprodutor({ itens, nome, ativa, token, aoMostrar }: { itens: ItemTv[];
 
   // Tudo, menos vídeo, troca pelo tempo cadastrado (vídeo troca ao acabar).
   // 15/10/2026: o cronômetro depende do ID/tempo do item, NÃO do objeto `atual` —
-  // a consulta ao ERP a cada 15 s (INTERVALO_PING_S) devolve uma lista nova, o
+  // a consulta ao ERP a cada INTERVALO_PING_S devolve uma lista nova, o
   // objeto mudava e o timer recomeçava do zero: item de 30 s nunca trocava
   // (a gestão mostrava "2 de 2 · há 1513 s").
   const tempoAtual = atual && atual.tipo !== "video" ? Math.max(3, atual.duracao_seg) : null;
