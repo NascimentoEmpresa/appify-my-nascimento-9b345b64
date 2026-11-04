@@ -13,7 +13,7 @@ import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_
 //   1. sem token → tv_registrar: ganha token (fica só neste navegador) e um
 //      código de 6 dígitos, mostrado em tela cheia até alguém parear em
 //      Sistemas › TV's;
-//   2. a cada 2 min (era 15 s) → tv_estado(token): playlist, aviso geral e comando
+//   2. a cada 4 min (era 15 s) → tv_estado(token): playlist, aviso geral e comando
 //      ("recarregar"). Cada consulta é o "ping" que mostra a TV online;
 //   3. toca os itens em sequência (imagem/aviso/página/YouTube pelo tempo
 //      cadastrado; vídeo até acabar). O aviso geral cobre tudo enquanto
@@ -141,13 +141,13 @@ export default function TvPlayer() {
 // deste arquivo tem os quatro setInterval que saíram.
   // 04/11/2026 — EXCEÇÃO ao "sem busca automática": sem ping toda TV aparecia
   // offline em Sistemas › TV's mesmo tocando, e o "Recarregar" não chegava.
-  // Volta só o tv_estado, a cada INTERVALO_PING_S (2 min, não mais 15 s), e o
+  // Volta só o tv_estado, a cada INTERVALO_PING_S (4 min, não mais 15 s), e o
   // cão de guarda abaixo. Reportar/batimento e conferência de versão seguem
   // fora (tv_reportar saiu do banco na mig 20261104001500).
   useEffect(() => {
     if (chaveFixa) gravarToken(chaveFixa);
     consultar();
-    // guardiao-ok: ping da TV a cada 2 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega)
+    // guardiao-ok: ping da TV a cada 4 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega)
     const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
     return () => window.clearInterval(t);
   }, [consultar]);
