@@ -31,6 +31,9 @@ prometheus.exporter.cadvisor "containers" {
   docker_host      = "unix:///var/run/docker.sock"
   docker_only      = true
   storage_duration = "2m"
+  // Só CPU e memória: o cAdvisor solta ~190 séries POR container; com ~15
+  // containers nos dois nós isso sozinho estouraria as 10 mil do plano grátis.
+  enabled_metrics  = ["cpu", "memory"]
 }
 
 prometheus.exporter.postgres "banco" {
@@ -57,11 +60,15 @@ prometheus.scrape "nos" {
   forward_to      = [prometheus.relabel.no.receiver]
 }
 
-// cadvisor solta métrica por cgroup do sistema também; fica só o que é container
+// cadvisor solta métrica por cgroup do sistema também; fica só o que é container.
+// O __name__ no meio da regra não é enfeite: sem ele ela descartava TAMBÉM o
+// "up" do próprio cAdvisor (que não tem nome de container). Foi isso que
+// escondeu, até 04/11/2026, que o coletor não enxergava container nenhum —
+// o painel ficava vazio e nenhum alvo aparecia como caído.
 prometheus.relabel "no" {
   rule {
-    source_labels = ["job", "name"]
-    regex         = "integrations/cadvisor;"
+    source_labels = ["job", "__name__", "name"]
+    regex         = "integrations/cadvisor;container_.*;"
     action        = "drop"
   }
   rule {

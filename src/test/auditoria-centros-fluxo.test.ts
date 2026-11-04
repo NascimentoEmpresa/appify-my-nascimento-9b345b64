@@ -99,3 +99,52 @@ describe("totaisCentrosFluxo — Contratos igual à Lucratividade, o resto em 'f
     expect(antigo.contratosForaLucratividade).toBe(0);
   });
 });
+
+// SIS-2026-0802: "Contratos fora da Lucratividade" explodiu em centros próprios e entrou "Outras Movimentações Financeiras" no saldo utilizável.
+describe("totaisCentrosFluxo — estoque, investimentos, obras, tributos e outras movimentações financeiras", () => {
+  const tipo = (id: string): TipoCentro =>
+    ({ est: "estoque", inv: "investimento", obra: "obra", mov: "movimentacao_financeira", adm: "administrativo", socio: "socio" } as Record<string, TipoCentro>)[id] ?? "contrato";
+  const tributo = (l: LinhaFluxoAud) => /IRPJ|CSLL/.test(l.classificacao_nome ?? "");
+  const fluxo = [
+    L({ valor: 1000, contrato_id: "c1", classificacao_nome: "SALARIO" }),
+    L({ valor: 300, contrato_id: "est" }),
+    L({ valor: 200, contrato_id: "inv" }),
+    L({ valor: 100, contrato_id: "obra" }),
+    L({ valor: 50, classificacao_nome: "IRPJ" }),
+    L({ valor: 40, classificacao_id: "cADM", classificacao_nome: "ENERGIA" }),
+    L({ valor: 500, contrato_id: "mov", classificacao_nome: "CHEQUE ESPECIAL" }),
+    L({ valor: 700, contrato_id: "mov", classificacao_nome: "APLICAÇÃO FINANCEIRA" }),
+    L({ valor: 900, contrato_id: "mov", classificacao_nome: "TRANSFERÊNCIA ENTRE CONTAS" }),
+    L({ valor: 70, contrato_id: "c1", classificacao_nome: "FINANCIAMENTOS" }),
+  ];
+  const conta = (l: LinhaFluxoAud) => l.classificacao_nome !== "FINANCIAMENTOS";
+  const p = totaisCentrosFluxo(fluxo, tipo, tipoClass, responsaveis, nenhum, conta, tributo);
+
+  it("cada centro recebe o seu valor e o tributo sai do administrativo", () => {
+    expect([p.estoque, p.investimentos, p.obras, p.tributosResultado, p.administrativo]).toEqual([300, 200, 100, 50, 40]);
+    expect(p.contratos).toBe(1000);
+    expect(p.contratosForaLucratividade).toBe(70);
+  });
+  it("outras movimentações = centro Movimentações Financeiras sem aplicação nem transferência; saem do saldo utilizável", () => {
+    expect(p.outrasMovimentacoes).toBe(500);
+    expect(p.aplicacoes).toBe(700);
+    expect(p.transferencias).toBe(900);
+    expect(p.saldoUtilizavel).toBe(p.saidaTotal - 700 - 900 - 500);
+  });
+  it("tudo distribuído: falta distribuir zera", () => {
+    expect(p.faltaDistribuir).toBe(0);
+  });
+});
+
+describe("totaisCentrosFluxo — composição das linhas novas (3 maiores)", () => {
+  const tipo = (id: string): TipoCentro => (id === "inv" ? "investimento" : "contrato");
+  const fluxo = [10, 50, 30, 20, 40].map((v, i) => L({ valor: v, contrato_id: "inv", despesa_id: `d${i}`, id_malote: `DM-${i}`, descricao: `item ${i}` }));
+  fluxo.push(L({ valor: 5, contrato_id: "inv", despesa_id: "d1", id_malote: "DM-1" })); // rateio do mesmo lançamento soma
+  const p = totaisCentrosFluxo(fluxo, tipo, tipoClass, responsaveis, nenhum, () => true, () => false, () => "INVESTIMENTOS HAGG");
+  it("guarda os 3 maiores, agrupa o rateio e informa a quantidade total", () => {
+    expect(p.composicao.investimentos.qtd).toBe(5);
+    expect(p.composicao.investimentos.itens.map((i) => i.valor)).toEqual([55, 40, 30]);
+    expect(p.composicao.investimentos.itens[0]).toMatchObject({ numero: "DM-1", contrato: "INVESTIMENTOS HAGG" });
+    expect(p.composicao.estoque).toEqual({ qtd: 0, itens: [] });
+  });
+});

@@ -6,7 +6,7 @@ import { agruparFaturamento, ehContratoAdministrativo, rubricaDaLinha, totaisVaz
 import { tratamentoEfetivo } from "../faturamento/tratamentoContrato";
 import { useLigacoesRubrica } from "../faturamento/useLigacoesRubrica";
 import { useTratamentosContrato } from "../faturamento/useTratamentosContrato";
-import { socioDoContrato } from "../fechamento/regras";
+import { ehTributoSobreResultado, socioDoContrato } from "../fechamento/regras";
 import { useBaseFaturamento } from "../faturamento/useBaseFaturamento";
 import {
   centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, TipoCentro, TipoValidacao, TotaisCard,
@@ -15,6 +15,7 @@ import {
 import { BasePeriodo, linhasMalote, useConciliadoMes, useMaloteCentrosMes, useFluxoMes, useMaloteDiretoMes, useOrcadoRealizado } from "./useAuditoriaDados";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const semAcento = (s: string | null | undefined) => (s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
 
 export interface EstadoCard {
   carregando: boolean;
@@ -102,19 +103,29 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
       const tipoDoContrato = (id: string): TipoCentro => {
         const nome = base.contratoPorId.get(id)?.nome;
         if (socioDoContrato(nome)) return "socio";
-        return ehContratoAdministrativo(nome) ? "administrativo" : "contrato";
+        if (ehContratoAdministrativo(nome)) return "administrativo";
+        // SIS-2026-0802: o que a Lucratividade não conta como contrato vira centro próprio, pelo tratamento efetivo do contrato (exceção gravada ou nome).
+        const t = tratamentoEfetivo(nome, tratamentos?.get(id));
+        if (t === "investimento") return "investimento";
+        if (t === "obra_administrativa") return "obra";
+        if (t === "fora_das_despesas") {
+          const n = semAcento(nome);
+          if (n.startsWith("ESTOQUE")) return "estoque";
+          if (n.startsWith("MOVIMENTACAO FINANCEIRA")) return "movimentacao_financeira";
+        }
+        return "contrato";
       };
       const contaNaLucratividade = (l: { contrato_id: string | null; classificacao_id?: string | null; classificacao_nome: string | null }) => {
         const nome = l.contrato_id ? base.contratoPorId.get(l.contrato_id)?.nome : null;
         if (tratamentoEfetivo(nome, l.contrato_id ? tratamentos?.get(l.contrato_id) : null) !== "normal") return false;
         return rubricaDaLinha({ classificacao_id: l.classificacao_id ?? null, classificacao_nome: l.classificacao_nome }, ligacoes) !== null;
       };
-      const p = totaisCentrosFluxo(fluxoQ.data, tipoDoContrato, centrosQ.data.tipoPorClassificacao, centrosQ.data.responsaveisPorClassificacao, f, contaNaLucratividade);
+      const p = totaisCentrosFluxo(fluxoQ.data, tipoDoContrato, centrosQ.data.tipoPorClassificacao, centrosQ.data.responsaveisPorClassificacao, f, contaNaLucratividade, (l) => ehTributoSobreResultado(l, ligacoes), (id) => base.contratoPorId.get(id)?.nome);
       t3 = {
         painel: p,
         a: p.saldoUtilizavel,
-        b: r2(p.contratos + p.contratosForaLucratividade + p.administrativo + p.socios),
-        aviso: "Saldo utilizável = saída total do Fluxo − aplicações financeiras − transferências entre contas. O que não está em contrato, administrativo nem sócios fica em \"falta distribuir\".",
+        b: r2(p.contratos + p.contratosForaLucratividade + p.administrativo + p.socios + p.estoque + p.investimentos + p.obras + p.tributosResultado),
+        aviso: "Saldo utilizável = saída total do Fluxo − aplicações financeiras − transferências entre contas − outras movimentações financeiras. O que não está em contrato, administrativo nem sócios fica em \"falta distribuir\".",
       };
     }
 
