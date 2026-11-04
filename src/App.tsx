@@ -233,6 +233,12 @@ import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
 // Solicitação de Treinamento (mig 20261026000910): o encarregado pede, Treinamentos decide.
 import SolicitarTreinamento from "./pages/encarregados/SolicitarTreinamento";
 import SolicitacoesTreinamento from "./pages/treinamentos/SolicitacoesTreinamento";
+// Treinamentos por Contrato (mig 20261104006000): empresa → contrato → treinamento.
+import TreinamentosContratos from "./pages/treinamentos/contratos/TreinamentosContratos";
+import ContratoTreinamentos from "./pages/treinamentos/contratos/ContratoTreinamentos";
+import TreinamentoContratoPagina from "./pages/treinamentos/contratos/TreinamentoContrato";
+import RelatorioTreinamentoContrato from "./pages/treinamentos/contratos/RelatorioTreinamento";
+import RelatoriosTreinamentosContrato from "./pages/treinamentos/contratos/RelatoriosTreinamentosContrato";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
@@ -1054,6 +1060,11 @@ const App = () => (
             <Route path="treinamentos" element={<TreinamentosDashboard />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
             <Route path="treinamentos/solicitacoes" element={<SolicitacoesTreinamento />} />
+            <Route path="treinamentos/contratos" element={<TreinamentosContratos />} />
+            <Route path="treinamentos/contratos/relatorios" element={<RelatoriosTreinamentosContrato />} />
+            <Route path="treinamentos/contratos/treinamento/:id" element={<TreinamentoContratoPagina />} />
+            <Route path="treinamentos/contratos/treinamento/:id/relatorio" element={<RelatorioTreinamentoContrato />} />
+            <Route path="treinamentos/contratos/:empresa/:filial" element={<ContratoTreinamentos />} />
             <Route path="treinamentos/alunos" element={<TrnAlunosLista />} />
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}

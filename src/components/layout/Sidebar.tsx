@@ -827,6 +827,16 @@ const treinamentosModule: ModuleDef = {
       ],
     },
     {
+      // Treinamentos presenciais por empresa/contrato (mig 20261104006000):
+      // fotos, lista de presença, avaliações, satisfação e relatórios.
+      label: "Por contrato",
+      defaultOpen: true,
+      items: [
+        { label: "Treinamentos por Contrato", to: "/app/treinamentos/contratos", icon: Building2 },
+        { label: "Relatórios", to: "/app/treinamentos/contratos/relatorios", icon: BarChart3 },
+      ],
+    },
+    {
       label: "Alunos",
       defaultOpen: true,
       items: [
