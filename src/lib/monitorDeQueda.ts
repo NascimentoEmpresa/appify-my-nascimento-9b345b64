@@ -18,10 +18,32 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 //      sistema_saude() (o PostgREST responde 503 quando não alcança o banco).
 //      Só com DUAS falhas seguidas, 3 s de intervalo, o estado vira "fora".
 //      Um 500 de uma RPC com bug não passa daqui, porque a saúde responde ok;
-//   3. com o estado "fora", testa de novo a cada 15 s e, quando responde,
-//      RECARREGA a página: perfil, permissões e menu vêm do zero, em vez de
-//      ficar com o estado vazio da janela de queda.
+//   3. com o estado "fora", testa de novo (ver "03/11/2026" abaixo) e, quando
+//      responde, RECARREGA a página: perfil, permissões e menu vêm do zero, em
+//      vez de ficar com o estado vazio da janela de queda.
 // Edge Functions ficam de fora: 5xx delas é erro da função, não queda.
+//
+// 03/11/2026 — O PRÓPRIO MONITOR SEGURAVA A QUEDA (post-mortem em
+// docs/incidentes/2026-11-03-post-mortem.md, causa C3)
+// Até aqui o reteste era a cada 15 s FIXOS e, no primeiro sucesso, a aba
+// recarregava NA HORA. Todas as abas do ERP entram em queda no mesmo segundo
+// (é o mesmo PostgREST caindo), então testavam em fase e, quando o servidor
+// voltava, recarregavam JUNTAS — inclusive as abas em segundo plano que
+// ninguém estava olhando. Cada recarga é o boot inteiro (perfil, sessão,
+// permissões, menu, notificações). Medido no log do Kong: o boot foi de
+// ~15/min para 1.674/min às 14:22 UTC e 1.990/min às 19:03 UTC, e esse pico
+// derrubava o servidor que tinha acabado de voltar. Três quedas de 10 a 25
+// minutos naquele dia foram esse ciclo.
+// Agora:
+//   - o reteste espera mais a cada falha (15 → 30 → 60 → 120 s, teto) e cada
+//     espera é sorteada entre 50 % e 150 % — as abas saem de fase;
+//   - quando o servidor volta, a aba visível recarrega depois de um sorteio
+//     de até ATRASO_MAX_RECARGA_MS, não no mesmo segundo que todas as outras;
+//   - a aba em segundo plano NÃO recarrega: espera o usuário voltar a ela.
+//     A maioria das abas abertas está escondida, e essas não precisam de nada
+//     até alguém olhar para elas;
+//   - o botão "Recarregar" continua imediato: é uma pessoa pedindo, não uma
+//     multidão de temporizadores.
 //
 // ?simular-queda=1 na URL mostra a tela sem queda real (apresentação e
 // conferência visual). Não muda nada no servidor.
@@ -30,8 +52,25 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 export type EstadoDoSistema = "ok" | "verificando" | "fora";
 
 const INTERVALO_REVERIFICACAO_MS = 15_000;
+const INTERVALO_REVERIFICACAO_MAX_MS = 120_000;
+const ATRASO_MAX_RECARGA_MS = 20_000;
 const INTERVALO_CONFIRMACAO_MS = 3_000;
 const TEMPO_LIMITE_SAUDE_MS = 8_000;
+
+/**
+ * Espera antes do próximo reteste: dobra a cada falha até o teto e é sorteada
+ * entre 50 % e 150 % do valor, para as abas não testarem em fase.
+ * `sorteio` em [0, 1) — parâmetro para o teste poder fixar.
+ */
+export function intervaloReverificacao(falhas: number, sorteio = Math.random()): number {
+  const base = Math.min(INTERVALO_REVERIFICACAO_MS * 2 ** Math.max(0, falhas), INTERVALO_REVERIFICACAO_MAX_MS);
+  return Math.round(base * (0.5 + sorteio));
+}
+
+/** Quanto a aba visível espera para recarregar depois que o servidor volta. */
+export function atrasoDeRecarga(sorteio = Math.random()): number {
+  return Math.round(ATRASO_MAX_RECARGA_MS * sorteio);
+}
 
 let estado: EstadoDoSistema = "ok";
 let proximaVerificacaoEm: number | null = null;
@@ -39,6 +78,8 @@ let simulado = false;
 let instalado = false;
 let fetchOriginal: typeof window.fetch | null = null;
 let reverificacao: ReturnType<typeof setTimeout> | null = null;
+let falhasSeguidas = 0;
+let recargaAgendada = false;
 const ouvintes = new Set<() => void>();
 
 function mudar(novo: EstadoDoSistema) {
@@ -94,9 +135,38 @@ const esperar = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
 function agendarReverificacao() {
   if (reverificacao) clearTimeout(reverificacao);
-  proximaVerificacaoEm = Date.now() + INTERVALO_REVERIFICACAO_MS;
+  const espera = intervaloReverificacao(falhasSeguidas);
+  falhasSeguidas++;
+  proximaVerificacaoEm = Date.now() + espera;
   ouvintes.forEach((fn) => fn());
-  reverificacao = setTimeout(() => void verificarAgora(false), INTERVALO_REVERIFICACAO_MS);
+  reverificacao = setTimeout(() => void verificarAgora(false), espera);
+}
+
+const abaEscondida = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+
+/**
+ * O servidor voltou e quem descobriu foi o temporizador, não uma pessoa.
+ * Aba visível: recarrega depois de um sorteio. Aba escondida: só quando o
+ * usuário voltar a ela (ver "03/11/2026" no topo).
+ */
+function recarregarSemManada() {
+  if (recargaAgendada) return;
+  recargaAgendada = true;
+  if (abaEscondida()) {
+    proximaVerificacaoEm = null;
+    ouvintes.forEach((fn) => fn());
+    const aoVoltar = () => {
+      if (abaEscondida()) return;
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.location.reload();
+    };
+    document.addEventListener("visibilitychange", aoVoltar);
+    return;
+  }
+  const atraso = atrasoDeRecarga();
+  proximaVerificacaoEm = Date.now() + atraso;
+  ouvintes.forEach((fn) => fn());
+  setTimeout(() => window.location.reload(), atraso);
 }
 
 /**
@@ -114,8 +184,12 @@ export async function verificarAgora(manual = true): Promise<boolean> {
   }
   const ok = await servidorRespondendo();
   if (ok) {
-    proximaVerificacaoEm = null;
-    window.location.reload();
+    if (manual) {
+      proximaVerificacaoEm = null;
+      window.location.reload();
+    } else {
+      recarregarSemManada();
+    }
     return true;
   }
   agendarReverificacao();
@@ -129,6 +203,7 @@ async function suspeitar() {
   await esperar(INTERVALO_CONFIRMACAO_MS);
   if (await servidorRespondendo()) { mudar("ok"); return; }
   mudar("fora");
+  falhasSeguidas = 0;
   agendarReverificacao();
 }
 

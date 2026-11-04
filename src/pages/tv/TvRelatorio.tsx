@@ -156,8 +156,9 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
     }, () => { /* sem rede: a próxima volta tenta de novo */ });
     const c = CACHE.get(item.id);
     if (c && Date.now() - c.em < VALIDADE_MS) setDados(c.dados); else buscar();
-    const t = window.setInterval(buscar, VALIDADE_MS);
-    return () => { vivo = false; window.clearInterval(t); };
+    // 03/11/2026: a reconsulta a cada VALIDADE_MS saiu (TV sem busca
+    // automática, ver TvPlayer.tsx). Os números são os de quando a TV abriu.
+    return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, token, previa, chavePrevia]);
 

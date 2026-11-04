@@ -309,6 +309,11 @@ const suprimentosModule: ModuleDef = {
         { label: "Dashboard de Compras", to: "/app/suprimentos/dashboard", icon: BarChart3, badge: "Novo" },
         // SIS-2026-0599: o que comprar para um contrato que está começando.
         { label: "Início de Contrato", to: "/app/suprimentos/inicio-de-contrato", icon: ShoppingCart },
+        // SIS-2026-0769: o que saiu do estoque para cada contrato, mês a mês.
+        // A linha em app_menu não basta para o item existir: a sidebar é esta
+        // lista, e canSee() só FILTRA o que já está aqui. Tela nova sem linha
+        // aqui fica alcançável apenas por URL direta.
+        { label: "Saídas por Contrato", to: "/app/suprimentos/saidas-por-contrato", icon: FileText, novoDesde: "2026-11-03" },
       ],
     },
     {

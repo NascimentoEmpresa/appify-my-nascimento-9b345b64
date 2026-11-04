@@ -1,0 +1,154 @@
+// ============================================================================
+//  GRAFANA ALLOY — o agente que manda métricas e logs dos nós ao Grafana Cloud
+//  (item 8, 03/11/2026). Instalado por infra/observabilidade/instalar-alloy.sh
+//  em /etc/alloy/config.alloy nos DOIS nós; as variáveis vêm de
+//  /etc/default/alloy (gerado pelo instalador, nunca no git).
+//
+//  O que sai daqui, e para responder o quê:
+//    máquina (node)      CPU, carga, memória, disco, rede   -> "o nó está no limite?"
+//    containers          CPU/memória de cada serviço da pilha -> "quem está comendo a CPU?"
+//                        (o que faltou no post-mortem de 03/11: sar não separa por processo)
+//    postgrest /metrics  pool disponível/esperando/timeouts, recargas de schema
+//                        -> as causas C1 e C2 do post-mortem, AO VIVO
+//    patroni /metrics    líder, lag, timeline -> "trocou de líder? a réplica está junto?"
+//    postgres            conexões, transações, locks, tamanho -> pelo exporter
+//    logs do kong        toda requisição com status e tempo (rt=) -> painéis por rota via LogQL
+//    logs do postgrest   PGRST003, schema cache, reconexões
+//    journal do patroni  o log do Postgres (statement timeout, FATAL, ERROR)
+//
+//  Cuidado com cardinalidade (o plano grátis tem 10 mil séries): nada de rota
+//  ou usuário como RÓTULO de métrica. Rota se extrai do log na hora da consulta.
+// ============================================================================
+
+logging { level = "warn" }
+
+// ── métricas ─────────────────────────────────────────────────────────────────
+prometheus.exporter.unix "maquina" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "diskstats", "netdev", "pressure", "uname", "time", "stat"]
+}
+
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "2m"
+}
+
+prometheus.exporter.postgres "banco" {
+  data_source_names = [sys.env("PG_MONITOR_DSN")]
+  autodiscovery { enabled = false }
+  // Só o que o painel usa. Os coletores POR TABELA (stat_user_tables,
+  // statio_user_tables) ficam desligados: na primeira instalação (03/11/2026)
+  // o stat_user_tables estourou o limite de 5 s do papel monitor nas ~800
+  // tabelas, e geraria milhares de séries — o plano grátis tem 10 mil.
+  enabled_collectors = ["database", "locks", "replication", "replication_slot", "stat_bgwriter", "stat_database", "long_running_transactions"]
+}
+
+prometheus.scrape "nos" {
+  targets = array.concat(
+    prometheus.exporter.unix.maquina.targets,
+    prometheus.exporter.cadvisor.containers.targets,
+    prometheus.exporter.postgres.banco.targets,
+    [
+      {"__address__" = "127.0.0.1:3001", "job" = "postgrest"},
+      {"__address__" = sys.env("IP_TUNEL") + ":8008", "job" = "patroni"},
+    ],
+  )
+  scrape_interval = "30s"
+  forward_to      = [prometheus.relabel.no.receiver]
+}
+
+// cadvisor solta métrica por cgroup do sistema também; fica só o que é container
+prometheus.relabel "no" {
+  rule {
+    source_labels = ["job", "name"]
+    regex         = "integrations/cadvisor;"
+    action        = "drop"
+  }
+  rule {
+    target_label = "no"
+    replacement  = sys.env("NO")
+  }
+  forward_to = [prometheus.remote_write.grafana.receiver]
+}
+
+prometheus.remote_write "grafana" {
+  endpoint {
+    url = sys.env("GC_PROM_URL")
+    basic_auth {
+      username = sys.env("GC_PROM_USER")
+      password = sys.env("GC_TOKEN")
+    }
+  }
+}
+
+// ── logs ─────────────────────────────────────────────────────────────────────
+discovery.docker "pilha" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "pilha" {
+  targets = discovery.docker.pilha.targets
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/erp-pilha-(.*)-1"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/erp-pilha-(.*)-1"
+    target_label  = "servico"
+  }
+}
+
+loki.source.docker "pilha" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.pilha.output
+  forward_to = [loki.process.pilha.receiver]
+}
+
+loki.process "pilha" {
+  // Kong: status como rótulo (poucos valores); o resto fica no texto da linha.
+  stage.match {
+    selector = "{servico=\"kong\"}"
+    stage.regex {
+      expression = "\" (?P<status>[0-9]{3}) [0-9-]+ \""
+    }
+    stage.template {
+      source   = "classe"
+      template = "{{ if .status }}{{ printf \"%.1s\" .status }}xx{{ end }}"
+    }
+    stage.labels {
+      values = { classe = "" }
+    }
+    // preflight do navegador não é tráfego de verdade: 40 % das linhas, nenhum valor
+    stage.drop {
+      expression = "\"OPTIONS /"
+    }
+  }
+  forward_to = [loki.write.grafana.receiver]
+}
+
+loki.source.journal "postgres" {
+  matches    = "_SYSTEMD_UNIT=patroni.service"
+  labels     = {servico = "postgres"}
+  forward_to = [loki.process.postgres.receiver]
+}
+
+// "no action. I am the leader" sai a cada 5 s e não diz nada
+loki.process "postgres" {
+  stage.drop {
+    expression = "no action\\. I am"
+  }
+  forward_to = [loki.write.grafana.receiver]
+}
+
+loki.write "grafana" {
+  endpoint {
+    url = sys.env("GC_LOKI_URL")
+    basic_auth {
+      username = sys.env("GC_LOKI_USER")
+      password = sys.env("GC_TOKEN")
+    }
+  }
+  external_labels = {no = sys.env("NO")}
+}

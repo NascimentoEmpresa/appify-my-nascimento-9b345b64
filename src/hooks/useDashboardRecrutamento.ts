@@ -22,8 +22,7 @@ export function useDashboardRecrutamento() {
       return desempacotar(data);
     },
     staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
-    refetchOnWindowFocus: true,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
   });
 }
 
@@ -41,6 +40,6 @@ export function useTempoStatusResponsavel(faixa: [string | null, string | null])
       return desempacotarPassagens(data);
     },
     staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
   });
 }

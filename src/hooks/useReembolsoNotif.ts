@@ -60,8 +60,7 @@ export function useReembolsoNotif(): ReembolsoNotif {
     // do reinício do Postgres por esgotamento de conexões — roda na Sidebar,
     // logo em toda tela de todo usuário logado. Quem aprova continua vendo o
     // efeito da própria ação na hora, porque a mutation invalida a query.
-    refetchInterval: 180_000,
-    refetchOnWindowFocus: true,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
   });
 
   return data ?? VAZIO;

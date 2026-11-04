@@ -9,6 +9,7 @@ import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 import { resumoDaTroca, ROTULO_TIPO, type TipoTroca } from "@/lib/trocaFuncao/solicitacao";
 import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -236,11 +237,11 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
       if (vivo) setFicha(data ?? null);
     })();
     carregarMsgs();
-    // O outro lado responde enquanto a tela está aberta; sem isto a resposta
-    // só apareceria no próximo F5.
-    const t = setInterval(carregarMsgs, 8000);
-    return () => { vivo = false; clearInterval(t); };
+    // Releitura a cada 8 s até 03/11/2026. Agora: ao abrir, depois de enviar
+    // e no botão "Atualizar" da barra do topo (src/lib/atualizarTela.ts).
+    return () => { vivo = false; };
   }, [tabelaFicha, id, carregarMsgs]);
+  useAoPedirAtualizacao(carregarMsgs);
 
   useEffect(() => { fimRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs.length]);
 

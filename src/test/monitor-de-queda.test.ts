@@ -74,3 +74,80 @@ describe("monitor de queda", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 });
+
+// 03/11/2026: o reteste em 15 s fixos + recarga imediata fazia todas as abas
+// recarregarem juntas quando o servidor voltava — e derrubavam de novo
+// (docs/incidentes/2026-11-03-post-mortem.md, C3). Estes testes travam a
+// dessincronização.
+describe("monitor de queda — sem recarga em manada", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  it("o reteste dobra a cada falha até 120 s e é sorteado entre 50% e 150%", async () => {
+    const m = await import("@/lib/monitorDeQueda");
+    expect(m.intervaloReverificacao(0, 0.5)).toBe(15_000);
+    expect(m.intervaloReverificacao(1, 0.5)).toBe(30_000);
+    expect(m.intervaloReverificacao(2, 0.5)).toBe(60_000);
+    expect(m.intervaloReverificacao(3, 0.5)).toBe(120_000);
+    expect(m.intervaloReverificacao(10, 0.5)).toBe(120_000);
+    expect(m.intervaloReverificacao(0, 0)).toBe(7_500);
+    expect(m.intervaloReverificacao(0, 0.999)).toBeLessThan(22_500);
+  });
+
+  it("100 abas sorteando o reteste se espalham por mais de 10 s (antes: todas no mesmo instante)", async () => {
+    const m = await import("@/lib/monitorDeQueda");
+    const esperas = Array.from({ length: 100 }, () => m.intervaloReverificacao(0));
+    expect(Math.max(...esperas) - Math.min(...esperas)).toBeGreaterThan(10_000);
+  });
+
+  function trocarRecarga() {
+    const reload = vi.fn();
+    const original = window.location;
+    Object.defineProperty(window, "location", { configurable: true, value: { ...original, reload, pathname: "/", search: "", href: "https://app.teste/" } });
+    return { reload, restaurar: () => Object.defineProperty(window, "location", { configurable: true, value: original }) };
+  }
+  function visibilidade(v: "visible" | "hidden") {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => v });
+  }
+
+  it("aba VISÍVEL: o servidor volta e a recarga espera um sorteio, não acontece no mesmo segundo", async () => {
+    const { reload, restaurar } = trocarRecarga();
+    visibilidade("visible");
+    let fora = true;
+    const m = await carregar(fetchFalso(() => (fora ? { status: 503 } : { status: 200 }), () => ({ status: 503 })));
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    await window.fetch("https://banco.teste/rest/v1/x");
+    await vi.advanceTimersByTimeAsync(3_500);
+    expect(m.monitorDeQueda.estado()).toBe("fora");
+    fora = false;
+    await vi.advanceTimersByTimeAsync(15_000); // reteste (sorteio 0.5 => 15 s) responde
+    expect(reload).not.toHaveBeenCalled();       // ainda esperando o sorteio da recarga (10 s)
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reload).toHaveBeenCalledTimes(1);
+    restaurar();
+  });
+
+  it("aba ESCONDIDA: o servidor volta e ela NÃO recarrega até o usuário voltar para ela", async () => {
+    const { reload, restaurar } = trocarRecarga();
+    visibilidade("hidden");
+    let fora = true;
+    const m = await carregar(fetchFalso(() => (fora ? { status: 503 } : { status: 200 }), () => ({ status: 503 })));
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    await window.fetch("https://banco.teste/rest/v1/x");
+    await vi.advanceTimersByTimeAsync(3_500);
+    fora = false;
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(reload).not.toHaveBeenCalled();
+    visibilidade("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(reload).toHaveBeenCalledTimes(1);
+    restaurar();
+  });
+
+  it("o botão Recarregar (manual) continua imediato", async () => {
+    const { reload, restaurar } = trocarRecarga();
+    visibilidade("visible");
+    const m = await carregar(fetchFalso(() => ({ status: 200 }), () => ({ status: 200 })));
+    await m.verificarAgora(true);
+    expect(reload).toHaveBeenCalledTimes(1);
+    restaurar();
+  });
+});

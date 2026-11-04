@@ -99,7 +99,7 @@ export default function WhatsAppInbox() {
   const { data: conversas = [] } = useQuery({
     queryKey: ["wa-conversas"],
     enabled: podeVer,
-    refetchInterval: 8000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       // O contato vem EMBUTIDO, pela FK WA_CONVERSA_contato_id_fkey. Uma
       // requisição, não 31.
@@ -209,7 +209,7 @@ export default function WhatsAppInbox() {
   const { data: mensagens = [] } = useQuery({
     queryKey: ["wa-mensagens", selId],
     enabled: podeVer && !!selId,
-    refetchInterval: 5000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data } = await (supabase as any).from("WA_MENSAGEM")
         .select("*").eq("conversa_id", selId).order("criada_em", { ascending: true });

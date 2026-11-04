@@ -27,6 +27,7 @@ import { EnviosEncarregados } from "./EnviosEncarregados";
 import { toast } from "sonner";
 import { EtiquetaConferencia, TABELA_ETIQUETA, type Etiqueta } from "./EtiquetaConferencia";
 import { cn } from "@/lib/utils";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 const sb = supabase as any;
 
@@ -172,11 +173,12 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
   // Se o Realtime subir um dia, isto volta a ser um canal — mas leia antes o
   // comentário de `useSupCatalogo.ts`, que explica o que cada canal custa em
   // conexões num banco com poucas vagas livres.
-  useEffect(() => {
-    carregarEtiquetas();
-    const t = window.setInterval(carregarEtiquetas, 20_000);
-    return () => window.clearInterval(t);
-  }, [carregarEtiquetas, mes]);
+  //
+  // 03/11/2026: a releitura de 20 s também saiu (requisição só quando o
+  // usuário pede — src/lib/atualizarTela.ts). Quem quer ver quem está
+  // conferindo agora clica em "Atualizar" na barra do topo.
+  useEffect(() => { carregarEtiquetas(); }, [carregarEtiquetas, mes]);
+  useAoPedirAtualizacao(carregarEtiquetas);
 
   /** O cadastro + o andamento do mês, na mesma linha. */
   const juntas: LinhaConferencia[] = useMemo(() => {

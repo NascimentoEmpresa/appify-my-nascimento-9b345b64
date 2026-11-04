@@ -44,8 +44,7 @@ export function useJuridicoNotif(): JuridicoNotif {
     queryKey: ["juridico-notif", !!aprovaDuvida, !!respondeDuvida, !!aprovaAdv, !!alteraAdv],
     enabled: algum,
     staleTime: 60_000,
-    refetchOnWindowFocus: true,
-    refetchInterval: 5 * 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async (): Promise<JuridicoNotif> => {
       const [duv, comp, adv] = await Promise.all([
         (aprovaDuvida || respondeDuvida)

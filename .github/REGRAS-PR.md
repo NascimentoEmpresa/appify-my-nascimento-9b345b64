@@ -389,6 +389,24 @@ nome. Cobrar a história inteira deixaria todo merge vermelho.
 
 ---
 
+## J9 — Desempenho: o que o guardião não pega (03/11/2026)
+
+O job `guardiao` (`.github/workflows/qualidade.yml`) já REPROVA polling, Realtime,
+lista sem limite e `select("*")` em tabela grande, `Promise.all` de N requisições,
+policy com função por linha e FK sem índice — não repita esses achados aqui. O que
+fica para o revisor, porque exige entender a tela:
+
+- **Total/KPI calculado no navegador** sobre uma lista inteira (`reduce`, `filter`
+  sobre milhares de linhas para somar). Pede RPC que devolve o agregado. Foi a raiz
+  da Fluxo de Caixa de 17,9 MB.
+- **Consulta nova filtrando por coluna sem índice** em tabela grande
+  (`.github/tabelas-grandes.json`). Pede o `CREATE INDEX` na mesma PR.
+- **RPC ou consulta dentro de laço** (`for`/`forEach` com `await supabase...`).
+- **Tela que relê dado de outra pessoa sozinha.** A regra do ERP é: só busca quando
+  o usuário pede (`src/lib/atualizarTela.ts`).
+
+Contexto: docs/incidentes/2026-11-03-post-mortem.md e docs/infra/pipeline-qualidade.md.
+
 ## Falsos positivos que o revisor NÃO pode acusar
 
 Tão importante quanto pegar erro é não gritar à toa. Revisor que dá alarme
