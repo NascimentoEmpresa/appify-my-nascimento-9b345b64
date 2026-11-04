@@ -75,6 +75,9 @@ export interface AplicacaoFinanceiraResgateCaixa {
   valor_principal: number;
   valor_rendimento: number;
   observacao: string | null;
+  // SIS-2026-0778: banco em que o resgate entrou (catálogo malote_cartao_banco). Sem ele o resgate não entra na Conciliação Bancária do banco.
+  // Nulo nos resgates anteriores à migration 20261104000700: informar editando o resgate.
+  banco_id?: string | null;
   created_by: string | null;
   created_at: string;
 }
@@ -266,6 +269,7 @@ export interface ResgatarMontanteInput {
   valorPrincipal: number;
   valorRendimento: number;
   observacao?: string | null;
+  bancoId?: string | null;
 }
 
 export function useResgatarMontanteAplicacao() {
@@ -278,6 +282,7 @@ export function useResgatarMontanteAplicacao() {
         _valor_principal: input.valorPrincipal,
         _valor_rendimento: input.valorRendimento,
         _observacao: input.observacao ?? null,
+        _banco_id: input.bancoId ?? null,
       });
       if (error) throw error;
       return data as string;
@@ -296,6 +301,8 @@ export interface EditarResgateInput {
   valorPrincipal: number;
   valorRendimento: number;
   observacao?: string | null;
+  // nulo preserva o banco já gravado
+  bancoId?: string | null;
 }
 
 // SIS-2026-0588: editar/excluir resgate direto nas Movimentações da tela.
@@ -309,6 +316,7 @@ export function useEditarResgate() {
         _valor_principal: input.valorPrincipal,
         _valor_rendimento: input.valorRendimento,
         _observacao: input.observacao ?? null,
+        _banco_id: input.bancoId ?? null,
       });
       if (error) throw error;
     },
