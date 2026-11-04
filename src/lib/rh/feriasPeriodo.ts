@@ -2,16 +2,22 @@
 // RH › Gestão de Férias — filtro de período (23/10/2026, pedido do Pablo:
 // filtrar por mês e por data de/até).
 //
+//   · "saida" (padrão desde 04/11/2026): a DATA DE SAÍDA cai dentro do
+//     intervalo — "quem sai de férias no mês". Reclamação do RH: no filtro
+//     01/01 a 31/07/2027 apareciam 135 pessoas que saíram em DEZEMBRO (ainda
+//     em gozo em janeiro), mais que as 113 que saem de fato no período.
 //   · "ferias": o período de gozo CRUZA o intervalo — saída ou retorno caindo
-//     dentro dele, ou as férias cobrindo-o inteiro. Quem sai em 20/01 e volta
-//     em 19/02 aparece tanto em janeiro quanto em fevereiro.
+//     dentro dele, ou as férias cobrindo-o inteiro ("quem está de férias no
+//     mês"). Quem sai em 20/01 e volta em 19/02 aparece em janeiro e em
+//     fevereiro. Era o único modo até 04/11/2026; continua como opção.
 //   · "criado": a data em que a solicitação entrou no sistema.
 //
-// Venda de dias (tipo "venda") não tem saída/retorno: no modo "ferias" ela sai
-// da lista enquanto houver período escolhido; no modo "criado" entra normal.
+// Venda de dias (tipo "venda") não tem saída/retorno: nos modos "saida" e
+// "ferias" ela sai da lista enquanto houver período escolhido; no modo
+// "criado" entra normal.
 // =====================================================================
 
-export type BasePeriodo = "ferias" | "criado";
+export type BasePeriodo = "saida" | "ferias" | "criado";
 
 export interface LinhaPeriodo {
   data_saida?: string | null;
@@ -42,6 +48,7 @@ export function passaNoPeriodo(r: LinhaPeriodo, base: BasePeriodo, de: string, a
   }
   const ini = diaLocal(r.data_saida);
   if (!ini) return false;
+  if (base === "saida") return (!de || ini >= de) && (!ate || ini <= ate);
   const fim = diaLocal(r.data_retorno) || ini;
   return (!ate || ini <= ate) && (!de || fim >= de);
 }

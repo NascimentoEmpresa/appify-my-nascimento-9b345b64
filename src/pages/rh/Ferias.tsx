@@ -115,7 +115,9 @@ export default function Ferias() {
   const [mes, setMes] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
-  const [basePeriodo, setBasePeriodo] = useState<BasePeriodo>("ferias");
+  // Padrão "saída no período" (04/11/2026): o RH quer quem SAI no mês; o
+  // "em férias no período" (cruza) ficou como opção — ver lib/rh/feriasPeriodo.
+  const [basePeriodo, setBasePeriodo] = useState<BasePeriodo>("saida");
   const temPeriodo = !!(de || ate);
   // Escolher o mês preenche De/Até; mexer em De/Até à mão desfaz o mês.
   const escolherMes = (v: string) => { setMes(v); setDe(v ? `${v}-01` : ""); setAte(v ? ultimoDiaDoMes(v) : ""); };
@@ -301,7 +303,8 @@ export default function Ferias() {
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "10px 14px" }}>
         {[
           ["Filtrar pela data", <select key="b" value={basePeriodo} onChange={e => setBasePeriodo(e.target.value as BasePeriodo)} style={inputData}>
-            <option value="ferias">Período das férias</option>
+            <option value="saida">Data de saída (sai no período)</option>
+            <option value="ferias">Em férias no período (inclui quem já saiu antes)</option>
             <option value="criado">Data da solicitação</option>
           </select>],
           ["Mês", <input key="m" type="month" value={mes} onChange={e => escolherMes(e.target.value)} style={inputData} />],
@@ -317,7 +320,7 @@ export default function Ferias() {
           <>
             <button onClick={limparPeriodo} style={{ padding: "7px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Limpar período</button>
             <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto" }}>
-              <b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) {basePeriodo === "ferias" ? "com férias" : "criadas"}{" "}
+              <b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) {basePeriodo === "saida" ? "com saída" : basePeriodo === "ferias" ? "com férias" : "criadas"}{" "}
               {de && ate ? `entre ${fmtDt(de)} e ${fmtDt(ate)}` : de ? `a partir de ${fmtDt(de)}` : `até ${fmtDt(ate)}`}
             </span>
           </>
