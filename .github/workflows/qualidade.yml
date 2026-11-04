@@ -1,0 +1,127 @@
+name: Qualidade (desempenho)
+
+# ============================================================================
+# 03/11/2026 — item 13 da revisão de infraestrutura.
+#
+# O ci.yml prova que o código COMPILA e que os testes PASSAM. Nada provava que
+# ele não derruba a produção: em 03/11/2026 caímos três vezes com código que
+# compilava e passava em tudo (post-mortem em docs/incidentes/). Este workflow
+# é o "QA que a empresa não tem", em dois jobs que reprovam a PR:
+#
+#   guardiao ........ regras determinísticas sobre as linhas ADICIONADAS
+#                     (.github/scripts/guardiao-desempenho.mjs): polling,
+#                     Realtime, lista sem limite em tabela grande, select * em
+#                     tabela grande, Promise.all de N requisições, policy com
+#                     função por linha, FK sem índice, SECURITY DEFINER sem
+#                     search_path. Rodado para trás nos commits que causaram
+#                     as quedas, ele teria barrado os três (ver o doc).
+#
+#   qa-requisicoes .. abre TODAS as telas da build da PR num navegador com a
+#                     API simulada, adianta o relógio em 10 minutos e reprova
+#                     a tela que buscar algo sozinha ou que gastar mais de 60
+#                     requisições para abrir (infra/qa/orcamento-requisicoes.mjs).
+#                     Não toca na produção.
+#
+# Para valer de verdade, os dois precisam ser OBRIGATÓRIOS na main:
+# Settings → Branches → main → Require status checks → "guardiao" e
+# "qa-requisicoes" (passo a passo em docs/infra/pipeline-qualidade.md).
+# ============================================================================
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: qualidade-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  # versão fixa: o page.clock (adiantar o relógio) existe desde a 1.45
+  PLAYWRIGHT_VERSION: '1.49.1'
+
+jobs:
+  guardiao:
+    name: guardiao
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Regras de desempenho nas linhas que a PR adiciona
+        run: node .github/scripts/guardiao-desempenho.mjs --base origin/${{ github.base_ref }}
+
+  qa-requisicoes:
+    name: qa-requisicoes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # PR só de migration/doc não muda o comportamento da tela: não gasta 10 min.
+      - name: A PR mexe no frontend?
+        id: mexe
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/|index.html|vite.config|package)'; then
+            echo "sim=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "PR sem mudança de frontend — QA de requisições não se aplica." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.mexe.outputs.sim
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Cache do node_modules
+        if: steps.mexe.outputs.sim
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - name: Instalar dependências
+        if: steps.mexe.outputs.sim && steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      # A build aponta para uma API que NÃO existe: o teste intercepta tudo.
+      # Se algum dia uma requisição escapar da interceptação, ela falha em vez
+      # de ir para a produção.
+      - name: Build apontando para a API falsa
+        if: steps.mexe.outputs.sim
+        env:
+          VITE_SUPABASE_URL: https://api.qa.invalid
+          VITE_SUPABASE_ANON_KEY: qa
+        run: npm run build
+
+      - name: Playwright
+        if: steps.mexe.outputs.sim
+        run: |
+          npm i --no-save --no-audit --no-fund playwright@${{ env.PLAYWRIGHT_VERSION }}
+          npx playwright install --with-deps chromium
+
+      - name: Abrir cada tela e contar requisições
+        if: steps.mexe.outputs.sim
+        run: |
+          npx vite preview --port 4173 --strictPort &
+          for i in $(seq 1 30); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
+          PLAYWRIGHT=playwright node infra/qa/orcamento-requisicoes.mjs --base http://localhost:4173 --paralelo 6 --saida orcamento.json
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.mexe.outputs.sim
+        with:
+          name: orcamento-requisicoes
+          path: orcamento.json
+          retention-days: 14

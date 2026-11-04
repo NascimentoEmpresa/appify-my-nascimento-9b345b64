@@ -55,6 +55,7 @@ import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
 import { erroDataInicio, hojeIso, inicioTrabalho, linhaInicioPedido, sugestaoDataInicio } from "@/lib/recrutamento/inicioTrabalho";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -755,6 +756,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const kbBoardRef = useRef<HTMLDivElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimer   = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Vaga com a conversa aberta: o botão "Atualizar" relê as mensagens dela.
+  const vagaAbertaMsgs = useRef<number | null>(null);
+  useAoPedirAtualizacao(async () => {
+    const id = vagaAbertaMsgs.current;
+    if (!id) return;
+    const { data: nm } = await sb
+      .from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at");
+    if (nm) setMsgs(nm);
+  });
 
   // ── Toast helper ─────────────────────────────────────────────
   const toast = useCallback((msg: string, type = "info") => {
@@ -1208,11 +1218,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (sol && (STATUS_PROCESSO.includes(sol.status) || vagaEncerrada(sol.status))) loadCandidatos(id);
     if (mensagens) setMsgs(mensagens);
 
-    pollTimer.current = setInterval(async () => {
-      const { data: nm } = await sb
-        .from("WA_MENSAGENS_RECRUTAMENTO").select("*").eq("solicitacao_id", id).order("created_at");
-      if (nm) setMsgs(nm);
-    }, 5000);
+    // Releitura das mensagens a cada 5 s: removida em 03/11/2026 — dado novo
+    // pelo botão "Atualizar" da barra do topo (src/lib/atualizarTela.ts).
+    vagaAbertaMsgs.current = id;
   }, [loadCandidatos]);
 
   // Link direto para uma vaga (?vaga=ID, 14/10/2026): é para onde a
@@ -1333,6 +1341,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setShowHistorico(false);
     setHistorico([]);
     if (pollTimer.current) clearInterval(pollTimer.current);
+    vagaAbertaMsgs.current = null;
     if (view === "kanban") loadKanban();
   };
 

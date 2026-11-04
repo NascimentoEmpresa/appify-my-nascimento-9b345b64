@@ -18,6 +18,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { lerMeuPerfil } from "@/lib/meuPerfil";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemoMode } from "@/context/DemoModeContext";
 import { menusForaDoConcedeTudo } from "@/lib/acesso";
@@ -155,11 +156,8 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
       // Cargo é só exibição (badge no perfil, filtro de UI) — nunca gate de acesso.
       const userRoles = ((rolesData ?? []).map((item) => item.role)) as Role[];
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("empresa_id, empresa_atual_id")
-        .eq("id", user.id)
-        .maybeSingle();
+      // Leitura compartilhada do boot (src/lib/meuPerfil.ts).
+      const profile = await lerMeuPerfil(user.id).catch(() => null);
 
       const activeEmpresaId = profile?.empresa_atual_id ?? profile?.empresa_id ?? null;
 

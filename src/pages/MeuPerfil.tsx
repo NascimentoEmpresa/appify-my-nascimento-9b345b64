@@ -1,3 +1,4 @@
+import { esquecerMeuPerfil } from "@/lib/meuPerfil";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Mail, Pencil, Smartphone, Save } from "lucide-react";
@@ -112,7 +113,7 @@ export default function MeuPerfil() {
     onSuccess: () => {
       setEditandoBio(false);
       toast.success("Descrição atualizada.");
-      qc.invalidateQueries({ queryKey: ["meu-perfil"] });
+      esquecerMeuPerfil(); qc.invalidateQueries({ queryKey: ["meu-perfil"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível salvar a descrição."),
   });

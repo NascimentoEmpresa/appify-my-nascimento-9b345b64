@@ -262,7 +262,6 @@ export function useStatusDevTelas(enabled = true) {
     // Falha NÃO vira "sem dados" guardado: em 02/10 a 1ª consulta rodou antes
     // da RPC existir, o null ficou 5 min no cache e o card não aparecia.
     staleTime: 60_000,
-    refetchOnWindowFocus: true,
     queryFn: async (): Promise<StatusDevTelas | null> => {
       const { data, error } = await sb.rpc("sis_status_dev_telas");
       if (error) throw error;

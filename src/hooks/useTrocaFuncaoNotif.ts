@@ -60,7 +60,6 @@ export function useTrocaFuncaoNotif(): TrocaFuncaoNotif {
       };
     },
     staleTime: 60_000,
-    refetchOnWindowFocus: true,
   });
 
   return data ?? VAZIO;

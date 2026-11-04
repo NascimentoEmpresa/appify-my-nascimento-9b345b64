@@ -374,7 +374,7 @@ export default function DashboardChamados() {
 
   const { data: devs = [] } = useQuery({
     queryKey: ["chamados-devs"],
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await (supabase as any).rpc("listar_desenvolvedores_chamados");
       if (error) throw error;
@@ -384,7 +384,7 @@ export default function DashboardChamados() {
 
   const { data: chamados = [], isLoading } = useQuery({
     queryKey: ["chamados-todos"],
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("CHAMADO_SISTEMA").select("*").order("created_at", { ascending: false });
@@ -396,7 +396,7 @@ export default function DashboardChamados() {
   // Avaliações: aqui só interessam as estrelas (média ponderada por dev).
   const { data: avaliacoes = [] } = useQuery({
     queryKey: ["chamados-avaliacoes-todas"],
-    refetchInterval: 300_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("CHAMADO_SISTEMA_AVALIACAO")

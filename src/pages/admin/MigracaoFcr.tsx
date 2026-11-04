@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   FileSpreadsheet,
 } from "lucide-react";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 const ANON_KEY = SUPABASE_ANON_KEY;
 
@@ -108,13 +109,10 @@ export default function MigracaoFcr() {
     setLoading(false);
   }
 
-  // Polling automático enquanto algum batch estiver "parseando"
-  useEffect(() => {
-    const hasRunning = batches.some((b) => b.status === "parseando");
-    if (!hasRunning) return;
-    const t = setInterval(() => loadBatches(), 2500);
-    return () => clearInterval(t);
-  }, [batches]);
+  // Polling de 2,5 s enquanto um lote estava "parseando": removido em
+  // 03/11/2026 (src/lib/atualizarTela.ts). O andamento aparece no botão
+  // "Atualizar" da barra do topo.
+  useAoPedirAtualizacao(loadBatches);
 
   useEffect(() => {
     loadEmpresas();

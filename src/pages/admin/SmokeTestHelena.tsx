@@ -74,7 +74,7 @@ export default function SmokeTestHelena() {
   const auditQ = useQuery({
     enabled: canSee,
     queryKey: ["smoke_helena_audit", filtroUserEmail],
-    refetchInterval: 15_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data: usrs } = await supabase
         .from("profiles")

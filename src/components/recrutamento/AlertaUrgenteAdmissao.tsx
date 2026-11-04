@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { BUCKET_CRACHAS } from "@/lib/suprimentos/fotoCracha";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 // =====================================================================
 // Admissão URGENTE — o card que treme na tela do SST e do Compras
@@ -87,13 +88,10 @@ export function AlertaUrgenteAdmissao() {
     setLista(itens);
   }, [user?.id, veSst, veCompras]);
 
-  useEffect(() => {
-    carregar();
-    const t = window.setInterval(carregar, INTERVALO_MS);
-    const foco = () => { if (document.visibilityState === "visible") carregar(); };
-    document.addEventListener("visibilitychange", foco);
-    return () => { window.clearInterval(t); document.removeEventListener("visibilitychange", foco); };
-  }, [carregar]);
+  // 03/11/2026: sem releitura automática — o botão "Atualizar" da barra do
+    // topo pede de novo (src/lib/atualizarTela.ts).
+  useEffect(() => { carregar(); }, [carregar]);
+  useAoPedirAtualizacao(carregar);
   // Trocar de tela (ex.: abriu a fila e decidiu) pede uma conferida.
   useEffect(() => { carregar(); }, [location.pathname, carregar]);
 

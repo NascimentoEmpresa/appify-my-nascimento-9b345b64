@@ -28,12 +28,25 @@
 
 name: erp-pilha
 
+# 03/11/2026 — LOG COM TETO. Sem isto o Docker grava json-file sem limite: o
+# log do Kong chegou a 4,8 GB, e um `docker logs` nele ocupou 38-46 % de um
+# núcleo do banco1 em plena queda (docs/incidentes/2026-11-03-post-mortem.md).
+# 5 arquivos de 100 MB por container: ~1 dia de Kong em horário de pico, e o
+# arquivo vivo nunca passa de 100 MB. O histórico longo vai para o Grafana
+# Cloud (infra/observabilidade/), não para o disco do nó.
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "5"
+
 services:
   auth:
     # GoTrue: o mesmo servico que valida as senhas hoje. O JWT_SECRET tem que
     # ser o MESMO usado para gerar ANON_KEY e SERVICE_ROLE_KEY, senao nenhum
     # token e aceito.
     image: supabase/gotrue:v2.158.1
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -73,6 +86,7 @@ services:
     # PostgREST: transforma o schema do Postgres em API REST. E ele que aplica
     # a RLS - por isso a replica precisa das policies carregadas.
     image: postgrest/postgrest:v12.2.3
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -85,6 +99,22 @@ services:
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: ${JWT_SECRET}
       PGRST_DB_USE_LEGACY_GUCS: "false"
+      # 03/11/2026 — pool de 10 (o padrão, nunca configurado) para 20.
+      # Medido no teste de carga daquela noite (docs/infra/capacidade-usuarios.md):
+      # 120 abas recarregando em 20 s deram 21,9 % de 5xx com a CPU do banco1
+      # a 65 % OCIOSA — o gargalo eram as 10 conexões (PGRST003 "Timed out
+      # acquiring connection from connection pool"), não o processador.
+      # 20, não 50: o que segura consulta pesada é o statement_timeout de 8 s
+      # por papel; pool grande demais só deixaria mais consultas pesadas
+      # disputando os 2 núcleos ao mesmo tempo. Dois nós x 20 = 40 de 200.
+      PGRST_DB_POOL: "20"
+      # 03/11/2026 (item 8): servidor de administração do PostgREST, só no
+      # localhost do nó. /metrics expõe pgrst_db_pool_available/_waiting/
+      # _timeouts_total e pgrst_schema_cache_loads_total — as duas causas
+      # do post-mortem de 03/11, ao vivo, lidas pelo Grafana Alloy.
+      PGRST_ADMIN_SERVER_PORT: "3001"
+    ports:
+      - "127.0.0.1:3001:3001"
 
   storage:
     # A VERSAO AQUI E AMARRADA AO NIVEL DE MIGRATION DA PRODUCAO, nao e "pegar
@@ -105,6 +135,7 @@ services:
     # ("unlock-object-versioning") e mudaria o schema para alem da producao.
     # Ao atualizar: conferir a contagem de migrations da tag ANTES de subir.
     image: supabase/storage-api:v1.80.2
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -139,6 +170,7 @@ services:
     # e ele le o MESMO supabase/config.toml da producao para saber quais
     # funcoes sao publicas - por isso o config.toml e montado aqui.
     image: supabase/edge-runtime:v1.77.2
+    logging: *logs
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
@@ -163,6 +195,12 @@ services:
       - ../../supabase/functions:/home/deno/functions:ro
       - ../../supabase/config.toml:/home/deno/config.toml:ro
       - ./functions-main:/home/deno/main:ro
+    # Segredos das Edge Functions (chaves de terceiros): o arquivo mora SÓ nos
+    # nós (/opt/erp/infra/failover/segredos-functions.env), nunca no git.
+    # required: false para o compose não recusar subir num nó novo sem ele.
+    env_file:
+      - path: ./segredos-functions.env
+        required: false
     command: ["start", "--main-service", "/home/deno/main"]
 
   kong:
@@ -171,6 +209,7 @@ services:
     # URL da Supabase hoje. E por isso que trocar de backend um dia sera
     # trocar UM endereco, nao reescrever o frontend.
     image: kong:2.8.1
+    logging: *logs
     restart: unless-stopped
     depends_on: [auth, rest, storage, functions]
     ports:
@@ -180,6 +219,26 @@ services:
       KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
       KONG_DNS_ORDER: LAST,A,CNAME
       KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      # 03/11/2026 (item 8): o log de acesso ganha o TEMPO de resposta
+      # (rt = total, urt = do serviço atrás do Kong). O formato padrão do nginx
+      # não tinha — no post-mortem daquele dia deu para dizer qual rota foi
+      # MAIS CHAMADA, mas não qual ficou LENTA. O começo da linha continua o
+      # "combined" de sempre: os scripts de infra/incidentes leem igual.
+      # $ = $ literal para o Compose não tentar interpolar.
+      KONG_NGINX_HTTP_LOG_FORMAT: >-
+        erp '$$remote_addr - $$remote_user [$$time_local] "$$request" $$status $$body_bytes_sent "$$http_referer" "$$http_user_agent" rt=$$request_time urt=$$upstream_response_time'
+      KONG_PROXY_ACCESS_LOG: /dev/stdout erp
+      # 03/11/2026 (item 7) — os 502 esporádicos ("upstream prematurely closed
+      # connection" / "Connection reset by peer" no log de erro do Kong, em
+      # chamadas leves como has_screen_access e app_menu). O PostgREST (servidor
+      # Warp) fecha conexão ociosa aos 30 s; o Kong a guardava para reuso por
+      # 60 s (padrão). Reusar uma conexão que o outro lado acabou de fechar =
+      # 502 para o usuário. 15 s < 30 s: o Kong solta antes.
+      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "15"
+      # "1024 worker_connections are not enough" apareceu 12 vezes no log em
+      # 03/11 (na recarga em massa). 4096 por worker, com o limite de arquivos
+      # do container acompanhando (ulimits abaixo).
+      KONG_NGINX_EVENTS_WORKER_CONNECTIONS: "4096"
       # Entram no kong.yml pelo entrypoint abaixo, nao pelo Kong.
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
@@ -195,6 +254,10 @@ services:
     # O Kong nao substitui variavel de ambiente em config declarativo. Sem
     # este render a chave esperada no header apikey seria a string literal
     # "$SUPABASE_ANON_KEY" e TODA chamada a /rest/v1 voltaria 401.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     entrypoint:
       - bash
       - -c

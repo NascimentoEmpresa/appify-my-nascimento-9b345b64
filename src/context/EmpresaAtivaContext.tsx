@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { empresasGrupo, type EmpresaGrupo } from "@/data/controladoria";
 import { supabase } from "@/integrations/supabase/client";
+import { esquecerMeuPerfil, lerMeuPerfil } from "@/lib/meuPerfil";
 import { useAuth } from "@/hooks/useAuth";
 
 interface EmpresaAtivaContextValue {
@@ -52,11 +53,8 @@ export function EmpresaAtivaProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       try {
         // Profile (flag + empresa atual + empresa_id fallback)
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("empresa_atual_id, empresa_id, acessa_todas_empresas")
-          .eq("id", user.id)
-          .maybeSingle();
+        // Leitura compartilhada do boot (src/lib/meuPerfil.ts).
+        const profile = await lerMeuPerfil(user.id).catch(() => null);
 
         let rows: any[] = [];
         let defaultEmpresaId: string | null = null;
@@ -121,6 +119,7 @@ export function EmpresaAtivaProvider({ children }: { children: ReactNode }) {
     if (user) {
       // Persiste no profile. O trigger valida o vínculo no banco.
       supabase.from("profiles").update({ empresa_atual_id: id }).eq("id", user.id).then(({ error }) => {
+        esquecerMeuPerfil(user.id);
         if (error) {
           // Reverte localmente se o banco recusar.
           // eslint-disable-next-line no-console

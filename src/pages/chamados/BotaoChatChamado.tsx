@@ -25,7 +25,7 @@ export function useChamadosNaoLidos() {
   return useQuery({
     queryKey: ["chamados-nao-lidos", user?.id],
     enabled: !!user?.id,
-    refetchInterval: 30000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_nao_lidos");
       const m: Record<string, number> = {};

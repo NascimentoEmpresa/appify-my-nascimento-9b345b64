@@ -1,3 +1,4 @@
+import { esquecerMeuPerfil } from "@/lib/meuPerfil";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ESTRUTURA_VAZIA, type Estrutura, type PerfilPessoa } from "@/lib/organograma/estruturaProcessos";
@@ -61,7 +62,7 @@ export function useSalvarBio() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [K, "perfil"] });
-      qc.invalidateQueries({ queryKey: ["meu-perfil"] });
+      esquecerMeuPerfil(); qc.invalidateQueries({ queryKey: ["meu-perfil"] });
     },
   });
 }

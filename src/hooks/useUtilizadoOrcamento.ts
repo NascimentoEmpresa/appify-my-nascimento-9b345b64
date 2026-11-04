@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { lerCompactoOuNada } from "@/lib/leituraCompacta";
 import { StatusDespesa } from "@/hooks/useMaloteDespesa";
 import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 
@@ -40,6 +41,11 @@ export function useUtilizadoOrcamento() {
   const query = useQuery({
     queryKey: ["utilizado_orcamento"],
     queryFn: async () => {
+      // 04/11/2026: leitura compacta (mig 20261104000100) — 2,7 MB -> 0,75 MB,
+      // as mesmas linhas na mesma ordem (data_pagamento desc), provado na
+      // produção para 5 usuários. Sem a função no banco, segue como antes.
+      const compacta = await lerCompactoOuNada(supabase as any, "ler_compacto", "v_malote_utilizado_orcamento");
+      if (compacta) return compacta as unknown as UtilizadoOrcamentoLinha[];
       const { data, error } = await (supabase as any)
         .from("v_malote_utilizado_orcamento")
         .select("*")

@@ -17,8 +17,12 @@
  * 1×/min ou mais, e um heartbeat perdido na rede não pode derrubar ninguém.
  */
 
-export const INTERVALO_HEARTBEAT_MS = 60_000;
-export const JANELA_ONLINE_MS = 3 * INTERVALO_HEARTBEAT_MS;
+// 03/11/2026: o sinal deixou de ser por temporizador (era 60 s) e passou a
+// sair quando a pessoa age, no máximo 1 a cada 5 min (ver
+// src/hooks/usePresencaOnline.ts). A janela vira 2x o intervalo (10 min),
+// a mesma que o presenca_listar já usa no banco (visto_em > now() - 10 min).
+export const INTERVALO_HEARTBEAT_MS = 5 * 60_000;
+export const JANELA_ONLINE_MS = 2 * INTERVALO_HEARTBEAT_MS;
 /** Sem mexer em nada por este tempo (com a aba visível) vira "ausente". */
 export const INATIVIDADE_AUSENTE_MS = 5 * 60_000;
 

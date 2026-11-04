@@ -18,6 +18,14 @@
 // `simultaneos` limita quantos lotes saem ao mesmo tempo: a fila de Pedidos de
 // Materiais tem ~2.800 pedidos = 70 lotes de 40, e 70 consultas de uma vez
 // pesam no banco tanto quanto a URL longa pesava no gateway.
+//
+// 03/11/2026 — o padrão passou de Infinity para 4. Com Infinity, uma lista de
+// ~10 mil ids virava 247 consultas de uma vez, e o PostgREST só tem 10
+// conexões no pool: essas rajadas esgotaram o pool às 13:51 e 16:57 UTC e
+// abriram as quedas do dia (docs/incidentes/2026-11-03-post-mortem.md, C1).
+// Quatro de cada vez deixa 6 conexões para o resto do ERP. Quem precisar de
+// mais, que diga — e melhor ainda: troque a lista de ids por uma RPC que
+// recebe uuid[] no corpo (sem limite de URL, uma requisição só).
 
 export function fatiar<T>(lista: T[], tamanho: number): T[][] {
   if (tamanho < 1) throw new Error("Tamanho do lote precisa ser ao menos 1");
@@ -36,7 +44,7 @@ export async function emLotes<T>(
   ids: string[],
   tamanho: number,
   consulta: (lote: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
-  simultaneos = Infinity,
+  simultaneos = 4,
 ): Promise<T[]> {
   const lotes = fatiar(ids, tamanho);
   const respostas: { data: T[] | null; error: unknown }[] = new Array(lotes.length);

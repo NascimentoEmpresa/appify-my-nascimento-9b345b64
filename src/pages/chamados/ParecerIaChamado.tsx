@@ -231,7 +231,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
       return (data ?? null) as ParecerIa | null;
     },
     // Enquanto a fila gera, confere de tempos em tempos — sem F5.
-    refetchInterval: (q) => ((q.state.data as ParecerIa | null | undefined)?.status === "pendente" ? 8000 : false),
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
   });
 
   // Havendo horas gastas, preço e média só por elas (30/10/2026) — mesmo
