@@ -4,6 +4,7 @@ import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitaco
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 
@@ -56,6 +57,9 @@ interface SolicitacaoFerias {
   motivo_cancelamento?: string | null;
   cancelada_por?: string | null;
   cancelada_em?: string | null;
+  /** Documentação (04/11/2026, mig 20261104002200): o dia em que foi para o malote e como voltou assinada. */
+  data_malote?: string | null;
+  retorno_documentacao?: string | null;
   criado_em?: string | null;
   atualizado_em?: string | null;
 }
@@ -112,7 +116,9 @@ export default function Ferias() {
   const [mes, setMes] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
-  const [basePeriodo, setBasePeriodo] = useState<BasePeriodo>("ferias");
+  // Padrão "saída no período" (04/11/2026): o RH quer quem SAI no mês; o
+  // "em férias no período" (cruza) ficou como opção — ver lib/rh/feriasPeriodo.
+  const [basePeriodo, setBasePeriodo] = useState<BasePeriodo>("saida");
   const temPeriodo = !!(de || ate);
   // Escolher o mês preenche De/Até; mexer em De/Até à mão desfaz o mês.
   const escolherMes = (v: string) => { setMes(v); setDe(v ? `${v}-01` : ""); setAte(v ? ultimoDiaDoMes(v) : ""); };
@@ -138,6 +144,18 @@ export default function Ferias() {
   // Cancelar pelo RH (24/09/2026): vale também DEPOIS de aprovada, com motivo.
   const [cancelando, setCancelando] = useState(false);
   const [motivoCanc, setMotivoCanc] = useState("");
+  // Documentação (04/11/2026): o RH edita no drawer; o rascunho nasce do registro aberto.
+  const [docMalote, setDocMalote] = useState("");
+  const [docRetorno, setDocRetorno] = useState("");
+  const [salvandoDoc, setSalvandoDoc] = useState(false);
+  // Só o RH define malote e retorno (04/11/2026) — o banco confere o mesmo
+  // (trg_ferias_documentacao_so_rh, mig 20261104002300). Sem o "alterar": só lê.
+  const { can } = usePermissoes();
+  const podeDoc = can("alterar", undefined, "rh_ferias");
+  useEffect(() => {
+    setDocMalote(sol?.data_malote ? String(sol.data_malote).slice(0, 10) : "");
+    setDocRetorno(sol?.retorno_documentacao ?? "");
+  }, [sol?.id, sol?.data_malote, sol?.retorno_documentacao]);
 
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
   const toastId = useRef(0);
@@ -234,6 +252,18 @@ export default function Ferias() {
     recarregarTudo();
   };
 
+  const salvarDocumentacao = async () => {
+    if (!drawerId || salvandoDoc) return;
+    setSalvandoDoc(true);
+    const patch = { data_malote: docMalote || null, retorno_documentacao: docRetorno.trim() || null, atualizado_em: new Date().toISOString() };
+    const { error } = await db.from("SISTEMA_SOLICITACOES_FERIAS").update(patch).eq("id", drawerId);
+    setSalvandoDoc(false);
+    if (error) { toast("Erro: " + error.message, "err"); return; }
+    setSol(s => (s ? { ...s, ...patch } : s));
+    setRows(rs => rs.map(r => (r.id === drawerId ? { ...r, ...patch } : r)));
+    toast("Documentação salva.", "ok");
+  };
+
   const kpi = (label: string, val: number, cor: string) => (
     <div style={{ flex: 1, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", boxShadow: "0 4px 16px rgba(15,23,42,.05)" }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
@@ -278,7 +308,8 @@ export default function Ferias() {
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "10px 14px" }}>
         {[
           ["Filtrar pela data", <select key="b" value={basePeriodo} onChange={e => setBasePeriodo(e.target.value as BasePeriodo)} style={inputData}>
-            <option value="ferias">Período das férias</option>
+            <option value="saida">Data de saída (sai no período)</option>
+            <option value="ferias">Em férias no período (inclui quem já saiu antes)</option>
             <option value="criado">Data da solicitação</option>
           </select>],
           ["Mês", <input key="m" type="month" value={mes} onChange={e => escolherMes(e.target.value)} style={inputData} />],
@@ -294,7 +325,7 @@ export default function Ferias() {
           <>
             <button onClick={limparPeriodo} style={{ padding: "7px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Limpar período</button>
             <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto" }}>
-              <b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) {basePeriodo === "ferias" ? "com férias" : "criadas"}{" "}
+              <b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) {basePeriodo === "saida" ? "com saída" : basePeriodo === "ferias" ? "com férias" : "criadas"}{" "}
               {de && ate ? `entre ${fmtDt(de)} e ${fmtDt(ate)}` : de ? `a partir de ${fmtDt(de)}` : `até ${fmtDt(ate)}`}
             </span>
           </>
@@ -306,16 +337,16 @@ export default function Ferias() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              {["Colaborador", "Período", "Dias", "Solicitante", "Status", "Criado"].map(h => (
+              {["Colaborador", "Período", "Dias", "Solicitante", "Status", "Malote", "Retorno doc.", "Criado"].map(h => (
                 <th key={h} style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".7px", padding: "11px 14px", borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</td></tr>
+              <tr><td colSpan={8} style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</td></tr>
             ) : rowsFiltradas.length === 0 ? (
-              <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>Nenhuma solicitação de férias.
               </td></tr>
             ) : rowsFiltradas.map(r => (
@@ -340,6 +371,8 @@ export default function Ferias() {
                   {r.excecao && <span title="Solicitada com menos de 30 dias de antecedência" style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>FORA DO PRAZO</span>}
                   {r.refeita_em && <span title={`Refeita pelo encarregado em ${fmtDt(r.refeita_em)} — precisa de nova avaliação`} style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#ede9fe", color: "#6d28d9", border: "1px solid #ddd6fe" }}>🔁 REFEITA</span>}
                 </td>
+                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569", whiteSpace: "nowrap" }}>{r.data_malote ? fmtDt(r.data_malote) : "—"}</td>
+                <td style={{ padding: "11px 14px", fontSize: 11.5, color: "#475569", maxWidth: 220 }}>{r.retorno_documentacao || "—"}</td>
                 <td style={{ padding: "11px 14px", fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.criado_em)}</td>
               </tr>
             ))}
@@ -434,6 +467,29 @@ export default function Ferias() {
                   <div style={{ fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>Solicitada com menos de 30 dias de antecedência. O solicitante foi avisado de que pode ser recusada e confirmou mesmo assim.</div>
                 </div>
               )}
+              {/* Documentação (04/11/2026): malote e retorno, que antes só viviam na planilha. */}
+              <div style={{ marginBottom: 18, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>📦 Documentação</div>
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "end" }}>
+                  <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
+                    Enviado ao malote em
+                    <input type="date" value={docMalote} onChange={e => setDocMalote(e.target.value)} disabled={!podeDoc}
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13, fontFamily: "inherit" }} />
+                  </label>
+                  <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
+                    Retorno da documentação
+                    <input type="text" value={docRetorno} onChange={e => setDocRetorno(e.target.value)} disabled={!podeDoc} placeholder="Ex.: RETORNOU ZAPSIGN - 02/10/2026"
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13, fontFamily: "inherit" }} />
+                  </label>
+                </div>
+                {!podeDoc && <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Só quem tem "alterar" na Gestão de Férias (RH) edita estes campos.</div>}
+                {podeDoc && (docMalote !== (sol.data_malote ? String(sol.data_malote).slice(0, 10) : "") || docRetorno.trim() !== (sol.retorno_documentacao ?? "")) && (
+                  <button onClick={salvarDocumentacao} disabled={salvandoDoc}
+                    style={{ marginTop: 8, padding: "6px 14px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: salvandoDoc ? "wait" : "pointer", fontFamily: "inherit" }}>
+                    {salvandoDoc ? "Salvando…" : "Salvar documentação"}
+                  </button>
+                )}
+              </div>
               {sol.observacoes && (
                 <div style={{ marginBottom: 18 }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>Observações</div>

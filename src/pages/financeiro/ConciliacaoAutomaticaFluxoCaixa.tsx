@@ -884,7 +884,8 @@ function ConciliarTab() {
                         // inline daqui — valor_aplicado é imutável por design (RPC
                         // aplicacao_financeira_editar não deixa mudá-lo); correção é
                         // excluir + recadastrar na própria tela de Aplicações.
-                        const podeAjustar = !!l.despesaId && l.origemFluxo !== "aplicacao_financeira" && !resolucao;
+                        // SIS-2026-0798: Conta Garantida também não passa pelo ajuste inline (estorna e lança de novo na própria tela).
+                        const podeAjustar = !!l.despesaId && l.origemFluxo !== "aplicacao_financeira" && l.origemFluxo !== "conta_garantida" && !resolucao;
                         const podeCriar = l.erro === "🚨 FLUXO - NÃO ENCONTRADO" && !resolucao;
                         // Fatia de despesa do Malote que não caiu no extrato desta conta: pode ter sido paga pela conta de outra empresa do rateio.
                         const podePagadora = l.erro === "⚠️ BANCO - NÃO ENCONTRADO" && l.origemFluxo === "malote" && !!l.despesaId && !resolucao;
@@ -958,7 +959,9 @@ function ConciliarTab() {
                                       className="text-[11px] text-muted-foreground"
                                       title={l.origemFluxo === "aplicacao_financeira"
                                         ? "Aplicação financeira não se ajusta aqui: corrija (exclua e recadastre) na tela de Aplicações Financeiras e use Recalcular."
-                                        : "Sem ajuste possível aqui: corrija o lançamento na origem e use Recalcular."}
+                                        : l.origemFluxo === "conta_garantida"
+                                          ? "Conta Garantida não se ajusta aqui: estorne e lance de novo na tela de Conta Garantida e use Recalcular."
+                                          : "Sem ajuste possível aqui: corrija o lançamento na origem e use Recalcular."}
                                     >
                                       Corrigir na origem
                                     </span>

@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   BENEFICIOS, DEF_POR_CHAVE, beneficioPreenchido, identificacaoCct, montarQuadro, normalizarBeneficios,
-  pendenciasConvencao, pendenciasDecreto, situacaoConvencao, textoBeneficio,
+  BENEFICIOS_CCT, pendenciasConvencao, pendenciasDecreto, situacaoConvencao, textoBeneficio,
   type MapaBeneficios, type ReferenciaConvencao,
 } from "@/lib/licitacoes/convencoes";
 
 /** Todos os benefícios preenchidos, como num cadastro completo. */
 const completos = (): MapaBeneficios => ({
-  va: { valor: 23.5, periodo: "dia" },
+  va: { valor: 23.5, periodo: "dia", desconto: { modo: "porcentagem", percentual: 20 } },
   vl: { valor: 12, periodo: "dia" },
   vt: { valor: 5, periodo: "dia" },
-  insalubridade: { percentual: 20 },
+  insalubridade: { percentual: 20, base: "minimo_regional" },
   periculosidade: { nao_contem: true },
   assiduidade: { valor: 120, periodo: "mes" },
   cesta_basica: { valor: 150, periodo: "mes" },
@@ -20,7 +20,7 @@ const completos = (): MapaBeneficios => ({
 });
 
 const cadastro = (b: MapaBeneficios = completos()) => ({
-  empresa_id: "e", contrato_id: "c", categoria_profissional: "Limpeza e Conservação", sindicato: "Sindilimp RS",
+  empresa_id: "e", categoria_profissional: "Limpeza e Conservação", sindicato: "Sindilimp RS",
   vigencia_inicio: "2026-01-01", vigencia_fim: "2027-12-31", cct_arquivo_path: "c/cct.pdf", beneficios: b,
 });
 
@@ -33,25 +33,55 @@ describe("benefícios", () => {
     expect(beneficioPreenchido(DEF_POR_CHAVE.va, undefined)).toBe(false);
     expect(beneficioPreenchido(DEF_POR_CHAVE.va, {})).toBe(false);
     expect(beneficioPreenchido(DEF_POR_CHAVE.va, { valor: 10 })).toBe(false); // sem periodicidade
+    expect(beneficioPreenchido(DEF_POR_CHAVE.va, { valor: 10, periodo: "dia" })).toBe(false); // sem o desconto
     expect(beneficioPreenchido(DEF_POR_CHAVE.va, { nao_contem: true })).toBe(true);
   });
-  it("percentual só aceita as opções do chamado", () => {
-    expect(beneficioPreenchido(DEF_POR_CHAVE.insalubridade, { percentual: 40 })).toBe(true);
-    expect(beneficioPreenchido(DEF_POR_CHAVE.insalubridade, { percentual: 10 })).toBe(false);
-    expect(beneficioPreenchido(DEF_POR_CHAVE.periculosidade, { percentual: 30 })).toBe(true);
+  it("percentual é digitado e exige a base de cálculo", () => {
+    const ins = DEF_POR_CHAVE.insalubridade;
+    expect(beneficioPreenchido(ins, { percentual: 10, base: "salario_base" })).toBe(true);
+    expect(beneficioPreenchido(ins, { percentual: 40 })).toBe(false); // sem base
+    expect(beneficioPreenchido(ins, { percentual: 120, base: "salario_base" })).toBe(false);
+    expect(textoBeneficio(DEF_POR_CHAVE.periculosidade, { percentual: 30, base: "salario_base" })).toBe("30% sobre o salário base");
+    expect(textoBeneficio(ins, { percentual: 12.5, base: "minimo_nacional" })).toBe("12,5% sobre o salário mínimo nacional");
+  });
+  it("aviso diz quando falta só a base", () => {
+    const b = completos();
+    b.insalubridade = { percentual: 40 };
+    expect(pendenciasConvencao(cadastro(b))).toEqual(["Insalubridade: escolha a base de cálculo"]);
+  });
+  it("VA: desconto do colaborador em valor, porcentagem ou 'Não contém'", () => {
+    const va = DEF_POR_CHAVE.va;
+    expect(textoBeneficio(va, { valor: 23.5, periodo: "dia", desconto: { modo: "porcentagem", percentual: 20 } }))
+      .toBe("R$ 23,50 / dia · desconto do colaborador: 20%");
+    expect(textoBeneficio(va, { valor: 400, periodo: "mes", desconto: { modo: "valor", valor: 1 } }))
+      .toBe("R$ 400,00 / mês · desconto do colaborador: R$ 1,00");
+    expect(textoBeneficio(va, { valor: 400, periodo: "mes", desconto: { nao_contem: true } }))
+      .toBe("R$ 400,00 / mês · desconto do colaborador: não contém");
+    expect(beneficioPreenchido(va, { nao_contem: true })).toBe(true); // sem VA não há desconto
+    const b = completos();
+    b.va = { valor: 23.5, periodo: "dia" };
+    expect(pendenciasConvencao(cadastro(b))).toEqual(['Vale-Alimentação (VA): informe o desconto do colaborador ou marque "Não contém"']);
+  });
+  it("a CCT não cadastra VT (vem do decreto)", () => {
+    expect(BENEFICIOS_CCT.map((b) => b.chave)).not.toContain("vt");
+    const b = completos();
+    delete b.vt;
+    expect(pendenciasConvencao(cadastro(b))).toEqual([]);
   });
   it("Plano de Saúde e Auxílio Creche são só por mês", () => {
     expect(textoBeneficio(DEF_POR_CHAVE.plano_saude, { valor: 250 })).toBe("R$ 250,00 / mês");
     expect(textoBeneficio(DEF_POR_CHAVE.auxilio_creche, { valor: 25.52, periodo: "dia" })).toBe("R$ 25,52 / mês");
   });
   it("a periodicidade sai como foi cadastrada", () => {
-    expect(textoBeneficio(DEF_POR_CHAVE.va, { valor: 23.5, periodo: "dia" })).toBe("R$ 23,50 / dia");
-    expect(textoBeneficio(DEF_POR_CHAVE.va, { valor: 461.82, periodo: "mes" })).toBe("R$ 461,82 / mês");
+    expect(textoBeneficio(DEF_POR_CHAVE.vl, { valor: 23.5, periodo: "dia" })).toBe("R$ 23,50 / dia");
+    expect(textoBeneficio(DEF_POR_CHAVE.vl, { valor: 461.82, periodo: "mes" })).toBe("R$ 461,82 / mês");
   });
-  it("Adicional de Líder: valor ou porcentagem (10/20/30)", () => {
+  it("Adicional de Líder: valor (sem base) ou porcentagem digitada sobre a base", () => {
     const d = DEF_POR_CHAVE.adicional_lider;
-    expect(textoBeneficio(d, { modo: "porcentagem", percentual: 20, periodo: "mes" })).toBe("20% / mês");
-    expect(beneficioPreenchido(d, { modo: "porcentagem", percentual: 15, periodo: "mes" })).toBe(false);
+    expect(textoBeneficio(d, { modo: "porcentagem", percentual: 15, base: "salario_base", periodo: "mes" })).toBe("15% sobre o salário base / mês");
+    expect(beneficioPreenchido(d, { modo: "porcentagem", percentual: 15, periodo: "mes" })).toBe(false); // sem base
+    expect(textoBeneficio(d, { modo: "valor", valor: 300, periodo: "mes" })).toBe("R$ 300,00 / mês");
+    expect(normalizarBeneficios({ adicional_lider: { modo: "valor", valor: 300, periodo: "mes", base: "salario_base" } }).adicional_lider?.base).toBeUndefined();
     expect(beneficioPreenchido(d, { modo: "valor", periodo: "mes" })).toBe(false);
     expect(textoBeneficio(d, { nao_contem: true })).toBe("Não contém");
   });
@@ -74,8 +104,8 @@ describe("cadastro", () => {
     expect(p).toContain("Convenção coletiva não anexada");
     expect(p.some((x) => x.startsWith("Cesta Básica"))).toBe(true);
   });
-  it("decreto sem anexo é pendência", () => {
-    expect(pendenciasConvencao({ ...cadastro(), decreto_numero: "12.345/2024" })).toContain("Decreto municipal informado sem o anexo");
+  it("contrato e decreto não são mais cobrados na CCT", () => {
+    expect(pendenciasConvencao({ ...cadastro(), contrato_id: null, decreto_numero: "12.345/2024" })).toEqual([]);
   });
   it("identificação da CCT pela vigência", () => {
     expect(identificacaoCct({ vigencia_inicio: "2026-01-01", vigencia_fim: "2027-12-31" })).toBe("CCT 2026/2027");
@@ -96,7 +126,8 @@ describe("quadro da vaga", () => {
   it("tudo da principal", () => {
     const q = montarQuadro({ status: "vinculado", principal_id: "a", referencias: [ref("a", completos())] });
     expect(q.status).toBe("ok");
-    expect(q.itens.find((i) => i.def.chave === "va")?.texto).toBe("R$ 23,50 / dia");
+    expect(q.itens.find((i) => i.def.chave === "va")?.texto).toBe("R$ 23,50 / dia · desconto do colaborador: 20%");
+    expect(q.itens.find((i) => i.def.chave === "insalubridade")?.texto).toBe("20% sobre o salário mínimo regional");
     expect(q.itens.find((i) => i.def.chave === "plano_saude")?.naoContem).toBe(true);
   });
   it("regra por benefício: o VT sai do decreto, sem somar", () => {
@@ -104,6 +135,12 @@ describe("quadro da vaga", () => {
     const q = montarQuadro({ status: "vinculado", principal_id: "a", regras: { vt: "b" }, referencias: [ref("a", completos()), decreto] });
     expect(q.itens.find((i) => i.def.chave === "vt")?.texto).toBe("R$ 9,10 / mês");
     expect(q.usadas.map((u) => u.id)).toEqual(["a", "b"]);
+  });
+  it("CCT sem VT e posto sem decreto: a pendência pede o decreto", () => {
+    const b = completos();
+    delete b.vt;
+    const q = montarQuadro({ status: "vinculado", principal_id: "a", referencias: [ref("a", b)] });
+    expect(q.pendencias).toEqual(["Vale-Transporte (VT): o posto não tem decreto municipal para o VT — vincule na Planilha de Custo."]);
   });
   it("benefício em branco na convenção vira pendência", () => {
     const b = completos();

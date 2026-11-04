@@ -865,8 +865,11 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
   const { data: linhas = [] } = useAplicacoesFinanceiras();
   const { data: resgatesCaixa = [] } = useResgatesCaixa();
   const resgatar = useResgatarMontanteAplicacao();
+  // SIS-2026-0778: banco em que o resgate entrou. Sem ele a Conciliação Bancária não enxerga o resgate no Fluxo daquele banco.
+  const { data: bancos = [] } = useCartaoBancos();
 
   const [empresaId, setEmpresaId] = useState("");
+  const [bancoId, setBancoId] = useState("");
   const [dataResgate, setDataResgate] = useState(hoje());
   const [valorPrincipal, setValorPrincipal] = useState("");
   const [valorRendimento, setValorRendimento] = useState("");
@@ -890,18 +893,18 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
   }, [linhas, resgatesCaixa, empresaId]);
 
   function limpar() {
-    setEmpresaId(""); setDataResgate(hoje()); setValorPrincipal(""); setValorRendimento(""); setObservacao("");
+    setEmpresaId(""); setBancoId(""); setDataResgate(hoje()); setValorPrincipal(""); setValorRendimento(""); setObservacao("");
   }
 
   async function confirmar() {
     const principal = Number(valorPrincipal.replace(/\./g, "").replace(",", "."));
     const rendimento = Number((valorRendimento || "0").replace(/\./g, "").replace(",", "."));
-    if (!empresaId || !dataResgate || !principal || principal <= 0) {
-      toast.error("Selecione a empresa e informe a data e o valor do principal resgatado.");
+    if (!empresaId || !bancoId || !dataResgate || !principal || principal <= 0) {
+      toast.error("Selecione a empresa e o banco e informe a data e o valor do principal resgatado.");
       return;
     }
     try {
-      await resgatar.mutateAsync({ empresaId, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, observacao: observacao.trim() || null });
+      await resgatar.mutateAsync({ empresaId, bancoId, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, observacao: observacao.trim() || null });
       toast.success("Resgate registrado.");
       limpar();
       onClose();
@@ -929,6 +932,14 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
               Montante aplicado disponível para resgate: {formatBRL(montanteEmpresa.principal)} de principal.
             </p>
           )}
+          <div>
+            <Label className="text-xs">Banco em que o resgate entrou *</Label>
+            <Select value={bancoId} onValueChange={setBancoId}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+              <SelectContent>{bancos.filter((b) => b.ativo).map((b) => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}</SelectContent>
+            </Select>
+            <p className="mt-1 text-[11px] text-muted-foreground">É o banco do extrato onde o dinheiro cai: a Conciliação Bancária usa para achar o resgate.</p>
+          </div>
           <div>
             <Label className="text-xs">Data do Resgate *</Label>
             <Input type="date" className="h-9" value={dataResgate} onChange={(e) => setDataResgate(e.target.value)} />
@@ -966,6 +977,8 @@ const numBR = (n: number) => String(n).replace(".", ",");
 
 function DialogEditarResgate({ resgate, onClose }: { resgate: AplicacaoFinanceiraResgateCaixa | null; onClose: () => void }) {
   const editar = useEditarResgate();
+  const { data: bancos = [] } = useCartaoBancos();
+  const [bancoId, setBancoId] = useState("");
   const [dataResgate, setDataResgate] = useState("");
   const [valorPrincipal, setValorPrincipal] = useState("");
   const [valorRendimento, setValorRendimento] = useState("");
@@ -974,6 +987,7 @@ function DialogEditarResgate({ resgate, onClose }: { resgate: AplicacaoFinanceir
   useEffect(() => {
     if (!resgate) return;
     setDataResgate(resgate.data_resgate);
+    setBancoId(resgate.banco_id ?? "");
     setValorPrincipal(numBR(Number(resgate.valor_principal)));
     setValorRendimento(numBR(Number(resgate.valor_rendimento)));
     setObservacao(resgate.observacao ?? "");
@@ -988,7 +1002,7 @@ function DialogEditarResgate({ resgate, onClose }: { resgate: AplicacaoFinanceir
       return;
     }
     try {
-      await editar.mutateAsync({ id: resgate.id, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, observacao: observacao.trim() || null });
+      await editar.mutateAsync({ id: resgate.id, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, observacao: observacao.trim() || null, bancoId: bancoId || null });
       toast.success("Resgate atualizado.");
       onClose();
     } catch (e: any) {
@@ -1003,6 +1017,17 @@ function DialogEditarResgate({ resgate, onClose }: { resgate: AplicacaoFinanceir
           <DialogTitle>Editar Resgate</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Banco em que o resgate entrou</Label>
+            <Select value={bancoId || "_"} onValueChange={(v) => setBancoId(v === "_" ? "" : v)}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_">— (sem banco)</SelectItem>
+                {bancos.filter((b) => b.ativo || b.id === resgate?.banco_id).map((b) => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {!bancoId && <p className="mt-1 text-[11px] text-amber-700">Sem banco o resgate não aparece na Conciliação Bancária. Informe o banco do extrato onde o dinheiro caiu.</p>}
+          </div>
           <div>
             <Label className="text-xs">Data do Resgate *</Label>
             <Input type="date" className="h-9" value={dataResgate} onChange={(e) => setDataResgate(e.target.value)} />
