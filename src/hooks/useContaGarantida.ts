@@ -1,209 +1,136 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import * as XLSX from "xlsx";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { MovimentoInput } from "@/pages/financeiro/conta-garantida/calculos";
+import type { ContaGarantida, MovimentoContaGarantida, StatusConta, TipoMovimento } from "@/pages/financeiro/conta-garantida/regras";
 
-const BANCOS_KEY = "fin_conta_garantida_banco";
-const MOVIMENTOS_KEY = "fin_conta_garantida_movimento";
-const CDI_KEY = "fin_cdi_historico";
+// SIS-2026-0798: Conta Garantida nativa (migration 20261104004000). Substitui a versão que só lia a planilha de Fluxo de Caixa importada
+// (fin_conta_garantida_*, ultrapassada e sem uso). Conta = linha de crédito; movimento = resgate / amortização / juros, que entra no Fluxo de
+// Caixa pela view v_conta_garantida_fluxo_caixa. Quem escreve o movimento são as RPCs (conferem o saldo e o limite no servidor).
 
-export interface BancoContaGarantida {
-  id: string;
-  nome: string;
-  limite: number;
-  taxa_mensal: number;
-  perc_cdi: number;
-  vencimento: string | null;
-  ativo: boolean;
-}
+const CONTAS_KEY = "financeiro_conta_garantida";
+const MOVIMENTOS_KEY = "financeiro_conta_garantida_movimento";
 
-export function useBancosContaGarantida() {
+const num = (v: unknown) => Number(v ?? 0);
+
+export function useContasGarantidas() {
   return useQuery({
-    queryKey: [BANCOS_KEY],
-    queryFn: async () => {
+    queryKey: [CONTAS_KEY],
+    staleTime: 30_000,
+    queryFn: async (): Promise<ContaGarantida[]> => {
       const { data, error } = await (supabase as any)
-        .from("fin_conta_garantida_banco")
-        .select("*")
-        .order("nome");
+        .from("financeiro_conta_garantida")
+        .select("id, numero, empresa_id, banco_id, conta_banco_id, conta, limite, taxa, vencimento, status, observacao")
+        .order("numero");
       if (error) throw error;
-      return (data ?? []) as BancoContaGarantida[];
+      return ((data ?? []) as any[]).map((c) => ({ ...c, limite: num(c.limite) }));
     },
-  });
-}
-
-interface SalvarBancoInput extends Omit<BancoContaGarantida, "id"> {
-  id?: string;
-}
-
-export function useSalvarBancoContaGarantida() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: SalvarBancoInput) => {
-      const { error } = await (supabase as any)
-        .from("fin_conta_garantida_banco")
-        .upsert(input, { onConflict: "nome" });
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [BANCOS_KEY] }),
-  });
-}
-
-export function useToggleBancoAtivo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, ativo }: { id: string; ativo: boolean }) => {
-      const { error } = await (supabase as any)
-        .from("fin_conta_garantida_banco")
-        .update({ ativo })
-        .eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [BANCOS_KEY] }),
   });
 }
 
 export function useMovimentosContaGarantida() {
   return useQuery({
     queryKey: [MOVIMENTOS_KEY],
-    queryFn: async () => {
+    staleTime: 30_000,
+    queryFn: async (): Promise<MovimentoContaGarantida[]> => {
       const { data, error } = await (supabase as any)
-        .from("fin_conta_garantida_movimento")
-        .select("data, banco, tipo, classificacao, valor")
-        .order("data");
+        .from("financeiro_conta_garantida_movimento")
+        .select("id, seq, numero, conta_garantida_id, tipo, data_movimento, valor, classificacao_id, observacao, cancelado_em, motivo_cancelamento, historico, created_at")
+        .order("data_movimento", { ascending: false })
+        .order("seq", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as MovimentoInput[];
+      return ((data ?? []) as any[]).map((m) => ({ ...m, seq: num(m.seq), valor: num(m.valor) }));
     },
   });
 }
 
-// Mesmos termos de classificação usados no motor legado (_calcular_financeiro)
-// pra decidir quais linhas do Fluxo de Caixa importar.
-const TERMOS_RELEVANTES = ["CHEQUE ESPECIAL", "APLICAÇÃO", "APLICACAO", "JUROS", "JURO", "RENDIMENTO"];
-const TERMOS_EXCLUIR = ["RESGATE CONTA VINCULADA"];
-
-function excelParaData(valor: unknown): Date | null {
-  if (valor instanceof Date) return valor;
-  if (typeof valor === "number") {
-    return new Date(Math.round((valor - 25569) * 86400 * 1000));
-  }
-  if (typeof valor === "string" && valor.trim()) {
-    const d = new Date(valor);
-    if (!isNaN(d.getTime())) return d;
-  }
-  return null;
-}
-
-function limparValor(valor: unknown): number {
-  if (typeof valor === "number") return valor;
-  if (typeof valor === "string") {
-    const limpo = valor.replace("R$", "").replace(/\./g, "").replace(",", ".").trim();
-    const n = parseFloat(limpo);
-    return isNaN(n) ? 0 : n;
-  }
-  return 0;
-}
-
-function parseFluxoCaixaXlsx(buf: ArrayBuffer): MovimentoInput[] {
-  const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellDates: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const linhasBrutas: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
-
-  let headerIdx = -1;
-  let colData = -1, colTipo = -1, colBanco = -1, colValor = -1, colClass = -1;
-  for (let i = 0; i < Math.min(15, linhasBrutas.length); i++) {
-    const linha = (linhasBrutas[i] ?? []).map((x) => String(x ?? "").toUpperCase().trim());
-    const iData = linha.indexOf("DATA");
-    const iBanco = linha.indexOf("BANCO");
-    const iValor = linha.indexOf("VALOR");
-    if (iData >= 0 && (iBanco >= 0 || iValor >= 0)) {
-      headerIdx = i;
-      colData = iData;
-      colTipo = linha.indexOf("TIPO");
-      colBanco = iBanco;
-      colValor = iValor;
-      colClass = linha.findIndex((c) => c.includes("CLASSIF") || c.includes("HIST"));
-      break;
-    }
-  }
-  if (headerIdx === -1) throw new Error("Cabeçalho não encontrado na planilha.");
-
-  const movimentos: MovimentoInput[] = [];
-  for (let i = headerIdx + 1; i < linhasBrutas.length; i++) {
-    const row = linhasBrutas[i];
-    if (!row || row.length === 0) continue;
-
-    const banco = String(row[colBanco] ?? "").trim();
-    const dt = excelParaData(row[colData]);
-    if (!banco || !dt) continue;
-
-    const classificacao = String(colClass >= 0 ? row[colClass] ?? "" : "").toUpperCase().trim();
-    const relevante = TERMOS_RELEVANTES.some((t) => classificacao.includes(t)) && !TERMOS_EXCLUIR.some((t) => classificacao.includes(t));
-    if (!relevante) continue;
-
-    movimentos.push({
-      data: dt.toISOString().slice(0, 10),
-      banco,
-      tipo: String(row[colTipo] ?? "").toUpperCase().trim(),
-      classificacao,
-      valor: limparValor(row[colValor]),
-    });
-  }
-  return movimentos;
-}
-
-export function useImportarMovimentosContaGarantida() {
+/** O lançamento muda a conta, o Fluxo de Caixa (e a conciliação, que lê o Fluxo): invalida tudo que depende dele. */
+function useInvalidarTudo() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (arquivo: File) => {
-      const buf = await arquivo.arrayBuffer();
-      const movimentos = parseFluxoCaixaXlsx(buf);
-      if (movimentos.length === 0) throw new Error("Nenhum movimento relevante encontrado na planilha.");
+  return () => {
+    qc.invalidateQueries({ queryKey: [CONTAS_KEY] });
+    qc.invalidateQueries({ queryKey: [MOVIMENTOS_KEY] });
+    qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+    qc.invalidateQueries({ queryKey: ["fluxo_caixa_conta"] });
+  };
+}
 
+export interface SalvarContaGarantidaInput {
+  id?: string;
+  empresaId: string;
+  bancoId: string;
+  contaBancoId: string | null;
+  conta: string;
+  limite: number;
+  taxa: string | null;
+  vencimento: string | null;
+  status: StatusConta;
+  observacao: string | null;
+}
+
+export function useSalvarContaGarantida() {
+  const invalidar = useInvalidarTudo();
+  return useMutation({
+    mutationFn: async (input: SalvarContaGarantidaInput) => {
       const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
-      const { error: delError } = await (supabase as any).from("fin_conta_garantida_movimento").delete().not("id", "is", null);
-      if (delError) throw delError;
-
-      const payload = movimentos.map((m) => ({ ...m, importado_por: userId }));
-      const { error: insError } = await (supabase as any).from("fin_conta_garantida_movimento").insert(payload);
-      if (insError) throw insError;
-
-      return movimentos.length;
+      const campos = {
+        empresa_id: input.empresaId,
+        banco_id: input.bancoId,
+        conta_banco_id: input.contaBancoId,
+        conta: input.conta.trim(),
+        limite: input.limite,
+        taxa: input.taxa?.trim() || null,
+        vencimento: input.vencimento || null,
+        status: input.status,
+        observacao: input.observacao?.trim() || null,
+      };
+      const db = (supabase as any).from("financeiro_conta_garantida");
+      const { error } = input.id
+        ? await db.update({ ...campos, updated_by: userId }).eq("id", input.id)
+        : await db.insert({ ...campos, created_by: userId });
+      if (error) {
+        if (error.code === "23505") throw new Error("Já existe uma conta garantida com esse número para a empresa e o banco.");
+        throw error;
+      }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [MOVIMENTOS_KEY] }),
+    onSuccess: invalidar,
   });
 }
 
-export function useCdiHistorico() {
-  return useQuery({
-    queryKey: [CDI_KEY],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("fin_cdi_historico")
-        .select("data, valor_pct")
-        .order("data", { ascending: false });
-      if (error) throw error;
-      // valor_pct guarda a fração diária já decimal (ex: 0.00038), não %.
-      return Object.fromEntries((data ?? []).map((r: any) => [r.data, Number(r.valor_pct)])) as Record<string, number>;
-    },
-  });
+export interface LancarContaGarantidaInput {
+  contaId: string;
+  tipo: TipoMovimento;
+  data: string;
+  valor: number;
+  classificacaoId: string;
+  observacao: string | null;
 }
 
-export function useAtualizarCdi() {
-  const qc = useQueryClient();
+export function useLancarContaGarantida() {
+  const invalidar = useInvalidarTudo();
   return useMutation({
-    mutationFn: async () => {
-      const resp = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados/ultimos/20?formato=json");
-      if (!resp.ok) throw new Error("Não foi possível consultar o CDI no Bacen.");
-      const dados: { data: string; valor: string }[] = await resp.json();
-
-      const payload = dados.map((d) => {
-        const [dia, mes, ano] = d.data.split("/");
-        return { data: `${ano}-${mes}-${dia}`, valor_pct: Number(d.valor) / 100 };
+    mutationFn: async (input: LancarContaGarantidaInput) => {
+      const { data, error } = await (supabase as any).rpc("conta_garantida_lancar", {
+        _conta_id: input.contaId,
+        _tipo: input.tipo,
+        _data: input.data,
+        _valor: input.valor,
+        _classificacao_id: input.classificacaoId,
+        _observacao: input.observacao,
       });
-      const { error } = await (supabase as any).from("fin_cdi_historico").upsert(payload, { onConflict: "data" });
       if (error) throw error;
-      return payload.length;
+      return data as string;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [CDI_KEY] }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useEstornarMovimentoContaGarantida() {
+  const invalidar = useInvalidarTudo();
+  return useMutation({
+    mutationFn: async ({ movimentoId, motivo }: { movimentoId: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("conta_garantida_estornar", { _movimento_id: movimentoId, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: invalidar,
   });
 }
