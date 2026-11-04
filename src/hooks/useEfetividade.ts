@@ -75,7 +75,7 @@ export function useEfetOcorrencias(ini: string | null, fim: string | null) {
   return useQuery({
     queryKey: ["efetividade", "ocorrencias", ini, fim],
     enabled: !!ini && !!fim,
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await sb.from("OPE_EFET_OCORRENCIA").select("*").gte("data", ini!).lte("data", fim!).order("created_at", { ascending: true });
       if (error) throw error;

@@ -83,6 +83,8 @@ export const ROTAS_LIBERADAS_EXATAS = ["/app"];
 export const ROTAS_MOVIDAS: Record<string, string> = {
   "/app/rh/colaboradores": "/app/operacional/colaboradores",
   "/app/rh/ativos-contratos": "/app/operacional/ativos-contratos",
+  // 03/11/2026: Saídas por Contrato saiu de "relatórios" (mig 20261103009200).
+  "/app/suprimentos/relatorios/saidas-por-contrato": "/app/suprimentos/saidas-por-contrato",
 };
 
 /** Endereço novo de uma rota que mudou de lugar; null se não mudou. */

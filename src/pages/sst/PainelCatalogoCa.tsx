@@ -51,7 +51,7 @@ export function PainelCatalogoCa() {
   const { data: situacao } = useQuery({
     queryKey: ["sst_ca_situacao"],
     // Enquanto o worker processa, a tela precisa perceber sozinha que terminou.
-    refetchInterval: (q) => ((q.state.data as SituacaoCatalogo)?.processando ? 5_000 : false),
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async (): Promise<SituacaoCatalogo | null> => {
       const { data, error } = await sb.rpc("sst_ca_situacao_catalogo");
       if (error) throw error;

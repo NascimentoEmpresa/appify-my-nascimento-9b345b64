@@ -5,6 +5,8 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './env';
+import { compartilharGetUser } from './getUserCompartilhado';
+import { limitarUploads } from '@/lib/limiteAnexo';
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -39,3 +41,13 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, 
     storageKey: 'sb-fwmzeaztjxrxxzxzxmgc-auth-token',
   }
 });
+
+// 03/11/2026: getUser() repetido no boot vira UMA ida ao GoTrue (ver
+// ./getUserCompartilhado.ts). Se o Lovable regerar este arquivo, esta linha
+// tem que voltar junto com as de cima.
+compartilharGetUser(supabase);
+
+// 03/11/2026: todo upload confere o tamanho antes de sair do navegador (10 MB
+// padrão, 25 MB documentos — src/lib/limiteAnexo.ts). Mesmo aviso do de cima:
+// se o Lovable regerar este arquivo, esta linha tem que voltar.
+limitarUploads(supabase.storage);

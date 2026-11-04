@@ -30,8 +30,7 @@ export function useAprovacoesNotif(): AprovacoesNotif {
     queryKey: ["aprovacoes-notif", user?.id],
     enabled: !!user?.id,
     staleTime: 60_000,
-    refetchOnWindowFocus: true,
-    refetchInterval: 5 * 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async (): Promise<AprovacoesNotif> => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase as any).rpc("minhas_pendencias_aprovacao");

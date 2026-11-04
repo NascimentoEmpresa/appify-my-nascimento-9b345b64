@@ -10,7 +10,7 @@ export function useMinhasExcecoes(userId: string | null | undefined) {
   return useQuery({
     queryKey: [KEY, "minhas", userId],
     enabled: !!userId,
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("malote_excecao_solicitacao")
@@ -63,7 +63,7 @@ export function useN1ForaDoPrazo(enabled = true) {
   return useQuery({
     queryKey: [KEY, "n1_fora_do_prazo"],
     enabled,
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     staleTime: 30_000,
     retry: false,
     queryFn: async () => {
@@ -223,7 +223,7 @@ export function useExcecaoEventos(solicitacaoId: string | undefined) {
 export function useTodasExcecoes() {
   return useQuery({
     queryKey: [KEY, "todas"],
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("malote_excecao_solicitacao")

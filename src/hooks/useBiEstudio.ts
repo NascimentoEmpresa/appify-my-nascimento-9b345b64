@@ -112,7 +112,7 @@ export function useDadosWidgetBi(widgetId: number | null, params: Record<string,
     queryKey: ["bi_widget_dados", widgetId, params],
     enabled: !!widgetId,
     staleTime: 60_000,
-    refetchInterval: atualizarSeg && atualizarSeg > 0 ? atualizarSeg * 1000 : false,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await sb.rpc("bi_widget_dados", { p_widget_id: widgetId, p_params: params });
       if (error) throw error;

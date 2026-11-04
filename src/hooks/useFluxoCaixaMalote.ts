@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { criarLimitadorDeConcorrencia } from "@/lib/limitarConcorrencia";
 import { atribuirContaAosLancamentos } from "@/hooks/useContasBanco";
+import { decodificarCompacto, ehLeituraCompacta } from "@/lib/leituraCompacta";
 
 // SIS-2026-0038 (achado do usuário, DESPESA SD-2026-0038 sumida do Fluxo de
 // Caixa): PostgREST limita todo select("*") sem .range() a 1000 linhas por
@@ -52,8 +53,21 @@ async function buscarPagina(tabela: string, ordenarPor: string[], pagina: number
 // Se a função ainda não existe no banco, ou se estourar os 8 s do
 // statement_timeout num pico (57014), segue paginando como antes — página a
 // página cada consulta fica curta e a tela abre, só mais devagar.
+//
+// 04/11/2026 — primeiro tenta a LEITURA COMPACTA (mig 20261104000100): as
+// mesmas linhas, campo a campo, em formato colunar com dicionário — 17,5 MB ->
+// 4,3 MB na importação histórica, 59–76 % menos em todas as fontes. Provado
+// idêntico na produção para 5 usuários e as 8 fontes
+// (infra/qa/conferir-leitura-compacta.mjs). Se a função ainda não existe no
+// banco (front publicado antes da migration), cai na leitura de sempre.
 async function lerFonteDeUmaVez(tabela: string, executar: ExecutarLimitado): Promise<any[] | null> {
   return executar(async () => {
+    const compacta = await (supabase as any).rpc("fluxo_caixa_ler_fonte_compacta", { p_fonte: tabela });
+    if (!compacta.error && ehLeituraCompacta(compacta.data)) return decodificarCompacto(compacta.data);
+    if (compacta.error && !["PGRST202", "42883"].includes(compacta.error.code)) {
+      if (compacta.error.code === "57014") return null;
+      throw compacta.error;
+    }
     const { data, error } = await (supabase as any).rpc("fluxo_caixa_ler_fonte", { p_fonte: tabela });
     if (error) {
       if (error.code === "PGRST202" || error.code === "42883" || error.code === "57014") return null;

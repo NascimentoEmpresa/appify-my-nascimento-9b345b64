@@ -41,7 +41,8 @@ const COLS_DISP = "id, nome, local, playlist_id, pareado_em, ultimo_ping, user_a
 export const useTvDispositivos = () => useQuery({
   queryKey: [K, "dispositivos"],
   // O online/offline vem do ping da TV (a cada 15 s): revalida no mesmo ritmo.
-  refetchInterval: 15_000, staleTime: 10_000,
+  // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
+  staleTime: 10_000,
   queryFn: async (): Promise<TvDispositivo[]> => {
     const { data, error } = await sb.from("TV_DISPOSITIVO").select(COLS_DISP).not("pareado_em", "is", null).order("nome");
     if (error) throw error;
@@ -52,7 +53,7 @@ export const useTvDispositivos = () => useQuery({
 export const useTvPlaylists = () => useQuery({
   // refetch: o AO VIVO procura o item que a TV informou nesta lista — item
   // criado por outra pessoa não pode ficar de fora até alguém recarregar a tela.
-  queryKey: [K, "playlists"], staleTime: 30_000, refetchInterval: 60_000,
+  queryKey: [K, "playlists"], staleTime: 30_000,
   queryFn: async (): Promise<TvPlaylist[]> => {
     const { data, error } = await sb.from("TV_PLAYLIST").select("id, nome, descricao, itens:TV_ITEM(*)").order("nome");
     if (error) throw error;
@@ -68,7 +69,8 @@ export const useTvPlaylists = () => useQuery({
 export const useTvAoVivo = (tvId: string | null) => useQuery({
   queryKey: [K, "ao-vivo", tvId], enabled: !!tvId,
   // Sem a migration não adianta insistir: para de consultar (a gestão simula).
-  refetchInterval: (q) => (q.state.data?.suportado === false ? false : 4_000), staleTime: 3_000, retry: false,
+  // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
+  staleTime: 3_000, retry: false,
   queryFn: async (): Promise<AoVivoTv> => {
     // atual_em (mig 20261020000004): quando a TV confirmou o item. Banco sem a
     // coluna → consulta sem ela (atual_em undefined = "não dá pra saber").
@@ -81,7 +83,7 @@ export const useTvAoVivo = (tvId: string | null) => useQuery({
 });
 
 export const useTvAlertas = () => useQuery({
-  queryKey: [K, "alertas"], staleTime: 15_000, refetchInterval: 30_000,
+  queryKey: [K, "alertas"], staleTime: 15_000,
   queryFn: async (): Promise<TvAlerta[]> => {
     const { data, error } = await sb.from("TV_ALERTA").select("*").order("created_at", { ascending: false }).limit(20);
     if (error) throw error;

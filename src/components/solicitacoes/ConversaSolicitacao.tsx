@@ -6,6 +6,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 import {
   BUCKET_ANEXOS, arquivosDaColagem, caminhoAnexo, ehImagem, erroDoAnexo, fmtTamanho, nomeDeColagem, type AnexoRef,
 } from "@/lib/solicitacoes/anexos";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 // =====================================================================
 // A CONVERSA DE UMA SOLICITAÇÃO — o mesmo fio dos dois lados
@@ -118,13 +119,10 @@ export function ConversaSolicitacao({ modulo, entidadeId, aviso, preencher }: {
     }
   }, [modulo, entidadeId]);
 
-  useEffect(() => {
-    carregar();
-    // O outro lado responde com a tela aberta; sem isto a resposta só
-    // apareceria no próximo F5.
-    const t = setInterval(carregar, 8000);
-    return () => clearInterval(t);
-  }, [carregar]);
+  // Releitura a cada 8 s até 03/11/2026. Agora: ao abrir, depois de enviar e
+  // no botão "Atualizar" da barra do topo (src/lib/atualizarTela.ts).
+  useEffect(() => { carregar(); }, [carregar]);
+  useAoPedirAtualizacao(carregar);
 
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "nearest" }); }, [msgs.length]);
 
