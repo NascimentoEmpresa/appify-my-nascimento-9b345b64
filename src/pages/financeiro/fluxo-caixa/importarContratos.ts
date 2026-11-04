@@ -5,7 +5,7 @@
 // Casamento: Nº + data de pagamento + tipo + empresa + valor (+ parcela). NUNCA sobrescreve um contrato já preenchido no Fluxo.
 // Fora do escopo da importação (ficam num relatório): cartão de crédito e aplicação financeira, que não têm contrato pela tela do Fluxo.
 
-export type OrigemFluxo = "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica";
+export type OrigemFluxo = "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
 
 export interface LinhaPlanilhaContrato {
   linha: number; // número da linha na planilha (cabeçalho = 1)
@@ -199,7 +199,7 @@ export function casarContratos(
       continue;
     }
 
-    if (linhaFluxo.origem === "cartao_fatura" || linhaFluxo.origem === "aplicacao_financeira") {
+    if (linhaFluxo.origem === "cartao_fatura" || linhaFluxo.origem === "aplicacao_financeira" || linhaFluxo.origem === "conta_garantida") {
       usadas.add(linhaFluxo);
       pendencias.push({ motivo: "origem_sem_suporte", linha: p.linha, numero: p.numero, detalhe: p.contratoNome });
       continue;
