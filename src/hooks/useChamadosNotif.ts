@@ -61,10 +61,18 @@ export function useChamadosNotif() {
     // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     staleTime: 30_000,
     queryFn: async () => {
+      // 04/11/2026: ganhou ordem e teto. O filtro por solicitante/responsável
+      // limita na prática, mas não DECLARA limite: um dev com anos de chamados
+      // puxava a lista inteira dele em toda tela que abrisse. Para uma bolinha
+      // de aviso, os 300 mais recentes respondem a mesma pergunta ("mudou algo
+      // depois da última vez que eu vi?"), e a tabela é das grandes
+      // (.github/tabelas-grandes.json) — o contrato de rede do CI exige janela.
       const { data } = await (supabase as any)
         .from("CHAMADO_SISTEMA")
         .select("id, updated_at, status, solicitante_id, responsavel_id, conclusao_confirmada_em")
-        .or(`solicitante_id.eq.${uid},responsavel_id.eq.${uid}`);
+        .or(`solicitante_id.eq.${uid},responsavel_id.eq.${uid}`)
+        .order("updated_at", { ascending: false })
+        .limit(300);
       return (data ?? []) as ChamadoRow[];
     },
   });
