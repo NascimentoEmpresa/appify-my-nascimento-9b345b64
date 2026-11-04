@@ -6,9 +6,10 @@ import { ajustarDefasagem, corAviso, medirDefasagem, duracaoTotal, haQuanto, nor
 describe("TVs — regras", () => {
   const agora = new Date("2026-10-07T12:00:00Z");
 
-  it("online até 50 s sem notícia; depois offline; sem ping, nunca conectou", () => {
+  it("online até 8,5 min sem notícia (2 pings de 4 min + folga); depois offline; sem ping, nunca conectou", () => {
     expect(statusTv("2026-10-07T11:59:20Z", agora)).toBe("online");
-    expect(statusTv("2026-10-07T11:58:00Z", agora)).toBe("offline");
+    expect(statusTv("2026-10-07T11:52:00Z", agora)).toBe("online");
+    expect(statusTv("2026-10-07T11:51:00Z", agora)).toBe("offline");
     expect(statusTv(null, agora)).toBe("nunca");
   });
 

@@ -117,9 +117,17 @@ export const LAYOUTS_AVISO: { valor: LayoutAviso; rotulo: string }[] = [
   { valor: "direita", rotulo: "Texto à esquerda, imagem à direita" },
 ];
 
-/** A TV consulta o ERP a cada INTERVALO_PING_S; sem notícia há 3 consultas, está offline. */
-export const INTERVALO_PING_S = 15;
-export const OFFLINE_APOS_S = INTERVALO_PING_S * 3 + 5;
+/**
+ * A TV consulta o ERP a cada INTERVALO_PING_S; sem notícia há 2 consultas (e
+ * uma folga), está offline. Era 15 s; em 03/11/2026 o ping saiu de vez ("sem
+ * busca automática") e toda TV aparecia offline 50 s depois de abrir, mesmo
+ * tocando. 04/11/2026, Pablo: "a TV tá funcionando mas aparece tudo OFFLINE"
+ * → ping volta, a cada 2 min; no mesmo dia, "deixa pela metade" → 4 min: 7 TVs
+ * ≈ 2.500 consultas/dia, contra as 16 mil de tv_estado + tv_reportar a 15 s
+ * (docs/infra/sem-busca-automatica.md).
+ */
+export const INTERVALO_PING_S = 240;
+export const OFFLINE_APOS_S = INTERVALO_PING_S * 2 + 30;
 
 /**
  * Aviso geral com tempo (duracao_seg): a TV conta a partir de quando ELA o
