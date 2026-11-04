@@ -134,19 +134,40 @@ export interface LancamentoFaltaDistribuir extends LancamentoSemCentro {
   // Aprovadores N1/N2 da classificação do lançamento (o "gerente responsável"); vazio quando não há classificação.
   responsaveis: string[];
 }
+// SIS-2026-0802: o que compõe cada linha nova do item 3 (os 3 maiores lançamentos e quantos são ao todo), para a Controladoria não ficar na dúvida.
+export type LinhaComposta = "outrasMovimentacoes" | "estoque" | "investimentos" | "obras" | "tributosResultado" | "contratosForaLucratividade";
+export interface ItemComposicao {
+  numero: string | null;
+  descricao: string;
+  classificacao: string | null;
+  contrato: string | null;
+  data: string | null;
+  valor: number;
+}
+export interface ComposicaoLinha { qtd: number; itens: ItemComposicao[] }
 export interface PainelCentrosFluxo {
   kind: "centros_fluxo";
+  composicao: Record<LinhaComposta, ComposicaoLinha>;
   saidaTotal: number;
   aplicacoes: number;
   transferencias: number;
   saldoUtilizavel: number;
   // SIS-2026-0747: "Contratos" é o MESMO valor do Total de custos da Lucratividade de Contratos (só o que a Lucratividade conta como custo).
   contratos: number;
-  // O restante das saídas de contrato, que a Lucratividade não conta: contrato de investimento/obra administrativa/estoque/movimentação financeira,
-  // classificação que não é custo (transferência, financiamento, distribuição…) e lançamento sem classificação. Continua distribuído em contrato.
+  // SIS-2026-0802: o antigo "Contratos fora da Lucratividade" explodiu em Estoque, Investimentos, Obras e Tributos sobre o Resultado (centros próprios).
+  // Sobra aqui só o resíduo: saída de contrato que a Lucratividade não conta e que não é de nenhum desses centros (classificação que não é custo, como
+  // financiamento ou distribuição, contrato com tratamento "fora das despesas" de outro nome e lançamento sem classificação). A tela só mostra se for != 0.
   contratosForaLucratividade: number;
   administrativo: number;
   socios: number;
+  estoque: number;
+  investimentos: number;
+  obras: number;
+  // IRPJ e CSLL lançados sem contrato (mesma regra do Fechamento da Empresa); saem do Administrativo.
+  tributosResultado: number;
+  // SIS-2026-0802: saídas do centro "Movimentações Financeiras" que não são aplicação nem transferência entre contas (Recebimento de Nota,
+  // Cheque Especial…). Como a aplicação e a transferência, não são despesa: saem do saldo utilizável.
+  outrasMovimentacoes: number;
   faltaDistribuir: number;
   lancamentos: LancamentoFaltaDistribuir[];
 }
@@ -326,7 +347,7 @@ export function totaisCentrosMalote(
 }
 
 // ── SIS-2026-0720: item 3 a partir da saída total do Fluxo de Caixa ──────────────────────────────────────
-export type TipoCentro = "contrato" | "administrativo" | "socio";
+export type TipoCentro = "contrato" | "administrativo" | "socio" | "estoque" | "investimento" | "obra" | "movimentacao_financeira";
 
 // Transferência entre contas é movimento do dinheiro da própria empresa, não despesa (junto da aplicação financeira, fica fora do
 // saldo utilizável). Casa pelo nome da classificação, sem acento e sem caixa.
@@ -341,8 +362,29 @@ export function totaisCentrosFluxo(
   filtro: FiltroAuditoria,
   // SIS-2026-0747: a saída de contrato conta em "Contratos" só se a Lucratividade a conta como custo; sem esta função vale tudo (como antes).
   contaNaLucratividade: (l: LinhaFluxoAud) => boolean = () => true,
+  // SIS-2026-0802: IRPJ/CSLL (Tributos sobre o Resultado) lançados sem contrato.
+  ehTributoResultado: (l: LinhaFluxoAud) => boolean = () => false,
+  nomeDoContrato: (contratoId: string) => string | null | undefined = () => null,
 ): PainelCentrosFluxo {
-  let saidaTotal = 0, aplicacoes = 0, transferencias = 0, contratos = 0, contratosForaLucratividade = 0, administrativo = 0, socios = 0;
+  const compor: Record<LinhaComposta, Map<string, ItemComposicao>> = {
+    outrasMovimentacoes: new Map(), estoque: new Map(), investimentos: new Map(), obras: new Map(), tributosResultado: new Map(), contratosForaLucratividade: new Map(),
+  };
+  // Mesmo lançamento rateado/parcelado entra uma vez, com as fatias somadas.
+  const anota = (linha: LinhaComposta, l: LinhaFluxoAud & { numero_parcela?: number | null }, v: number, i: number) => {
+    const chave = l.despesa_id ? `${l.origem}|${l.despesa_id}|${l.numero_parcela ?? ""}|${l.data_pagamento ?? ""}` : `${l.origem}|#${i}`;
+    const atual = compor[linha].get(chave);
+    if (atual) { atual.valor = r2(atual.valor + v); return; }
+    compor[linha].set(chave, {
+      numero: l.id_malote ?? null,
+      descricao: l.descricao ?? "",
+      classificacao: l.classificacao_nome ?? null,
+      contrato: l.contrato_id ? (nomeDoContrato(l.contrato_id) ?? null) : null,
+      data: l.data_pagamento ?? null,
+      valor: r2(v),
+    });
+  };
+  let saidaTotal = 0, aplicacoes = 0, transferencias = 0, outrasMovimentacoes = 0, contratos = 0, contratosForaLucratividade = 0, administrativo = 0, socios = 0;
+  let estoque = 0, investimentos = 0, obras = 0, tributosResultado = 0;
   const por = new Map<string, LancamentoFaltaDistribuir>();
   fluxo.forEach((l, i) => {
     if (l.tipo !== "saida" || ehSaldoAnterior(l) || !passaLinha(filtro, l)) return;
@@ -354,10 +396,15 @@ export function totaisCentrosFluxo(
       const t = tipoDoContrato(l.contrato_id);
       if (t === "socio") socios += v;
       else if (t === "administrativo") administrativo += v;
+      else if (t === "movimentacao_financeira") { outrasMovimentacoes += v; anota("outrasMovimentacoes", l, v, i); }
+      else if (t === "estoque") { estoque += v; anota("estoque", l, v, i); }
+      else if (t === "investimento") { investimentos += v; anota("investimentos", l, v, i); }
+      else if (t === "obra") { obras += v; anota("obras", l, v, i); }
       else if (contaNaLucratividade(l)) contratos += v;
-      else contratosForaLucratividade += v;
+      else { contratosForaLucratividade += v; anota("contratosForaLucratividade", l, v, i); }
       return;
     }
+    if (ehTributoResultado(l)) { tributosResultado += v; anota("tributosResultado", l, v, i); return; }
     if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") { administrativo += v; return; }
     // Sem contrato e sem classificação administrativa: não está em nenhum centro. Um lançamento rateado entra uma vez, com as fatias somadas.
     const parcela = l.numero_parcela ?? null;
@@ -378,9 +425,17 @@ export function totaisCentrosFluxo(
     });
   });
   const lancamentos = Array.from(por.values()).sort((a, b) => b.valor - a.valor);
-  const saldoUtilizavel = r2(saidaTotal - aplicacoes - transferencias);
+  const saldoUtilizavel = r2(saidaTotal - aplicacoes - transferencias - outrasMovimentacoes);
+  const resumir = (m: Map<string, ItemComposicao>): ComposicaoLinha => {
+    const todos = Array.from(m.values()).sort((a, b) => b.valor - a.valor);
+    return { qtd: todos.length, itens: todos.slice(0, 3) };
+  };
   return {
     kind: "centros_fluxo",
+    composicao: {
+      outrasMovimentacoes: resumir(compor.outrasMovimentacoes), estoque: resumir(compor.estoque), investimentos: resumir(compor.investimentos),
+      obras: resumir(compor.obras), tributosResultado: resumir(compor.tributosResultado), contratosForaLucratividade: resumir(compor.contratosForaLucratividade),
+    },
     saidaTotal: r2(saidaTotal),
     aplicacoes: r2(aplicacoes),
     transferencias: r2(transferencias),
@@ -389,7 +444,12 @@ export function totaisCentrosFluxo(
     contratosForaLucratividade: r2(contratosForaLucratividade),
     administrativo: r2(administrativo),
     socios: r2(socios),
-    faltaDistribuir: r2(saldoUtilizavel - contratos - contratosForaLucratividade - administrativo - socios),
+    estoque: r2(estoque),
+    investimentos: r2(investimentos),
+    obras: r2(obras),
+    tributosResultado: r2(tributosResultado),
+    outrasMovimentacoes: r2(outrasMovimentacoes),
+    faltaDistribuir: r2(saldoUtilizavel - contratos - contratosForaLucratividade - administrativo - socios - estoque - investimentos - obras - tributosResultado),
     lancamentos,
   };
 }
