@@ -7,7 +7,7 @@
 export type TipoMassa = "centro_custo" | "classificacao" | "conta_banco";
 
 export interface LinhaMassa {
-  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica";
+  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
   despesa_id: string;
   numero_parcela: number | null;
   id_malote?: string | null;

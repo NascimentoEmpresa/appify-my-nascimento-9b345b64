@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
-import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
+import { AVISO_REFAZER, diasRestantesParaRefazer, podeCancelarFerias, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 import { ConversaSolicitacao, type ModuloConversa } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
@@ -109,6 +109,7 @@ const ROTULO: Record<string, string> = {
   aprovador_motivo: "Retorno de quem aprovou",
   refeita_em: "Refeita em", data_saida: "Data de saída", data_retorno: "Retorno previsto",
   dias_ferias: "Dias de férias", dias_vendidos: "Abono (dias vendidos)", observacoes: "Observações",
+  data_malote: "Enviado ao malote em", retorno_documentacao: "Retorno da documentação",
   sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
   sst_observacao: "Observação do SST",
   // Demissão: o ASO demissional, com os mesmos nomes de coluna do ASO de
@@ -178,7 +179,7 @@ function paraMensagem(m: LinhaMensagem, texto: string | null | undefined, email?
   };
 }
 
-export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefazer }: {
+export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefazer, onCancelada }: {
   tipo: TipoSolicitacao;
   /**
    * `number | string` porque as duas coisas chegam: as solicitações antigas
@@ -197,9 +198,19 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
    * Só aparece quando a regra deixa (podeRefazerFerias).
    */
   onRefazer?: (ficha: Record<string, unknown>) => void;
+  /**
+   * Férias (04/11/2026): o encarregado cancela a própria solicitação (RPC
+   * ferias_cancelar_pelo_solicitante) — é o caminho quando o prazo de 7 dias
+   * do refazer passou. Avisa a lista para recarregar.
+   */
+  onCancelada?: () => void;
 }) {
   const { user } = useAuth();
   const [ficha, setFicha] = useState<Record<string, unknown> | null>(null);
+  const [cancelando, setCancelando] = useState(false);
+  const [motivoCanc, setMotivoCanc] = useState("");
+  const [enviandoCanc, setEnviandoCanc] = useState(false);
+  const [erroCanc, setErroCanc] = useState("");
   const [msgs, setMsgs] = useState<Mensagem[]>([]);
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -244,6 +255,20 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
   useAoPedirAtualizacao(carregarMsgs);
 
   useEffect(() => { fimRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs.length]);
+
+  const cancelarFerias = async () => {
+    if (enviandoCanc) return;
+    const m = motivoCanc.trim();
+    if (m.length < 5) { setErroCanc("Informe o motivo do cancelamento."); return; }
+    setEnviandoCanc(true); setErroCanc("");
+    const { error } = await db.rpc("ferias_cancelar_pelo_solicitante", { p_id: Number(id), p_motivo: m });
+    setEnviandoCanc(false);
+    if (error) { setErroCanc(error.message); return; }
+    const { data } = await db.from(tabelaFicha).select("*").eq("id", id).maybeSingle();
+    setFicha(data ?? null);
+    setCancelando(false); setMotivoCanc("");
+    onCancelada?.();
+  };
 
   const enviar = async () => {
     const t = texto.trim();
@@ -295,7 +320,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo",
         "posto_atual_nome", "posto_atual_contrato", "posto_novo_nome", "posto_novo_contrato"].includes(k);
   const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_|cancelado_)/.test(k)
-    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em"].includes(k);
+    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em", "data_malote", "retorno_documentacao"].includes(k);
   const grupos: { titulo: string; icone: string; itens: [string, string, string][] }[] = [
     { titulo: "Colaborador", icone: "👤", itens: linhas.filter(([k]) => ehColaborador(k)) },
     { titulo: "Solicitação", icone: "📝", itens: linhas.filter(([k]) => !ehColaborador(k) && !ehDecisao(k)) },
@@ -315,7 +340,8 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
           </div>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{titulo}</div>
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span className="ini-badge">{status}</span>
+            {/* A ficha relida manda (muda ao cancelar daqui); a lista é o ponto de partida. */}
+            <span className="ini-badge">{String(ficha?.status ?? status)}</span>
             {tipo === "Férias" && !!ficha?.refeita_em && (
               <span title={`Refeita em ${fmt(String(ficha.refeita_em))}`} style={{ fontSize: 13.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#6d28d9" }}>🔁 Refeita</span>
             )}
@@ -348,17 +374,59 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
         {tipo === "Férias" && onRefazer && ficha && (() => {
           const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null, cancelada_pelo_rh: !!ficha.cancelada_pelo_rh });
           const dias = ficha.cancelada_pelo_rh ? 0 : diasRestantesParaRefazer(ficha.criado_em as string | null);
+          // Prazo de 7 dias esgotado (04/11/2026): aviso em vermelho dizendo
+          // o caminho — cancelar e pedir outra —, com o botão ao lado.
+          // Só quem pediu cancela por aqui (a RPC confere o mesmo pelo e-mail).
+          const souSolicitante = !!user?.email && String(ficha.solicitante_email ?? "").trim().toLowerCase() === user.email.toLowerCase();
+          const regraCanc = podeCancelarFerias({ status: ficha.status as string | null, data_saida: ficha.data_saida as string | null, tipo: ficha.tipo as string | null });
+          const canc = souSolicitante ? regraCanc : { ok: false, motivo: "só quem fez a solicitação pode cancelá-la — fale com o RH pela conversa." };
+          const esgotado = !regra.ok && ficha.status !== "Cancelada";
           return (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14, padding: "10px 14px", borderRadius: 12, border: `1px solid ${regra.ok ? "#c7d2fe" : "#e2e8f0"}`, background: regra.ok ? "#eef2ff" : "#f8fafc" }}>
-              <div style={{ flex: 1, minWidth: 220, fontSize: 13.5, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>
-                {regra.ok
-                  ? <><b>Precisa corrigir algo?</b> {AVISO_REFAZER} {dias > 0 && <>Prazo: <b>{dias} dia{dias === 1 ? "" : "s"}</b>.</>}</>
-                  : <><b>Refazer indisponível.</b> {regra.motivo}</>}
+            <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 12, border: `1px solid ${regra.ok ? "#c7d2fe" : esgotado ? "#fecaca" : "#e2e8f0"}`, background: regra.ok ? "#eef2ff" : esgotado ? "#fef2f2" : "#f8fafc" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220, fontSize: 13.5, color: regra.ok ? "#3730a3" : esgotado ? "#991b1b" : "#64748b", lineHeight: 1.5 }}>
+                  {regra.ok
+                    ? <><b>Precisa corrigir algo?</b> {AVISO_REFAZER} {dias > 0 && <>Prazo: <b>{dias} dia{dias === 1 ? "" : "s"}</b>.</>}</>
+                    : <><b>{esgotado ? "⛔ Prazo para refazer encerrado." : "Refazer indisponível."}</b> {regra.motivo}</>}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {regra.ok && (
+                    <button onClick={() => onRefazer(ficha)}
+                      style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#4f46e5", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      🔁 Refazer solicitação
+                    </button>
+                  )}
+                  {canc.ok && !cancelando && (
+                    <button onClick={() => { setCancelando(true); setErroCanc(""); }}
+                      style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #dc2626", background: "#fff", color: "#b91c1c", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      ✖ Cancelar solicitação
+                    </button>
+                  )}
+                </div>
               </div>
-              <button onClick={() => onRefazer(ficha)} disabled={!regra.ok}
-                style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: regra.ok ? "#4f46e5" : "#cbd5e1", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: regra.ok ? "pointer" : "not-allowed", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                🔁 Refazer solicitação
-              </button>
+              {esgotado && !canc.ok && (
+                <div style={{ marginTop: 6, fontSize: 12.5, color: "#64748b" }}>Cancelar também não é possível: {canc.motivo}</div>
+              )}
+              {cancelando && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #fecaca" }}>
+                  <div style={{ fontSize: 13.5, color: "#7f1d1d", fontWeight: 700, marginBottom: 6 }}>
+                    Cancelar esta solicitação? O RH será avisado. Depois de cancelada ela não volta — para as férias acontecerem, faça uma nova solicitação.
+                  </div>
+                  <textarea value={motivoCanc} onChange={e => setMotivoCanc(e.target.value)} rows={2} placeholder="Motivo do cancelamento (obrigatório)"
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #fca5a5", fontSize: 13.5, fontFamily: "inherit", resize: "vertical" }} />
+                  {erroCanc && <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4 }}>{erroCanc}</div>}
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button onClick={cancelarFerias} disabled={enviandoCanc}
+                      style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: enviandoCanc ? "wait" : "pointer", fontFamily: "inherit" }}>
+                      {enviandoCanc ? "Cancelando…" : "Confirmar cancelamento"}
+                    </button>
+                    <button onClick={() => { setCancelando(false); setMotivoCanc(""); setErroCanc(""); }}
+                      style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#fff", color: "#475569", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Voltar
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}

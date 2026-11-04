@@ -97,6 +97,8 @@ const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   cartao_fatura: "financeiro-cartao-credito",
   aplicacao_financeira: "financeiro-aplicacao-financeira",
   importacao_historica: "financeiro-fluxo-caixa-gestao",
+  // SIS-2026-0798: como Aplicação Financeira, só se gerencia (estorna) pela própria tela; aqui a entrada só satisfaz o tipo exaustivo.
+  conta_garantida: "conta-garantida",
 };
 
 interface FiltrosExport {
@@ -149,6 +151,7 @@ const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   cartao_fatura: "Fatura Cartão de Crédito",
   aplicacao_financeira: "Aplicação Financeira",
   importacao_historica: "Importação (planilha)",
+  conta_garantida: "Conta Garantida",
 };
 
 // SIS-2026-0413 (complemento): a tabela renderizava todas as linhas
@@ -1435,6 +1438,18 @@ export default function FluxoCaixaGestao() {
                           onClick={() => navigate("/app/financeiro/gestao-financeira/aplicacoes-financeiras")}
                         >
                           Ver em Aplicações
+                        </Button>
+                      ) : l.origem === "conta_garantida" ? (
+                        // SIS-2026-0798: resgate/amortização/juros não se editam nem se excluem daqui (ajuste isolado não vale para esta origem):
+                        // corrige-se estornando e lançando de novo na Conta Garantida.
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap p-0 text-xs"
+                          title="Gerencie (estorne) na Conta Garantida"
+                          onClick={() => navigate("/app/financeiro/conta-garantida")}
+                        >
+                          Ver na Conta Garantida
                         </Button>
                       ) : (
                         <div className="flex items-center justify-center gap-0.5">

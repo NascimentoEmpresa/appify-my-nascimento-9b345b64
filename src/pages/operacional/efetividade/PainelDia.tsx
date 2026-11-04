@@ -19,6 +19,13 @@
 // IMPLANTADO — registrado pela Licitação em Contratos › Implantação, igual
 // ao previsto enquanto ninguém registrar. O previsto aparece ao lado só
 // quando difere, e os dois vão no CSV.
+//
+// 04/11/2026 (mesmo chamado: "o Painel não bate com o Ativos/Contratos"): o
+// banco ligava UM contrato a UMA filial e o contrato menor da filial sumia
+// daqui. Agora vem uma linha por contrato (mig 20261104001300) e a filial
+// soma os seus (implantadoPorFilial). Ao lado do Implantado, o "Tem" e o
+// saldo do Ativos/Contratos — a mesma regra, lida da mesma função do banco
+// (rh_ac_pessoas_posto) — e o KPI "Postos implantados" com o total geral.
 // =====================================================================
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -26,13 +33,14 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   AlertTriangle, BarChart3, CalendarCheck2, ChevronRight, Download, FileText, LayoutGrid, Palmtree, RefreshCw,
-  Stethoscope, Trophy, UserMinus, UserX, Users, UserCheck, Clock, Fingerprint,
+  Stethoscope, Trophy, UserMinus, UserX, Users, UserCheck, Clock, Fingerprint, Building2,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEfetDiaristas, useEfetPrevistoPlanilha } from "@/hooks/useEfetividade";
 import {
-  AUSENCIA_A_COBRIR, agrupar, avaliarDia, chaveContrato, descoberto, foraDaEscala, pct, resumir, somaDias, statusContrato, baixarCsv, tempoSemCobertura,
-  type ResumoGrupo,
+  AUSENCIA_A_COBRIR, agrupar, avaliarDia, chaveContrato, descoberto, foraDaEscala, implantadoPorFilial, pct, resumir, somaDias, statusContrato,
+  totalImplantado, baixarCsv, tempoSemCobertura,
+  type ImplantadoFilial, type ResumoGrupo,
 } from "@/lib/efetividade";
 import {
   AvisoSincronizacao, BadgeContrato, BarraFiltros, BASE_ROTA, CabecalhoEfetividade, Carregando, CelulaPct, Erro, Kpi, Secao, Vazio,
@@ -48,7 +56,7 @@ export default function PainelDia() {
   const d = useDiaEfetividade(filtros);
   const { data: diaristas = [] } = useEfetDiaristas();
   const { data: planilha = [] } = useEfetPrevistoPlanilha();
-  const previstoPlanilha = useMemo(() => new Map(planilha.map((p) => [chaveContrato(p.empresa, p.filial), p])), [planilha]);
+  const implantadoFilial = useMemo(() => implantadoPorFilial(planilha), [planilha]);
 
   const r = useMemo(() => resumir(d.linhas.map((l) => l.dia)), [d.linhas]);
   const rOntem = useMemo(() => resumir(d.linhasOntem.map((l) => l.dia)), [d.linhasOntem]);
@@ -75,16 +83,23 @@ export default function PainelDia() {
         const presentesEscala = x.presentes - foraEscala;
         return {
           ...x, contrato: d.contratoMap.get(x.chave), status: statusContrato(x),
-          previstoPlanilha: previstoPlanilha.get(x.chave)?.previsto ?? null,
-          implantado: (() => { const p = previstoPlanilha.get(x.chave); return p ? Number(p.implantado ?? p.previsto) : null; })(),
+          impl: implantadoFilial.get(x.chave) ?? null,
           foraEscala, presentesEscala, cobertas, descobertasEscala,
           pendentes: x.previsto - presentesEscala - foraEscala - cobertas - descobertasEscala,
         };
       })
       .sort((a, b) => ORDEM_STATUS[a.status] - ORDEM_STATUS[b.status] || b.descobertos - a.descobertos || (a.efetividade ?? 1) - (b.efetividade ?? 1));
-  }, [d.linhas, d.contratoMap, previstoPlanilha]);
+  }, [d.linhas, d.contratoMap, implantadoFilial]);
   const foraEscalaTotal = porContrato.reduce((a, x) => a + x.foraEscala, 0);
   const foraEscalaOntem = d.linhasOntem.filter((l) => foraDaEscala(l.dia, l.p.jornada)).length;
+
+  // Sem filtro, o total é o do Ativos/Contratos (todo contrato com planilha,
+  // inclusive o que ainda não tem ninguém); com filtro, só os visíveis.
+  const comFiltro = !!(filtros.contrato || filtros.turno || filtros.posto || filtros.encarregado);
+  const totImpl = useMemo(
+    () => totalImplantado(planilha, comFiltro ? new Set(porContrato.map((x) => x.chave)) : null),
+    [planilha, comFiltro, porContrato],
+  );
 
   // Faltas nos últimos 14 dias (a base já traz as batidas dessa janela).
   const rankingFaltas = useMemo(() => {
@@ -108,8 +123,8 @@ export default function PainelDia() {
   const contratosDescobertos = porContrato.filter((x) => x.descobertos > 0).length;
 
   const exportar = () => baixarCsv(`efetividade_${d.data}.csv`, [
-    ["Contrato", "Previsto (planilha)", "Implantado", "Escalados hoje", "Presentes na escala", "Fora de escala", "Coberturas", "Em andamento", "Descobertos", "Faltas", "Atestados", "Afastamentos", "Férias", "Efetividade", "Status", "Sem registro de ponto"],
-    ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.previstoPlanilha ?? "", x.implantado ?? "", x.previsto, x.presentesEscala, x.foraEscala, x.cobertas, x.pendentes, x.descobertasEscala,
+    ["Contrato", "Previsto (planilha)", "Implantado", "Tem (Ativos/Contratos)", "Saldo (tem − implantado)", "Escalados hoje", "Presentes na escala", "Fora de escala", "Coberturas", "Em andamento", "Descobertos", "Faltas", "Atestados", "Afastamentos", "Férias", "Efetividade", "Status", "Sem registro de ponto"],
+    ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.impl?.previsto ?? "", x.impl?.implantado ?? "", x.impl?.tem ?? "", x.impl?.saldo ?? "", x.previsto, x.presentesEscala, x.foraEscala, x.cobertas, x.pendentes, x.descobertasEscala,
       x.faltas, x.atestados, x.afastamentos, x.ferias, x.aguardandoApuracao ? "aguardando apuração" : pct(x.efetividade), x.status, x.semRegistro]),
   ]);
 
@@ -130,7 +145,12 @@ export default function PainelDia() {
 
       {d.carregando ? <Carregando /> : (
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
+            <Kpi icon={Building2} rotulo="Postos implantados" valor={planilha.length ? totImpl.implantado : null} tom="info"
+              dica={[
+                totImpl.implantado !== totImpl.previsto ? `previsto ${totImpl.previsto.toLocaleString("pt-BR")}` : null,
+                totImpl.tem != null && totImpl.saldo != null ? `tem ${totImpl.tem.toLocaleString("pt-BR")} · saldo ${fmtSaldo(totImpl.saldo)}` : null,
+              ].filter(Boolean).join(" · ") || "igual ao previsto da planilha"} />
             <Kpi icon={Users} rotulo="Escalados hoje" valor={r.previsto} anterior={rOntem.previsto} tom="info" />
             <Kpi icon={UserCheck} rotulo="Presentes na escala" valor={r.presentes - foraEscalaTotal} anterior={rOntem.presentes - foraEscalaOntem} tom="success" />
             <Kpi icon={UserX} rotulo="Ausências" valor={r.faltas + r.atestados} anterior={rOntem.faltas + rOntem.atestados} tom="destructive" melhorSobe={false} />
@@ -150,7 +170,9 @@ export default function PainelDia() {
                   <thead className="sticky top-0 bg-muted/70 text-xs backdrop-blur">
                     <tr>
                       <th className="p-2 text-left">Contrato</th>
-                      <th className="p-2" title="Postos de fato implantados (Licitação › Contratos › Implantação; sem registro, igual às vagas da Planilha de Custo) — a mesma conta do RH › Ativos/Contratos">Implantado</th>
+                      <th className="p-2" title="Postos de fato implantados (Licitação › Contratos › Implantação; sem registro, igual às vagas da Planilha de Custo) — a mesma conta do Operacional › Ativos/Contratos">Implantado</th>
+                      <th className="p-2" title="Trabalhando no contrato agora (situação da Senior; afastados e renda técnica fora) — o Tem do Operacional › Ativos/Contratos">Tem</th>
+                      <th className="p-2" title="Tem − implantado: negativo = posto implantado sem gente; positivo = gente acima do implantado">Saldo</th>
                       <th className="p-2" title="Quem a escala esperava neste dia = Presentes + Fora de escala + Coberturas + Em andamento + Descobertos — a base da efetividade">Escalados hoje</th>
                       <th className="p-2" title="Presentes dentro da escala (1ª batida até 1h do início)">Presentes</th>
                       <th className="p-2" title="Presentes com a 1ª batida a mais de 1h do início da escala">Fora de escala</th>
@@ -167,11 +189,7 @@ export default function PainelDia() {
                           <p className="truncate font-semibold text-primary" title={x.contrato?.nome}>{x.contrato?.nome ?? x.chave}</p>
                           {!!x.contrato?.encarregados.length && <p className="truncate text-[11px] text-muted-foreground">{x.contrato.encarregados.map((e) => e.nome).join(", ")}</p>}
                         </td>
-                        <td className="whitespace-nowrap p-2 text-center tabular-nums">
-                          {x.implantado == null ? <span className="text-muted-foreground" title="Sem Planilha de Custo ligada a este contrato">—</span>
-                            : x.implantado === Number(x.previstoPlanilha) ? x.implantado
-                            : <span title={`Previsto na Planilha de Custo: ${x.previstoPlanilha}`}>{x.implantado}<span className="ml-1 text-[10px] text-muted-foreground">/ {x.previstoPlanilha} prev.</span></span>}
-                        </td>
+                        <CelulasImplantado impl={x.impl} />
                         <td className="p-2 text-center tabular-nums">{x.previsto}</td>
                         <td className="p-2 text-center tabular-nums text-success">{x.presentesEscala}</td>
                         <td className={cn("p-2 text-center tabular-nums", x.foraEscala ? "font-semibold text-warning" : "text-muted-foreground")}>{x.foraEscala}</td>
@@ -183,7 +201,7 @@ export default function PainelDia() {
                         <td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => irPostos(x.chave)}>Ver detalhe</Button></td>
                       </tr>
                     ))}
-                    {!porContrato.length && <tr><td colSpan={11}><Vazio texto="Nenhum contrato com os filtros escolhidos." /></td></tr>}
+                    {!porContrato.length && <tr><td colSpan={13}><Vazio texto="Nenhum contrato com os filtros escolhidos." /></td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -249,6 +267,41 @@ export default function PainelDia() {
         </div>
       )}
     </div>
+  );
+}
+
+const fmtSaldo = (n: number) => (n > 0 ? `+${n}` : String(n));
+
+/** Implantado | Tem | Saldo de uma filial — a soma dos contratos dela, com a lista na dica quando são mais de um. */
+function CelulasImplantado({ impl }: { impl: ImplantadoFilial | null }) {
+  if (!impl) {
+    return (
+      <>
+        <td className="p-2 text-center text-muted-foreground" title="Sem Planilha de Custo ligada a este contrato">—</td>
+        <td className="p-2 text-center text-muted-foreground">—</td>
+        <td className="p-2 text-center text-muted-foreground">—</td>
+      </>
+    );
+  }
+  const dica = [
+    impl.implantado !== impl.previsto ? `Previsto na Planilha de Custo: ${impl.previsto}` : null,
+    impl.contratos.length > 1
+      ? `Soma de ${impl.contratos.length} contratos nesta filial:\n${impl.contratos.map((c) => `· ${c.nome}: ${c.implantado}${c.tem != null ? ` (tem ${c.tem})` : ""}`).join("\n")}`
+      : null,
+  ].filter(Boolean).join("\n\n") || undefined;
+  return (
+    <>
+      <td className="whitespace-nowrap p-2 text-center tabular-nums" title={dica}>
+        {impl.implantado}
+        {impl.implantado !== impl.previsto && <span className="ml-1 text-[10px] text-muted-foreground">/ {impl.previsto} prev.</span>}
+        {impl.contratos.length > 1 && <span className="ml-1 text-[10px] text-muted-foreground">({impl.contratos.length} contratos)</span>}
+      </td>
+      <td className="p-2 text-center tabular-nums">{impl.tem ?? "—"}</td>
+      <td className={cn("p-2 text-center font-semibold tabular-nums",
+        impl.saldo == null || impl.saldo === 0 ? "text-muted-foreground" : impl.saldo < 0 ? "text-destructive" : "text-warning")}>
+        {impl.saldo == null ? "—" : fmtSaldo(impl.saldo)}
+      </td>
+    </>
   );
 }
 
