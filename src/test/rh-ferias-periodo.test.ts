@@ -17,6 +17,19 @@ describe("Gestão de Férias — filtro de período", () => {
     expect(passaNoPeriodo(ferias, "ferias", "2026-12-01", ultimoDiaDoMes("2026-12"))).toBe(false);
   });
 
+  it("modo saída (padrão desde 04/11/2026): só quem SAI no período", () => {
+    // Saiu em dezembro e volta em janeiro: não aparece em janeiro (queixa do RH).
+    const dezembro = { data_saida: "2026-12-14", data_retorno: "2027-01-13", criado_em: "2026-11-01T13:00:00Z" };
+    expect(passaNoPeriodo(dezembro, "saida", "2027-01-01", "2027-07-31")).toBe(false);
+    expect(passaNoPeriodo(dezembro, "saida", "2026-12-01", ultimoDiaDoMes("2026-12"))).toBe(true);
+    // No modo antigo ("em férias no período") continua aparecendo nos dois meses.
+    expect(passaNoPeriodo(dezembro, "ferias", "2027-01-01", "2027-07-31")).toBe(true);
+    expect(passaNoPeriodo(ferias, "saida", "2027-01-01", ultimoDiaDoMes("2027-01"))).toBe(true);
+    expect(passaNoPeriodo(ferias, "saida", "2027-02-01", ultimoDiaDoMes("2027-02"))).toBe(false);
+    expect(passaNoPeriodo(ferias, "saida", "2027-01-20", "2027-01-20")).toBe(true);
+    expect(passaNoPeriodo(venda, "saida", "2026-10-01", "2026-10-31")).toBe(false);
+  });
+
   it("limite de um lado só", () => {
     expect(passaNoPeriodo(ferias, "ferias", "2027-02-19", "")).toBe(true);
     expect(passaNoPeriodo(ferias, "ferias", "2027-02-20", "")).toBe(false);
