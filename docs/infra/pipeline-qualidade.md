@@ -70,18 +70,35 @@ Medido em 03/11 nas telas do WhatsApp:
 | Requisições sozinhas em 10 min parada | **35–36 por tela** → reprova | **0** |
 | Requisições para abrir | 54 | 42 |
 
-## 3. Como deixar obrigatório (uma vez, no navegador)
+## 3. Obrigatório desde 04/11/2026 — FEITO
 
-Sem isso o check fica vermelho, mas o merge continua liberado.
+Até 04/11 nada disso travava o merge: o único check obrigatório na `main` era
+`validar-chamado` (o prefixo do chamado no título). Ou seja, os dez outros
+podiam estar vermelhos e o botão de merge continuava verde — a pipeline era
+documentação executável. Hoje a proteção da `main` está assim (conferível com
+`gh api repos/.../branches/main/protection`):
 
-1. GitHub → repositório `appify-my-nascimento-9b345b64` → **Settings** →
-   **Branches** (ou **Rules → Rulesets**).
-2. Na regra da `main`, marque **Require status checks to pass before merging**.
-3. Na busca de checks, adicione **`guardiao`** e **`qa-requisicoes`**. Eles só
-   aparecem na busca depois de terem rodado uma vez, nesta PR.
-4. Marque **Do not allow bypassing the above settings**, para que nem o admin
-   pule sem ver.
-5. Salve.
+| | |
+|---|---|
+| Checks obrigatórios | `validar-chamado`, `tipos`, `testes`, `build`, `lint`, `migrations`, `portaria`, `revisao-ia`, `guardiao`, `qa-requisicoes`, `migracao-roda` |
+| Branch atualizada antes do merge | sim (`strict`) |
+| PR obrigatória (sem push direto na `main`) | sim |
+| Vale para administrador também | sim (`enforce_admins`) |
+| Force push / apagar a `main` | bloqueados |
+| Atores com bypass | nenhum |
+
+O que mudou junto, para que "obrigatório" não virasse teatro — os detalhes
+estão em [`pipeline-revisao-04-11-2026.md`](pipeline-revisao-04-11-2026.md):
+
+- a **portaria (R1–R8) passou a rodar em todo push** da PR. Antes rodava só na
+  abertura: abria-se a PR com uma linha e o código real entrava depois, sem
+  passar por regra nenhuma;
+- a **label `pular-revisao-ia` deixou de desligar a portaria** (job pulado
+  conta como sucesso, então a label era um merge livre);
+- **"a IA não revisou" virou vermelho**. Com a cota esgotada o check ficava
+  verde sem uma linha de revisão;
+- o **veredito da IA passou a bloquear** (era `REVISAO_IA_BLOQUEIA`, nunca
+  ligada).
 
 ## 4. Regras para o revisor por IA
 
@@ -94,8 +111,9 @@ para o filtro que usa, e RPC chamada dentro de laço.
 | Lacuna | Por quê | O que resolveria |
 |---|---|---|
 | **Teste de carga por PR** | Exige um banco com dados de verdade. Não existe homologação; carga na produção a cada PR derrubaria a produção | um **ambiente de homologação**: uma VM com cópia noturna sem dados pessoais (~US$ 30/mês na Vultr). Aí `infra/carga/carga.mjs` roda por PR contra ela e reprova regressão de p95 |
-| **Aplicar a migration antes do merge** | As 1.247 migrations não aplicam do zero (o schema real diverge do repositório) | o mesmo ambiente, ou um dump só de schema da produção restaurado num Postgres do runner |
-| **Consulta lenta nova** (falta de índice para um filtro) | Precisa de `EXPLAIN` com dados reais | idem, com `EXPLAIN (ANALYZE)` das consultas novas |
+| **Aplicar a migration no schema de verdade** | *Parcialmente resolvido em 04/11:* o job `migracao-roda` já aplica as migrations da PR num Postgres 18 do runner e reprova erro de sintaxe — o que para a fila. O que falta é o schema real, porque as 1.247 migrations não aplicam do zero | um dump **só de schema** da produção, publicado todo dia. Depende de um subcomando novo na chave restrita do cluster (hoje ela aceita só `functions` e `migrations`), que é mudança nos nós |
+| **Consulta lenta nova** (falta de índice para um filtro) | Precisa de `EXPLAIN` com dados reais | idem: com o dump de schema no runner, `EXPLAIN` já diria se a policy nova varre a tabela |
+| **Tela medida com DADO** (total somado no navegador) | A API falsa do `qa-requisicoes` responde `[]` para tudo, então nenhuma tela exercita render de lista. Devolver linhas sintéticas faria telas quebrarem por formato inesperado e a nova regra de "erro no console" acusaria falso positivo | gerar as linhas a partir do `types.ts` (o tipo de cada tabela está lá) em vez de inventar o formato |
 | **Dev rodando o frontend local contra a produção** | Está fora do CI: em 03/11 vieram 15,8 mil requisições de `localhost:8080`, `192.168.100.18:8080` e `192.168.1.38:8080`, com hot-reload batendo no banco de produção | homologação, de novo. Até lá, combinar com o time que `npm run dev` aponta para a produção e é para usar com cuidado |
 
 A homologação é o próximo passo de maior retorno: ela destrava as três

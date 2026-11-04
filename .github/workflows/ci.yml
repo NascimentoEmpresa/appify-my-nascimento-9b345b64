@@ -239,6 +239,18 @@ jobs:
             tsc-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json') }}-
             tsc-${{ runner.os }}-
 
+      # Baseline da catraca: quantos erros de tipo a main tem. Só restaura (quem
+      # grava é o push da main, no fim deste job). Cache escrito na main é
+      # visível para as PRs; o escrito numa PR só vale para ela.
+      - name: Restaurar o baseline de tipos da main
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: baseline-tipos.txt
+          key: baseline-tipos-nunca-acerta
+          restore-keys: |
+            baseline-tipos-
+
       - name: Type-check dos arquivos da PR
         id: tsc
         env:
@@ -287,7 +299,38 @@ jobs:
 
           if [ "$SEMEANDO" = "1" ]; then
             echo "Cache semeado. ($TOTAL erro(s) de tipo na base.)"
+            # Publica o número da main como baseline da catraca (ver abaixo).
+            # A impressão digital do lockfile vai junto: subir dependência pode
+            # mudar a versão do TypeScript e, com ela, a contagem — comparar
+            # números feitos por compiladores diferentes reprovaria PR por
+            # motivo errado.
+            printf '%s %s\n' "$TOTAL" "${{ hashFiles('package-lock.json') }}" > baseline-tipos.txt
+            echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          # ----------------------------------------------------------------
+          # CATRACA (04/11/2026). O gate por arquivo da PR, abaixo, não vê a
+          # PR que piora um arquivo que ela NÃO tocou — e isso acontece toda
+          # vez que alguém muda o tipo de retorno de um helper usado em 30
+          # telas. A dívida antiga continua não sendo cobrada (travar nos ~180
+          # erros pararia o time); o que a catraca impede é o número SUBIR.
+          # ----------------------------------------------------------------
+          if [ -f baseline-tipos.txt ]; then
+            BASE_TOTAL=$(cut -d' ' -f1 baseline-tipos.txt)
+            BASE_LOCK=$(cut -d' ' -f2 baseline-tipos.txt)
+            if [ "$BASE_LOCK" != "${{ hashFiles('package-lock.json') }}" ]; then
+              echo "::notice::Catraca de tipos desligada nesta PR: o package-lock mudou, então a contagem da main foi feita com outro compilador."
+            elif [ "$TOTAL" -gt "$BASE_TOTAL" ]; then
+              echo "::error::Esta PR AUMENTA a dívida de tipos do projeto: a main tem $BASE_TOTAL erro(s) e com esta PR são $TOTAL."
+              echo "Isso costuma acontecer quando a mudança altera um tipo usado por outros arquivos — o erro aparece LONGE do que você editou."
+              echo "Rode na sua máquina para ver onde: npx tsc -p tsconfig.app.json --noEmit"
+              exit 1
+            else
+              echo "Catraca de tipos: main=$BASE_TOTAL, esta PR=$TOTAL. OK."
+            fi
+          else
+            echo "::notice::Sem baseline de tipos da main (primeira execução ou cache expirado): catraca desligada nesta PR."
           fi
 
           # Um erro do tsc é a linha "caminho(linha,col): error TSxxxx: ..."
@@ -323,6 +366,13 @@ jobs:
         with:
           path: .tsbuildinfo-ci
           key: tsc-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json') }}-${{ github.run_id }}
+
+      - name: Publicar o baseline de tipos da main
+        if: github.event_name == 'push' && steps.tsc.outputs.total != ''
+        uses: actions/cache/save@v4
+        with:
+          path: baseline-tipos.txt
+          key: baseline-tipos-${{ github.sha }}
 
   # ==========================================================================
   # Os três jobs abaixo eram passos que ficavam na fila atrás do type-check.
@@ -378,13 +428,23 @@ jobs:
       - name: Build de produção
         run: npm run build
 
-  # Não trava a PR — ver o cabeçalho. A ideia é mostrar o que a PR introduziu
-  # sem cobrar a limpeza dos 2585 erros que já existiam.
+  # 04/11/2026 — deixou de ser só aviso: virou CATRACA.
+  #
+  # A lista dos 2.585 erros antigos continua NÃO sendo cobrada (exigir lint
+  # limpo hoje deixaria toda PR vermelha e o time desligaria o check). O que
+  # mudou é a outra metade, que faltava: o número não pode SUBIR no arquivo que
+  # a PR tocou. Quem compara é .github/scripts/catraca-lint.mjs.
+  #
+  # O lint do repositório inteiro é caro (minutos), então ele roda UMA VEZ por
+  # merge, no push da main, e publica o número por arquivo no cache. A PR linta
+  # só os arquivos dela e compara. Sem baseline (primeira vez, cache expirado),
+  # a catraca se desliga sozinha e o job volta a ser informativo — baseline que
+  # falta nunca reprova PR.
   lint:
-    name: lint (aviso)
+    name: lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event_name == 'pull_request' && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    timeout-minutes: 20
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
     permissions:
       contents: read
     steps:
@@ -405,8 +465,17 @@ jobs:
       - name: Instalar dependências
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Lint dos arquivos da PR (aviso)
-        continue-on-error: true
+      - name: Restaurar o baseline do lint da main
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: baseline-lint.json
+          key: baseline-lint-nunca-acerta
+          restore-keys: |
+            baseline-lint-
+
+      - name: Lint dos arquivos da PR (catraca)
+        if: github.event_name == 'pull_request'
         env:
           BASE: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -424,13 +493,31 @@ jobs:
           echo "$ARQUIVOS" | sed 's/^/  /'
           echo
 
+          # O eslint sai 1 quando acha erro; aqui o que decide é a catraca.
           # shellcheck disable=SC2086
           npx eslint $ARQUIVOS || true
-
           echo
-          echo "Lembrete: este passo é informativo e não reprova a PR. Os erros"
-          echo "apontados podem ser anteriores à sua mudança — corrija os que"
-          echo "vieram com ela."
+          # shellcheck disable=SC2086
+          npx eslint $ARQUIVOS -f json -o lint-da-pr.json || true
+
+          node .github/scripts/catraca-lint.mjs --atual lint-da-pr.json --baseline baseline-lint.json
+
+      # Uma vez por merge: o número por arquivo do repositório inteiro, que é o
+      # baseline das PRs. Caro (minutos) e fora do caminho crítico de quem está
+      # esperando revisão — aqui ninguém espera.
+      - name: Medir a main e publicar o baseline
+        if: github.event_name == 'push'
+        run: |
+          set -uo pipefail
+          npx eslint . -f json -o lint-da-main.json || true
+          node .github/scripts/catraca-lint.mjs --resumir lint-da-main.json --para baseline-lint.json
+
+      - name: Guardar o baseline do lint
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: baseline-lint.json
+          key: baseline-lint-${{ github.sha }}
 
 
   # ---------------------------------------------------------------------
@@ -506,17 +593,21 @@ jobs:
           echo "   git log --format='%h %ad %s' --date=short -1 -- <arquivo>"
           exit 1
 # ---------------------------------------------------------------------------
-# Sobre o lint
+# Sobre o lint (atualizado em 04/11/2026)
 #
-# São 2585 erros na base inteira, então exigir lint limpo hoje é inviável. O
-# caminho para torná-lo obrigatório, quando o time quiser:
+# São ~2585 erros na base inteira, então exigir lint limpo continua inviável —
+# e continua NÃO sendo cobrado. O que passou a valer é a catraca: o número de
+# erros do arquivo que a PR tocou não pode ficar maior do que o da main. Mesma
+# ideia aplicada aos tipos, no job `tipos`.
 #
-#   1. Rodar `npx eslint . --fix` — resolve ~8 erros e 8 warnings sozinho.
-#   2. Atacar as regras por volume, uma PR por regra, em vez de arquivo por
-#      arquivo. A campeã costuma ser @typescript-eslint/no-explicit-any.
-#   3. Quando o número chegar perto de zero, trocar este job por um
-#      `npm run lint` sem continue-on-error e adicioná-lo aos required checks.
+# Por que catraca em vez de meta: "limpar o lint" é um projeto que ninguém
+# começa, e enquanto ninguém começa o número cresce. Com a catraca o número só
+# pode descer, sem ninguém precisar parar para limpar.
 #
-# Enquanto isso, o valor está no build, no type-check e nos testes — que são os
-# três que já estão verdes e travam de verdade.
+# O caminho para exigir lint limpo um dia, se o time quiser:
+#   1. `npx eslint . --fix` — resolve ~8 erros e 8 warnings sozinho.
+#   2. Atacar as regras por volume, uma PR por regra. A campeã costuma ser
+#      @typescript-eslint/no-explicit-any.
+#   3. Quando o número chegar perto de zero, trocar a catraca por
+#      `npm run lint` puro.
 # ---------------------------------------------------------------------------
