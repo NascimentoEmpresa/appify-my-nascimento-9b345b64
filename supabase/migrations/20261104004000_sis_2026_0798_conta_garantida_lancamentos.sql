@@ -98,6 +98,10 @@ CREATE TABLE IF NOT EXISTS public.financeiro_conta_garantida_movimento (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS financeiro_conta_garantida_movimento_numero ON public.financeiro_conta_garantida_movimento (numero);
+-- Índices das FKs que a unique (empresa_id, banco_id, conta) não cobre (guardião de desempenho): JOIN e DELETE nas tabelas referenciadas.
+CREATE INDEX IF NOT EXISTS financeiro_conta_garantida_banco_id_idx ON public.financeiro_conta_garantida (banco_id);
+CREATE INDEX IF NOT EXISTS financeiro_conta_garantida_conta_banco_id_idx ON public.financeiro_conta_garantida (conta_banco_id);
+CREATE INDEX IF NOT EXISTS financeiro_conta_garantida_movimento_classificacao_id_idx ON public.financeiro_conta_garantida_movimento (classificacao_id);
 CREATE INDEX IF NOT EXISTS financeiro_conta_garantida_movimento_conta ON public.financeiro_conta_garantida_movimento (conta_garantida_id, data_movimento, seq);
 
 CREATE OR REPLACE FUNCTION public.conta_garantida_gerar_numero()
