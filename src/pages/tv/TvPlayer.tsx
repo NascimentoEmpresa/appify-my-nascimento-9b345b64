@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type AlertaNaTv, type EstadoTv, type ItemTv, type LayoutAviso } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
+import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_ANTI_ESTATICA_MS, rotuloTelaAcordada, type ModoTelaAcordada } from "@/lib/tv/telaAcordada";
 
 // =====================================================================
 // /tv — PLAYER das TVs da empresa (Sistemas › TV's, mig 20261007000012)
@@ -83,7 +84,11 @@ const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record
 // av:rede, av:img) — aparece em "tela" na gestão. O banco guarda 30 letras.
 const VERSAO_JS = scriptPrincipal(document.documentElement.outerHTML)?.match(/index-([^./]+)\.js/)?.[1]?.slice(0, 8) ?? "dev";
 let estadoImagemAviso = "";
-const tela = () => [`${window.screen?.width ?? window.innerWidth}x${window.screen?.height ?? window.innerHeight}`, VERSAO_JS, estadoImagemAviso].filter(Boolean).join(" ");
+// 04/11/2026 — como a tela está sendo mantida acordada (wl/vd/x, ver
+// src/lib/tv/telaAcordada.ts). Vem ANTES do aviso: o left(…, 30) do banco
+// corta o fim, e isto importa mais para saber por que uma TV dormiu.
+let estadoTelaAcordada = "";
+const tela = () => [`${window.screen?.width ?? window.innerWidth}x${window.screen?.height ?? window.innerHeight}`, VERSAO_JS, estadoTelaAcordada, estadoImagemAviso].filter(Boolean).join(" ");
 const lerToken = () => { try { return localStorage.getItem(CHAVE_TOKEN); } catch { return null; } };
 const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE_TOKEN, t) : localStorage.removeItem(CHAVE_TOKEN); } catch { /* modo privado */ } };
 const midiaPublica = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
@@ -172,21 +177,44 @@ export default function TvPlayer() {
   // (cão de guarda de 30 s: removido em 03/11/2026 — sem ping não há "sem
   // contato" para vigiar; ver "TV SEM BUSCA AUTOMÁTICA" acima.)
 
-  // Tela não apaga (onde o navegador deixa) e o cursor some.
+  // Tela não apaga e o cursor some. 04/11/2026 — "algumas TVs estão
+  // desligando a tela / entrando em modo soneca": o pedido de wake lock que
+  // ficava aqui não pedia de novo quando o navegador soltava o lock com a
+  // página visível, e navegador sem a API ficava sem nada. Agora é
+  // manterTelaAcordada (wake lock → vídeo mudo de reserva), com o resultado
+  // em data-tela-acordada, no console e no `tela` mandado ao ERP.
+  const [modoAcordada, setModoAcordada] = useState<ModoTelaAcordada>("pendente");
   useEffect(() => {
-    let lock: { release?: () => Promise<void> } | null = null;
-    const pedir = async () => { try { lock = await (navigator as any).wakeLock?.request("screen"); } catch { /* sem suporte */ } };
-    pedir();
-    const vis = () => document.visibilityState === "visible" && pedir();
-    document.addEventListener("visibilitychange", vis);
+    const parar = manterTelaAcordada({
+      wakeLock: (navigator as Navigator & { wakeLock?: { request: (t: "screen") => Promise<any> } }).wakeLock,
+      documento: document,
+      criarVideo: () => criarVideoReserva(document),
+      aoMudar: (m) => {
+        estadoTelaAcordada = rotuloTelaAcordada(m);
+        setModoAcordada(m);
+        console.info(`[tv] tela acordada: ${m}`);
+      },
+    });
+    // Fundo preto no body: o deslocamento de 1 px (abaixo) não pode mostrar
+    // uma linha clara na borda.
     document.body.style.cursor = "none";
-    return () => { document.removeEventListener("visibilitychange", vis); document.body.style.cursor = ""; lock?.release?.(); };
+    document.body.style.background = "#000";
+    return () => { parar(); document.body.style.cursor = ""; document.body.style.background = ""; };
   }, []);
+
+  // Anti-imagem-estática: 1 px por minuto (ver telaAcordada.ts). Só local,
+  // sem requisição.
+  const [passo, setPasso] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setPasso((n) => n + 1), PASSO_ANTI_ESTATICA_MS);
+    return () => window.clearInterval(t);
+  }, []);
+  const desloc = deslocamentoAntiEstatica(passo);
 
   const alerta = useAvisoNoTempo(estado?.alerta ?? null);
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-black text-white" onDoubleClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>
+    <div className="fixed inset-0 overflow-hidden bg-black text-white" data-tela-acordada={modoAcordada} style={{ transform: `translate(${desloc.x}px, ${desloc.y}px)` }} onDoubleClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>
       {!estado ? <Centro titulo="Conectando ao ERP…" sub={erro ?? undefined} />
         : !estado.pareada ? <Pareamento codigo={estado.codigo ?? "------"} erro={erro} />
         : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} aoMostrar={reportar} />}
