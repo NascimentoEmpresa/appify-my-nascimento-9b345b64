@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { emLotes } from "@/lib/emLotes";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { Toasts, btnStyle, EtapaChip, Modal } from "@/components/recrutamento/CandidatoInfo";
@@ -118,7 +119,13 @@ export default function BancoTalentos() {
     setRows(list);
     const ids = list.map((c: any) => c.id);
     if (ids.length) {
-      const { data: arq } = await (supabase as any).from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").select("*").in("candidato_id", ids).order("id");
+      // 04/11/2026: eram TODOS os ids (1.309) num in.(...) só — a resposta do
+      // PostgREST devolve a URL num cabeçalho, que estourava o buffer do Kong
+      // ("upstream sent too big header" -> 502 na tela). Lotes de 200 (~1,2 kB de
+      // URL), no máximo 4 por vez (emLotes), e a mesma ordem por id no fim.
+      const arq = (await emLotes<any>(ids.map(String), 200, (lote) =>
+        (supabase as any).from("RECRUTAMENTO_CANDIDATO_ARQUIVOS").select("*").in("candidato_id", lote).order("id")))
+        .sort((x: any, y: any) => (x.id > y.id ? 1 : x.id < y.id ? -1 : 0));
       const map: Record<number, any[]> = {};
       (arq ?? []).forEach((a: any) => { (map[a.candidato_id] = map[a.candidato_id] || []).push(a); });
       setArquivos(map);

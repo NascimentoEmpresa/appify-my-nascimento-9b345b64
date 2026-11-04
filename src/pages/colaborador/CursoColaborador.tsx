@@ -182,21 +182,26 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
   const curtir = useCurtirAula(aula.id);
   const passouQuiz = temQuiz && aula.nota_quiz != null && aula.nota_quiz >= aula.nota_minima;
 
-  // Tempo assistido: conta só com a aba visível, manda a cada 60 s e no unmount.
+  // Tempo assistido: conta só com a aba visível. Até 03/11/2026 mandava a
+  // cada 60 s por temporizador; agora manda quando a pessoa SAI — esconde a
+  // aba ou deixa a aula (src/lib/atualizarTela.ts: nada vai ao servidor por
+  // relógio). O tempo continua contado do mesmo jeito, só chega junto.
   const acumulado = useRef(0);
   useEffect(() => {
     if (travada) return;
-    let ultimo = Date.now();
-    const tick = () => {
-      const agora = Date.now();
-      if (document.visibilityState === "visible") acumulado.current += (agora - ultimo) / 1000;
-      ultimo = agora;
-      if (acumulado.current >= 60) { registrarTempoAula(aula.id, acumulado.current); acumulado.current = 0; }
+    let visivelDesde: number | null = document.visibilityState === "visible" ? Date.now() : null;
+    const fechar = () => {
+      if (visivelDesde != null) { acumulado.current += (Date.now() - visivelDesde) / 1000; visivelDesde = null; }
+      if (acumulado.current >= 5) { registrarTempoAula(aula.id, acumulado.current); acumulado.current = 0; }
     };
-    const t = setInterval(tick, 5000);
+    const aoMudar = () => {
+      if (document.visibilityState === "visible") visivelDesde = Date.now();
+      else fechar();
+    };
+    document.addEventListener("visibilitychange", aoMudar);
     return () => {
-      clearInterval(t);
-      if (acumulado.current >= 5) registrarTempoAula(aula.id, acumulado.current);
+      document.removeEventListener("visibilitychange", aoMudar);
+      fechar();
       acumulado.current = 0;
     };
   }, [aula.id, travada]);

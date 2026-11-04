@@ -133,19 +133,10 @@ export function useContratosCatalogo(habilitado: string | boolean | null = true)
  * O código abaixo continua correto e funcional — o desligamento foi feito no
  * ponto de uso, não aqui, justamente para o religamento ser um `git revert`.
  */
-export function useContratosCatalogoRealtime() {
-  const qc = useQueryClient();
-
-  useEffect(() => {
-    const canal = sb.channel("sup_cat_contratos")
-      .on("postgres_changes",
-          { event: "*", schema: "public", table: "contratos" },
-          () => qc.invalidateQueries({ queryKey: ["sup_cat_contratos"] }))
-      .subscribe();
-
-    return () => { sb.removeChannel(canal); };
-  }, [qc]);
-}
+// 03/11/2026: o hook useContratosCatalogoRealtime foi REMOVIDO. Ninguém o
+// chamava desde 21/09/2026 (ver acima), e o Realtime nem existe no cluster
+// (sem container nem rota no Kong). A regra agora é não buscar sozinho
+// (src/lib/atualizarTela.ts); o CI reprova .channel( em código novo.
 
 /**
  * Postos do contrato — DERIVADOS da Planilha de Custo, não cadastrados aqui.

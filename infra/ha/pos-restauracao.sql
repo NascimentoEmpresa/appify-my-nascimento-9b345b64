@@ -33,7 +33,10 @@ ALTER ROLE supabase_storage_admin SET log_statement = none;
 -- biblioteca nao existir, TODA conexao do papel falha no handshake.
 ALTER ROLE anon          SET statement_timeout = '3s';
 ALTER ROLE authenticated SET statement_timeout = '8s';
-ALTER ROLE authenticator SET statement_timeout = '8s';
+-- 03/11/2026: 60s, não 8s — a introspecção do schema roda como authenticator e
+-- estourava os 8s sob carga (migration 20261103009100). As requisições seguem
+-- com o limite do papel personificado (authenticated 8s, anon 3s).
+ALTER ROLE authenticator SET statement_timeout = '60s';
 ALTER ROLE authenticator SET lock_timeout = '8s';
 
 -- ── 3. donos de auth e storage ──────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { lerMeuPerfil } from "@/lib/meuPerfil";
 import { useAuth } from "@/hooks/useAuth";
 
 // =====================================================================
@@ -32,8 +32,10 @@ export function useMeuNome(preferido?: string | null): string {
     if (cacheUid === user.id && cacheNome) { setNome(cacheNome); return; }
     let vivo = true;
     (async () => {
-      const { data } = await (supabase as any).from("profiles")
-        .select("display_name").eq("id", user.id).maybeSingle();
+      // Leitura compartilhada (src/lib/meuPerfil.ts): o cache acima só valia
+      // DEPOIS da primeira resposta, então N componentes montando juntos
+      // faziam N leituras — 9.700 no dia 03/11/2026.
+      const data = await lerMeuPerfil(user.id).catch(() => null);
       if (!vivo) return;
       const achado = String(data?.display_name ?? "").trim();
       if (achado) { cacheUid = user.id; cacheNome = achado; }

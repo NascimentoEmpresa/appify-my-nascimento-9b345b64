@@ -34,7 +34,11 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 
   return useQuery({
     queryKey: ["accessible-menus", acao, empresaId],
-    staleTime: 30_000,
+    // 03/11/2026: 30 s -> 5 min. São 3 requisições (uma delas app_menu
+    // inteiro, 25 kB) refeitas a cada navegação: 6.717 leituras de app_menu
+    // no dia. Permissão alterada pelo admin vale na próxima recarga ou em
+    // 5 min; a RLS no banco recusa na hora de qualquer jeito.
+    staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data: u } = await supabase.auth.getUser();

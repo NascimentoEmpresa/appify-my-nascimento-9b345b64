@@ -62,7 +62,7 @@ export function FeedAtualizacoes({
   const { data: feed = { eventos: [], chamados: {} } } = useQuery({
     queryKey: ["chamados-feed", scope, uid, limit],
     enabled: scope === "all" || !!uid,
-    refetchInterval: 60_000,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     staleTime: 30_000,
     queryFn: async () => {
       const chamados: Record<string, ChamadoLabel> = {};

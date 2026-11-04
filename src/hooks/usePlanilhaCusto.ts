@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { chaveCampoOutros, GRUPO_OUTROS } from "@/lib/planilhaCustoClassificacoes";
+import { lerCompactoOuNada } from "@/lib/leituraCompacta";
 
 export type JustificativaEntry = {
   ts: string;
@@ -302,7 +303,25 @@ export function usePlanilhaCustos(filtros?: { cliente?: string; contrato?: strin
   const todasEmpresas = filtros?.todasEmpresas ?? false;
   return useQuery({
     queryKey: ["planilha_custo", todasEmpresas ? "todas" : empresa.id, filtros],
+    // 03/11/2026: a planilha inteira são 1.909 linhas x ~120 colunas = 4,5 MB
+    // de JSON (2 páginas de 2 MB), lida por 11 telas — 1.605 leituras e
+    // 3,1 GB no dia, a rota MAIS PESADA do ERP. Ela muda por importação, não
+    // a cada minuto: 10 min de cache, e quem importa/edita invalida a chave.
+    staleTime: 10 * 60_000,
     queryFn: async () => {
+      // 04/11/2026: sem filtro de texto, a planilha inteira vem numa leitura
+      // compacta (mig 20261104000100) — 4,5 MB -> 1,2 MB, as mesmas linhas na
+      // mesma ordem (created_at desc), provado na produção para 5 usuários
+      // (infra/qa/conferir-leitura-compacta.mjs). O filtro de empresa é o mesmo
+      // .eq de antes, aplicado aqui. Com filtro de cliente/contrato (ilike) ou
+      // sem a função no banco, segue o caminho de sempre.
+      if (!filtros?.cliente && !filtros?.contrato) {
+        const compacta = await lerCompactoOuNada(supabase as any, "ler_compacto", "planilha_custo");
+        if (compacta) {
+          const linhas = compacta as unknown as PlanilhaCustoRow[];
+          return todasEmpresas ? linhas : linhas.filter((l) => l.empresa_id === empresa.id);
+        }
+      }
       // Busca em lotes de 1000 para contornar o limite do PostgREST
       const PAGE = 1000;
       let all: PlanilhaCustoRow[] = [];

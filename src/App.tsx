@@ -296,7 +296,6 @@ import FormularioRespostas from "./pages/central-servicos/FormularioRespostas";
 import FormularioAnalise from "./pages/central-servicos/FormularioAnalise";
 import FormulariosDashboard from "./pages/central-servicos/FormulariosDashboard";
 import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial";
-import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
 import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
@@ -417,6 +416,9 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
 // recebe dado fresco ao voltar — que é o comportamento certo para um sistema
 // com pagamento e aprovação.
+// 03/11/2026: SUPERADO. staleTime virou 5 min e refetchOnWindowFocus virou
+// false — no ERP, dado novo só quando o usuário pede (botão "Atualizar", ver
+// src/lib/atualizarTela.ts e docs/infra/sem-busca-automatica.md).
 // /app/login não existe — o login é /login. Mesmo assim, em 19/10/2026 parte
 // do pessoal caía em app.grpnascimento.com.br/app/login?next=/app/whatsapp
 // (favorito/link salvo; nada no código monta esse endereço) e via o 404.
@@ -429,8 +431,19 @@ function LoginForaDoLugar() {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
-      gcTime: 300_000,
+      // 03/11/2026: 30 s -> 5 min e 5 -> 30 min. Com 30 s, voltar a uma tela
+      // depois de meio minuto refazia todas as consultas dela, e cada
+      // navegação refazia as do layout (menus, permissões, notificações).
+      // Dado que muda por ação do próprio usuário é invalidado pela mutation
+      // (invalidateQueries) e atualiza na hora; dado que muda por ação de
+      // OUTRA pessoa aparece ao clicar em atualizar ou recarregar a página —
+      // é a regra do item 5 (requisição só quando o usuário pede).
+      staleTime: 5 * 60_000,
+      gcTime: 30 * 60_000,
+      // 03/11/2026: voltar para a aba do navegador NÃO refaz as consultas (era o
+      // padrão do React Query: toda query velha da tela ia ao servidor a cada
+      // alt-tab). Dado novo é no botão "Atualizar" — src/lib/atualizarTela.ts.
+      refetchOnWindowFocus: false,
       // A ordem das checagens importa: auth PRIMEIRO. 401/403 é token vencido
       // (transitório, local, merece insistência), não sobrecarga.
       retry: (failureCount, error) => {
@@ -688,7 +701,12 @@ const App = () => (
             <Route path="central-servicos/formularios" element={<Formularios />} />
             <Route path="central-servicos/formularios/dashboard" element={<FormulariosDashboard />} />
             <Route path="central-servicos/formularios/painel" element={<PainelGerencialFormularios />} />
-            <Route path="central-servicos/formularios/config" element={<FormulariosConfig />} />
+            {/* 03/11/2026 (item 7): a "Configuração" dos Formulários lia CS_FORM_GESTORES,
+                tabela que NUNCA existiu na produção (mig 20260710000005 não entrou no
+                cluster) — a tela abria com 404 no DevTools. Quem cria/vê formulário
+                hoje é o Gerenciamento de Acesso (menu central_servicos_formularios).
+                Nenhum link levava a esta rota; ela fica só redirecionando. */}
+            <Route path="central-servicos/formularios/config" element={<Navigate to="/app/central-servicos/formularios" replace />} />
             {/* "Líderes por setor" foi centralizado na Administração (Módulos & Menus →
                 Acesso por Usuário). Mantém a URL antiga redirecionando pra lá. */}
             <Route path="central-servicos/formularios/lideres" element={<Navigate to="/app/administracao?tab=modulos" replace />} />
@@ -877,7 +895,14 @@ const App = () => (
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/estoque-mapa" element={<Suspense fallback={null}><EstoqueMapa /></Suspense>} />
-            <Route path="suprimentos/relatorios/saidas-por-contrato" element={<Suspense fallback={null}><SaidasPorContrato /></Suspense>} />
+            {/* Saídas por Contrato (SIS-2026-0769) mora em Suprimentos, não em
+                "relatórios", desde 03/11/2026 (mig 20261103009200, pedido do
+                Eduardo). O endereço antigo é redirecionado pelo RouteGuard
+                (ROTAS_MOVIDAS em src/lib/acesso.ts) e a rota antiga continua
+                aqui pelo mesmo motivo de rh/colaboradores: sem ela o caminho
+                cai no 404 de fora do AppShell e o guard nem roda. */}
+            <Route path="suprimentos/saidas-por-contrato" element={<Suspense fallback={null}><SaidasPorContrato /></Suspense>} />
+            <Route path="suprimentos/relatorios/saidas-por-contrato" element={<Navigate to="/app/suprimentos/saidas-por-contrato" replace />} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/solicitacoes-manutencoes" element={<SolicitacoesManutencoes />} />

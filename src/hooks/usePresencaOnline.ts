@@ -17,10 +17,19 @@ import {
 const sb = supabase as any;
 
 /**
- * Heartbeat de presença: 1 chamada a presenca_registrar por minuto por aba,
- * mais uma imediata ao voltar para a aba (a bolinha fica verde na hora, sem
- * esperar o próximo minuto). Interação de mouse/teclado só atualiza uma
- * variável — não dispara request.
+ * Sinal de presença (presenca_registrar).
+ *
+ * Até 03/11/2026 era um heartbeat por TEMPORIZADOR: 1 chamada por minuto por
+ * aba aberta, com ou sem alguém usando — 25.152 chamadas no dia 03/11 para no
+ * máximo 62 abas, a 4ª rota mais chamada do ERP. Pela regra do item 5
+ * (src/lib/atualizarTela.ts), nada mais vai ao servidor por relógio.
+ *
+ * Agora o sinal sai quando a PESSOA age: ao abrir o ERP, ao voltar para a aba
+ * e ao clicar/teclar — no máximo um a cada INTERVALO_HEARTBEAT_MS (5 min).
+ * Quem está usando aparece "online"; quem parou de mexer some da lista depois
+ * de JANELA_ONLINE_MS (src/lib/presencaOnline.ts). O estado "ausente" (aba
+ * aberta, parada) deixou de existir de propósito: detectá-lo exige justamente
+ * o temporizador que saiu.
  *
  * Falha é silenciosa de propósito: presença é enfeite, não pode derrubar tela
  * nem encher o console se o cluster estiver respirando.
@@ -31,54 +40,42 @@ export function useHeartbeatPresenca(habilitado: boolean) {
 
   useEffect(() => {
     if (!habilitado || !user?.id) return;
-    let ultimaInteracao = Date.now();
     let ultimoEnvio = 0;
     let primeiro = true;
 
     const enviar = () => {
       ultimoEnvio = Date.now();
-      const ativo = estaAtivo(document.visibilityState === "visible", ultimaInteracao, Date.now());
+      const ativo = estaAtivo(document.visibilityState === "visible", Date.now(), Date.now());
       sb.rpc("presenca_registrar", { _ativo: ativo }).then(
         () => {
-          // O primeiro sinal da sessão já põe a própria pessoa na lista,
-          // sem esperar o minuto da próxima busca.
+          // O primeiro sinal da sessão já põe a própria pessoa na lista.
           if (primeiro) qc.invalidateQueries({ queryKey: ["presenca-online"] });
           primeiro = false;
         },
         () => undefined,
       );
     };
-    const marcarInteracao = () => {
-      ultimaInteracao = Date.now();
-    };
-    const aoMudarVisibilidade = () => {
+    const aoAgir = () => {
       if (document.visibilityState !== "visible") return;
-      ultimaInteracao = Date.now();
-      // Volta rápida (alt-tab) não precisa de request extra.
-      if (Date.now() - ultimoEnvio > 15_000) enviar();
+      if (Date.now() - ultimoEnvio >= INTERVALO_HEARTBEAT_MS) enviar();
     };
 
     enviar();
-    const timer = window.setInterval(enviar, INTERVALO_HEARTBEAT_MS);
     const opcoes = { passive: true } as const;
-    window.addEventListener("pointerdown", marcarInteracao, opcoes);
-    window.addEventListener("keydown", marcarInteracao, opcoes);
-    window.addEventListener("pointermove", marcarInteracao, opcoes);
-    document.addEventListener("visibilitychange", aoMudarVisibilidade);
+    window.addEventListener("pointerdown", aoAgir, opcoes);
+    window.addEventListener("keydown", aoAgir, opcoes);
+    document.addEventListener("visibilitychange", aoAgir);
     return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("pointerdown", marcarInteracao);
-      window.removeEventListener("keydown", marcarInteracao);
-      window.removeEventListener("pointermove", marcarInteracao);
-      document.removeEventListener("visibilitychange", aoMudarVisibilidade);
+      window.removeEventListener("pointerdown", aoAgir);
+      window.removeEventListener("keydown", aoAgir);
+      document.removeEventListener("visibilitychange", aoAgir);
     };
   }, [habilitado, user?.id, qc]);
 }
 
 /**
- * Lista de quem está online. Refaz a cada minuto SÓ com a aba visível (o
- * React Query não refaz intervalo em segundo plano por padrão) — com a aba
- * escondida ninguém está olhando o painel.
+ * Lista de quem está online: busca ao abrir o painel e no botão "Atualizar"
+ * (sem intervalo desde 03/11/2026).
  */
 export function usePresencaOnline(habilitado: boolean) {
   const { user } = useAuth();
@@ -86,7 +83,7 @@ export function usePresencaOnline(habilitado: boolean) {
     queryKey: ["presenca-online"],
     enabled: habilitado && !!user?.id,
     staleTime: 30_000,
-    refetchInterval: INTERVALO_HEARTBEAT_MS,
+    // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
       const { data, error } = await sb.rpc("presenca_listar");
       if (error) throw error;

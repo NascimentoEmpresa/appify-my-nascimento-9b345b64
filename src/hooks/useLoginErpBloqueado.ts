@@ -25,7 +25,6 @@ export function useLoginErpBloqueado(userId: string | null | undefined, ativo: b
     queryKey: ["login-erp-bloqueado", userId],
     enabled: ativo && !!userId,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: true,
     retry: false,
     queryFn: async (): Promise<EstadoLoginErp> => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

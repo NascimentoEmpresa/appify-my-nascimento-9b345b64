@@ -10,6 +10,7 @@ import {
   ChevronLeft, ChevronRight, Maximize2, Minimize2, Pause, Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 const sb = supabase as any;
 
@@ -102,13 +103,14 @@ export default function ConferenciaPontoPainel() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Fica aberto o dia inteiro: recarrega sozinho e mantém o relógio andando
-  // para o contador do prazo não congelar.
+  // Fica aberto o dia inteiro: o relógio anda sozinho (não toca no servidor)
+  // para o contador do prazo não congelar. A releitura de 30 s saiu em
+  // 03/11/2026 — dado novo pelo botão "Atualizar" (src/lib/atualizarTela.ts).
   useEffect(() => {
-    const t = setInterval(carregar, 30_000);
     const r = setInterval(() => setAgora(new Date()), 1000);
-    return () => { clearInterval(t); clearInterval(r); };
-  }, [carregar]);
+    return () => { clearInterval(r); };
+  }, []);
+  useAoPedirAtualizacao(carregar);
 
   const cartoes: Cartao[] = useMemo(() => {
     const idx = new Map(linhas.map(l => [`${l.contrato_empresa}__${l.contrato_filial}`, l]));

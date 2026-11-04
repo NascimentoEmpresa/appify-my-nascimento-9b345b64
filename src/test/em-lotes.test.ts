@@ -48,3 +48,17 @@ describe("emLotes", () => {
     )).rejects.toThrow("502");
   });
 });
+
+describe("emLotes — padrão de simultaneidade (03/11/2026)", () => {
+  it("sem dizer nada, nunca passa de 4 lotes ao mesmo tempo", async () => {
+    let emVoo = 0, pico = 0;
+    const ids = Array.from({ length: 40 * 30 }, (_, i) => String(i));
+    await emLotes(ids, 40, async (lote) => {
+      emVoo++; pico = Math.max(pico, emVoo);
+      await new Promise((r) => setTimeout(r, 1));
+      emVoo--;
+      return { data: lote.map((id) => ({ id })), error: null };
+    });
+    expect(pico).toBe(4);
+  });
+});
