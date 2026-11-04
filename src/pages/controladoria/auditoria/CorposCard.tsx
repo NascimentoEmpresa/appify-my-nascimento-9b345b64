@@ -1,6 +1,7 @@
 import { ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
 import { ArrowRight, Pencil, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
@@ -8,8 +9,8 @@ import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
-  diferenca, DivergenciaMalote, EntradasSaidas, fmtPercentual, LABEL_MOTIVO_DIVERGENCIA, LABEL_MOTIVO_SEM_CENTRO, LABEL_ORIGEM_FINANCEIRO, LABEL_ORIGEM_LANCAMENTO,
-  LancamentoSemCentro, LinkCard, linkReclassificarFluxo, PainelCentrosFluxo, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
+  ComposicaoLinha, diferenca, DivergenciaMalote, EntradasSaidas, fmtPercentual, LABEL_MOTIVO_DIVERGENCIA, LABEL_MOTIVO_SEM_CENTRO, LABEL_ORIGEM_FINANCEIRO, LABEL_ORIGEM_LANCAMENTO,
+  LancamentoSemCentro, LinhaComposta, LinkCard, linkReclassificarFluxo, PainelCentrosFluxo, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
 } from "./regras";
 import { AjusteRegistrado, useAjustesDasDespesas } from "./useAuditoriaDados";
 
@@ -393,17 +394,37 @@ export function CorpoSemCentro({ pendentes, linkFluxo }: { pendentes: Lancamento
 // ── 3 (SIS-2026-0720). Centros de custo × saída total do Fluxo de Caixa ───────────────────────────────────
 // Saída total → (−) aplicação → (−) transferência entre contas = saldo utilizável, que precisa estar nos centros de custo. O que não está
 // em nenhum é o "falta distribuir": a seta abre os lançamentos e cada um leva ao Fluxo já na edição para reclassificar.
-function LinhaValor({ rotulo, valor, forte, tom, dica }: { rotulo: string; valor: number; forte?: boolean; tom?: "neutro" | "alerta"; dica?: string }) {
+function LinhaValor({ rotulo, valor, forte, tom, dica, composicao }: { rotulo: string; valor: number; forte?: boolean; tom?: "neutro" | "alerta"; dica?: string; composicao?: ComposicaoLinha | null }) {
+  const dia = (iso: string | null) => (iso ? iso.split("-").reverse().join("/") : "—");
   return (
-    <div className={cn("flex items-center justify-between gap-2 px-3 py-1.5 text-sm", forte && "bg-muted/50 font-semibold", tom === "alerta" && "text-red-600 dark:text-red-400")} title={dica}>
-      <span>{rotulo}</span>
-      <span className="tabular-nums">{fmtMoney(valor)}</span>
+    <div>
+      <div className={cn("flex items-center justify-between gap-2 px-3 py-1.5 text-sm", forte && "bg-muted/50 font-semibold", tom === "alerta" && "text-red-600 dark:text-red-400")} title={dica}>
+        <span>{rotulo}</span>
+        <span className="tabular-nums">{fmtMoney(valor)}</span>
+      </div>
+      {/* SIS-2026-0802: o que compõe a linha (os 3 maiores lançamentos); só aparece com "Mostrar composição" marcado. */}
+      {composicao && composicao.itens.length > 0 && (
+        <ul className="space-y-0.5 border-t border-dashed bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
+          {composicao.itens.map((it, i) => (
+            <li key={i} className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate" title={it.descricao}>
+                <span className="font-mono">{it.numero ?? "sem ID"}</span> · {it.descricao || "sem descrição"}
+                {it.contrato ? ` · ${it.contrato}` : ""}{it.classificacao ? ` · ${it.classificacao}` : ""} · {dia(it.data)}
+              </span>
+              <span className="shrink-0 tabular-nums text-foreground">{fmtMoney(it.valor)}</span>
+            </li>
+          ))}
+          {composicao.qtd > composicao.itens.length && <li>+ {composicao.qtd - composicao.itens.length} outro(s) lançamento(s)</li>}
+        </ul>
+      )}
     </div>
   );
 }
 
 export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo; mes: string; empresaId: string | null }) {
   const [aberto, setAberto] = useState(false);
+  const [mostrarComposicao, setMostrarComposicao] = useState(false);
+  const comp = (k: LinhaComposta) => (mostrarComposicao ? p.composicao[k] : null);
   // Só Controladoria e Financeiro reclassificam: é a permissão "Alterar" do Fluxo de Caixa.
   const { data: podeReclassificar = false } = useScreenAccess("financeiro-fluxo-caixa-gestao", "alterar");
   const dia = (iso: string | null) => (iso ? iso.split("-").reverse().join("/") : "—");
@@ -425,10 +446,22 @@ export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo
         <p className="text-2xl font-bold">{fmtMoney(p.saidaTotal)}</p>
         <p className="text-[11px] text-muted-foreground">Total de saídas do Fluxo de Caixa</p>
       </div>
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox checked={mostrarComposicao} onCheckedChange={(v) => setMostrarComposicao(v === true)} />
+        Mostrar composição (3 maiores lançamentos de cada linha)
+      </label>
       <div className="divide-y rounded-lg border overflow-hidden">
         <LinhaValor rotulo="Saída total do Fluxo de Caixa" valor={p.saidaTotal} />
         <LinhaValor rotulo="Aplicação (não utiliza)" valor={p.aplicacoes} dica="Aplicação financeira é giro de caixa, não despesa." />
         <LinhaValor rotulo="Transferências entre contas (não utiliza)" valor={p.transferencias} dica="Classificação TRANSFERÊNCIA ENTRE CONTAS: dinheiro que muda de conta, não despesa." />
+        <div className="bg-blue-50 text-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+          <LinhaValor
+            rotulo="Outras Movimentações Financeiras (Recebimento de Nota, Cheque Especial)"
+            valor={p.outrasMovimentacoes}
+            composicao={comp("outrasMovimentacoes")}
+            dica="Saídas do centro de custo Movimentações Financeiras cuja classificação não é Aplicação Financeira nem Transferência entre contas. Como elas, não são despesa."
+          />
+        </div>
         <LinhaValor rotulo="Saldo utilizável" valor={p.saldoUtilizavel} forte />
       </div>
       <div className="rounded-lg border overflow-hidden">
@@ -437,13 +470,18 @@ export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo
           <LinhaValor rotulo="Contratos" valor={p.contratos} dica="Mesmo valor do Total de custos da Lucratividade de Contratos (no mesmo período e base)." />
           {p.contratosForaLucratividade !== 0 && (
             <LinhaValor
-              rotulo="Contratos fora da Lucratividade"
+              rotulo="Contratos — outras saídas que a Lucratividade não conta"
               valor={p.contratosForaLucratividade}
-              dica="Saídas de contrato que a Lucratividade não conta como custo: contratos de investimento, obra administrativa, estoque ou movimentação financeira; classificações que não são custo (transferência, financiamento, distribuição…); e lançamentos sem classificação."
+              composicao={comp("contratosForaLucratividade")}
+              dica="Saídas de contrato comum que a Lucratividade não conta como custo e que não são de Estoque, Investimentos, Obras nem Tributos: classificações que não são custo (financiamento, distribuição…), contrato com tratamento 'fora das despesas' de outro nome e lançamentos sem classificação."
             />
           )}
           <LinhaValor rotulo="Administrativo" valor={p.administrativo} />
           <LinhaValor rotulo="Sócios" valor={p.socios} />
+          <LinhaValor rotulo="Estoque" valor={p.estoque} composicao={comp("estoque")} dica="Contratos de estoque (nome começa com ESTOQUE, tratamento 'fora das despesas')." />
+          <LinhaValor rotulo="Investimentos" valor={p.investimentos} composicao={comp("investimentos")} dica="Contratos com tratamento Investimento (nome começa com INVESTIMENTO ou exceção gravada)." />
+          <LinhaValor rotulo="Obras" valor={p.obras} composicao={comp("obras")} dica="Contratos com tratamento Obra administrativa (OBRAS ADM - …)." />
+          <LinhaValor rotulo="Tributos sobre o Resultado" valor={p.tributosResultado} composicao={comp("tributosResultado")} dica="IRPJ e CSLL lançados sem contrato (mesma regra do Fechamento da Empresa); não entram em Administrativo." />
           <div className={cn("flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-semibold", fechou ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300")}>
             <span>Falta distribuir</span>
             <span className="flex items-center gap-2">
