@@ -80,7 +80,8 @@ documentação executável. Hoje a proteção da `main` está assim (conferível
 
 | | |
 |---|---|
-| Checks obrigatórios | `validar-chamado`, `tipos`, `testes`, `build`, `lint`, `migrations`, `portaria`, `revisao-ia`, `guardiao`, `qa-requisicoes`, `migracao-roda` |
+| Checks obrigatórios | `validar-chamado`, `tipos`, `testes`, `build`, `lint`, `migrations`, `portaria`, `guardiao`, `qa-requisicoes`, `migracao-roda` |
+| **`revisao-ia` saiu da lista em 04/11, à noite** | A assinatura que alimentava o revisor foi desativada e a chave de API está sem crédito: a ação é recusada na porta (custo 0, 1 turno) em toda PR com código, e as três últimas PRs do time ficaram vermelhas por isso. Check que não tem como passar não é portaria, é bloqueio — ver §3.1 |
 | Branch atualizada antes do merge | sim (`strict`) |
 | PR obrigatória (sem push direto na `main`) | sim |
 | Vale para administrador também | sim (`enforce_admins`) |
@@ -99,6 +100,65 @@ estão em [`pipeline-revisao-04-11-2026.md`](pipeline-revisao-04-11-2026.md):
   verde sem uma linha de revisão;
 - o **veredito da IA passou a bloquear** (era `REVISAO_IA_BLOQUEIA`, nunca
   ligada).
+
+## 3.1 O revisor por IA está sem credencial (04/11/2026, noite)
+
+A assinatura que alimentava o revisor foi desativada e a chave de API está sem
+crédito. O sintoma é sempre o mesmo, e é reconhecível no log:
+
+```
+Diagnostico: subtype=success custo=0 turnos=1 1a=failure 2a=failure
+```
+
+Custo zero e um turno = recusado **antes de ler o diff**, nas duas tentativas.
+Isso acontece em toda PR que tenha código, então o check `revisao-ia` não tinha
+como ficar verde.
+
+**O que foi feito, e por quê:**
+
+1. `revisao-ia` **saiu da lista de checks obrigatórios**. Um check que não pode
+   passar não é uma portaria: é um bloqueio permanente. O time ficou travado
+   entre 18:54 e 19:14 por causa disso (três execuções seguidas na PR do João).
+2. A variable **`REVISAO_IA_SEM_CREDENCIAL=sim`** faz a recusa na porta virar
+   aviso em vez de vermelho, para a lista de checks não nascer vermelha todos
+   os dias — alarme que fica ligado para sempre é alarme que ninguém olha.
+   Ela é um estado **do repositório**, não uma válvula de PR: vale para todo
+   mundo e está à vista em Settings → Variables.
+3. O comentário do bot na PR continua saindo, dizendo em negrito que **ninguém
+   julgou o diff**.
+
+**A regra que não pode ser quebrada:** com `REVISAO_IA_SEM_CREDENCIAL=sim`, o
+check `revisao-ia` **não pode** voltar para a lista de obrigatórios. Os dois
+juntos produzem um check verde que não revisou nada — exatamente o buraco que a
+PR #1123 fechou.
+
+**Como voltar ao que era** (nesta ordem):
+
+1. Crédito pré-pago em `console.anthropic.com` → o secret `ANTHROPIC_API_KEY`
+   volta a funcionar (a ação já dá precedência a ele sobre a assinatura).
+   Custo estimado: o revisor roda em `claude-haiku-4-5` sobre um diff de no
+   máximo 150 KB, algo entre **US$ 0,05 e US$ 0,40 por PR** — na casa de
+   **US$ 5 a 15 por mês** no ritmo atual do time. Não é estimativa medida: o
+   custo real aparece no campo `total_cost_usd` da execução, que o passo
+   "Publicar a revisão" imprime.
+2. Apagar a variable `REVISAO_IA_SEM_CREDENCIAL`.
+3. Confirmar numa PR real que o check fica verde **com veredito** (o comentário
+   do bot tem que trazer a análise, não um aviso).
+4. Só então devolver `revisao-ia` à lista de obrigatórios.
+
+**O que se perde enquanto isso:** o julgamento das regras J1–J9 do
+`REGRAS-PR.md` — acesso/RLS (J1), menu que nasce aberto (J2), filtro de empresa
+(J1.E), total somado no navegador (J9). Nada disso é coberto por regra
+determinística hoje. Os dez checks que continuam obrigatórios cobrem o que é
+mecanizável; o resto volta a depender de leitura humana nas PRs que mexem em
+`supabase/migrations/`, em policy ou nas telas de acesso.
+
+**Caminho para não depender de credencial:** transformar as partes
+mecanizáveis de J1 em regras do guardião — `app_menu.codigo` repetido no mesmo
+módulo (J1.D), menu novo sem semear `perfil_acesso_permissao` na mesma
+migration (J2), rota nova em `App.tsx` sem `AcessoGate`/`RouteGuard` (J1.F) e
+filtro de empresa em consulta nova (J1.E). São quatro regras de texto, com
+teste, e nenhuma delas precisa de modelo.
 
 ## 4. Regras para o revisor por IA
 

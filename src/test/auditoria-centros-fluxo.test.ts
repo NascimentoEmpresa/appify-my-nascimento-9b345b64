@@ -146,5 +146,6 @@ describe("totaisCentrosFluxo — composição das linhas novas (3 maiores)", () 
     expect(p.composicao.investimentos.itens.map((i) => i.valor)).toEqual([55, 40, 30]);
     expect(p.composicao.investimentos.itens[0]).toMatchObject({ numero: "DM-1", contrato: "INVESTIMENTOS HAGG" });
     expect(p.composicao.estoque).toEqual({ qtd: 0, itens: [] });
+    expect(p.composicao.contratos).toEqual({ qtd: 0, itens: [] });
   });
 });

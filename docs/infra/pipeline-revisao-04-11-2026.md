@@ -20,7 +20,7 @@ tarde**. O que valia só como proposta está marcado como pendente.
 | F1 | nenhum check obrigatório | **feito** — 11 checks obrigatórios, PR obrigatória, sem bypass nem para admin |
 | F2 | portaria só no 1º push | **feito** — `synchronize` no `revisao_ia.yml`; a IA repete o julgamento em push de alto risco |
 | F3 | label desligava a portaria | **feito** — a label vale só para o julgamento por IA |
-| F4 | IA verde sem revisar | **feito** — "não produziu veredito" reprova; veredito reprovado bloqueia |
+| F4 | IA verde sem revisar | **feito, e depois contornado pela realidade** — "não produziu veredito" reprova; mas à noite de 04/11 a credencial do revisor morreu, o check passou a reprovar TODA PR e saiu da lista de obrigatórios. Ver §3.1 do `pipeline-qualidade.md` |
 | F5 | tela quebrada passava | **feito** — `console.error`, exceção, HTTP ≥ 400 e `#root` vazio reprovam |
 | F6.1 | regex não vê tabela em variável | **feito** — contrato de rede no interceptador (`infra/qa/contrato-de-rede.mjs`) |
 | F6.2 | functions/worker fora das regras | **feito** — D2–D7 valem lá, mais a W1 (piso de 60 s no worker) |

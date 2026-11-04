@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -36,6 +37,7 @@ import {
   useHistoricoImportadoAplicacao,
   useEditarResgate,
   useExcluirResgate,
+  useDefinirBancoResgates,
   type AplicacaoFinanceiraResgateCaixa,
   useExcluirAplicacao,
   useHistoricoAplicacao,
@@ -76,6 +78,13 @@ export default function AplicacoesFinanceiras() {
   const { data: historico = [] } = useHistoricoImportadoAplicacao();
   const { data: empresas = [] } = useEmpresasGrupo();
   const excluir = useExcluirAplicacao();
+  const { data: bancosCatalogo = [] } = useCartaoBancos();
+  const definirBanco = useDefinirBancoResgates();
+  const bancoPorId = useMemo(() => new Map(bancosCatalogo.map((b) => [b.id, b])), [bancosCatalogo]);
+  // Seleção de resgates para definir o banco em massa (só resgates têm banco editável aqui).
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [bancoMassa, setBancoMassa] = useState("");
+  const [somenteSemBanco, setSomenteSemBanco] = useState(false);
 
   const [dialogNova, setDialogNova] = useState(false);
   const [dialogResgate, setDialogResgate] = useState(false);
@@ -154,6 +163,7 @@ export default function AplicacoesFinanceiras() {
       chave: string; data: string; tipo: "aplicacao" | "resgate" | "rendimento"; empresa: string; descricao: string;
       principal: number; rendimento: number; observacao: string | null;
       resgate?: AplicacaoFinanceiraResgateCaixa; historico?: boolean;
+      bancoNome?: string | null; bancoLogo?: string | null;
     }[] = [];
     // SIS-2026-0651: histórico importado do Fluxo — só leitura (corrige-se no Fluxo de Caixa).
     for (const h of historico) {
@@ -162,14 +172,14 @@ export default function AplicacoesFinanceiras() {
         empresa: h.empresa_nome ?? "—", descricao: `${h.id_malote} · ${h.banco_nome ?? "Importado"}`,
         principal: h.movimento === "rendimento" ? 0 : h.valor,
         rendimento: h.movimento === "rendimento" ? h.valor : 0,
-        observacao: h.descricao, historico: true,
+        observacao: h.descricao, historico: true, bancoNome: h.banco_nome, bancoLogo: h.banco_logo_path,
       } as any);
     }
     for (const l of linhas) {
       itens.push({
         chave: `a-${l.id}`, data: l.data_aplicacao, tipo: "aplicacao", empresa_id: l.empresa_id,
         empresa: l.empresa_nome ?? "—", descricao: `${l.numero} · ${l.produto}`,
-        principal: Number(l.valor_aplicado), rendimento: 0, observacao: l.descricao || null,
+        principal: Number(l.valor_aplicado), rendimento: 0, observacao: l.descricao || null, bancoNome: l.banco_nome, bancoLogo: l.banco_logo_path,
       } as any);
     }
     for (const r of resgatesCaixa) {
@@ -177,7 +187,7 @@ export default function AplicacoesFinanceiras() {
         chave: `r-${r.id}`, data: r.data_resgate, tipo: "resgate", empresa_id: r.empresa_id,
         empresa: nomeEmpresa.get(r.empresa_id) ?? "—", descricao: `${r.numero ?? "—"} · Resgate`,
         principal: Number(r.valor_principal), rendimento: Number(r.valor_rendimento), observacao: r.observacao,
-        resgate: r,
+        resgate: r, bancoNome: r.banco_id ? (bancoPorId.get(r.banco_id)?.nome ?? null) : null, bancoLogo: r.banco_id ? (bancoPorId.get(r.banco_id)?.logo_path ?? null) : null,
       } as any);
     }
     return itens
@@ -185,10 +195,37 @@ export default function AplicacoesFinanceiras() {
         if (empresaFiltro && m.empresa_id !== empresaFiltro) return false;
         if (dataDe && m.data < dataDe) return false;
         if (dataAte && m.data > dataAte) return false;
+        if (somenteSemBanco && !(m.resgate && !m.resgate.banco_id)) return false;
         return true;
       })
       .sort((a, b) => b.data.localeCompare(a.data));
-  }, [linhas, resgatesCaixa, historico, empresaFiltro, dataDe, dataAte]);
+  }, [linhas, resgatesCaixa, historico, empresaFiltro, dataDe, dataAte, somenteSemBanco, bancoPorId]);
+
+  // Resgates visíveis (todas as páginas) e quantos ainda estão sem banco: é o que a barra de "definir banco" trabalha.
+  const resgatesVisiveis = useMemo(() => movimentacoes.flatMap((m) => (m.resgate ? [m.resgate] : [])), [movimentacoes]);
+  const resgatesSemBancoVisiveis = useMemo(() => resgatesVisiveis.filter((r) => !r.banco_id), [resgatesVisiveis]);
+  const totalSemBanco = useMemo(() => resgatesCaixa.filter((r) => !r.banco_id).length, [resgatesCaixa]);
+  const idsSelecionados = useMemo(() => resgatesVisiveis.filter((r) => selecionados.has(r.id)).map((r) => r.id), [resgatesVisiveis, selecionados]);
+
+  function alternarSelecao(id: string, marcado: boolean) {
+    setSelecionados((atual) => {
+      const novo = new Set(atual);
+      if (marcado) novo.add(id); else novo.delete(id);
+      return novo;
+    });
+  }
+
+  async function aplicarBancoEmMassa() {
+    if (!bancoMassa || idsSelecionados.length === 0) return;
+    try {
+      const qtd = await definirBanco.mutateAsync({ ids: idsSelecionados, bancoId: bancoMassa });
+      toast.success(`Banco definido em ${qtd} resgate${qtd === 1 ? "" : "s"}.`);
+      setSelecionados(new Set());
+      setBancoMassa("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível definir o banco.");
+    }
+  }
 
   // Paginação só da tabela; os totais do período abaixo somam TODAS as movimentações filtradas.
   const [paginaMov, setPaginaMov] = useState(1);
@@ -415,13 +452,46 @@ export default function AplicacoesFinanceiras() {
         <Card>
           <CardContent className="p-4 space-y-3">
             <p className="text-sm font-semibold">Movimentações</p>
+            {/* Banco dos resgates: o que está sem banco não aparece na Conciliação Bancária. Filtra, seleciona e define em massa. */}
+            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs">
+              <Button
+                type="button" size="sm" variant={somenteSemBanco ? "default" : "outline"} className="h-7 text-xs"
+                onClick={() => setSomenteSemBanco((v) => !v)}
+                title="Mostra só os resgates que ainda não têm banco (não aparecem na Conciliação Bancária)"
+              >
+                Resgates sem banco ({totalSemBanco})
+              </Button>
+              <AcessoGate menu={MENU_CODIGO} acao="alterar">
+                <Button
+                  type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={resgatesSemBancoVisiveis.length === 0}
+                  onClick={() => setSelecionados(new Set(resgatesSemBancoVisiveis.map((r) => r.id)))}
+                >
+                  Selecionar os {resgatesSemBancoVisiveis.length} sem banco
+                </Button>
+                {idsSelecionados.length > 0 && (
+                  <>
+                    <span className="font-medium">{idsSelecionados.length} selecionado{idsSelecionados.length === 1 ? "" : "s"}</span>
+                    <Select value={bancoMassa} onValueChange={setBancoMassa}>
+                      <SelectTrigger className="h-7 w-[180px] text-xs"><SelectValue placeholder="Banco do extrato…" /></SelectTrigger>
+                      <SelectContent>{bancosCatalogo.filter((b) => b.ativo).map((b) => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <Button type="button" size="sm" className="h-7 text-xs" disabled={!bancoMassa || definirBanco.isPending} onClick={aplicarBancoEmMassa}>
+                      {definirBanco.isPending ? "Aplicando…" : "Definir banco"}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setSelecionados(new Set())}>Limpar seleção</Button>
+                  </>
+                )}
+              </AcessoGate>
+            </div>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8"></TableHead>
                     <TableHead>Data</TableHead>
                     <TableHead>Movimento</TableHead>
                     <TableHead>Empresa</TableHead>
+                    <TableHead>Banco</TableHead>
                     <TableHead>Referência</TableHead>
                     <TableHead className="text-right">Principal</TableHead>
                     <TableHead className="text-right">Rendimento</TableHead>
@@ -432,12 +502,19 @@ export default function AplicacoesFinanceiras() {
                 </TableHeader>
                 <TableBody>
                   {movimentacoes.length === 0 && (
-                    <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nenhuma movimentação no período.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Nenhuma movimentação no período.</TableCell></TableRow>
                   )}
                   {movimentacoesPagina.map((m) => {
                     const entrada = m.tipo !== "aplicacao";
                     return (
                       <TableRow key={m.chave} className="[&>td]:px-2 [&>td]:py-2">
+                        <TableCell>
+                          {m.resgate && (
+                            <AcessoGate menu={MENU_CODIGO} acao="alterar">
+                              <Checkbox checked={selecionados.has(m.resgate.id)} onCheckedChange={(v) => alternarSelecao(m.resgate!.id, v === true)} aria-label="Selecionar resgate" />
+                            </AcessoGate>
+                          )}
+                        </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{fmtData(m.data)}</TableCell>
                         <TableCell className="whitespace-nowrap">
                           <Badge className={entrada ? "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300"}>
@@ -450,6 +527,13 @@ export default function AplicacoesFinanceiras() {
                           )}
                         </TableCell>
                         <TableCell className="text-xs">{m.empresa}</TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {m.bancoNome ? (
+                            <BancoBadge nome={m.bancoNome} logoUrl={urlLogoCartao(m.bancoLogo ?? null)} />
+                          ) : m.resgate ? (
+                            <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" title="Sem banco o resgate não aparece na Conciliação Bancária">Sem banco</Badge>
+                          ) : "—"}
+                        </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{m.descricao}</TableCell>
                         <TableCell className="text-right text-xs whitespace-nowrap">{formatBRL(m.principal)}</TableCell>
                         <TableCell className="text-right text-xs whitespace-nowrap text-emerald-600 dark:text-emerald-400">{entrada ? formatBRL(m.rendimento) : "—"}</TableCell>
