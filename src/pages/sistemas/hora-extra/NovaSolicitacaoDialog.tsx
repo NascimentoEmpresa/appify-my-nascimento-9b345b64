@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarDays, ChevronDown, Clock3, FileText, Info, Loader2, Send, Sparkles, Trash2, UserRound, UsersRound, Zap,
+  CalendarDays, ChevronDown, Clock3, FileText, Info, Send, Trash2, UserRound, UsersRound, Zap,
 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { gerarJustificativaModelo } from "../../../../supabase/functions/_shared/hora-extra-justificativa";
+import {
+  gerarJustificativaModelo,
+  LIMITE_JUSTIFICATIVA,
+} from "../../../../supabase/functions/_shared/hora-extra-justificativa";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -29,18 +31,16 @@ import {
   limitarPercentual,
   mediaConclusao,
   mensagemErro,
-  motivoErroFuncao,
   normalizarPontoSemIntervalo,
   podeIgnorarEscalaNoFimDeSemana,
   validarSolicitacao,
 } from "./horaExtraUtils";
-import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
+import { BotaoGerarMensagem, Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
+import { pedirMensagemHoraExtra } from "./gerarMensagemHoraExtra";
 import { ASSUNTO_EMERGENCIAL_SEM_CHAMADO, linhaSemChamado, NUMERO_SEM_CHAMADO } from "./prHoraExtraUtils";
 import SeletorChamadoDialog from "./SeletorChamadoDialog";
 import type { ChamadoDisponivel, PrioridadeHoraExtra, SolicitacaoHoraExtra, TipoHoraExtra } from "./types";
 import { CLASSE_PRIORIDADE, LABEL_PRIORIDADE } from "./types";
-
-const PRAZO_GERAR_MS = 25_000;
 
 interface LinhaChamado extends ChamadoDisponivel {
   percentual_previsto: number;
@@ -256,44 +256,17 @@ export default function NovaSolicitacaoDialog({
       sem_chamado: !!c.sem_chamado,
     }));
     setGerando(true);
-    // Prazo de 25 s (03/11/2026, Pablo: "aqui fica só gerando e não vai"):
-    // sem ele, uma Edge/I.A que não respondia deixava o botão girando para
-    // sempre, sem toast. O `timeout` do invoke corta a requisição; a corrida
-    // com o relógio cobre o que vem antes dela (renovação do token).
-    let relogio: ReturnType<typeof setTimeout> | undefined;
+    // Chamada, prazo de 25 s e leitura do erro em gerarMensagemHoraExtra.ts
+    // (04/11/2026), compartilhados com o mesmo botão da conclusão.
     try {
-      const prazo = new Promise<never>((_, rejeitar) => {
-        relogio = setTimeout(() => rejeitar(new Error("A I.A demorou demais para responder.")), PRAZO_GERAR_MS);
-      });
-      const { data, error } = await Promise.race([
-        supabase.functions.invoke("hora-extra-justificativa-ia", {
-          body: { chamados: dados },
-          timeout: PRAZO_GERAR_MS - 1_000,
-        }),
-        prazo,
-      ]);
-      if (error) {
-        // A mensagem útil vem no corpo — mas nem sempre em JSON com `error`:
-        // o roteador do cluster usa `erro` e o proxy devolve página em texto.
-        const ctx = (error as { context?: unknown }).context;
-        if (ctx instanceof Response) {
-          const corpo = await ctx.text().catch(() => "");
-          throw new Error(motivoErroFuncao(ctx.status, corpo));
-        }
-        if ((error as { name?: string }).name === "FunctionsFetchError") {
-          throw new Error("A função não respondeu (rede fora ou passou de 25 s).");
-        }
-        throw new Error(error.message);
-      }
-      if (data?.error || !data?.texto) throw new Error(data?.error ?? "A IA não devolveu texto.");
-      alterar("justificativa", String(data.texto).slice(0, 500));
+      const texto = await pedirMensagemHoraExtra({ chamados: dados });
+      alterar("justificativa", texto.slice(0, LIMITE_JUSTIFICATIVA));
     } catch (erro: unknown) {
       alterar("justificativa", gerarJustificativaModelo(dados));
       toast.error(
         `${mensagemErro(erro, "Não foi possível gerar com a I.A.")} Usamos um texto padrão — revise antes de enviar.`,
       );
     } finally {
-      clearTimeout(relogio);
       setGerando(false);
     }
   };
@@ -681,24 +654,12 @@ export default function NovaSolicitacaoDialog({
                 </div>
               </SecaoForm>
               <SecaoForm titulo="4. Justificativa da solicitação" icone={<FileText className="h-5 w-5" />}>
-                <div className="-mt-10 mb-3 flex justify-end">
-                  <span title={chamados.length ? undefined : "Adicione ao menos um chamado na seção 3."}>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={!chamados.length || gerando}
-                      onClick={gerarMensagem}
-                    >
-                      {gerando ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="mr-2 h-4 w-4 text-violet-600" />
-                      )}
-                      {gerando ? "Gerando…" : "Gerar mensagem"}
-                    </Button>
-                  </span>
-                </div>
+                <BotaoGerarMensagem
+                  gerando={gerando}
+                  desabilitado={!chamados.length}
+                  dica="Adicione ao menos um chamado na seção 3."
+                  aoClicar={gerarMensagem}
+                />
                 <Textarea
                   maxLength={500}
                   rows={3}
