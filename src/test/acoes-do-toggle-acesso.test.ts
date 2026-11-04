@@ -74,16 +74,24 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH e Fluxo de Caixa são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "duvidas",
       "encarregados_diarias",
       "financeiro-fluxo-caixa-gestao",
       "financeiro_diarias",
       "operacional_diarias",
+      "rh_ferias",
       "rh_rateio_despesas",
       "sistemas_hora_extra",
     ]);
+  });
+
+  it("Gestão de Férias: ligar a tela NÃO concede enviar_malote, desligar revoga", () => {
+    // Enviar as férias cria despesa no Malote do Financeiro (mig 20261104007000).
+    expect(acoesGravadasPeloToggle("rh_ferias", true)).not.toContain("enviar_malote");
+    expect(acoesGravadasPeloToggle("rh_ferias", true)).toContain("alterar");
+    expect(acoesGravadasPeloToggle("rh_ferias", false)).toContain("enviar_malote");
   });
 
   it("Rateio do RH: ligar a tela NÃO concede enviar_malote, desligar revoga", () => {

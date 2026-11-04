@@ -110,6 +110,7 @@ const ROTULO: Record<string, string> = {
   refeita_em: "Refeita em", data_saida: "Data de saída", data_retorno: "Retorno previsto",
   dias_ferias: "Dias de férias", dias_vendidos: "Abono (dias vendidos)", observacoes: "Observações",
   data_malote: "Enviado ao malote em", retorno_documentacao: "Retorno da documentação",
+  status_senior: "Férias na Senior", documentacao_enviada_em: "Documentação enviada",
   sst_por: "SST", sst_em: "SST em", sst_aso_data: "Data do ASO",
   sst_observacao: "Observação do SST",
   // Demissão: o ASO demissional, com os mesmos nomes de coluna do ASO de
@@ -149,6 +150,12 @@ const OCULTAS = new Set([
   // Demissao: ids e carimbos de quem tratou nao dizem nada a quem solicitou.
   "colaborador_id", "colaborador_cpf", "contrato_id", "atualizado_em",
   "operacional_por", "operacional_em", "rh_por", "rh_em",
+  // Férias › envio ao Malote (04/11/2026, mig 20261104007000): recibo,
+  // valor líquido e a despesa são do RH — o encarregado vê o status Senior,
+  // a data do malote e a documentação, não o dinheiro nem o arquivo.
+  "status_senior_por", "status_senior_em", "recibo_path", "recibo_nome", "recibo_anexado_por", "recibo_anexado_em",
+  "valor_liquido", "valor_origem", "valor_leitura", "valor_confirmado_por", "valor_confirmado_em",
+  "malote_despesa_id", "malote_enviado_por", "malote_enviado_em",
 ]);
 
 /**
@@ -320,7 +327,7 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo",
         "posto_atual_nome", "posto_atual_contrato", "posto_novo_nome", "posto_novo_contrato"].includes(k);
   const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_|cancelado_)/.test(k)
-    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em", "data_malote", "retorno_documentacao"].includes(k);
+    || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em", "data_malote", "retorno_documentacao", "status_senior", "documentacao_enviada_em"].includes(k);
   const grupos: { titulo: string; icone: string; itens: [string, string, string][] }[] = [
     { titulo: "Colaborador", icone: "👤", itens: linhas.filter(([k]) => ehColaborador(k)) },
     { titulo: "Solicitação", icone: "📝", itens: linhas.filter(([k]) => !ehColaborador(k) && !ehDecisao(k)) },
