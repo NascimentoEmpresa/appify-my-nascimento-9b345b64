@@ -296,7 +296,6 @@ import FormularioRespostas from "./pages/central-servicos/FormularioRespostas";
 import FormularioAnalise from "./pages/central-servicos/FormularioAnalise";
 import FormulariosDashboard from "./pages/central-servicos/FormulariosDashboard";
 import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial";
-import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
 import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
@@ -702,7 +701,12 @@ const App = () => (
             <Route path="central-servicos/formularios" element={<Formularios />} />
             <Route path="central-servicos/formularios/dashboard" element={<FormulariosDashboard />} />
             <Route path="central-servicos/formularios/painel" element={<PainelGerencialFormularios />} />
-            <Route path="central-servicos/formularios/config" element={<FormulariosConfig />} />
+            {/* 03/11/2026 (item 7): a "Configuração" dos Formulários lia CS_FORM_GESTORES,
+                tabela que NUNCA existiu na produção (mig 20260710000005 não entrou no
+                cluster) — a tela abria com 404 no DevTools. Quem cria/vê formulário
+                hoje é o Gerenciamento de Acesso (menu central_servicos_formularios).
+                Nenhum link levava a esta rota; ela fica só redirecionando. */}
+            <Route path="central-servicos/formularios/config" element={<Navigate to="/app/central-servicos/formularios" replace />} />
             {/* "Líderes por setor" foi centralizado na Administração (Módulos & Menus →
                 Acesso por Usuário). Mantém a URL antiga redirecionando pra lá. */}
             <Route path="central-servicos/formularios/lideres" element={<Navigate to="/app/administracao?tab=modulos" replace />} />

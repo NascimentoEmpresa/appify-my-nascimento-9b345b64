@@ -212,6 +212,17 @@ services:
       KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
       KONG_DNS_ORDER: LAST,A,CNAME
       KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      # 03/11/2026 (item 7) — os 502 esporádicos ("upstream prematurely closed
+      # connection" / "Connection reset by peer" no log de erro do Kong, em
+      # chamadas leves como has_screen_access e app_menu). O PostgREST (servidor
+      # Warp) fecha conexão ociosa aos 30 s; o Kong a guardava para reuso por
+      # 60 s (padrão). Reusar uma conexão que o outro lado acabou de fechar =
+      # 502 para o usuário. 15 s < 30 s: o Kong solta antes.
+      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "15"
+      # "1024 worker_connections are not enough" apareceu 12 vezes no log em
+      # 03/11 (na recarga em massa). 4096 por worker, com o limite de arquivos
+      # do container acompanhando (ulimits abaixo).
+      KONG_NGINX_EVENTS_WORKER_CONNECTIONS: "4096"
       # Entram no kong.yml pelo entrypoint abaixo, nao pelo Kong.
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
@@ -227,6 +238,10 @@ services:
     # O Kong nao substitui variavel de ambiente em config declarativo. Sem
     # este render a chave esperada no header apikey seria a string literal
     # "$SUPABASE_ANON_KEY" e TODA chamada a /rest/v1 voltaria 401.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     entrypoint:
       - bash
       - -c
