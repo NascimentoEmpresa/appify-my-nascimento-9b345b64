@@ -278,11 +278,42 @@ jobs:
             echo "::notice::Push intermediário de risco $RISCO: o modelo não é chamado de novo (economia). A portaria rodou normalmente."
           fi
 
+          # --------------------------------------------------------------
+          # 04/11/2026 — o único caso em que "não revisou" NÃO pode reprovar
+          #
+          # A claude-code-action se recusa a rodar quando o workflow da PR
+          # difere do que está na main (proteção dela contra PR que muda o
+          # workflow para vazar o token). Ela não falha: sai com SUCESSO sem
+          # revisar nada. Log da PR #1123, que é a PR que escreveu estas
+          # linhas:
+          #
+          #   Skipping action due to workflow validation: ... must have
+          #   identical content to the version on the default branch
+          #   Exiting due to workflow validation skip
+          #   end-action id=claude.run;outcome=success
+          #
+          # Sem esta detecção, TODA PR que mexe neste arquivo fica com o
+          # check vermelho para sempre — e, com o check obrigatório e sem
+          # bypass, nunca mergeia. Inclusive a PR que fosse consertar o
+          # próprio arquivo. É impasse, não rigor.
+          #
+          # O preço: quem tocar neste arquivo passa sem julgamento de IA. Não
+          # é porta aberta sem aviso — a portaria (R1–R8) roda igual, `.github/`
+          # é sempre risco ALTO, e o comentário na PR diz em negrito que a
+          # revisão não aconteceu e que a mudança precisa de leitura humana.
+          # --------------------------------------------------------------
+          MEXE_NO_WORKFLOW=0
+          if git diff --name-only "origin/${BASE}...HEAD" | grep -qx '\.github/workflows/revisao_ia\.yml'; then
+            MEXE_NO_WORKFLOW=1
+            echo "::notice::Esta PR altera o próprio revisao_ia.yml: a ação do Claude se recusa a rodar nesse caso (proteção dela). O julgamento por IA vai faltar e isso NÃO vai reprovar o check — leia a mudança do workflow à mão."
+          fi
+
           {
             echo "risco=$RISCO"
             echo "modelo=$MODELO"
             echo "turnos=$TURNOS"
             echo "rodar=$RODAR"
+            echo "mexe_no_workflow=$MEXE_NO_WORKFLOW"
           } >> "$GITHUB_OUTPUT"
           echo "Risco: $RISCO — modelo $MODELO, teto de $TURNOS turnos, chamar modelo: $RODAR. ($ALTO arquivo(s) de alto risco, $CODIGO de código.)"
 
@@ -484,6 +515,7 @@ jobs:
           CLAUDE_RETRY: ${{ steps.claude_retry.outcome }}
           RISCO: ${{ steps.risco.outputs.risco }}
           RODAR: ${{ steps.risco.outputs.rodar }}
+          MEXE_NO_WORKFLOW: ${{ steps.risco.outputs.mexe_no_workflow }}
           # Modelo da 1ª tentativa vem do classificador; o da 2ª é fixo no
           # step de retry. Mantenha os dois em sincronia se trocar de modelo.
           MODELO_1: ${{ steps.risco.outputs.modelo }}
@@ -527,6 +559,22 @@ jobs:
 
           Para forçar uma revisão nova: aplique a label `revisar-de-novo`, ou
           Actions → esta execução → "Re-run all jobs".
+          MSG
+          elif [ "${MEXE_NO_WORKFLOW:-0}" = "1" ]; then
+            cat > corpo.md <<'MSG'
+          ## ⚠️ A revisão por IA NÃO rodou — e esta PR precisa de leitura humana
+
+          Esta PR altera o próprio `.github/workflows/revisao_ia.yml`. A ação do
+          Claude se recusa a rodar quando o workflow da PR difere do que está na
+          `main` — é uma proteção dela contra PR que muda o workflow para vazar o
+          token. Ela não falha: **sai com sucesso sem revisar nada**.
+
+          O check passa de propósito, porque reprovar aqui criaria uma PR que
+          nunca mergeia (inclusive a PR que fosse consertar este arquivo). Mas
+          **ninguém julgou este diff**: alguém precisa ler a mudança do workflow
+          à mão antes do merge.
+
+          As regras absolutas (portaria R1–R8) rodaram normalmente e valem.
           MSG
           else
             # A causa real está no JSON que a ação grava — inclusive o campo
@@ -660,6 +708,7 @@ jobs:
           DIFF_VAZIO: ${{ steps.diff.outputs.vazio }}
           RISCO: ${{ steps.risco.outputs.risco }}
           RODAR: ${{ steps.risco.outputs.rodar }}
+          MEXE_NO_WORKFLOW: ${{ steps.risco.outputs.mexe_no_workflow }}
         run: |
           set -uo pipefail
 
@@ -675,6 +724,11 @@ jobs:
 
           if [ "${RODAR:-1}" != "1" ]; then
             echo "::notice::Push intermediário de risco $RISCO: o modelo não foi chamado de novo, de propósito (economia). A revisão da abertura vale, e a portaria rodou neste push."
+            exit 0
+          fi
+
+          if [ ! -f veredito.json ] && [ "${MEXE_NO_WORKFLOW:-0}" = "1" ]; then
+            echo "::warning::A revisão por IA NÃO rodou porque esta PR altera o próprio .github/workflows/revisao_ia.yml — a ação do Claude se recusa a rodar quando o workflow da PR difere do da main. O check passa para não criar impasse (seria uma PR que nunca mergeia), mas esta mudança precisa de leitura humana. A portaria rodou normalmente."
             exit 0
           fi
 
