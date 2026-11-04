@@ -599,23 +599,27 @@ jobs:
             # Revisão de verdade sempre consome tokens e gasta vários turnos.
             if [ "$CUSTO" = "0" ] && [ "$TURNOS" = "1" ]; then
               cat > corpo.md <<MSG
-          ## Revisão não rodou — cota da assinatura esgotada
+          ## Revisão não rodou — as credenciais do revisor foram recusadas
 
           A execução foi rejeitada **antes de ler o diff**: custo zero e apenas
-          1 turno. Isso não é erro de revisão, é recusa na porta. A segunda
-          tentativa automática também foi recusada.
+          1 turno. Isso não é erro de revisão, é recusa na porta — e aconteceu
+          nas duas tentativas.
 
-          O revisor usa a **assinatura Claude pessoal do Eduardo** (o secret
-          \`ANTHROPIC_API_KEY\` está vazio), então quando ele está usando o
-          Claude, o revisor para de funcionar para o time inteiro. Menos
-          provável: o secret \`CLAUDE_CODE_OAUTH_TOKEN\` expirou.
+          Os dois secrets existem (\`ANTHROPIC_API_KEY\` e
+          \`CLAUDE_CODE_OAUTH_TOKEN\`), então "recusa na porta" significa uma
+          destas três coisas: a chave de API está **sem crédito**, a assinatura
+          que gerou o token foi **desativada**, ou o token **expirou**.
 
-          **Isto é um problema de infraestrutura, não da sua PR.** Chame o
-          Eduardo. A solução definitiva é migrar para uma chave de API própria,
-          que não compete com o uso pessoal de ninguém.
+          **Isto é um problema de infraestrutura, não da sua PR.** O conserto é
+          crédito pré-pago em console.anthropic.com na chave \`ANTHROPIC_API_KEY\`
+          (a ação dá precedência a ela), que não depende da assinatura de
+          ninguém.
 
-          As regras absolutas (portaria) rodaram normalmente e valem
-          independente disso — só a parte de julgamento (IA) ficou de fora.
+          Enquanto isso valer, este check **não é obrigatório** e não trava
+          merge — mas também **ninguém julgou este diff**. As regras absolutas
+          (portaria R1–R8) rodaram normalmente, e os checks determinísticos
+          (guardião, qa-requisicoes, migracao-roda, tipos, testes, build)
+          continuam obrigatórios.
           MSG
             elif [ "$SUBTYPE" = "error_max_turns" ]; then
               cat > corpo.md <<MSG
@@ -709,6 +713,10 @@ jobs:
           RISCO: ${{ steps.risco.outputs.risco }}
           RODAR: ${{ steps.risco.outputs.rodar }}
           MEXE_NO_WORKFLOW: ${{ steps.risco.outputs.mexe_no_workflow }}
+          # Estado declarado do repositório: "sim" quando o revisor está sem
+          # credencial válida. Ver o bloco comentado mais abaixo — com isto
+          # ligado, este check NÃO pode ser obrigatório na main.
+          SEM_CREDENCIAL: ${{ vars.REVISAO_IA_SEM_CREDENCIAL }}
         run: |
           set -uo pipefail
 
@@ -729,6 +737,34 @@ jobs:
 
           if [ ! -f veredito.json ] && [ "${MEXE_NO_WORKFLOW:-0}" = "1" ]; then
             echo "::warning::A revisão por IA NÃO rodou porque esta PR altera o próprio .github/workflows/revisao_ia.yml — a ação do Claude se recusa a rodar quando o workflow da PR difere do da main. O check passa para não criar impasse (seria uma PR que nunca mergeia), mas esta mudança precisa de leitura humana. A portaria rodou normalmente."
+            exit 0
+          fi
+
+          if [ ! -f veredito.json ] && [ "${SEM_CREDENCIAL:-}" = "sim" ]; then
+            # ----------------------------------------------------------------
+            # 04/11/2026, fim do dia — o revisor ficou SEM CREDENCIAL
+            #
+            # A assinatura que alimentava o revisor foi desativada, e a chave de
+            # API está sem crédito: a ação é recusada na porta (custo 0, 1
+            # turno) em TODA PR com código. Com "não produziu veredito =
+            # vermelho", isso deixaria toda PR do time vermelha para sempre —
+            # e check que nasce vermelho e fica vermelho é fita adesiva em cima
+            # do alto-falante: em uma semana ninguém olha mais a lista de
+            # checks, nem os que importam.
+            #
+            # Então existe esta variable, que é um estado DECLARADO do
+            # repositório (Settings → Secrets and variables → Actions →
+            # Variables), não uma válvula de PR: ninguém escapa da revisão da
+            # SUA PR ligando isso, porque ela vale para todo mundo e aparece
+            # nas configurações.
+            #
+            # REGRA QUE NÃO PODE SER QUEBRADA: com esta variable em "sim", o
+            # check `revisao-ia` NÃO pode estar na lista de checks obrigatórios
+            # da main. Os dois juntos = check verde que não revisou nada, que é
+            # exatamente o buraco que a PR #1123 fechou. Quando o crédito
+            # voltar: apague a variable e volte a exigir o check.
+            # ----------------------------------------------------------------
+            echo "::warning::A revisão por IA não rodou: as credenciais estão recusando (REVISAO_IA_SEM_CREDENCIAL=sim). NINGUÉM julgou este diff — a portaria e os checks determinísticos rodaram. O motivo está no comentário da PR."
             exit 0
           fi
 
