@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageSquare, MessageSquarePlus, Send } from "lucide-react";
+import { MessageSquare, MessageSquarePlus, RefreshCw, Send } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -49,7 +49,7 @@ export function CelulaJustificativa({ resumo, podeEscrever, onAbrir }: { resumo?
 export function JustificativaFaturamentoDialog({ alvo, podeEscrever, onClose }: { alvo: AlvoJustificativaFaturamento | null; podeEscrever: boolean; onClose: () => void }) {
   const { user } = useAuth();
   const { data: usuarios = [] } = useUsuariosAtivos();
-  const { data: mensagens = [], isLoading } = useMensagensFaturamento(alvo?.contratoId ?? null, alvo?.competencia ?? null);
+  const { data: mensagens = [], isLoading, refetch, isFetching } = useMensagensFaturamento(alvo?.contratoId ?? null, alvo?.competencia ?? null);
   const enviar = useEnviarMensagemFaturamento();
   const [texto, setTexto] = useState("");
   const [destinatario, setDestinatario] = useState(NINGUEM);
@@ -80,6 +80,9 @@ export function JustificativaFaturamentoDialog({ alvo, podeEscrever, onClose }: 
           <DialogDescription>
             {alvo?.contratoNome} · {alvo?.empresaNome} · {alvo?.competenciaLabel}
           </DialogDescription>
+          <Button type="button" variant="outline" size="sm" className="h-7 w-fit gap-1.5 text-xs" onClick={() => void refetch()} disabled={isFetching}>
+            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} /> Atualizar conversa
+          </Button>
         </DialogHeader>
 
         <div className="min-h-[200px] flex-1 space-y-2 overflow-y-auto rounded-md border bg-muted/30 p-3">

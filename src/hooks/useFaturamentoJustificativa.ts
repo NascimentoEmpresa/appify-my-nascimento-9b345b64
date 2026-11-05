@@ -53,7 +53,7 @@ export function useMensagensFaturamento(contratoId: string | null, competencia: 
   return useQuery({
     queryKey: [CHAVE, "chat", contratoId, competencia],
     enabled: !!contratoId && !!competencia,
-    refetchInterval: 15_000,
+    // Sem busca automática (regra do ERP, src/lib/atualizarTela.ts): mensagem nova aparece ao abrir, ao enviar ou no botão Atualizar.
     queryFn: async (): Promise<MensagemFaturamento[]> => {
       const { data, error } = await db.from("faturamento_justificativa_mensagem").select(COLUNAS).eq("contrato_id", contratoId).eq("competencia", competencia).order("created_at", { ascending: true });
       if (error) throw error;
