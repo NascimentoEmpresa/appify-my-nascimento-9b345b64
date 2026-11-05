@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { totaisDoRelatorio, type NfParaTotais } from "@/pages/financeiro/relatorio-servicos/totais";
+import { pendenciaContaVinculada } from "@/pages/financeiro/nf-emissao/shared";
 
 const nf = (o: Partial<NfParaTotais> = {}): NfParaTotais => ({
   contrato_id: "c1", competencia: "2026-09-01", tipo_nota: "N", status: "concluida", data_pagamento: null,
@@ -48,5 +49,29 @@ describe("SIS-2026-0647 · totais do Relatório Geral", () => {
   it("sem linhas filtradas tudo zera", () => {
     const t = totaisDoRelatorio([], exec, pend);
     expect(Object.values(t).every((v) => v === 0)).toBe(true);
+  });
+});
+
+// SIS-2026-0794: conta vinculada recebida e pendência (descontado − efetivamente recebido).
+describe("SIS-2026-0794 · pendência da conta vinculada", () => {
+  it("pendência por nota é o descontado menos o recebido, nunca negativa", () => {
+    expect(pendenciaContaVinculada({ desconto_conta_vinculada: 4151.8, conta_vinculada_valor_recebido: 0 })).toBe(4151.8);
+    expect(pendenciaContaVinculada({ desconto_conta_vinculada: 4151.8, conta_vinculada_valor_recebido: 4151.8 })).toBe(0);
+    expect(pendenciaContaVinculada({ desconto_conta_vinculada: 100, conta_vinculada_valor_recebido: 130 })).toBe(0);
+    expect(pendenciaContaVinculada({ desconto_conta_vinculada: 100 })).toBe(100);
+  });
+  it("nota cancelada ou substituída não deve conta vinculada", () => {
+    expect(pendenciaContaVinculada({ desconto_conta_vinculada: 100, situacao_site_pmt: "CANCELADA" })).toBe(0);
+  });
+  it("os KPIs somam descontado, recebido e as pendências por nota (recebido a maior não abate a pendência de outra nota)", () => {
+    const t = totaisDoRelatorio([
+      nf({ desconto_conta_vinculada: 100, conta_vinculada_valor_recebido: 40 }),
+      nf({ desconto_conta_vinculada: 100, conta_vinculada_valor_recebido: 130 }),
+      nf({ desconto_conta_vinculada: 50, conta_vinculada_valor_recebido: 50 }),
+      nf({ status: "cancelada", desconto_conta_vinculada: 999, conta_vinculada_valor_recebido: 0 }),
+    ], exec, pend);
+    expect(t.contaVinculada).toBe(250);
+    expect(t.contaVinculadaRecebida).toBe(220);
+    expect(t.pendenciaContaVinculada).toBe(60);
   });
 });

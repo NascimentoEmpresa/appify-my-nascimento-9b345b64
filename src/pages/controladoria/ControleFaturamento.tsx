@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +15,9 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { useResumoChatsFaturamento } from "@/hooks/useFaturamentoJustificativa";
+import { CelulaJustificativa, JustificativaFaturamentoDialog, type AlvoJustificativaFaturamento } from "./faturamento/JustificativaFaturamentoDialog";
 import { fmtMoney, foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
 import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
 import { StatusCelula, divergenciaEntre, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
@@ -95,6 +98,10 @@ export default function ControleFaturamento() {
   const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: nfs = [], isLoading: carregandoNfs } = useNfsEmissao(null, { todasEmpresas: true });
   const { data: empresas = [] } = useEmpresasGrupo();
+  // SIS-2026-0808: chat de justificativa dos contratos não faturados (escrever exige 'responder'; ler, 'visualizar').
+  const { data: podeJustificar = false } = useScreenAccess("controle-faturamento", "responder");
+  const [alvoJustificativa, setAlvoJustificativa] = useState<AlvoJustificativaFaturamento | null>(null);
+  const [params, setParams] = useSearchParams();
 
   const [filtroEmpresa, setFiltroEmpresa] = useState("");
   const [aba, setAba] = useState("geral");
@@ -317,6 +324,36 @@ export default function ControleFaturamento() {
     navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
   }
 
+  const { data: chats } = useResumoChatsFaturamento(competencia);
+  const chatDoContrato = (contratoId: string) => chats?.get(contratoId);
+  function abrirJustificativa(contrato: ContratoERP, comp = competencia) {
+    setAlvoJustificativa({
+      contratoId: contrato.id,
+      contratoNome: contrato.nome,
+      empresaNome: empresaNomePorId.get(contrato.empresa_id) ?? "—",
+      competencia: comp,
+      competenciaLabel: labelMes(comp),
+    });
+  }
+
+  // Link do sino (?chat=<contrato>&competencia=YYYY-MM-01): vai para a competência e abre a conversa.
+  const chatDoLink = params.get("chat");
+  useEffect(() => {
+    if (!chatDoLink) return;
+    const comp = params.get("competencia");
+    const contrato = contratos.find((c) => c.id === chatDoLink);
+    if (!contrato) return;
+    if (comp && /^\d{4}-\d{2}-01$/.test(comp)) {
+      setAno(Number(comp.slice(0, 4)));
+      setCompetenciaSel(comp);
+    }
+    abrirJustificativa(contrato, comp && /^\d{4}-\d{2}-01$/.test(comp) ? comp : competencia);
+    params.delete("chat");
+    params.delete("competencia");
+    setParams(params, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatDoLink, contratos]);
+
   const carregando = carregandoContratos || carregandoPlanilha || carregandoNfs;
 
   // SIS-2026-0650: volta empresa, busca, ano e competência ao padrão.
@@ -482,11 +519,12 @@ export default function ControleFaturamento() {
                         <TableHead className="text-right">Valor Recebido</TableHead>
                         <TableHead className="text-right">Conta Vinculada</TableHead>
                         <TableHead className="text-right">% Recebido/Faturado</TableHead>
+                        <TableHead>Justificativa</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {linhasCompetencia.length === 0 && (
-                        <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-8">Sem contratos vigentes para os filtros selecionados.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={14} className="text-center text-muted-foreground py-8">Sem contratos vigentes para os filtros selecionados.</TableCell></TableRow>
                       )}
                       {linhasCompetencia.map((l) => (
                         <TableRow
@@ -510,6 +548,11 @@ export default function ControleFaturamento() {
                           <TableCell className="text-right text-sm">{fmtMoney(l.recebido)}</TableCell>
                           <TableCell className="text-right text-sm">{fmtMoney(l.cv)}</TableCell>
                           <TableCell className="text-right text-sm">{l.contabil ? `${((l.recebido / l.contabil) * 100).toFixed(2).replace(".", ",")}%` : "0,00%"}</TableCell>
+                          <TableCell>
+                            {l.status !== "NOTAS_LANCADAS" && (
+                              <CelulaJustificativa resumo={chatDoContrato(l.contrato.id)} podeEscrever={podeJustificar} onAbrir={() => abrirJustificativa(l.contrato)} />
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -527,6 +570,7 @@ export default function ControleFaturamento() {
                           <TableCell className="text-right">{fmtMoney(kpis.recebido)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(linhasCompetencia.reduce((s, l) => s + l.cv, 0))}</TableCell>
                           <TableCell className="text-right">{kpis.contabil ? `${kpis.pctRecebido.toFixed(2).replace(".", ",")}%` : "0,00%"}</TableCell>
+                          <TableCell />
                         </TableRow>
                       </TableFooter>
                     )}
@@ -639,10 +683,15 @@ export default function ControleFaturamento() {
               onLimparFiltros={limparFiltros}
               codigos={codigos}
               rotuloCodigo={rotuloCodigo}
+              chatDoContrato={chatDoContrato}
+              podeJustificar={podeJustificar}
+              onJustificar={(contratoId) => { const c = contratos.find((x) => x.id === contratoId); if (c) abrirJustificativa(c); }}
             />
           </TabsContent>
         </Tabs>
       )}
+
+      <JustificativaFaturamentoDialog alvo={alvoJustificativa} podeEscrever={podeJustificar} onClose={() => setAlvoJustificativa(null)} />
 
       <Dialog open={abrirNaoEmitido} onOpenChange={setAbrirNaoEmitido}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">

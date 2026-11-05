@@ -162,6 +162,18 @@ export function valorPendenteNf(
   return Math.max(0, nf.vlr_liquido_total - (nf.valor_pago ?? 0) - nf.desconto_conta_vinculada - pos);
 }
 
+// SIS-2026-0794: pendência da conta vinculada = o que foi descontado na nota menos o que efetivamente entrou na
+// conta vinculada. Nunca negativa (recebido a maior não abate a pendência de outra nota) e nota cancelada/substituída não deve nada.
+export function pendenciaContaVinculada(nf: {
+  desconto_conta_vinculada: number;
+  conta_vinculada_valor_recebido?: number | null;
+  situacao_site_pmt?: string | null;
+  situacao_dominio?: string | null;
+}): number {
+  if (situacaoEspecial(nf)) return 0;
+  return Math.max(0, Math.round(((nf.desconto_conta_vinculada || 0) - (nf.conta_vinculada_valor_recebido || 0)) * 100) / 100);
+}
+
 export function itemVazio(ordem: number) {
   return {
     identificacao: `Item ${ordem}`,

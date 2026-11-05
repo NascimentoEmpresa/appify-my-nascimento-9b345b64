@@ -1,4 +1,4 @@
-import { naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
+import { naoContabilizaKpi, pendenciaContaVinculada } from "@/pages/financeiro/nf-emissao/shared";
 
 // SIS-2026-0647: totais do topo do Relatório Geral. Tudo é calculado em cima das linhas já filtradas
 // (empresa, competência, contrato, status, código, emissão, busca), então os valores mudam com qualquer filtro.
@@ -17,6 +17,7 @@ export interface NfParaTotais {
   vlr_liquido_total: number;
   valor_pago?: number | null;
   desconto_conta_vinculada: number;
+  conta_vinculada_valor_recebido?: number | null;
 }
 
 export interface TotaisRelatorio {
@@ -29,6 +30,9 @@ export interface TotaisRelatorio {
   // Executado − Faturado. Positivo: executou mais do que faturou; negativo: faturou acima do executado.
   divergencia: number;
   contaVinculada: number;
+  // SIS-2026-0794: o que entrou na conta vinculada e o que ainda falta (soma das pendências por nota, nunca negativa).
+  contaVinculadaRecebida: number;
+  pendenciaContaVinculada: number;
   recebido: number;
   pendente: number;
 }
@@ -40,7 +44,7 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
   executavelDoContratoMes: (contratoId: string, anoMes: string) => number,
   pendenteDaNf: (nf: T) => number,
 ): TotaisRelatorio {
-  let executado = 0, faturado = 0, liquido = 0, contaVinculada = 0, recebido = 0, pendente = 0;
+  let executado = 0, faturado = 0, liquido = 0, contaVinculada = 0, contaVinculadaRecebida = 0, pendenciaCv = 0, recebido = 0, pendente = 0;
   // Só nota Código N é lançamento (mesmo critério do Controle de Faturamento); o executável de cada contrato/mês entra uma vez.
   const paresExecutavel = new Set<string>();
   for (const n of linhas) {
@@ -49,6 +53,8 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
     faturado += n.vlr_bruto_total || 0;
     liquido += n.vlr_liquido_total || 0;
     contaVinculada += n.desconto_conta_vinculada || 0;
+    contaVinculadaRecebida += n.conta_vinculada_valor_recebido || 0;
+    pendenciaCv += pendenciaContaVinculada(n);
     recebido += n.valor_pago ?? 0;
     pendente += pendenteDaNf(n);
     if (n.tipo_nota === "N") paresExecutavel.add(`${n.contrato_id}|${n.competencia.slice(0, 7)}`);
@@ -65,6 +71,8 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
     liquido: r2(liquido),
     divergencia: r2(executado - faturado),
     contaVinculada: r2(contaVinculada),
+    contaVinculadaRecebida: r2(contaVinculadaRecebida),
+    pendenciaContaVinculada: r2(pendenciaCv),
     recebido: r2(recebido),
     pendente: r2(pendente),
   };
