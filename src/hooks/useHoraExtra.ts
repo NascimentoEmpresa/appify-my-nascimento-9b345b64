@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { PontoMesHoraExtra } from "@/lib/horaExtraLimite";
 import type {
   ChamadoDisponivel,
   ColaboradorHoraExtra,
@@ -28,19 +29,47 @@ export interface InformacoesPrHoraExtra {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
 
-export function useSolicitacoesHoraExtra(inicio: string, fim: string) {
+/**
+ * `colaboradorId`: a tela de Solicitações passa o próprio usuário e só mostra as
+ * próprias HEs, mesmo para quem aprova (quem aprova vê as dos outros na
+ * Liberação). Sem o argumento, quem manda é a RLS. `null` = usuário ainda não
+ * carregado: espera, em vez de pedir a lista sem o filtro.
+ */
+export function useSolicitacoesHoraExtra(inicio: string, fim: string, colaboradorId?: string | null) {
   return useQuery({
-    queryKey: ["hora-extra", "lista", inicio, fim],
+    queryKey: ["hora-extra", "lista", inicio, fim, colaboradorId ?? "rls"],
+    enabled: colaboradorId !== null,
     queryFn: async () => {
-      const { data, error } = await db
+      let consulta = db
         .from("HORA_EXTRA_SOLICITACAO")
         .select("*, chamados:HORA_EXTRA_CHAMADO(*), anexos:HORA_EXTRA_ANEXO(*)")
         .gte("data_he", inicio)
-        .lte("data_he", fim)
-        .order("created_at", { ascending: false });
+        .lte("data_he", fim);
+      if (colaboradorId) consulta = consulta.eq("colaborador_id", colaboradorId);
+      const { data, error } = await consulta.order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as SolicitacaoHoraExtra[];
     },
+  });
+}
+
+export const chavePontoMesHoraExtra = (mes: string, colaboradorId: string) =>
+  ["hora-extra", "ponto-mes", mes, colaboradorId] as const;
+
+/** Batidas da Senior, escala e HEs de uma pessoa em um mês (mig 20261104010000). */
+export async function buscarPontoMesHoraExtra(mes: string, colaboradorId: string): Promise<PontoMesHoraExtra> {
+  const { data, error } = await db.rpc("hora_extra_ponto_mes", { p_mes: mes, p_colaborador: colaboradorId });
+  if (error) throw error;
+  return data as PontoMesHoraExtra;
+}
+
+/** `mes` nulo não busca: o diálogo fechado não gasta chamada. */
+export function usePontoMesHoraExtra(mes: string | null, colaboradorId?: string | null) {
+  return useQuery({
+    queryKey: chavePontoMesHoraExtra(mes ?? "", colaboradorId ?? ""),
+    enabled: !!mes && /^\d{4}-\d{2}$/.test(mes) && !!colaboradorId,
+    staleTime: 10 * 60_000,
+    queryFn: () => buscarPontoMesHoraExtra(mes!, colaboradorId!),
   });
 }
 

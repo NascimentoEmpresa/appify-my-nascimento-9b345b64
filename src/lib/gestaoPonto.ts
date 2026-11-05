@@ -291,10 +291,26 @@ export function agruparPorJornada(batidas: Batida[], j: Jornada): Map<string, nu
   return porDia;
 }
 
+/**
+ * Quanto de hora extra o dia vale: o que passou do previsto, ou tudo o que foi
+ * trabalhado quando não havia nada previsto (folga, fim de semana, feriado).
+ * É a coluna "Hora extra" da Gestão de Ponto e o que conta no limite de 48h.
+ */
+export function minutosExtraDoDia(d: Pick<DiaPonto, "previsto" | "saldo" | "trabalhado" | "situacao">): number {
+  if (d.situacao === "futuro" || d.situacao === "fora_contrato") return 0;
+  return d.previsto ? Math.max(0, d.saldo) : d.trabalhado;
+}
+
+/**
+ * `feriadosExtras`: dias fora da lista nacional que valem como feriado para esta
+ * pessoa. A Hora Extra manda aqui as datas marcadas como feriado na solicitação,
+ * único registro de feriado municipal que o ERP tem.
+ */
 export function montarEspelho(
   c: Pick<ColaboradorPonto, "batidas" | "escala" | "admissao" | "afastamento"> & { situacao?: string | null },
   mes: string,
   hoje: string = iso(new Date()),
+  feriadosExtras?: ReadonlyMap<string, string>,
 ): EspelhoMes {
   const j = interpretarEscala(c.escala);
   const porDia = agruparPorJornada(c.batidas ?? [], j);
@@ -311,7 +327,7 @@ export function montarEspelho(
     const pares: [number, number][] = [];
     for (let i = 0; i + 1 < batidas.length; i += 2) pares.push([batidas[i], batidas[i + 1]]);
     const trabalhado = pares.reduce((s, [a, b]) => s + Math.max(0, b - a), 0);
-    const feriado = feriados.get(data) ?? null;
+    const feriado = feriados.get(data) ?? feriadosExtras?.get(data) ?? null;
     const foraContrato = (!!c.admissao && data < c.admissao) || (!!c.afastamento && data > c.afastamento);
 
     // Previsto: revezamento só nos dias trabalhados; o resto, dia útil da escala.
@@ -364,7 +380,7 @@ export function montarEspelho(
     atrasos: dias.filter((d) => d.atrasoMin > 0).length,
     minutosAtraso: dias.reduce((s, d) => s + d.atrasoMin, 0),
     extras: dias.filter((d) => d.saldo > TOLERANCIA_MIN || d.situacao === "folga_trabalhada").length,
-    minutosExtra: passados.reduce((s, d) => s + (d.previsto ? Math.max(0, d.saldo) : d.trabalhado), 0),
+    minutosExtra: passados.reduce((s, d) => s + minutosExtraDoDia(d), 0),
     minutosDevendo: passados.reduce((s, d) => s + (d.previsto ? Math.max(0, -d.saldo) : 0), 0),
   };
   totais.saldo = totais.trabalhado - totais.previsto;

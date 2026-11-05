@@ -50,6 +50,7 @@ import {
   totalizarLinhasRelatorioPr,
 } from "./prHoraExtraUtils";
 import type { ChamadoHoraExtra, SolicitacaoHoraExtra, StatusExecucao } from "./types";
+import { useConfirmacaoLimite } from "./useConfirmacaoLimite";
 
 interface LinhaConclusao {
   id: string;
@@ -93,6 +94,7 @@ export default function ConcluirHoraExtraDialog({
   solicitacao: SolicitacaoHoraExtra | null;
 }) {
   const concluir = useConcluirHoraExtra();
+  const { conferirLimite, dialogoLimite } = useConfirmacaoLimite();
   const [linhas, setLinhas] = useState<LinhaConclusao[]>([]);
   const [adicionais, setAdicionais] = useState<LinhaConclusao[]>([]);
   const [arquivos, setArquivos] = useState<File[]>([]);
@@ -386,6 +388,13 @@ export default function ConcluirHoraExtraDialog({
       toast.error("Aguarde a validação do chamado encontrado no título da PR.");
       return;
     }
+    const seguir = await conferirLimite({
+      colaboradorId: solicitacao.colaborador_id,
+      data: solicitacao.data_he,
+      minutos,
+      ignorarId: solicitacao.id,
+    });
+    if (!seguir) return;
     try {
       await concluir.mutateAsync({
         p: {
@@ -640,6 +649,7 @@ export default function ConcluirHoraExtraDialog({
           </div>
         </DialogContent>
       </Dialog>
+      {dialogoLimite}
       <AlertDialog open={Boolean(linhaParaRemover)} onOpenChange={(v) => !v && setLinhaParaRemover(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
