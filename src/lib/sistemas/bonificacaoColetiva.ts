@@ -103,9 +103,65 @@ export function notasDaEntrega(e: EntregaBonificacao, cfg: ConfigBonificacao): N
     prazo: prazo === null ? null : prazo ? 100 : 0,
     dificuldade: finito(pontos) ? limitar(pontos) : null,
     valor: finito(e.valorMercado) && cfg.referenciaValor > 0
-      ? limitar((e.valorMercado / cfg.referenciaValor) * 100)
+      ? PISO_VALOR + (100 - PISO_VALOR) * limitar(e.valorMercado / cfg.referenciaValor, 0, 1)
       : null,
   };
+}
+
+// ── Régua do critério Valor (05/11/2026) ─────────────────────────────────
+//
+// A régua fixa (R$ 10.000 = nota 100) estava fora da escala de chamado: o
+// valor médio por entrega ficava em R$ 1–3 mil, e a equipe toda tirava 2 a 25
+// nesse critério — ele puxava todo mundo para baixo e não diferenciava
+// ninguém. Agora a régua é RELATIVA ao próprio mês: o valor de mercado no
+// percentil 75 das entregas do período vale 100 (o quarto mais valioso das
+// entregas tira 100; as demais, proporcional). Sempre sobre TODAS as entregas
+// válidas do mês — filtrar um dev não muda a régua dele.
+//
+// Com menos de MIN_ENTREGAS_REFERENCIA entregas com valor, um percentil não
+// diz nada; vale a referência fixa configurada em Pesos e regras.
+//
+// PISO: toda entrega vale pelo menos PISO_VALOR. Pablo, 05/11: "se eu ajustar
+// um bug rápido que impede 50 pessoas de trabalhar vai ter menos valor do que
+// um sistema novo complexo? os dois têm importância". O preço de mercado mede
+// tamanho, não importância — então ele só diferencia de 50 a 100, nunca zera:
+//   nota = PISO + (100 − PISO) × min(1, valor ÷ régua).
+
+export const PISO_VALOR = 50;
+export const PERCENTIL_REFERENCIA = 0.75;
+export const MIN_ENTREGAS_REFERENCIA = 3;
+
+/** Percentil (0–1) com interpolação linear; null em lista vazia. */
+export function percentil(valores: number[], p: number): number | null {
+  const v = valores.filter(finito).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const pos = (v.length - 1) * limitar(p, 0, 1);
+  const base = Math.floor(pos);
+  const resto = pos - base;
+  return v[base + 1] === undefined ? v[base] : v[base] + resto * (v[base + 1] - v[base]);
+}
+
+export interface ReferenciaValor {
+  /** Valor de mercado (R$) que vale nota 100 neste mês. */
+  valor: number;
+  /** true = calculada pelas entregas do mês; false = a fixa da configuração. */
+  automatica: boolean;
+  /** Entregas com valor de mercado usadas na conta. */
+  base: number;
+}
+
+/** Régua do critério Valor para o mês: percentil 75 das entregas, ou a fixa. */
+export function referenciaDoPeriodo(entregas: Pick<EntregaBonificacao, "valorMercado">[], referenciaFixa: number): ReferenciaValor {
+  const valores = entregas.map((e) => e.valorMercado).filter((n): n is number => finito(n) && n > 0);
+  const p = valores.length >= MIN_ENTREGAS_REFERENCIA ? percentil(valores, PERCENTIL_REFERENCIA) : null;
+  return p !== null && p > 0
+    ? { valor: Math.round(p * 100) / 100, automatica: true, base: valores.length }
+    : { valor: referenciaFixa, automatica: false, base: valores.length };
+}
+
+/** Configuração efetiva do mês: a gravada, com a régua do Valor já resolvida. */
+export function configDoPeriodo(cfg: ConfigBonificacao, entregasDoMes: Pick<EntregaBonificacao, "valorMercado">[]): ConfigBonificacao {
+  return { ...cfg, referenciaValor: referenciaDoPeriodo(entregasDoMes, cfg.referenciaValor).valor };
 }
 
 /** Média de cada critério sobre as entregas que têm aquele critério. */

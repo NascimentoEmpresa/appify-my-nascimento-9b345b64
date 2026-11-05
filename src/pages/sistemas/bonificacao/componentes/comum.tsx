@@ -28,7 +28,7 @@ export const AJUDA = {
   satisfacao: "Converte a avaliação do solicitante (1 a 5) em nota de 0 a 100 para compor o resultado.",
   prazo: "Compara a data prometida e a data efetiva de conclusão; concluir depois do limite zera o critério.",
   dificuldade: "Grau de dificuldade estimado pela IA (complexidade de 1 a 5 do parecer do chamado), ajustável pelo gestor. Classificação: fácil, médio, difícil ou muito difícil, convertida em pontos conforme as regras.",
-  valor: "Valor da tarefa estimado pela IA com base no escopo e em referências de mercado. A nota usa o valor de mercado comparado à referência configurada, limitado a 100; não é pagamento nem economia comprovada.",
+  valor: "Valor da tarefa estimado pela IA com base no escopo e em referências de mercado. Toda entrega vale no mínimo 50; o valor de mercado só diferencia de 50 a 100, comparado com a régua do mês (percentil 75 das entregas do período); não é pagamento nem economia comprovada.",
   composicao: "Mostra quantos pontos cada critério contribuiu para a nota consolidada da equipe.",
   resultadoCriterios: "Médias dos cinco critérios de todas as tarefas consideradas, antes de aplicar os pesos da nota final.",
   porDev: "Comparativo de entregas e notas individuais. Útil para gestão, sem alterar a cota igualitária.",
@@ -41,7 +41,7 @@ export const AJUDA = {
   clt: "Estimativa do custo da execução por profissional contratado em regime CLT, sob as premissas utilizadas.",
   pontosPerdidos: "Diferença entre a pontuação máxima possível do critério e os pontos efetivamente obtidos.",
   peso: "Participação percentual desse critério na nota final. A soma de todos os pesos é 100%.",
-  referencia: "Valor de mercado (R$) que dá nota 100 no critério Valor. Tarefas acima dele ficam limitadas a 100.",
+  referencia: "A régua do critério Valor é o percentil 75 do valor de mercado das entregas do mês. Esta referência fixa só vale em mês com menos de 3 entregas com valor da IA.",
   fechamento: "Fechar o período guarda a foto do resultado e trava a verba, a configuração e as avaliações das entregas do mês. Reabrir descarta a foto.",
   pendencias: "Entregas com algum critério sem dado. O critério sem dado fica fora da média e os pesos dos demais são redistribuídos — complete antes de fechar o período.",
 } as const;

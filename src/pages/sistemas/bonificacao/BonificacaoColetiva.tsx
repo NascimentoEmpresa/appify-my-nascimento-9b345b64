@@ -40,9 +40,9 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useEntregasBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
-  contribuicao, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
+  configDoPeriodo, contribuicao, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
   mediasDosCriterios, noPrazo, notaDaEntrega, notaDoGrupo, notasDaEntrega, pendenciasDaEntrega, pontosPerdidos,
-  ratearBonificacao, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
+  ratearBonificacao, referenciaDoPeriodo, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
   type ConfigBonificacao, type Criterio, type EntregaDetalhada, type NotasCriterios, type Rateio, type ResumoDev,
 } from "@/lib/sistemas/bonificacaoColetiva";
 import { AbaRegras } from "./componentes/AbaRegras";
@@ -92,8 +92,6 @@ function Painel() {
   const { data: podeFechar = false } = useScreenAccess(MENU_REGRAS, "aprovar");
 
   const periodo = useMemo(() => resolverPeriodo(mes, periodos), [mes, periodos]);
-  const cfg = periodo.config;
-
   const meses = useMemo(() => {
     const s = new Set(ultimasCompetencias(hoje, 18));
     for (const p of periodos) s.add(String(p.competencia).slice(0, 7));
@@ -103,6 +101,9 @@ function Painel() {
   // Nota coletiva e rateio: SEMPRE todas as entregas válidas do mês.
   const validas = useMemo(() => entregas.filter((e) => !e.foraDaBonificacao), [entregas]);
   const excluidas = useMemo(() => entregas.filter((e) => e.foraDaBonificacao), [entregas]);
+  // Régua do Valor relativa ao mês (percentil 75 de TODAS as entregas válidas).
+  const referencia = useMemo(() => referenciaDoPeriodo(validas, periodo.config.referenciaValor), [validas, periodo.config.referenciaValor]);
+  const cfg = useMemo(() => configDoPeriodo(periodo.config, validas), [periodo.config, validas]);
   const devsDoMes = useMemo(() => resumoPorDev(validas, cfg), [validas, cfg]);
   const devSelecionado = dev !== "todos" && devsDoMes.some((d) => d.devId === dev) ? dev : "todos";
   const filtradas = useMemo(
@@ -232,7 +233,7 @@ function Painel() {
               />
             </TabsContent>
             <TabsContent value="regras">
-              <AbaRegras periodo={periodo} podeAlterar={podeConfigurar} podeAprovar={podeFechar} fotoDoResultado={fotoDoResultado} />
+              <AbaRegras periodo={periodo} referencia={referencia}podeAlterar={podeConfigurar} podeAprovar={podeFechar} fotoDoResultado={fotoDoResultado} />
             </TabsContent>
           </>
         )}
