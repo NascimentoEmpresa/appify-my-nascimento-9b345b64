@@ -12,7 +12,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileCheck, CircleDollarSign, FileDown, ListChecks, TrendingUp, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Search, FileCheck, CircleDollarSign, FileDown, ListChecks, TrendingUp, CheckCircle2, AlertTriangle, Landmark } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { cn } from "@/lib/utils";
@@ -34,7 +34,7 @@ import {
   ajustarValoresNfConcluida, somaDescontosPosEmissao, AjusteValoresItem,
 } from "@/pages/financeiro/nf-emissao/calculos";
 import {
-  fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDeDias, moneyTextContains, valorPendenteNf,
+  fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDeDias, moneyTextContains, valorPendenteNf, pendenciaContaVinculada,
 } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
@@ -52,6 +52,15 @@ const STATUS_FILTRO_LABEL: Record<StatusFiltro, string> = {
   substituida: "Substituída",
   cancelada: "Cancelada",
 };
+
+// SIS-2026-0794: pendência da conta vinculada (descontado − efetivamente recebido); vermelho enquanto houver saldo a buscar, verde quando zerou.
+function PendenciaCvBadge({ valor }: { valor: number }) {
+  return (
+    <Badge variant="outline" className={valor > 0 ? "border-red-500/40 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400" : "border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"}>
+      {fmtMoney(valor)}
+    </Badge>
+  );
+}
 
 function PagamentoBadge({ nf }: { nf: NfEmissaoRow }) {
   if (nf.data_pagamento) {
@@ -219,7 +228,7 @@ export default function NotasConcluidasTab() {
   // itens de cada NF pra calcular o "Valor pendente de recebimento" certo.
   const { data: itensContrato } = useItensNfEmissaoEmLote(nfsDoContrato.map((n) => n.id));
   const kpisContrato = useMemo(() => {
-    let executado = 0, faturado = 0, recebido = 0, pendente = 0;
+    let executado = 0, faturado = 0, recebido = 0, pendente = 0, pendenciaCv = 0;
     // Achado real (Ruan): Cancelada/Substituída ainda carrega valores da
     // planilha legada — some da conta pra não inflar os totais.
     for (const n of nfsDoContrato) {
@@ -228,8 +237,9 @@ export default function NotasConcluidasTab() {
       faturado += n.vlr_bruto_total;
       recebido += n.valor_pago ?? 0;
       pendente += valorPendenteNf(n, itensContrato?.get(n.id) ?? []);
+      pendenciaCv += pendenciaContaVinculada(n);
     }
-    return { executado, faturado, recebido, pendente };
+    return { executado, faturado, recebido, pendente, pendenciaCv };
   }, [nfsDoContrato, itensContrato]);
 
   // SIS-2026-0323 (pedido do usuário): mesmo divisor arrastável já usado
@@ -280,6 +290,9 @@ export default function NotasConcluidasTab() {
         "Data de pagamento": fmtDate(nf.data_pagamento),
         "Valor Pago": nf.valor_pago ?? 0,
         "Desconto conta vinculada": nf.desconto_conta_vinculada,
+        "Recebido conta vinculada": nf.conta_vinculada_valor_recebido ?? 0,
+        "Data recebimento conta vinculada": fmtDate(nf.conta_vinculada_data_recebimento ?? null),
+        "Pendência conta vinculada": pendenciaContaVinculada(nf),
         "Status atual": STATUS_FILTRO_LABEL[statusDaNota(nf)],
       }));
       const ws = XLSX.utils.json_to_sheet(linhas);
@@ -402,11 +415,12 @@ export default function NotasConcluidasTab() {
                 <p className="text-sm font-semibold">{contratoAtual.nome}</p>
                 <p className="text-xs text-muted-foreground">{contratoAtual.cliente}</p>
               </div>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-5 gap-2">
                 <KpiTile label="Valor Executado" valor={fmtMoney(kpisContrato.executado)} icon={<ListChecks />} cor="slate" />
                 <KpiTile label="Valor Faturado" valor={fmtMoney(kpisContrato.faturado)} icon={<TrendingUp />} cor="sky" />
                 <KpiTile label="Valor Recebido" valor={fmtMoney(kpisContrato.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
                 <KpiTile label="Val. Pendente de Recebimento" valor={fmtMoney(kpisContrato.pendente)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+                <KpiTile label="Pendência conta vinculada" valor={fmtMoney(kpisContrato.pendenciaCv)} icon={<Landmark />} cor="amber" valorClass={kpisContrato.pendenciaCv > 0 ? "text-amber-600 dark:text-amber-400" : undefined} />
               </div>
             </div>
             <div className="overflow-auto flex-1">
@@ -423,14 +437,16 @@ export default function NotasConcluidasTab() {
                     <ColumnFilterHead label="Valor líquido" value={colFiltros.liquido ?? ""} onApply={(v) => setColFiltro("liquido", v)} type="money" />
                     <ColumnFilterHead label="Data de pagamento" value={colFiltros.pagamento ?? ""} onApply={(v) => setColFiltro("pagamento", v)} type="date" />
                     <ColumnFilterHead label="Recebido" value={colFiltros.recebido ?? ""} onApply={(v) => setColFiltro("recebido", v)} type="money" />
-                    <ColumnFilterHead label="Desconto conta vinculada" value={colFiltros.contaVinculada ?? ""} onApply={(v) => setColFiltro("contaVinculada", v)} type="money" />
+                    <ColumnFilterHead label="Valor descontado conta vinculada" value={colFiltros.contaVinculada ?? ""} onApply={(v) => setColFiltro("contaVinculada", v)} type="money" />
+<TableHead className="text-center">Valor efetivamente recebido conta vinculada</TableHead>
+<TableHead className="text-center">Pendência conta vinculada</TableHead>
                     <ColumnFilterHead label="Status" value={colFiltros.status ?? ""} onApply={(v) => setColFiltro("status", v)} type="select" options={Object.values(STATUS_FILTRO_LABEL).filter((l) => l !== "Todos")} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {nfsDoContrato.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                         Nenhuma NF {filtroStatus === "todos" ? "concluída" : STATUS_FILTRO_LABEL[filtroStatus].toLowerCase()} para este contrato{buscaNf.trim() ? " com essa busca" : ""}.
                       </TableCell>
                     </TableRow>
@@ -459,6 +475,8 @@ export default function NotasConcluidasTab() {
                       <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_pagamento)}</TableCell>
                       <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.valor_pago ?? 0)}</TableCell>
                       <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.desconto_conta_vinculada)}</TableCell>
+<TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.conta_vinculada_valor_recebido ?? 0)}</TableCell>
+<TableCell className="text-center whitespace-nowrap"><PendenciaCvBadge valor={pendenciaContaVinculada(nf)} /></TableCell>
                       <TableCell className="text-center">
                         <PagamentoBadge nf={nf} />
                       </TableCell>
@@ -484,14 +502,16 @@ export default function NotasConcluidasTab() {
                   <ColumnFilterHead label="Valor líquido" value={colFiltros.liquido ?? ""} onApply={(v) => setColFiltro("liquido", v)} type="money" />
                   <ColumnFilterHead label="Data de pagamento" value={colFiltros.pagamento ?? ""} onApply={(v) => setColFiltro("pagamento", v)} type="date" />
                   <ColumnFilterHead label="Recebido" value={colFiltros.recebido ?? ""} onApply={(v) => setColFiltro("recebido", v)} type="money" />
-                  <ColumnFilterHead label="Desconto conta vinculada" value={colFiltros.contaVinculada ?? ""} onApply={(v) => setColFiltro("contaVinculada", v)} type="money" />
+                  <ColumnFilterHead label="Valor descontado conta vinculada" value={colFiltros.contaVinculada ?? ""} onApply={(v) => setColFiltro("contaVinculada", v)} type="money" />
+<TableHead className="text-center">Valor efetivamente recebido conta vinculada</TableHead>
+<TableHead className="text-center">Pendência conta vinculada</TableHead>
                   <ColumnFilterHead label="Status" value={colFiltros.status ?? ""} onApply={(v) => setColFiltro("status", v)} type="select" options={Object.values(STATUS_FILTRO_LABEL).filter((l) => l !== "Todos")} />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {nfsFlatFiltradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={15} className="text-center text-muted-foreground py-8">
                       Nenhuma NF encontrada com esse filtro/busca.
                     </TableCell>
                   </TableRow>
@@ -512,6 +532,8 @@ export default function NotasConcluidasTab() {
                     <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_pagamento)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.valor_pago ?? 0)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.desconto_conta_vinculada)}</TableCell>
+<TableCell className="text-center whitespace-nowrap">{fmtMoney(nf.conta_vinculada_valor_recebido ?? 0)}</TableCell>
+<TableCell className="text-center whitespace-nowrap"><PendenciaCvBadge valor={pendenciaContaVinculada(nf)} /></TableCell>
                     <TableCell className="text-center">
                       <PagamentoBadge nf={nf} />
                     </TableCell>
@@ -593,6 +615,8 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   const [dataEmissao, setDataEmissao] = useState("");
   const [numeroNf, setNumeroNf] = useState("");
   const [descontoContaVinculada, setDescontoContaVinculada] = useState("0");
+  const [cvDataRecebimento, setCvDataRecebimento] = useState("");
+  const [cvValorRecebido, setCvValorRecebido] = useState("0");
   const [recebimentoExtra, setRecebimentoExtra] = useState("0");
   const [faltaReceber, setFaltaReceber] = useState("0");
   const [pagoAMais, setPagoAMais] = useState("0");
@@ -606,6 +630,8 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setDataEmissao(nf.data_emissao ?? "");
     setNumeroNf(nf.numero_nf ?? "");
     setDescontoContaVinculada(String(nf.desconto_conta_vinculada ?? 0));
+    setCvDataRecebimento(nf.conta_vinculada_data_recebimento ?? "");
+    setCvValorRecebido(String(nf.conta_vinculada_valor_recebido ?? 0));
     setRecebimentoExtra(String(nf.recebimento_extra ?? 0));
     setFaltaReceber(String(nf.falta_receber ?? 0));
     setPagoAMais(String(nf.pago_a_mais ?? 0));
@@ -808,6 +834,8 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
         situacao_site_pmt: situacaoSitePmt.trim() || null,
         situacao_dominio: situacaoDominio.trim() || null,
         desconto_conta_vinculada: Number(descontoContaVinculada) || 0,
+        conta_vinculada_data_recebimento: cvDataRecebimento || null,
+        conta_vinculada_valor_recebido: Number(cvValorRecebido) || 0,
         recebimento_extra: Number(recebimentoExtra) || 0,
         falta_receber: Number(faltaReceber) || 0,
         pago_a_mais: Number(pagoAMais) || 0,
@@ -1014,6 +1042,14 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
               <div>
                 <Label className="text-xs">Pago a mais</Label>
                 <CurrencyInput value={pagoAMais} onChange={setPagoAMais} />
+              </div>
+              <div>
+                <Label className="text-xs">Data de recebimento — Conta Vinculada</Label>
+                <Input type="date" value={cvDataRecebimento} onChange={(e) => setCvDataRecebimento(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Valor efetivamente recebido — Conta Vinculada</Label>
+                <CurrencyInput value={cvValorRecebido} onChange={setCvValorRecebido} />
               </div>
               <div className="col-span-2 flex items-end">
                 <Button variant="outline" onClick={handleSalvarReconciliacao} disabled={registrarPagamento.isPending}>
