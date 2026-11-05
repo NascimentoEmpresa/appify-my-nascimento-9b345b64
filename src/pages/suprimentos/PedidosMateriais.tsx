@@ -32,8 +32,9 @@ import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
   PackageSearch, PackageOpen, Car, HardHat, Undo2,
-  PackageCheck, Ban, Send,
+  PackageCheck, Ban, Send, ChevronDown,
 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -44,7 +45,7 @@ import { abrirComprovacaoPdf } from "@/lib/suprimentos/comprovacaoPdf";
 import { ModalFotosComprovacao } from "@/components/suprimentos/ModalFotosComprovacao";
 import { ModalFichaEpi } from "@/components/suprimentos/ModalFichaEpi";
 import { FotoCracha } from "@/components/suprimentos/FotoCracha";
-import { calcularEnvioItens } from "@/lib/suprimentos/envioItens";
+import { calcularEnvioItens, despachadoSemRegistroDeSaida } from "@/lib/suprimentos/envioItens";
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
 import { pedidoElegivelParaRomaneio, pedidoEmRomaneioAberto, validarSelecaoRomaneio } from "@/lib/suprimentos/romaneio";
 import { imprimirRomaneio } from "@/lib/suprimentos/romaneioImpressao";
@@ -824,16 +825,37 @@ function SecaoRomaneios() {
     }
   };
 
-  return (
-    <section className="space-y-3 rounded-xl border bg-muted/20 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 font-semibold"><PackageCheck className="h-5 w-5" /> Romaneios</h2>
-          <p className="text-sm text-muted-foreground">Abertos e retirados aguardando despacho.</p>
-        </div>
-        <Badge variant="outline">{romaneios.length}</Badge>
-      </div>
+  // SIS-2026-0799: a seção nasce RECOLHIDA. Com oito romaneios abertos ela
+  // ocupava a tela inteira e o Supply rolava várias vezes antes de chegar à
+  // fila de pedidos, que é o que se abre esta tela para ver. O cabeçalho
+  // continua mostrando a contagem, então dá para saber se há romaneio
+  // esperando sem expandir.
+  const [aberta, setAberta] = useState(false);
 
+  return (
+    <Collapsible open={aberta} onOpenChange={setAberta} asChild>
+    <section className="space-y-3 rounded-xl border bg-muted/20 p-4">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left"
+          aria-label={aberta ? "Recolher romaneios" : "Expandir romaneios"}
+        >
+          <div>
+            <h2 className="flex items-center gap-2 font-semibold"><PackageCheck className="h-5 w-5" /> Romaneios</h2>
+            <p className="text-sm text-muted-foreground">
+              Abertos e retirados aguardando despacho.
+              {!aberta && " Clique para ver."}
+            </p>
+          </div>
+          <span className="flex shrink-0 items-center gap-2">
+            <Badge variant="outline">{isLoading ? "…" : romaneios.length}</Badge>
+            <ChevronDown className={cn("h-5 w-5 text-muted-foreground transition-transform", aberta && "rotate-180")} />
+          </span>
+        </button>
+      </CollapsibleTrigger>
+
+      <CollapsibleContent className="space-y-3">
       {isLoading ? (
         <p className="py-4 text-sm text-muted-foreground">Carregando romaneios…</p>
       ) : error ? (
@@ -908,6 +930,7 @@ function SecaoRomaneios() {
           })}
         </div>
       )}
+      </CollapsibleContent>
 
       <Dialog open={!!cancelando} onOpenChange={(aberto) => !aberto && setCancelando(null)}>
         <DialogContent>
@@ -928,6 +951,7 @@ function SecaoRomaneios() {
 
       <ModalDespacharRomaneio romaneio={despachando} onFechar={() => setDespachando(null)} />
     </section>
+    </Collapsible>
   );
 }
 
@@ -1064,6 +1088,8 @@ function CardPedido({
   );
   const enviados = envio.filter((l) => l.enviada > 0);
   const pendentes = envio.filter((l) => l.pendente > 0);
+  // SIS-2026-0799: despachado sem baixa nenhuma — não listar tudo como pendente.
+  const semRegistroSaida = despachadoSemRegistroDeSaida(p.status, tagsDoPedido);
 
   const ocultos = (p.sup_pedido_item ?? []).length - itens.length;
 
@@ -1255,6 +1281,11 @@ function CardPedido({
             </>
           ) : carregandoTags ? (
             <p className="py-1 text-xs text-muted-foreground">Conferindo o que já saiu…</p>
+          ) : semRegistroSaida ? (
+            <p className="py-1 text-xs text-muted-foreground">
+              Pedido despachado sem baixa peça por peça no estoque — não há registro do que saiu por item.
+              Confira o Histórico.
+            </p>
           ) : (
             (() => {
               const enviando = visaoItens === "ENVIADOS";
