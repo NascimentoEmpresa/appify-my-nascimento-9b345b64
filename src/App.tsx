@@ -292,6 +292,8 @@ import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
 // Afastamentos e Telemedicina (mig 20261029001750): atestados, lotação automática e impacto financeiro.
 import SstAfastamentos from "./pages/sst/Afastamentos";
+// Controle de Afastamentos (mig 20261105030000): acompanhamento até o retorno.
+import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -1121,6 +1123,7 @@ const App = () => (
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
             <Route path="sst/afastamentos" element={<SstAfastamentos />} />
+            <Route path="sst/controle-afastamentos" element={<SstControleAfastamentos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />
