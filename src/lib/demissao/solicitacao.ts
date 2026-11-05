@@ -144,6 +144,14 @@ export const STATUS_SST_ASO_VALIDO = "ASO válido";
  */
 export const STATUS_CANCELAMENTO_SOLICITADO = "Cancelamento solicitado";
 
+/**
+ * O RH pediu ajuste e a solicitação está com quem a abriu (SIS-2026-0805, mig
+ * 20261105020000). Só quem solicitou mexe nela; ao reenviar, volta para
+ * "Pendente RH" com a aprovação mantida. Diferente de devolver ao Operacional,
+ * que desfaz a aprovação e não deixa o encarregado editar nada.
+ */
+export const STATUS_AJUSTE_SOLICITADO = "Ajuste solicitado";
+
 export type Status =
   | "Pendente Operacional"
   // Diretoria (16/09/2026): demissão do escritório OU com setor nasce aqui e
@@ -151,6 +159,7 @@ export type Status =
   | "Pendente Diretoria"
   | "Reprovada"
   | "Pendente RH"
+  | typeof STATUS_AJUSTE_SOLICITADO
   | "Pendente SST"
   | typeof STATUS_SST_RECEBIDA
   | typeof STATUS_SST_AGENDADO
@@ -161,7 +170,7 @@ export type Status =
 
 /** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
-  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", STATUS_AJUSTE_SOLICITADO, "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", STATUS_CANCELAMENTO_SOLICITADO, "Cancelada",
 ];
@@ -181,6 +190,7 @@ export function corDoStatus(status: string): string {
     "Pendente Operacional": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Pendente Diretoria": "bg-amber-100 text-amber-800 border-amber-200",
     "Pendente RH": "bg-purple-100 text-purple-700 border-purple-200",
+    [STATUS_AJUSTE_SOLICITADO]: "bg-orange-100 text-orange-800 border-orange-300",
     "Pendente SST": "bg-cyan-100 text-cyan-800 border-cyan-200",
     // Os dois do SST puxam para o mesmo lado do círculo cromático que
     // "Pendente SST" — quem olha a fila vê que são a mesma etapa —, mas o
@@ -205,6 +215,7 @@ export function explicaStatus(status: string): string {
     "Pendente Operacional": "Aguardando a aprovação do Operacional.",
     "Pendente Diretoria": "Aguardando a aprovação da Diretoria (administrativo / setor).",
     "Pendente RH": "Aprovada. Aguardando o RH liberar.",
+    [STATUS_AJUSTE_SOLICITADO]: "O RH pediu um ajuste. Aguardando quem solicitou corrigir e reenviar.",
     "Pendente SST": "Liberada pelo RH. Aguardando o SST receber a solicitação.",
     [STATUS_SST_RECEBIDA]: "O SST recebeu a solicitação e está agendando o ASO demissional.",
     [STATUS_SST_AGENDADO]: "ASO demissional agendado — a data, a hora e o local estão na solicitação.",
@@ -357,6 +368,14 @@ export interface SolicitacaoDemissao {
   devolvido_motivo: string | null;
   /** De qual etapa a devolução partiu: 'sst' ou 'rh'. */
   devolvido_de: string | null;
+  /** Ajuste pedido pelo RH ao encarregado (SIS-2026-0805). */
+  ajuste_por?: string | null;
+  ajuste_em?: string | null;
+  ajuste_motivo?: string | null;
+  ajuste_feito_por?: string | null;
+  ajuste_feito_em?: string | null;
+  ajuste_observacao?: string | null;
+  ajuste_alteracoes?: AlteracaoAjuste[] | null;
 
   criado_em: string | null;
   atualizado_em: string | null;
@@ -447,6 +466,45 @@ export function limiteUltimaDataTrabalhada(hoje = hojeISO()): string {
 export function erroUltimaDataTrabalhada(data: string, hoje = hojeISO()): string | null {
   if (!data) return "Informe a última data trabalhada do colaborador antes de liberar.";
   if (data > limiteUltimaDataTrabalhada(hoje)) return `A última data trabalhada pode ser no máximo ${ULTIMA_DATA_DIAS_A_FRENTE} dias à frente (até ${fmtData(limiteUltimaDataTrabalhada(hoje))}).`;
+  return null;
+}
+
+// ── Ajuste pedido pelo RH ao encarregado (SIS-2026-0805) ─────────────
+export const MOTIVO_AJUSTE_MIN = 10;
+
+/** O RH pede ajuste no turno dele: depois de liberar, o erro é assunto do SST. */
+export const podePedirAjuste = (etapa: string, status: string): boolean => etapa === "rh" && status === "Pendente RH";
+export const podeAjustarDemissao = (s: Pick<SolicitacaoDemissao, "status">): boolean => s.status === STATUS_AJUSTE_SOLICITADO;
+
+/** Uma linha do que mudou — gravada pela RPC em `ajuste_alteracoes`. */
+export interface AlteracaoAjuste { campo: string; antes: string | null; depois: string | null }
+
+/** Os campos que quem solicitou pode corrigir. */
+export interface FormAjuste {
+  data_solicitacao: string;
+  colaborador_posto: string;
+  motivo_solicitacao: string;
+  motivo_pedido: string;
+  relato: string;
+  termino_experiencia: string;
+  data_aviso: string;
+  modelo_aviso: string;
+  colaborador_telefone: string;
+  colaborador_email: string;
+}
+
+/** A régua da abertura. A RPC demissao_reenviar_ajuste repete a mesma regra. */
+export function erroDoAjuste(f: FormAjuste, qtdAnexos: number): string | null {
+  if (!f.data_solicitacao) return "Informe a data da solicitação.";
+  if (!f.motivo_solicitacao) return "Selecione o motivo da solicitação.";
+  if (!f.motivo_pedido) return "Selecione o motivo do pedido de demissão.";
+  if (f.relato.trim().length < 20) return "Relate o motivo com pelo menos 20 caracteres.";
+  if (!f.termino_experiencia) return "Informe o término de contrato de experiência.";
+  if (!f.data_aviso) return "Informe a data do aviso.";
+  if (!f.modelo_aviso) return "Selecione o modelo de aviso.";
+  if (!telefoneCompleto(f.colaborador_telefone)) return "Informe o telefone do colaborador com DDD.";
+  if (!emailValido(f.colaborador_email)) return "Informe um e-mail válido do colaborador.";
+  if (qtdAnexos < 1) return "Anexe pelo menos 1 documento.";
   return null;
 }
 
@@ -606,7 +664,8 @@ export const STATUS_RH_CANCELA_NO_SST: string[] = ["Pendente SST", STATUS_SST_RE
 /** O cancelamento do RH, nesse status, vai gerar aviso pro SST desmarcar o ASO? */
 export const cancelarAvisaSST = (status: string) => STATUS_RH_CANCELA_NO_SST.includes(status);
 export function podeCancelarDemissaoRH(s: Pick<SolicitacaoDemissao, "status">): { ok: boolean; motivo?: string } {
-  if (s.status === "Pendente RH" || cancelarAvisaSST(s.status) || s.status === STATUS_SST_ASO_VALIDO) return { ok: true };
+  // "Ajuste solicitado": sem isto, um pedido que o encarregado abandonou ficaria parado sem saída.
+  if (s.status === "Pendente RH" || s.status === STATUS_AJUSTE_SOLICITADO || cancelarAvisaSST(s.status) || s.status === STATUS_SST_ASO_VALIDO) return { ok: true };
   const geral = podeCancelarDemissao(s);
   if (!geral.ok) return geral;
   return { ok: false, motivo: `O RH cancela a partir do Pendente RH (agora está ${s.status}).` };
