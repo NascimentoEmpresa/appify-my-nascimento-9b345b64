@@ -228,7 +228,13 @@ export function PainelDespesaMalote({
   // já nasce marcado (RateioGrid trava o checkbox pra não deixar desmarcar),
   // igual ao Contrato. Vale também para quem embute este painel: as duas
   // telas de aprovação de diária (SIS-2026-0480).
-  const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: true, integrante: false });
+  // Rateio que já chega com integrante (Férias › Malote em massa, 05/11/2026:
+  // uma linha por colaborador) nasce com a coluna Integrante à vista — senão
+  // o integrante ia gravado sem ninguém ter visto quem era.
+  const [dimensoes, setDimensoes] = useState<DimensoesRateio>({
+    empresa: false, contrato: false, fornecedor: true,
+    integrante: !!rateioInicial?.some((l) => l.integrante_empregado_id != null),
+  });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>(rateioInicial ?? []);
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");

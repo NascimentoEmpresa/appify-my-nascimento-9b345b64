@@ -142,3 +142,29 @@ export function useGerarParecerIa() {
     },
   });
 }
+
+/**
+ * Salário (EMPREGADOS."Valor Salário") dos devs, para o "CLT" do Comparativo
+ * individual (mig 20261105010500). O banco só devolve para quem tem
+ * 'colaboradores_ver_salario' — sem isso vem vazio e a tela mostra "—".
+ * Só busca no mês atual (meses anteriores são 0 por enquanto). Se a RPC
+ * ainda não existe no banco, também vem vazio em vez de quebrar a aba.
+ */
+export function useSalariosBonificacao(ids: string[], ativo: boolean) {
+  const chave = [...ids].sort();
+  return useQuery({
+    queryKey: [CHAVE, "salarios", chave],
+    enabled: ativo && chave.length > 0,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async (): Promise<Record<string, number>> => {
+      const { data, error } = await db.rpc("bonificacao_dev_salarios", { p_ids: chave });
+      if (error) return {};
+      const out: Record<string, number> = {};
+      for (const l of (data ?? []) as { responsavel_id: string; salario: number | string | null }[]) {
+        const n = Number(l.salario);
+        if (l.responsavel_id && Number.isFinite(n)) out[l.responsavel_id] = n;
+      }
+      return out;
+    },
+  });
+}

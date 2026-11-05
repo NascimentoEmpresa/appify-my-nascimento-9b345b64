@@ -9,6 +9,7 @@ import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitac
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { EnviarFeriasMalote, abrirReciboFerias, type MaloteDaFerias } from "./EnviarFeriasMalote";
+import { EnviarFeriasLoteMalote } from "./EnviarFeriasLoteMalote";
 
 // SISTEMA_SOLICITACOES_FERIAS e o histórico não estão no types.ts gerado;
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -194,6 +195,7 @@ export default function Ferias() {
   // Enviar ao Malote: ação própria do menu, fora do toggle (como no Rateio).
   const { data: podeEnviarMalote = false } = useScreenAccess("rh_ferias", "enviar_malote");
   const [enviandoMalote, setEnviandoMalote] = useState(false);
+  const [loteAberto, setLoteAberto] = useState(false);
   // Número/status da despesa no Malote, por solicitação (RPC: quem só tem o RH não lê malote_despesa).
   const [malotes, setMalotes] = useState<Map<number, MaloteDaFerias>>(new Map());
   useEffect(() => {
@@ -350,8 +352,21 @@ export default function Ferias() {
           <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>📅 Gestão de Férias</h1>
           <p style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Solicitações de férias dos colaboradores — aprove, reprove ou acompanhe.</p>
         </div>
-        <ResumoDeFuncoes fluxo="ferias" />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {/* Malote em massa (05/11/2026): o lote da Senior com as férias de
+              vários de uma vez. Só para o RH que anexa (alterar) E envia. */}
+          {podeDoc && podeEnviarMalote && (
+            <button onClick={() => setLoteAberto(true)}
+              style={{ padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "1px solid #0f3171", background: "#0f3171", color: "#fff" }}>
+              📦 Malote em massa
+            </button>
+          )}
+          <ResumoDeFuncoes fluxo="ferias" />
+        </div>
       </div>
+      {loteAberto && (
+        <EnviarFeriasLoteMalote aberto onFechar={() => setLoteAberto(false)} onEnviado={() => { carregar(); carregarStats(); }} />
+      )}
 
       {/* KPIs */}
       <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>

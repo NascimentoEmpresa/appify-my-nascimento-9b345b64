@@ -5,6 +5,10 @@ import {
   configDoPeriodo,
   distribuirPorPeso,
   pesosPadrao,
+  redistribuirPesos,
+  cltDoMes,
+  pesosSalvosDoMes,
+  aplicarPesosSalvos,
   completarComEquipe,
   percentil,
   referenciaDoPeriodo,
@@ -301,6 +305,46 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     const d = distribuirPorPeso(1000, [dev("p", 90, "Pablo"), { ...devs[0], entregas: [] }]);
     expect(d.linhas.map((l) => [l.peso, l.valor])).toEqual([[100, 1000], [0, 0]]);
     expect(d.pesosPadrao).toBe(true);
+  });
+  it("pesos salvos: valem no mês e são herdados pelos seguintes", () => {
+    const linha = (competencia: string, pesos_devs: Record<string, number> | null, modo_divisao: "peso" | "nota" | null = "peso") =>
+      ({ competencia, pesos_devs, modo_divisao } as unknown as Parameters<typeof pesosSalvosDoMes>[1][number]);
+    const linhas = [linha("2026-09-01", { a: 50, b: 50 }), linha("2026-10-01", { a: 70, b: 30 }, "nota"), linha("2026-11-01", null)];
+    expect(pesosSalvosDoMes("2026-10", linhas)).toEqual({ pesos: { a: 70, b: 30 }, modo: "nota", herdadoDe: null });
+    expect(pesosSalvosDoMes("2026-11", linhas)?.herdadoDe).toBe("2026-10"); // novembro sem pesos próprios herda
+    expect(pesosSalvosDoMes("2026-08", linhas)).toBeNull(); // antes de qualquer salvo: padrão
+  });
+  it("pesos salvos aplicados: quem não entregou fica 0 e o resto volta a somar 100", () => {
+    const r = aplicarPesosSalvos([dev("a", 90), dev("b", null), dev("c", 80)], { a: 50, b: 30, c: 20 });
+    expect(r).toEqual({ a: 71.43, b: 0, c: 28.57 });
+    expect(aplicarPesosSalvos([dev("a", 90), dev("c", 80)], { a: 60, c: 40 })).toEqual({ a: 60, c: 40 });
+    // ninguém salvo com nota: cai no padrão
+    expect(aplicarPesosSalvos([dev("x", 90, "Pablo")], { z: 100 })).toEqual({ x: 100 });
+  });
+  it("CLT do mês: salário proporcional aos dias corridos; meses anteriores 0", () => {
+    expect(cltDoMes(3200, "2026-11", "2026-11-05")).toBe(533.33); // 3200 × 5/30
+    expect(cltDoMes(3100, "2026-10", "2026-10-31")).toBe(3100); // último dia = salário cheio
+    expect(cltDoMes(2800, "2026-02", "2026-02-14")).toBe(1400); // fevereiro: 28 dias
+    expect(cltDoMes(3200, "2026-10", "2026-11-05")).toBe(0); // mês anterior
+    expect(cltDoMes(null, "2026-11", "2026-11-05")).toBeNull(); // sem salário / sem permissão
+  });
+  it("editar um peso redistribui entre os outros com peso, na proporção, e fecha em 100", () => {
+    const base = { e: 22.22, i: 22.22, j: 22.22, p: 22.22, o: 11.11, t: 0 };
+    const r = redistribuirPesos(base, "o", 5);
+    expect(r.o).toBe(5);
+    expect(r.t).toBe(0); // sem entrega continua em 0
+    expect(Math.round(Object.values(r).reduce((a, b) => a + b, 0) * 100)).toBe(10000);
+    for (const id of ["e", "i", "j", "p"]) expect(Math.abs(r[id] - 23.75)).toBeLessThanOrEqual(0.01);
+    // aumentar: os outros diminuem na mesma proporção
+    const r2 = redistribuirPesos({ a: 50, b: 30, c: 20 }, "a", 60);
+    expect(r2).toEqual({ a: 60, b: 24, c: 16 });
+    // nada sem destino depois da edição
+    const d = distribuirPorPeso(1000, [dev("a", 90), dev("b", 80), dev("c", 70)], r2);
+    expect(d.saldo).toBe(0);
+    // ninguém mais com peso: o editado fica com 100
+    expect(redistribuirPesos({ a: 100, b: 0 }, "a", 40)).toEqual({ a: 100, b: 0 });
+    // acima de 100 vira 100 e os outros 0
+    expect(redistribuirPesos({ a: 50, b: 50 }, "a", 150)).toEqual({ a: 100, b: 0 });
   });
   it("ninguém com nota: nada distribuído", () => {
     const d = distribuirPorPeso(1000, [dev("a", null)], {}, "nota");

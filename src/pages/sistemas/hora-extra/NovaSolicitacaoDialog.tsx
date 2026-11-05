@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays, ChevronDown, Clock3, FileText, Info, Send, Trash2, UserRound, UsersRound, Zap,
 } from "lucide-react";
@@ -21,6 +21,14 @@ import {
   useSalvarHoraExtra,
 } from "@/hooks/useHoraExtra";
 import { mesDaData, resumirMesHoraExtra } from "@/lib/horaExtraLimite";
+import {
+  aplicarMarcacoesSenior,
+  CAMPOS_PONTO,
+  marcacoesDoDia,
+  ROTULO_CAMPO_PONTO,
+  type CampoPonto,
+  type ValoresPonto,
+} from "@/lib/horaExtraPontoSenior";
 import { cn } from "@/lib/utils";
 import {
   calcularHoraExtra,
@@ -104,8 +112,21 @@ export default function NovaSolicitacaoDialog({
   const [arquivos, setArquivos] = useState<File[]>([]);
   const enviarAnexos = useEnviarAnexosHoraExtra();
   const [seletor, setSeletor] = useState(false);
+  // Ponto puxado da Senior (05/11/2026, regra em src/lib/horaExtraPontoSenior.ts).
+  // Refs e não estado: o efeito que aplica as batidas lê os dois e, se fossem
+  // dependência, se realimentaria. Toda mudança neles vem junto de um setForm
+  // (cujo updater roda no render, antes desta leitura), então camposSenior
+  // derivado aqui está sempre em dia.
+  const editadosRef = useRef(new Set<CampoPonto>());
+  const daSeniorRef = useRef(new Set<CampoPonto>());
+  const camposSenior = CAMPOS_PONTO.filter((c) => daSeniorRef.current.has(c));
+  const esquecerSenior = () => {
+    editadosRef.current = new Set();
+    daSeniorRef.current = new Set();
+  };
   useEffect(() => {
     if (!aberto) return;
+    esquecerSenior();
     if (solicitacao) {
       setForm({
         colaborador_id: solicitacao.colaborador_id,
@@ -155,6 +176,9 @@ export default function NovaSolicitacaoDialog({
   // dela, e o usuário só mexe na saída para dizer até que hora ficou.
   const trocarEscala = (id: string) => {
     const nova = escalas.find((e) => e.id === id);
+    // Escala escolhida volta os quatro horários para os dela; as batidas da
+    // Senior entram de novo por cima no efeito abaixo.
+    if (nova && !solicitacao) esquecerSenior();
     setForm((atual) => ({
       ...atual,
       escala_id: id,
@@ -221,6 +245,49 @@ export default function NovaSolicitacaoDialog({
     aberto && form.data_he ? mesDaData(form.data_he) : null,
     form.colaborador_id,
   );
+  // null enquanto carrega: não mexe nos campos. Sem vínculo/espelho = [].
+  const marcacoesSenior =
+    aberto && !solicitacao && pontoMes ? marcacoesDoDia(pontoMes.colaborador?.batidas, form.data_he) : null;
+  const chaveMarcacoes = marcacoesSenior?.join(",") ?? null;
+  useEffect(() => {
+    if (!aberto || solicitacao || chaveMarcacoes === null) return;
+    // Espera a escala inicial: ela sobrescreve os quatro horários.
+    if (escalas.length && !form.escala_id) return;
+    const doEscala = escalas.find((e) => e.id === form.escala_id);
+    const padrao: ValoresPonto = doEscala
+      ? {
+          ponto_entrada: doEscala.entrada.slice(0, 5),
+          ponto_saida_intervalo: doEscala.saida_intervalo.slice(0, 5),
+          ponto_retorno_intervalo: doEscala.retorno_intervalo.slice(0, 5),
+          ponto_saida: doEscala.saida.slice(0, 5),
+        }
+      : {
+          ponto_entrada: estadoInicial.ponto_entrada,
+          ponto_saida_intervalo: estadoInicial.ponto_saida_intervalo,
+          ponto_retorno_intervalo: estadoInicial.ponto_retorno_intervalo,
+          ponto_saida: estadoInicial.ponto_saida,
+        };
+    const daSenior = daSeniorRef.current;
+    setForm((atual) => {
+      const r = aplicarMarcacoesSenior({
+        atual: {
+          ponto_entrada: atual.ponto_entrada,
+          ponto_saida_intervalo: atual.ponto_saida_intervalo,
+          ponto_retorno_intervalo: atual.ponto_retorno_intervalo,
+          ponto_saida: atual.ponto_saida,
+        },
+        padrao,
+        marcacoes: chaveMarcacoes ? chaveMarcacoes.split(",") : [],
+        editados: editadosRef.current,
+        daSenior,
+      });
+      daSeniorRef.current = r.daSenior;
+      return { ...atual, ...r.valores };
+    });
+    // escalas.length e não escalas: o `= []` do hook é um array novo a cada
+    // render enquanto carrega, e o efeito rodaria em laço.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aberto, solicitacao, chaveMarcacoes, form.escala_id, escalas.length]);
   const resumoMes = pontoMes
     ? resumirMesHoraExtra(pontoMes, {
         ignorarId: solicitacao?.id,
@@ -346,7 +413,18 @@ export default function NovaSolicitacaoDialog({
     desabilitado = false,
   ) => (
     <Campo rotulo={rotulo}>
-      <Input type="time" disabled={desabilitado} value={form[campo]} onChange={(e) => alterar(campo, e.target.value)} />
+      <Input
+        type="time"
+        disabled={desabilitado}
+        value={form[campo]}
+        title={camposSenior.includes(campo) ? "Puxado do ponto da Senior" : undefined}
+        className={cn(camposSenior.includes(campo) && "border-emerald-300 bg-emerald-50")}
+        onChange={(e) => {
+          editadosRef.current.add(campo);
+          daSeniorRef.current.delete(campo);
+          alterar(campo, e.target.value);
+        }}
+      />
     </Campo>
   );
   return (
@@ -532,6 +610,22 @@ export default function NovaSolicitacaoDialog({
                       )}
                     </div>
                     {campoHora("Saída", "ponto_saida")}
+                    {!solicitacao && pontoMes && (
+                      <p
+                        className={cn(
+                          "col-span-2 text-[11px] md:col-span-4",
+                          camposSenior.length ? "text-emerald-700" : "text-slate-500",
+                        )}
+                      >
+                        {camposSenior.length
+                          ? `Puxado da Senior (${formatarData(form.data_he)}): ${camposSenior
+                              .map((c) => ROTULO_CAMPO_PONTO[c])
+                              .join(", ")}. Confira e ajuste se precisar.`
+                          : pontoMes.colaborador
+                            ? "Nenhuma batida na Senior neste dia ainda — preencha manualmente."
+                            : "Sem ponto da Senior para este colaborador — preencha manualmente."}
+                      </p>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-blue-50 p-3">
                     <div className="col-span-2 flex items-center gap-1 text-xs font-semibold text-blue-700">

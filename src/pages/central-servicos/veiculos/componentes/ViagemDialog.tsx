@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, CheckCircle2, FileText, Fuel, Gauge, Loader2, Paperclip, Plus, Save } from "lucide-react";
+import { Camera, CheckCircle2, FileText, Fuel, Gauge, History, Loader2, Paperclip, Plus, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   LABEL_TURNO, abrirArquivoVeiculo, formatarData, hojeISO,
-  useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useRegistrarAbastecimento, useRegistrarKmInicial, useViagem,
+  useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useViagem,
   type ContratoSimples,
 } from "@/hooks/useAgendamentoVeiculos";
 
@@ -257,6 +257,11 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
               )}
             </section>
 
+            {/* ── Histórico (04/11/2026) ─────────────────────────────
+                Onde aparece o "FULANO NÃO PREENCHEU A SAÍDA E A CHEGADA…"
+                e cada checklist salvo — antes o log só ia para o relatório. */}
+            <HistoricoDaViagem agendamentoId={agendamentoId} />
+
             {/* ── Notas de abastecimento ─────────────────────────── */}
             <section className="rounded-xl border border-border p-4">
               <div className="mb-3 flex items-center justify-between gap-2">
@@ -354,6 +359,35 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+const ROTULO_ACAO: Record<string, string> = {
+  criado: "Agendado", cancelado: "Cancelado", confirmado: "Confirmado", concluido: "Concluído",
+  km_inicial: "KM inicial", km_final: "Finalização", checklist_saida: "Checklist de saída",
+  checklist_chegada: "Checklist de chegada", checklist_pendente: "Checklist não preenchido",
+};
+
+function HistoricoDaViagem({ agendamentoId }: { agendamentoId: string | null }) {
+  const q = useHistoricoAgendamento(agendamentoId);
+  const linhas = q.data ?? [];
+  if (!linhas.length) return null;
+  return (
+    <section className="rounded-xl border border-border p-4">
+      <h4 className="mb-3 flex items-center gap-2 text-sm font-bold"><History className="h-4 w-4 text-primary" /> Histórico</h4>
+      <ul className="max-h-56 space-y-2 overflow-y-auto">
+        {linhas.map((l) => (
+          <li key={l.id} className={`rounded-lg border p-2 text-xs ${l.acao === "checklist_pendente" ? "border-destructive/40 bg-destructive/5" : "border-border"}`}>
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className={`font-semibold ${l.acao === "checklist_pendente" ? "text-destructive" : "text-foreground"}`}>{ROTULO_ACAO[l.acao] ?? l.acao}</span>
+              <span className="text-muted-foreground">{new Date(l.created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</span>
+              {l.usuario_nome && <span className="text-muted-foreground">· {l.usuario_nome}</span>}
+            </div>
+            {l.detalhe && <p className={`mt-0.5 ${l.acao === "checklist_pendente" ? "font-semibold text-destructive" : "text-muted-foreground"}`}>{l.detalhe}</p>}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

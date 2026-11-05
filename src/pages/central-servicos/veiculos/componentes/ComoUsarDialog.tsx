@@ -13,7 +13,7 @@ const TOPICOS: { titulo: string; texto: string }[] = [
   {
     titulo: "2. Data e turno",
     texto:
-      "Escolha a saída, o retorno e o turno. Se outra pessoa já reservou aquele carro no período, o aviso aparece na hora — antes de você confirmar.",
+      "Escolha a saída, o retorno, o turno e a provável data e hora da chegada. Se outra pessoa já reservou aquele carro no período, o aviso aparece na hora — antes de você confirmar.",
   },
   {
     titulo: "3. Contratos atendidos",
@@ -29,6 +29,11 @@ const TOPICOS: { titulo: string; texto: string }[] = [
     titulo: "Por que um veículo fica indisponível?",
     texto:
       "Porque o Patrimônio o marcou como em manutenção. Quando há previsão de retorno, o carro volta a aceitar reservas a partir do dia seguinte a ela; sem previsão, fica bloqueado por tempo indeterminado. Esta tela não altera nada no Patrimônio — só respeita o que está lá.",
+  },
+  {
+    titulo: "Checklist de saída e de chegada",
+    texto:
+      "Em 'Meus Agendamentos', cada agendamento tem o checklist de saída (ao pegar o carro) e o de chegada (ao devolver): fotos das laterais, dianteira, traseira, 4 do interior e do KM, e de defeito se houver. Condutor e veículo já vêm do agendamento. Nada é bloqueado, mas quem agenda outro veículo sem preencher fica registrado no histórico, e o sistema avisa quando passar a hora.",
   },
   {
     titulo: "Precisa desmarcar?",

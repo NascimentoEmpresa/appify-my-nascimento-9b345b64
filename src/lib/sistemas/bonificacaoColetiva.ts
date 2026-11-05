@@ -364,6 +364,54 @@ export function pesosPadrao(devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota
 }
 
 /**
+ * "CLT" do Comparativo individual (Pablo, 05/11/2026): o salário do
+ * colaborador GASTO no mês, por dias corridos já passados — no mês atual,
+ * salário × dia de hoje ÷ dias do mês (o dia de hoje conta: "5 dias
+ * passados" no dia 5), e vai subindo sozinho a cada dia. Meses anteriores
+ * (e futuros) ficam 0 por enquanto — "os meses anteriores ainda são
+ * incertos". Sem salário (ou sem permissão de ver salário, ver mig
+ * 20261105010500) → null, a tela mostra "—".
+ * `mes` = 'AAAA-MM'; `hoje` = 'AAAA-MM-DD' no fuso de Brasília.
+ */
+export function cltDoMes(salario: number | null | undefined, mes: string, hoje: string): number | null {
+  if (!finito(salario)) return null;
+  if (mes !== hoje.slice(0, 7)) return 0;
+  const [a, m] = mes.split("-").map(Number);
+  const diasNoMes = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  const dia = Math.min(diasNoMes, Math.max(1, Number(hoje.slice(8, 10)) || 1));
+  return Math.round((salario * 100 * dia) / diasNoMes) / 100;
+}
+
+/**
+ * Editar o peso de UM dev redistribui a diferença entre os OUTROS que já têm
+ * peso > 0, na proporção do peso de cada um — a soma fica sempre em 100%
+ * (Pablo, 05/11: "quando diminuir a porcentagem de um tem que aumentar pros
+ * outros que já tem alguma porcentagem"; antes Otavio a 5% deixava 93,9% e
+ * R$ 270,59 sem destino). Quem está com 0% (sem entrega) continua em 0.
+ * Se ninguém mais tem peso, o editado fica com 100% (não há para quem
+ * repassar). Arredonda a 2 casas e joga o resíduo no maior dos outros.
+ * `base` deve ser o retrato dos pesos ANTES da edição (tela tira no foco),
+ * para a proporção entre os outros não se perder digitando "1" → "10" → "100".
+ */
+export function redistribuirPesos(base: Record<string, number>, devId: string, novo: number): Record<string, number> {
+  const out: Record<string, number> = { ...base };
+  const outros = Object.keys(base).filter((id) => id !== devId && finito(base[id]) && base[id] > 0);
+  const soma = outros.reduce((a, id) => a + base[id], 0);
+  if (!outros.length || soma <= 0) {
+    out[devId] = 100;
+    return out;
+  }
+  const v = Math.round(limitar(finito(novo) ? novo : 0) * 100) / 100;
+  out[devId] = v;
+  const resto = Math.round((100 - v) * 100); // em centésimos de %
+  let usado = 0;
+  outros.forEach((id) => { out[id] = Math.floor((base[id] * resto) / soma) / 100; usado += Math.round(out[id] * 100); });
+  const maior = outros.reduce((a, id) => (base[id] > base[a] ? id : a), outros[0]);
+  out[maior] = Math.round(out[maior] * 100 + (resto - usado)) / 100;
+  return out;
+}
+
+/**
  * Como o liberado é dividido (Pablo, 05/11/2026):
  *  - "peso" (PADRÃO): cada um leva liberado × peso ÷ 100 — Eduardo, Iury,
  *    João e Pablo recebem IGUAL; a nota individual não mexe no valor.
@@ -595,6 +643,9 @@ export interface LinhaPeriodo {
   fechado_em: string | null;
   fechado_por: string | null;
   resultado: unknown;
+  /** Peso no valor por dev ({responsavel_id: %}) — mig 20261105011000. */
+  pesos_devs?: Record<string, number> | null;
+  modo_divisao?: ModoDivisao | null;
 }
 
 export const configDaLinha = (l: LinhaPeriodo): ConfigBonificacao => ({
@@ -639,6 +690,64 @@ export interface PeriodoResolvido {
   /** Mês de onde a configuração foi herdada (YYYY-MM) ou "padrao". null = própria. */
   herdadoDe: string | null;
   fechado: boolean;
+}
+
+// ── Pesos por dev salvos (Pablo, 05/11/2026: "tem que ter um botão de
+// salvar e manter fixo") ────────────────────────────────────────────────
+// Ficam NO MÊS (BONIFICACAO_DEV_PERIODO.pesos_devs/modo_divisao) e o mês sem
+// pesos próprios herda do último mês anterior que tenha — o que se salva hoje
+// vale para os meses seguintes até alguém mudar; mexer num mês não reescreve
+// o passado (nem período fechado).
+
+export interface PesosSalvos {
+  pesos: Record<string, number>;
+  modo: ModoDivisao;
+  /** null = salvos no próprio mês; 'AAAA-MM' = herdados desse mês. */
+  herdadoDe: string | null;
+}
+
+export function pesosSalvosDoMes(mes: string, linhas: LinhaPeriodo[]): PesosSalvos | null {
+  const chave = (l: LinhaPeriodo) => String(l.competencia).slice(0, 7);
+  const l = linhas
+    .filter((x) => chave(x) <= mes && x.pesos_devs && typeof x.pesos_devs === "object")
+    .sort((a, b) => chave(b).localeCompare(chave(a)))[0];
+  if (!l || !l.pesos_devs) return null;
+  const pesos: Record<string, number> = {};
+  for (const [id, v] of Object.entries(l.pesos_devs)) { const n = Number(v); if (finito(n)) pesos[id] = n; }
+  return { pesos, modo: l.modo_divisao === "nota" ? "nota" : "peso", herdadoDe: chave(l) === mes ? null : chave(l) };
+}
+
+/** Reescala os pesos > 0 para somarem 100 (2 casas; resíduo no maior). */
+function normalizar100(p: Record<string, number>): Record<string, number> {
+  const ids = Object.keys(p).filter((id) => p[id] > 0);
+  const soma = ids.reduce((a, id) => a + p[id], 0);
+  if (!ids.length || Math.abs(soma - 100) < 0.005) return { ...p };
+  const out: Record<string, number> = { ...p };
+  let usado = 0;
+  ids.forEach((id) => { out[id] = Math.floor((p[id] * 10000) / soma) / 100; usado += Math.round(out[id] * 100); });
+  const maior = ids.reduce((a, id) => (p[id] > p[a] ? id : a), ids[0]);
+  out[maior] = Math.round(out[maior] * 100 + (10000 - usado)) / 100;
+  return out;
+}
+
+/**
+ * Pesos salvos aplicados à equipe do mês: quem está salvo e tem nota leva o
+ * seu peso; quem não entregou no mês (nota null) ou não estava salvo fica 0;
+ * os pesos > 0 são reescalados para somar 100 (ex.: salvo em outubro com um
+ * dev que não entregou em novembro — a parte dele volta para os outros, na
+ * proporção). Ninguém com peso → padrão.
+ */
+export function aplicarPesosSalvos(
+  devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota?: number | null })[],
+  salvos: Record<string, number>,
+): Record<string, number> {
+  const p: Record<string, number> = {};
+  for (const d of devs) {
+    const v = salvos[d.devId];
+    p[d.devId] = d.nota !== null && finito(v) && v > 0 ? limitar(v) : 0;
+  }
+  if (!Object.values(p).some((v) => v > 0)) return pesosPadrao(devs);
+  return normalizar100(p);
 }
 
 /**

@@ -35,48 +35,60 @@ async function abrirPdf(arquivo: File) {
 
 type DocPdf = Awaited<ReturnType<typeof abrirPdf>>;
 
-/** Camada de texto do PDF, uma linha por posição vertical. */
+/**
+ * Camada de texto de UMA página, uma linha por posição vertical. Itens a até
+ * 3 pt de altura um do outro são a mesma linha: na relação bancária do lote
+ * (05/11/2026) o valor sai 1,2 pt acima do nome — arredondando a altura de 2
+ * em 2 pt, ele caía numa linha só dele e a linha da pessoa ficava sem valor.
+ */
+async function textoDaPagina(doc: DocPdf, p: number): Promise<string> {
+  const pg = await doc.getPage(p);
+  const tc = await pg.getTextContent();
+  const itens: { x: number; y: number; s: string }[] = [];
+  for (const it of tc.items) {
+    if (!("str" in it) || !it.str.trim()) continue;
+    itens.push({ x: it.transform[4], y: it.transform[5], s: it.str });
+  }
+  itens.sort((a, b) => b.y - a.y);
+  const linhas: { y: number; itens: typeof itens }[] = [];
+  for (const it of itens) {
+    const ultima = linhas[linhas.length - 1];
+    if (ultima && ultima.y - it.y <= 3) ultima.itens.push(it);
+    else linhas.push({ y: it.y, itens: [it] });
+  }
+  return linhas.map((l) => l.itens.sort((a, b) => a.x - b.x).map((o) => o.s).join(" ")).join("\n");
+}
+
 async function textoDoPdf(doc: DocPdf): Promise<string> {
   const paginas: string[] = [];
-  for (let p = 1; p <= Math.min(doc.numPages, MAX_PAGINAS); p++) {
-    const pg = await doc.getPage(p);
-    const tc = await pg.getTextContent();
-    const linhas = new Map<number, { x: number; s: string }[]>();
-    for (const it of tc.items) {
-      if (!("str" in it) || !it.str.trim()) continue;
-      const y = Math.round(it.transform[5] / 2) * 2; // tolera 1 pt de desalinhamento
-      const lista = linhas.get(y) ?? [];
-      lista.push({ x: it.transform[4], s: it.str });
-      linhas.set(y, lista);
-    }
-    paginas.push([...linhas.keys()].sort((a, b) => b - a)
-      .map((y) => linhas.get(y)!.sort((a, b) => a.x - b.x).map((o) => o.s).join(" ")).join("\n"));
-  }
+  for (let p = 1; p <= Math.min(doc.numPages, MAX_PAGINAS); p++) paginas.push(await textoDaPagina(doc, p));
   return paginas.join("\n");
+}
+
+async function paginaComoImagem(doc: DocPdf, p: number): Promise<HTMLCanvasElement> {
+  const pg = await doc.getPage(p);
+  const base = pg.getViewport({ scale: 1 });
+  const viewport = pg.getViewport({ scale: Math.min(4, 2400 / base.width) });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("O navegador não deixou desenhar a página do PDF.");
+  // intent "print": o pdf.js não agenda o desenho por requestAnimationFrame,
+  // que não dispara com a aba em segundo plano — o RH que troca de aba
+  // enquanto o recibo é lido não fica com a leitura parada (visto no teste).
+  await pg.render({ canvasContext: ctx, viewport, intent: "print" }).promise;
+  return canvas;
 }
 
 /** Cada página do PDF como imagem de ~2.400 px de largura (≈300 dpi no A4). */
 async function paginasComoImagem(doc: DocPdf): Promise<HTMLCanvasElement[]> {
   const telas: HTMLCanvasElement[] = [];
-  for (let p = 1; p <= Math.min(doc.numPages, MAX_PAGINAS); p++) {
-    const pg = await doc.getPage(p);
-    const base = pg.getViewport({ scale: 1 });
-    const viewport = pg.getViewport({ scale: Math.min(4, 2400 / base.width) });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("O navegador não deixou desenhar a página do PDF.");
-    // intent "print": o pdf.js não agenda o desenho por requestAnimationFrame,
-    // que não dispara com a aba em segundo plano — o RH que troca de aba
-    // enquanto o recibo é lido não fica com a leitura parada (visto no teste).
-    await pg.render({ canvasContext: ctx, viewport, intent: "print" }).promise;
-    telas.push(canvas);
-  }
+  for (let p = 1; p <= Math.min(doc.numPages, MAX_PAGINAS); p++) telas.push(await paginaComoImagem(doc, p));
   return telas;
 }
 
-async function ocr(imagens: (HTMLCanvasElement | File)[], progresso?: Progresso): Promise<string> {
+async function ocrPorPagina(imagens: (HTMLCanvasElement | File)[], progresso?: Progresso): Promise<string[]> {
   const { createWorker } = await import("tesseract.js");
   progresso?.("Preparando a leitura da imagem (a primeira vez demora um pouco)…");
   const worker = await createWorker("por");
@@ -87,9 +99,60 @@ async function ocr(imagens: (HTMLCanvasElement | File)[], progresso?: Progresso)
       const { data } = await worker.recognize(imagens[i]);
       textos.push(data.text);
     }
-    return textos.join("\n");
+    return textos;
   } finally {
     await worker.terminate();
+  }
+}
+
+async function ocr(imagens: (HTMLCanvasElement | File)[], progresso?: Progresso): Promise<string> {
+  return (await ocrPorPagina(imagens, progresso)).join("\n");
+}
+
+/** Lote (Malote em massa): até 80 páginas — relação bancária + um recibo por pessoa. */
+const MAX_PAGINAS_LOTE = 80;
+
+export interface PaginasLote {
+  paginas: string[];
+  /** Páginas que precisaram de OCR (1 = primeira). */
+  paginasOcr: number[];
+  totalPaginas: number;
+}
+
+/**
+ * O texto de CADA página do arquivo do lote, na ordem (loteFerias.ts monta as
+ * pessoas). Página com camada de texto vai direto; página sem texto (o lote
+ * escaneado) passa por OCR. Imagem solta: uma página, por OCR.
+ */
+export async function lerPaginasLote(arquivo: File, progresso?: Progresso): Promise<PaginasLote> {
+  const ehPdf = arquivo.type === "application/pdf" || /\.pdf$/i.test(arquivo.name);
+  if (!ehPdf) {
+    return { paginas: await ocrPorPagina([arquivo], progresso), paginasOcr: [1], totalPaginas: 1 };
+  }
+  progresso?.("Abrindo o PDF…");
+  const doc = await abrirPdf(arquivo);
+  try {
+    if (doc.numPages > MAX_PAGINAS_LOTE) {
+      throw new Error(`O arquivo tem ${doc.numPages} páginas; o limite do lote é ${MAX_PAGINAS_LOTE}. Divida o arquivo.`);
+    }
+    const paginas: string[] = [];
+    const semTexto: number[] = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      progresso?.(`Lendo o texto da página ${p} de ${doc.numPages}…`);
+      const t = await textoDaPagina(doc, p);
+      paginas.push(t);
+      if (t.replace(/\s/g, "").length < 40) semTexto.push(p);
+    }
+    if (semTexto.length) {
+      progresso?.(`${semTexto.length} página(s) escaneada(s) — convertendo em imagem…`);
+      const imagens: HTMLCanvasElement[] = [];
+      for (const p of semTexto) imagens.push(await paginaComoImagem(doc, p));
+      const textos = await ocrPorPagina(imagens, progresso);
+      semTexto.forEach((p, i) => { paginas[p - 1] = textos[i]; });
+    }
+    return { paginas, paginasOcr: semTexto, totalPaginas: doc.numPages };
+  } finally {
+    void doc.destroy();
   }
 }
 

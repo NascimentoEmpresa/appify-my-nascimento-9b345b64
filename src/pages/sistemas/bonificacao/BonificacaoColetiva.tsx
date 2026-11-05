@@ -18,11 +18,11 @@
 // de desenvolvedor só muda o que se VÊ — nota coletiva e rateio usam sempre
 // todas as entregas do mês.
 // =====================================================================
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle, BarChart3, ChevronDown, ClipboardList, Download, ExternalLink, Lock, Printer, RefreshCw,
-  Scale, Settings2, User, Users, Wallet,
+  Save, Scale, Settings2, User, Users, Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -37,11 +37,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
+import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalariosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
 import { completarComEquipe, type ModoDivisao } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
-  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
+  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, redistribuirPesos, cltDoMes, aplicarPesosSalvos, pesosPadrao, pesosSalvosDoMes, type PesosSalvos, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
   mediasDosCriterios, noPrazo, notaDaEntrega, notaDoGrupo, notasDaEntrega, pendenciasDaEntrega, pontosPerdidos,
   ratearBonificacao, referenciaDoPeriodo, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
   type ConfigBonificacao, type Criterio, type EntregaDetalhada, type NotasCriterios, type Rateio, type ResumoDev,
@@ -94,6 +94,7 @@ function Painel() {
   const { data: podeFechar = false } = useScreenAccess(MENU_REGRAS, "aprovar");
 
   const periodo = useMemo(() => resolverPeriodo(mes, periodos), [mes, periodos]);
+  const pesosSalvos = useMemo(() => pesosSalvosDoMes(mes, periodos), [mes, periodos]);
   const meses = useMemo(() => {
     const s = new Set(ultimasCompetencias(hoje, 18));
     for (const p of periodos) s.add(String(p.competencia).slice(0, 7));
@@ -220,7 +221,7 @@ function Painel() {
               />
             </TabsContent>
             <TabsContent value="individual" className="space-y-4">
-              <AbaIndividual devs={devsFiltro} cfg={cfg} />
+              <AbaIndividual devs={devsFiltro} cfg={cfg} mes={mes} hoje={hoje} />
             </TabsContent>
             <TabsContent value="tarefas" className="space-y-4">
               <AbaTarefas
@@ -234,6 +235,7 @@ function Painel() {
                 verba={periodo.verba} fechado={periodo.fechado} foto={periodo.linha?.resultado ?? null}
                 podeConfigurar={podeConfigurar} podeExportar={podeExportar} imprimir={imprimir}
                 verIndividual={(id) => verDev(id, "individual")} pendentes={comPendencia.length}
+                pesosSalvos={pesosSalvos} temLinha={!!periodo.linha}
               />
             </TabsContent>
             <TabsContent value="regras">
@@ -338,7 +340,11 @@ function AbaEquipe({ filtradas, validas, cfg, notaEquipe, notaFiltro, filtrando,
   );
 }
 
-function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: (d: ResumoDev) => ReactNode; extras?: boolean }) {
+function TabelaDevs({ devs, acao, extras = false, clt }: {
+  devs: ResumoDev[]; acao?: (d: ResumoDev) => ReactNode; extras?: boolean;
+  /** Substitui o "CLT IA" pelo salário do mês (Comparativo individual). */
+  clt?: (d: ResumoDev) => number | null;
+}) {
   if (!devs.length) return <Vazio>Sem dados.</Vazio>;
   return (
     <div className="overflow-x-auto">
@@ -348,7 +354,7 @@ function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: 
             <TableHead>Desenvolvedor</TableHead><TableHead>Entregas</TableHead>
             {CRITERIOS.map((k) => <TableHead key={k}>{ROTULO_CRITERIO[k]}</TableHead>)}
             <TableHead>Nota final</TableHead>
-            {extras && <><TableHead>Mercado IA</TableHead><TableHead>Freelancer IA</TableHead><TableHead>CLT IA</TableHead></>}
+            {extras && <><TableHead>Mercado IA</TableHead><TableHead>Freelancer IA</TableHead><TableHead>{clt ? <span className="inline-flex items-center gap-1">CLT (salário do mês)<Ajuda texto="Salário do colaborador (cadastro da Senior) proporcional aos dias corridos já passados no mês atual — sobe sozinho a cada dia. Meses anteriores ficam R$ 0,00 por enquanto. Só aparece para quem tem 'Colaboradores — Ver salário'; os demais veem —." /></span> : "CLT IA"}</TableHead></>}
             {acao && <TableHead />}
           </TableRow>
         </TableHeader>
@@ -359,7 +365,7 @@ function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: 
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell>{moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className="tabular-nums">{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}
@@ -370,13 +376,19 @@ function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: 
 }
 
 // ── Individual ───────────────────────────────────────────────────────────
-function AbaIndividual({ devs, cfg }: { devs: ResumoDev[]; cfg: ConfigBonificacao }) {
+function AbaIndividual({ devs, cfg, mes, hoje }: { devs: ResumoDev[]; cfg: ConfigBonificacao; mes: string; hoje: string }) {
+  // "CLT" = salário gasto no mês (Pablo, 05/11/2026): só o mês atual busca o
+  // salário; meses anteriores são 0 (cltDoMes). O banco corta quem não pode
+  // ver salário (mig 20261105010500).
+  const mesAtual = mes === hoje.slice(0, 7);
+  const { data: salarios = {} } = useSalariosBonificacao(devs.map((d) => d.devId), mesAtual);
+  const clt = (d: ResumoDev) => (mesAtual ? cltDoMes(salarios[d.devId], mes, hoje) : 0);
   return (
     <>
       <Card className="p-5">
         <Titulo ajuda="Apresenta a nota por critério de cada profissional e os valores estimados das tarefas que executou.">Comparativo individual</Titulo>
         <p className="mb-3 text-sm text-muted-foreground">Selecione um desenvolvedor no filtro para ver só ele. As notas individuais não alteram a cota da bonificação.</p>
-        <TabelaDevs devs={devs} extras />
+        <TabelaDevs devs={devs} extras clt={clt} />
       </Card>
       <Card className="p-5">
         <Titulo ajuda="Detalhamento dos cinco componentes da nota individual, antes e depois da aplicação dos pesos.">Pontuação por critério do profissional</Titulo>
@@ -526,10 +538,10 @@ function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
 // ── Distribuição da bonificação ──────────────────────────────────────────
 interface FotoFechamento { nota_equipe?: number | null; verba?: number; liberado?: number; saldo?: number; participantes?: { devNome: string; valor: number }[]; gerado_em?: string }
 
-function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
+function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes, pesosSalvos, temLinha }: {
   mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; devsMes: ResumoDev[]; todos: boolean; filtradas: EntregaDetalhada[]; totalPeriodo: number;
   verba: number; fechado: boolean; foto: unknown; podeConfigurar: boolean; podeExportar: boolean; imprimir: () => void;
-  verIndividual: (id: string) => void; pendentes: number;
+  verIndividual: (id: string) => void; pendentes: number; pesosSalvos: PesosSalvos | null; temLinha: boolean;
 }) {
   const salvar = useSalvarPeriodo();
   const [verbaTexto, setVerbaTexto] = useState<string | null>(null);
@@ -597,7 +609,8 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, tot
       )}
 
       <div className="grid gap-4">
-        <CartaoPesoNoValor base={rateio.liberado} devs={devsMes} visiveis={todos ? devsMes : devs} />
+        <CartaoPesoNoValor key={mes} base={rateio.liberado} devs={devsMes} visiveis={todos ? devsMes : devs}
+          mes={mes} cfg={cfg} verba={verba} fechado={fechado} podeSalvar={podeConfigurar} salvos={pesosSalvos} temLinha={temLinha} />
         <Card className="p-5">
           <Titulo ajuda="Explica a fórmula: verba disponível × nota coletiva ÷ 100; depois divide-se igualmente entre os participantes.">Cálculo da bonificação coletiva</Titulo>
           <ol className="list-decimal space-y-1 rounded-md border-l-4 border-primary bg-muted/40 p-3 pl-8 text-sm text-muted-foreground">
@@ -661,14 +674,51 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, tot
  * "Desempenho por desenvolvedor — com peso no valor" (desenho do Pablo, 05/11/2026).
  * Valor previsto = valor LIBERADO à equipe × (peso × nota) ÷ Σ(peso × nota):
  * o liberado é dividido inteiro (correção do Pablo, 05/11 — antes era a verba).
- * Pesos editáveis só na tela (simulação, não gravam); "Pesos padrão" volta a
+ * Pesos editáveis e salvos pelo botão (ver SALVAR abaixo); "Pesos padrão" volta a
  * Eduardo/Iury/João/Pablo iguais e os demais com metade (pesosPadrao).
  * A régua dos pesos é o MÊS inteiro: filtrar um dev não muda o peso dele.
+ * Editar um peso redistribui a diferença entre os outros com peso > 0, na
+ * proporção (redistribuirPesos) — a soma fica em 100% (Pablo, 05/11).
+ * SALVAR (Pablo, 05/11: "tem que ter um botão de salvar e manter fixo"):
+ * grava pesos + modo NO MÊS (BONIFICACAO_DEV_PERIODO, mig 20261105011000);
+ * mês sem pesos próprios herda do último mês salvo (pesosSalvosDoMes).
+ * Só quem tem 'Verba, pesos e fechamento' alterar salva (a RLS decide); os
+ * demais podem simular, sem gravar. Período fechado não salva (gatilho).
  */
-function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: ResumoDev[]; visiveis: ResumoDev[] }) {
-  const [pesos, setPesos] = useState<Record<string, number>>({});
-  const [modo, setModo] = useState<ModoDivisao>("peso");
+function CartaoPesoNoValor({ base, devs, visiveis, mes, cfg, verba, fechado, podeSalvar, salvos, temLinha }: {
+  base: number; devs: ResumoDev[]; visiveis: ResumoDev[];
+  mes: string; cfg: ConfigBonificacao; verba: number; fechado: boolean; podeSalvar: boolean; salvos: PesosSalvos | null; temLinha: boolean;
+}) {
+  const salvar = useSalvarPeriodo();
+  // Base = salvos (aplicados à equipe do mês) ou padrão; edição por cima até salvar.
+  const inicial = useMemo(() => (salvos ? aplicarPesosSalvos(devs, salvos.pesos) : pesosPadrao(devs)), [devs, salvos]);
+  const [editado, setEditado] = useState<Record<string, number> | null>(null);
+  const [modoEditado, setModoEditado] = useState<ModoDivisao | null>(null);
+  const pesos = editado ?? inicial;
+  const modo: ModoDivisao = modoEditado ?? salvos?.modo ?? "peso";
+  const setPesos = (p: Record<string, number>) => setEditado(p);
+  const setModo = (m: ModoDivisao) => setModoEditado(m);
   const d = useMemo(() => distribuirPorPeso(base, devs, pesos, modo), [base, devs, pesos, modo]);
+  const pendente = editado !== null || (modoEditado !== null && modoEditado !== (salvos?.modo ?? "peso"));
+  const salvarPesos = () => {
+    const mapa = Object.fromEntries(d.linhas.map((l) => [l.devId, l.peso]));
+    salvar.mutate({
+      competencia: intervaloDaCompetencia(mes).competencia,
+      pesos_devs: mapa, modo_divisao: modo,
+      // Mês ainda sem linha: nasce com a config herdada e a verba da tela.
+      ...(temLinha ? {} : { verba, ...linhaDaConfig(cfg) }),
+    }, {
+      onSuccess: () => { setEditado(null); setModoEditado(null); toast.success(`Pesos salvos para ${rotuloCompetencia(mes)} — valem também para os meses seguintes até alguém mudar.`); },
+      onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar os pesos."),
+    });
+  };
+  const situacao = pendente ? "alterações não salvas"
+    : salvos ? (salvos.herdadoDe ? `pesos salvos em ${rotuloCompetencia(salvos.herdadoDe)} (herdados)` : "pesos salvos neste mês")
+    : "pesos padrão (Eduardo, Iury, João e Pablo iguais; demais com metade)";
+  // Retrato dos pesos no foco do campo: a proporção entre os outros sai dele,
+  // não do valor a cada tecla (digitar "100" no caminho zeraria os outros).
+  const retrato = useRef<Record<string, number> | null>(null);
+  const pesosAtuais = () => Object.fromEntries(d.linhas.map((l) => [l.devId, l.peso]));
   const ids = new Set(visiveis.map((v) => v.devId));
   const linhas = d.linhas.filter((l) => ids.has(l.devId));
   const totalOk = Math.abs(d.pesoTotal - 100) < 0.05;
@@ -676,7 +726,7 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido entre os desenvolvedores. Pela porcentagem (padrão): cada um leva liberado × peso — Eduardo, Iury, João e Pablo recebem igual. Pela nota: a parte é proporcional a peso × nota individual. Peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade; sem entrega no mês, 0%. Os pesos aqui são simulação e não são gravados.">
+          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido entre os desenvolvedores. Pela porcentagem (padrão): cada um leva liberado × peso — Eduardo, Iury, João e Pablo recebem igual. Pela nota: a parte é proporcional a peso × nota individual. Peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade; sem entrega no mês, 0%. Ao mudar o peso de um, a diferença é repartida entre os outros que têm peso, na proporção de cada um — a soma fica em 100%. O botão Salvar grava os pesos e o modo neste mês; os meses seguintes herdam até alguém mudar.">
             Desempenho por desenvolvedor — com peso no valor
           </Titulo>
           <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor liberado à equipe é dividido {modo === "peso" ? "pela porcentagem de cada um" : "por porcentagem × nota"}.</p>
@@ -707,9 +757,11 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
               <div className="relative">
                 <Input type="number" min={0} max={100} step={1} className="w-24 pr-6 text-center font-semibold tabular-nums"
                   value={String(l.peso)}
+                  onFocus={() => { retrato.current = pesosAtuais(); }}
+                  onBlur={() => { retrato.current = null; }}
                   onChange={(e) => {
                     const n = Number(e.target.value.replace(",", "."));
-                    setPesos((p) => ({ ...p, [l.devId]: Number.isFinite(n) ? n : 0 }));
+                    setPesos(redistribuirPesos(retrato.current ?? pesosAtuais(), l.devId, Number.isFinite(n) ? n : 0));
                   }} />
                 <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs">%</span>
               </div>
@@ -727,8 +779,15 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
         <div><b>Distribuído:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
         <div className="md:pl-4"><b>Sem destino:</b> <span className="tabular-nums">{moeda(d.saldo)}</span>{d.saldo > 0 && <span className="text-xs text-muted-foreground"> ({modo === "peso" ? "pesos abaixo de 100%" : "ninguém com nota"})</span>}</div>
         <div className="flex flex-wrap items-center gap-2 md:pl-4">
-          <span><b>Critério atual:</b> {modo === "peso" ? "pela porcentagem" : "pela nota"} · {d.pesosPadrao ? "pesos padrão (Eduardo, Iury, João e Pablo iguais; demais com metade)" : "pesos personalizados (simulação)"}</span>
-          {!d.pesosPadrao && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos padrão</Button>}
+          <span><b>Critério atual:</b> {modo === "peso" ? "pela porcentagem" : "pela nota"} · <span className={pendente ? "text-warning" : ""}>{situacao}</span></span>
+          {!d.pesosPadrao && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos(pesosPadrao(devs))}>Pesos padrão</Button>}
+          {pendente && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { setEditado(null); setModoEditado(null); }}>Descartar</Button>}
+          {podeSalvar && (
+            <Button size="sm" className="h-7 gap-1 px-3" disabled={!pendente || fechado || !totalOk || salvar.isPending} onClick={salvarPesos}
+              title={fechado ? "Período fechado: reabra para mudar os pesos." : !totalOk ? "Os pesos precisam somar 100%." : undefined}>
+              <Save className="h-3.5 w-3.5" /> {salvar.isPending ? "Salvando…" : "Salvar pesos"}
+            </Button>
+          )}
         </div>
       </div>
     </Card>
