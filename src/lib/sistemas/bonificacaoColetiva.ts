@@ -304,11 +304,19 @@ export function ratearBonificacao(
 //
 // Bloco "Desempenho por desenvolvedor — com peso no valor" da aba
 // Distribuição (desenho do Pablo, 05/11): cada dev tem um PESO (% do valor
-// liberado; padrão = pesos iguais, 100 ÷ nº de devs) e o valor previsto é
-//   verba × peso ÷ 100 × nota individual ÷ 100 (a verba, não o liberado:
-// passar antes pela nota coletiva descontaria a nota duas vezes).
-// O que a nota individual não alcança fica como saldo não distribuído.
-// É simulação na tela: o fechamento continua gravando o rateio igual.
+// liberado) e o valor previsto é a parte dele no VALOR LIBERADO à equipe:
+//   liberado × (peso × nota) ÷ Σ(peso × nota de todos)
+// Correção do mesmo dia (Pablo: "tá puxando o valor errado pra dividir, é o
+// valor liberado pra equipe"): a 1ª versão fazia verba × peso × nota e
+// deixava saldo; agora o liberado é dividido INTEIRO — a nota coletiva já
+// descontou a verba, e a nota individual só decide quem leva mais da parte.
+// Dev sem nota leva 0. Os centavos que sobram do arredondamento vão para as
+// maiores frações (o total fecha exato).
+//
+// Peso padrão (Pablo, 05/11): Eduardo, Iury, João e Pablo com peso igual;
+// os demais (Otavio, Thamires) com METADE desse peso — PESO_RELATIVO_DEMAIS.
+// Casado pelo primeiro nome, sem acento. Editar o peso na tela é simulação:
+// o fechamento continua gravando o rateio igual.
 
 export interface LinhaPesoValor {
   devId: string;
@@ -326,34 +334,81 @@ export interface DistribuicaoPorPeso {
   pesoTotal: number;
   distribuido: number;
   saldo: number;
-  /** true quando todos os pesos são iguais (o critério padrão). */
-  pesosIguais: boolean;
+  /** true quando os pesos são os do padrão (pesosPadrao). */
+  pesosPadrao: boolean;
 }
 
 /** Peso igual para cada dev (100 ÷ n), arredondado a 2 casas. */
 export const pesoIgual = (n: number) => (n > 0 ? Math.round((10000 / n)) / 100 : 0);
 
+/** Primeiros nomes (sem acento, minúsculos) dos devs de peso cheio. */
+export const DEVS_PESO_CHEIO = ["eduardo", "iury", "joao", "pablo"] as const;
+/** Peso dos demais devs em relação ao peso cheio. */
+export const PESO_RELATIVO_DEMAIS = 0.5;
+
+const primeiroNome = (nome: string) =>
+  (nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().split(/\s+/)[0] ?? "";
+
+/**
+ * Peso padrão de cada dev (% que somam 100): cheio para os de DEVS_PESO_CHEIO,
+ * metade para os demais, e 0 para quem está sem nota no mês (sem entrega —
+ * Pablo, 05/11: "se tiver 0 deixa a porcentagem em 0 também").
+ */
+export function pesosPadrao(devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota?: number | null })[]): Record<string, number> {
+  const rel = devs.map((d) =>
+    d.nota === null ? 0 : (DEVS_PESO_CHEIO as readonly string[]).includes(primeiroNome(d.devNome)) ? 1 : PESO_RELATIVO_DEMAIS);
+  const soma = rel.reduce((a, r) => a + r, 0);
+  const out: Record<string, number> = {};
+  devs.forEach((d, i) => { out[d.devId] = soma > 0 ? Math.round((rel[i] * 10000) / soma) / 100 : 0; });
+  return out;
+}
+
+/**
+ * Como o liberado é dividido (Pablo, 05/11/2026):
+ *  - "peso" (PADRÃO): cada um leva liberado × peso ÷ 100 — Eduardo, Iury,
+ *    João e Pablo recebem IGUAL; a nota individual não mexe no valor.
+ *  - "nota": a parte é proporcional a peso × nota individual (quem tem nota
+ *    maior leva mais do mesmo liberado).
+ */
+export type ModoDivisao = "peso" | "nota";
+
 export function distribuirPorPeso(
   base: number,
   devs: Pick<ResumoDev, "devId" | "devNome" | "nota" | "entregas">[],
   pesos: Record<string, number> = {},
+  modo: ModoDivisao = "peso",
 ): DistribuicaoPorPeso {
   const baseCent = Math.max(0, Math.round((finito(base) ? base : 0) * 100));
-  const padrao = pesoIgual(devs.length);
-  const linhas = devs.map((d) => {
-    const peso = finito(pesos[d.devId]) ? limitar(pesos[d.devId]) : padrao;
+  const padrao = pesosPadrao(devs);
+  const base1 = devs.map((d) => {
+    const peso = finito(pesos[d.devId]) ? limitar(pesos[d.devId]) : padrao[d.devId] ?? 0;
     const nota = d.nota === null || !finito(d.nota) ? null : limitar(d.nota);
-    const cent = nota === null ? 0 : Math.round((baseCent * peso * nota) / 10000);
-    return { devId: d.devId, devNome: d.devNome, entregas: d.entregas.length, nota, peso, valor: cent / 100 };
+    return { d, peso, nota, w: modo === "peso" ? peso : nota === null ? 0 : peso * nota };
   });
-  const distribuidoCent = linhas.reduce((a, l) => a + Math.round(l.valor * 100), 0);
+  const W = base1.reduce((a, x) => a + x.w, 0);
+  // "nota": normaliza por Σ(peso × nota), o liberado sai inteiro.
+  // "peso": liberado × peso ÷ 100 — se os pesos não somam 100, a diferença
+  // fica como saldo (nunca passa do liberado).
+  const brutos = base1.map((x) =>
+    modo === "peso" ? (baseCent * x.w) / (Math.abs(W - 100) < 0.05 ? W : Math.max(100, W)) : W > 0 ? (baseCent * x.w) / W : 0);
+  const cents = brutos.map(Math.floor);
+  const alvo = modo === "peso" ? Math.round(brutos.reduce((a, b) => a + b, 0)) : W > 0 ? baseCent : 0;
+  let sobra = alvo - cents.reduce((a, c) => a + c, 0);
+  brutos
+    .map((b, i) => ({ i, frac: b - Math.floor(b) }))
+    .sort((a, b) => b.frac - a.frac)
+    .forEach(({ i }) => { if (sobra > 0 && base1[i].w > 0) { cents[i] += 1; sobra -= 1; } });
+  const linhas = base1.map((x, i) => ({
+    devId: x.d.devId, devNome: x.d.devNome, entregas: x.d.entregas.length, nota: x.nota, peso: x.peso, valor: cents[i] / 100,
+  }));
+  const distribuidoCent = cents.reduce((a, c) => a + c, 0);
   return {
     linhas,
     base: baseCent / 100,
     pesoTotal: Math.round(linhas.reduce((a, l) => a + l.peso, 0) * 100) / 100,
     distribuido: distribuidoCent / 100,
     saldo: (baseCent - distribuidoCent) / 100,
-    pesosIguais: linhas.every((l) => l.peso === linhas[0]?.peso),
+    pesosPadrao: linhas.every((l) => Math.abs(l.peso - (padrao[l.devId] ?? 0)) < 0.005),
   };
 }
 
@@ -617,6 +672,32 @@ export interface ResumoDev {
   mercado: number;
   freelancer: number;
   clt: number;
+}
+
+/** Meses para trás em que quem foi responsável por chamado concluído conta como "da equipe". */
+export const MESES_EQUIPE = 6;
+
+/** Intervalo da equipe: do 1º dia de MESES_EQUIPE meses antes até o fim da competência. */
+export function intervaloDaEquipe(mes: string): { inicio: string; fim: string } {
+  const { fim } = intervaloDaCompetencia(mes);
+  const [ano, mm] = fim.split("-").map(Number);
+  const d = new Date(Date.UTC(ano, mm - 1 - MESES_EQUIPE, 1));
+  return { inicio: d.toISOString().slice(0, 10), fim };
+}
+
+/**
+ * Soma à lista do mês quem é da equipe mas não teve entrega nele (Pablo,
+ * 05/11/2026: "por que a Thamires não aparece aqui?"). Entra com 0 entregas,
+ * sem nota — no peso no valor leva R$ 0 e não tira nada de ninguém. "Equipe"
+ * = responsável por chamado concluído nos últimos MESES_EQUIPE meses.
+ */
+export function completarComEquipe(devs: ResumoDev[], equipe: { devId: string; devNome: string }[]): ResumoDev[] {
+  const tem = new Set(devs.map((d) => d.devId));
+  const vazio = Object.fromEntries(CRITERIOS.map((k) => [k, null])) as NotasCriterios;
+  const extras = equipe
+    .filter((e) => !tem.has(e.devId))
+    .map((e) => ({ devId: e.devId, devNome: e.devNome, entregas: [], medias: { ...vazio }, nota: null, mercado: 0, freelancer: 0, clt: 0 }));
+  return [...devs, ...extras];
 }
 
 export function resumoPorDev(entregas: EntregaBonificacao[], cfg: ConfigBonificacao): ResumoDev[] {

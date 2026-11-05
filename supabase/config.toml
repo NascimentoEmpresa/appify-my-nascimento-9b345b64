@@ -212,3 +212,10 @@ verify_jwt = true
 # (incluir/alterar/aprovar) antes de gastar token.
 [functions.hora-extra-justificativa-ia]
 verify_jwt = true
+
+# Relatórios › Demissões › "Motivos do relato (I.A)" (05/11/2026): classifica
+# o relato livre da demissão numa categoria fechada e grava em
+# SISTEMA_DEMISSAO_RELATO_IA (mig 20261105008300). A fila é lida com o JWT
+# do usuário (dir_rel_exige do relatório); a gravação, com service_role.
+[functions.demissao-relato-ia]
+verify_jwt = true
