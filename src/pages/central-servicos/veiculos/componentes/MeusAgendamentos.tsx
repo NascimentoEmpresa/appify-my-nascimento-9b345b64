@@ -12,10 +12,12 @@ import {
   LABEL_TURNO,
   formatarData,
   hojeISO,
+  podeMarcarNaoUsei,
   useCancelarAgendamento,
   type Agendamento,
 } from "@/hooks/useAgendamentoVeiculos";
 import { ViagemDialog } from "./ViagemDialog";
+import { NaoUseiDialog } from "./NaoUseiDialog";
 
 interface Props {
   agendamentos: Agendamento[];
@@ -36,6 +38,7 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
   // (22/09/2026 — chamado dos abastecimentos).
   const [viagem, setViagem] = useState<Agendamento | null>(null);
   const [motivo, setMotivo] = useState("");
+  const [naoUsei, setNaoUsei] = useState<Agendamento | null>(null);
   const cancelar = useCancelarAgendamento();
   const hoje = hojeISO();
 
@@ -68,6 +71,9 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
           const meu = a.solicitante_id === usuarioId;
           const futuro = a.data_fim >= hoje;
           const podeCancelar = a.status === "confirmado" && futuro && (meu || podeCancelarDeTerceiros);
+          // Já começou e não foi finalizada: dá para dizer que o carro nem saiu
+          // (05/11/2026) — sem isso a pessoa ficava presa a um KM que não existe.
+          const podeNaoUsei = podeMarcarNaoUsei(a, hoje) && (meu || podeCancelarDeTerceiros);
 
           return (
             <Card
@@ -134,15 +140,32 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
                         Cancelado: {a.motivo_cancelamento}
                       </p>
                     )}
-                    {/* KM e notas ficam a um clique: o card inteiro abre a viagem. */}
-                    <p className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-primary">
-                      <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" /> KM da viagem</span>
-                      <span className="inline-flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Anexar nota de gasolina</span>
-                    </p>
+                    {a.nao_utilizado_em ? (
+                      <p className="mt-1.5 text-xs font-medium text-muted-foreground">
+                        Carro não utilizado — marcado por {a.nao_utilizado_por_nome ?? "—"} em{" "}
+                        {new Date(a.nao_utilizado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                        {a.nao_utilizado_motivo && ` · ${a.nao_utilizado_motivo}`}
+                      </p>
+                    ) : (
+                      /* KM e notas ficam a um clique: o card inteiro abre a viagem. */
+                      <p className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-primary">
+                        <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" /> KM da viagem</span>
+                        <span className="inline-flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Anexar nota de gasolina</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {podeNaoUsei && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); setNaoUsei(a); }}
+                    >
+                      Não usei o carro no dia
+                    </Button>
+                  )}
                   <span
                     className={cn(
                       "flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
@@ -176,6 +199,8 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
         onFechar={() => setViagem(null)}
         souDono={!!viagem && (viagem.solicitante_id === usuarioId || podeCancelarDeTerceiros)}
       />
+
+      <NaoUseiDialog alvo={naoUsei} onFechar={() => setNaoUsei(null)} />
 
       <Dialog open={!!cancelando} onOpenChange={(o) => !o && setCancelando(null)}>
         <DialogContent>

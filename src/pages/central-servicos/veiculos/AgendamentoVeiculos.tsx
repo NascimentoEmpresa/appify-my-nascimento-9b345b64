@@ -25,6 +25,7 @@ import { CardVeiculo } from "./componentes/CardVeiculo";
 import { CalendarioGeral } from "./componentes/CalendarioGeral";
 import { ComoUsarDialog } from "./componentes/ComoUsarDialog";
 import { MeusAgendamentos } from "./componentes/MeusAgendamentos";
+import { NaoUseiDialog, type AlvoNaoUsei } from "./componentes/NaoUseiDialog";
 import { Passos, type IndicePasso } from "./componentes/Passos";
 import { PassoConfirmar } from "./componentes/PassoConfirmar";
 import { PassoContratos } from "./componentes/PassoContratos";
@@ -73,10 +74,13 @@ export default function AgendamentoVeiculos() {
   const [incluirInativos, setIncluirInativos] = useState(false);
   const contratos = useContratosParaAgendamento(incluirInativos);
   const criar = useCriarAgendamento();
-  // Viagem anterior sem KM final trava o próximo agendamento (a trava de
-  // verdade é do banco; aqui é para a pessoa saber antes de preencher tudo).
+  // Viagem anterior não finalizada: só LEMBRETE (05/11/2026). A trava saiu do
+  // banco na mig 286, mas a tela ainda segurava o passo 4 — e quem reservou e
+  // nem usou o carro não tinha KM para informar. Agora cada pendência tem o
+  // botão "Não usei o carro no dia" (mig 20261105009200).
   const pendentes = useKmPendentes();
-  const pendencia = pendentes.data?.[0] ?? null;
+  const listaPendentes = pendentes.data ?? [];
+  const [naoUsei, setNaoUsei] = useState<AlvoNaoUsei | null>(null);
 
   const [passo, setPasso] = useState<IndicePasso>(0);
   const [maximo, setMaximo] = useState<IndicePasso>(0);
@@ -149,9 +153,8 @@ export default function AgendamentoVeiculos() {
       return !conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
     }
     if (passo === 2) return ctr.length > 0;
-    // KM inicial + foto viraram opcionais aqui (23/09/2026): dá para
-    // registrar depois, na viagem. A pendência de KM final continua travando.
-    if (passo === 3) return !pendencia;
+    // KM inicial + foto opcionais aqui (23/09/2026). Pendência de viagem
+    // anterior NÃO trava mais (05/11/2026) — "libera o pessoal".
     return true;
   })();
 
@@ -226,15 +229,31 @@ export default function AgendamentoVeiculos() {
               </p>
             </div>
 
-            {pendencia && (
-              <div className="mb-4 rounded-2xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
-                <p className="font-semibold text-destructive">Você tem uma viagem sem o KM final</p>
-                <p className="mt-1 text-foreground">
-                  Viagem nº {pendencia.numero} · {pendencia.veiculo_nome} ({formatarData(pendencia.data_inicio)} a {formatarData(pendencia.data_fim)}).
-                  Feche o KM final dela em <b>Meus Agendamentos</b> para agendar outro veículo.
+            {listaPendentes.length > 0 && (
+              <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50/70 p-4 text-sm dark:bg-amber-500/10">
+                <p className="font-semibold text-amber-700 dark:text-amber-400">
+                  {listaPendentes.length === 1 ? "Você tem uma viagem não finalizada" : `Você tem ${listaPendentes.length} viagens não finalizadas`}
                 </p>
+                <p className="mt-1 text-foreground">
+                  Finalize com o KM em <b>Meus Agendamentos</b> ou, se o carro nem saiu, toque em <b>Não usei o carro no dia</b>.
+                  Dá para agendar outro veículo mesmo assim.
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {listaPendentes.map((p) => (
+                    <li key={p.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-foreground">
+                        Viagem nº {p.numero} · {p.veiculo_nome} ({formatarData(p.data_inicio)}
+                        {p.data_fim !== p.data_inicio && ` a ${formatarData(p.data_fim)}`})
+                      </span>
+                      <Button size="sm" variant="outline" onClick={() => setNaoUsei(p)}>
+                        Não usei o carro no dia
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
+            <NaoUseiDialog alvo={naoUsei} onFechar={() => setNaoUsei(null)} />
 
             <Card className="p-5">
               <Passos atual={passo} maximoAlcancado={maximo} onIr={irPara} />

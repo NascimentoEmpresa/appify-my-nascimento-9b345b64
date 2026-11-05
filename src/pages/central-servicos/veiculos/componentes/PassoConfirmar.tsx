@@ -80,7 +80,7 @@ export function PassoConfirmar({
           <p className="text-sm text-foreground">
             <b>KM do painel na retirada:</b> se já estiver com o carro, registre agora; se não, deixe em
             branco e preencha depois na viagem, em <b>Meus Agendamentos</b>. Ao voltar, informe o KM final
-            e outra foto — sem isso não dá para agendar outro veículo.
+            e outra foto. Se o carro nem saiu, use <b>Não usei o carro no dia</b>.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">

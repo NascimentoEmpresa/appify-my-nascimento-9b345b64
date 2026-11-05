@@ -92,6 +92,12 @@ export interface Agendamento {
   solicitante_nome: string | null;
   created_at: string;
   contratos: ContratoDoAgendamento[];
+  /** Viagem finalizada (mig 286). null = ainda aberta. */
+  finalizada_em?: string | null;
+  /** "Não usei o carro no dia" (mig 20261105009200). */
+  nao_utilizado_em?: string | null;
+  nao_utilizado_por_nome?: string | null;
+  nao_utilizado_motivo?: string | null;
 }
 
 export interface NovoAgendamento {
@@ -591,6 +597,28 @@ export function useFecharKm() {
     onSuccess: (_d, v) => { invalidar(v.id); toast.success("Viagem atualizada."); },
     onError: (e: any) => toast.error(mensagemDeErro(e)),
   });
+}
+
+/**
+ * "Não usei o carro no dia" (05/11/2026): reserva que passou sem o carro sair
+ * fecha a pendência sem KM nem foto. Registra quem marcou e quando; o banco
+ * recusa reserva futura (é Cancelar) e viagem com KM final/nota.
+ */
+export function useNaoUsei() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; motivo?: string }) => {
+      const { error } = await sb.rpc("cs_veiculo_nao_utilizado", { p_agendamento: v.id, p_motivo: v.motivo?.trim() || null });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Registrado: o carro não foi usado. A pendência saiu."); },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+/** Reserva que já começou, segue aberta e pode ser marcada como "não usei". */
+export function podeMarcarNaoUsei(a: Pick<Agendamento, "status" | "data_inicio" | "finalizada_em" | "nao_utilizado_em">, hoje = hojeISO()): boolean {
+  return a.status === "confirmado" && a.data_inicio <= hoje && !a.finalizada_em && !a.nao_utilizado_em;
 }
 
 export function useDefinirContratosDaViagem() {
