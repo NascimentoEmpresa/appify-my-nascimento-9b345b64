@@ -37,7 +37,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useEntregasBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
+import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
+import { completarComEquipe, type ModoDivisao } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
   configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
@@ -86,6 +87,7 @@ function Painel() {
 
   const { data: entregas = [], isLoading, isFetching, error, refetch } = useEntregasBonificacao(mes);
   const { data: periodos = [] } = usePeriodosBonificacao();
+  const { data: equipe = [] } = useEquipeBonificacao(mes);
   const { data: podeAvaliar = false } = useScreenAccess(MENU, "alterar");
   const { data: podeExportar = false } = useScreenAccess(MENU, "exportar");
   const { data: podeConfigurar = false } = useScreenAccess(MENU_REGRAS, "alterar");
@@ -106,6 +108,8 @@ function Painel() {
   const cfg = useMemo(() => configDoPeriodo(periodo.config, validas), [periodo.config, validas]);
   const devsDoMes = useMemo(() => resumoPorDev(validas, cfg), [validas, cfg]);
   const devSelecionado = dev !== "todos" && devsDoMes.some((d) => d.devId === dev) ? dev : "todos";
+  // Peso no valor: a equipe inteira, quem não entregou no mês com 0 (Thamires, 05/11).
+  const devsEquipe = useMemo(() => completarComEquipe(devsDoMes, equipe), [devsDoMes, equipe]);
   const filtradas = useMemo(
     () => (devSelecionado === "todos" ? validas : validas.filter((e) => e.devId === devSelecionado)),
     [validas, devSelecionado],
@@ -226,7 +230,7 @@ function Painel() {
             </TabsContent>
             <TabsContent value="bonificacao" className="space-y-4">
               <AbaBonificacao
-                mes={mes} cfg={cfg} rateio={rateio} devs={devsFiltro} devsMes={devsDoMes} filtradas={filtradas} totalPeriodo={validas.length}
+                mes={mes} cfg={cfg} rateio={rateio} devs={devsFiltro} devsMes={devsEquipe} todos={devSelecionado === "todos"} filtradas={filtradas} totalPeriodo={validas.length}
                 verba={periodo.verba} fechado={periodo.fechado} foto={periodo.linha?.resultado ?? null}
                 podeConfigurar={podeConfigurar} podeExportar={podeExportar} imprimir={imprimir}
                 verIndividual={(id) => verDev(id, "individual")} pendentes={comPendencia.length}
@@ -522,8 +526,8 @@ function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
 // ── Distribuição da bonificação ──────────────────────────────────────────
 interface FotoFechamento { nota_equipe?: number | null; verba?: number; liberado?: number; saldo?: number; participantes?: { devNome: string; valor: number }[]; gerado_em?: string }
 
-function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
-  mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; devsMes: ResumoDev[]; filtradas: EntregaDetalhada[]; totalPeriodo: number;
+function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
+  mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; devsMes: ResumoDev[]; todos: boolean; filtradas: EntregaDetalhada[]; totalPeriodo: number;
   verba: number; fechado: boolean; foto: unknown; podeConfigurar: boolean; podeExportar: boolean; imprimir: () => void;
   verIndividual: (id: string) => void; pendentes: number;
 }) {
@@ -593,7 +597,7 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPerio
       )}
 
       <div className="grid gap-4">
-        <CartaoPesoNoValor base={rateio.verba} devs={devsMes} visiveis={devs} />
+        <CartaoPesoNoValor base={rateio.liberado} devs={devsMes} visiveis={todos ? devsMes : devs} />
         <Card className="p-5">
           <Titulo ajuda="Explica a fórmula: verba disponível × nota coletiva ÷ 100; depois divide-se igualmente entre os participantes.">Cálculo da bonificação coletiva</Titulo>
           <ol className="list-decimal space-y-1 rounded-md border-l-4 border-primary bg-muted/40 p-3 pl-8 text-sm text-muted-foreground">
@@ -655,13 +659,16 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPerio
 
 /**
  * "Desempenho por desenvolvedor — com peso no valor" (desenho do Pablo, 05/11/2026).
- * Valor previsto = verba disponível × peso ÷ 100 × nota ÷ 100. Pesos editáveis
- * só na tela (simulação, não gravam); "Pesos iguais" volta ao padrão.
+ * Valor previsto = valor LIBERADO à equipe × (peso × nota) ÷ Σ(peso × nota):
+ * o liberado é dividido inteiro (correção do Pablo, 05/11 — antes era a verba).
+ * Pesos editáveis só na tela (simulação, não gravam); "Pesos padrão" volta a
+ * Eduardo/Iury/João/Pablo iguais e os demais com metade (pesosPadrao).
  * A régua dos pesos é o MÊS inteiro: filtrar um dev não muda o peso dele.
  */
 function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: ResumoDev[]; visiveis: ResumoDev[] }) {
   const [pesos, setPesos] = useState<Record<string, number>>({});
-  const d = useMemo(() => distribuirPorPeso(base, devs, pesos), [base, devs, pesos]);
+  const [modo, setModo] = useState<ModoDivisao>("peso");
+  const d = useMemo(() => distribuirPorPeso(base, devs, pesos, modo), [base, devs, pesos, modo]);
   const ids = new Set(visiveis.map((v) => v.devId));
   const linhas = d.linhas.filter((l) => ids.has(l.devId));
   const totalOk = Math.abs(d.pesoTotal - 100) < 0.05;
@@ -669,13 +676,21 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Titulo ajuda="Valor previsto = verba disponível para a equipe × peso do desenvolvedor × nota individual (a própria nota já aplica o desconto; não passa antes pela nota coletiva). O que as notas não alcançam fica como saldo não distribuído. Os pesos aqui são simulação e não são gravados.">
+          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido entre os desenvolvedores. Pela porcentagem (padrão): cada um leva liberado × peso — Eduardo, Iury, João e Pablo recebem igual. Pela nota: a parte é proporcional a peso × nota individual. Peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade; sem entrega no mês, 0%. Os pesos aqui são simulação e não são gravados.">
             Desempenho por desenvolvedor — com peso no valor
           </Titulo>
-          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor pode ser ponderado por peso e calculado sobre a verba disponível para a equipe.</p>
+          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor liberado à equipe é dividido {modo === "peso" ? "pela porcentagem de cada um" : "por porcentagem × nota"}.</p>
+          <div className="mt-3 inline-flex rounded-md border p-0.5 text-sm" role="radiogroup" aria-label="Como dividir">
+            {([["peso", "Dividir pela porcentagem"], ["nota", "Dividir pela nota"]] as const).map(([m, rot]) => (
+              <button key={m} type="button" role="radio" aria-checked={modo === m} onClick={() => setModo(m)}
+                className={`rounded px-3 py-1 transition-colors ${modo === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                {rot}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="grid min-w-[16rem] gap-1 rounded-lg border bg-muted/30 px-4 py-2 text-sm">
-          <div className="flex justify-between gap-6"><span className="text-muted-foreground">Verba disponível para a equipe:</span><b className="tabular-nums">{moeda(d.base)}</b></div>
+          <div className="flex justify-between gap-6"><span className="text-muted-foreground">Valor liberado à equipe:</span><b className="tabular-nums">{moeda(d.base)}</b></div>
           <div className="flex justify-between gap-6"><span className="text-muted-foreground">Peso total considerado:</span><b className={`tabular-nums ${totalOk ? "" : "text-warning"}`}>{num(d.pesoTotal)}%</b></div>
         </div>
       </div>
@@ -685,7 +700,7 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
           <div className="min-w-0">
             <div className="mb-1.5 flex justify-between gap-3 text-sm"><span className="truncate">{l.devNome}</span><b className="tabular-nums">{num(l.nota)}/100</b></div>
             <Progress value={l.nota ?? 0} className="h-2" />
-            <small className="text-muted-foreground">{l.entregas} entrega(s)</small>
+            <small className="text-muted-foreground">{l.entregas ? `${l.entregas} entrega(s)` : "0 entregas — sem entrega no mês"}</small>
           </div>
           <div className="flex gap-3 md:border-l md:pl-4">
             <label className="grid gap-1 text-center text-xs text-muted-foreground">Peso no valor
@@ -709,11 +724,11 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
       {!totalOk && <p className="mt-3 text-xs text-warning">Os pesos somam {num(d.pesoTotal)}% — ajuste para 100% para distribuir o valor liberado inteiro.</p>}
 
       <div className="mt-5 grid gap-2 rounded-lg border bg-muted/30 px-4 py-3 text-sm md:grid-cols-3 md:divide-x">
-        <div><b>Distribuído pela nota:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
-        <div className="md:pl-4"><b>Saldo não distribuído:</b> <span className="tabular-nums">{moeda(d.saldo)}</span></div>
+        <div><b>Distribuído:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
+        <div className="md:pl-4"><b>Sem destino:</b> <span className="tabular-nums">{moeda(d.saldo)}</span>{d.saldo > 0 && <span className="text-xs text-muted-foreground"> ({modo === "peso" ? "pesos abaixo de 100%" : "ninguém com nota"})</span>}</div>
         <div className="flex flex-wrap items-center gap-2 md:pl-4">
-          <span><b>Critério atual:</b> {d.pesosIguais ? `pesos iguais (${num(pesoIgual(devs.length))}% para cada)` : "pesos personalizados (simulação)"}</span>
-          {!d.pesosIguais && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos iguais</Button>}
+          <span><b>Critério atual:</b> {modo === "peso" ? "pela porcentagem" : "pela nota"} · {d.pesosPadrao ? "pesos padrão (Eduardo, Iury, João e Pablo iguais; demais com metade)" : "pesos personalizados (simulação)"}</span>
+          {!d.pesosPadrao && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos padrão</Button>}
         </div>
       </div>
     </Card>

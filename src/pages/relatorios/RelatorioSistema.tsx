@@ -7,6 +7,7 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import { MENU_IA, sistemaPorSlug } from "./sistemas";
 import TurnoverPainel from "./TurnoverPainel";
+import DemissoesMotivos from "./DemissoesMotivos";
 import {
   GraficoMensal, GraficoRanking, GraficoStatus, LinhaKpis, PainelIA, SeletorPeriodo, TabelaRecentes, usePeriodo,
 } from "./componentes";
@@ -91,6 +92,8 @@ function RelatorioPadrao({ slug }: { slug: string }) {
           <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {r.rankings.map((rk) => <GraficoRanking key={rk.titulo} titulo={rk.titulo} itens={rk.itens} cor={s.cor} />)}
           </div>
+          {/* Demissões (05/11/2026, mig 20261105008300): motivo por contrato, relato agrupado pela I.A e detalhe. */}
+          {slug === "demissoes" && <DemissoesMotivos filtro={periodo.filtro} />}
           <AcessoGate menu={MENU_IA} acao="visualizar">
             <PainelIA sistema={s.slug} de={periodo.de} ate={periodo.ate} contrato={periodo.contrato} meses={periodo.meses} titulo={s.titulo} />
           </AcessoGate>

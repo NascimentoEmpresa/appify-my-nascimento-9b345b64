@@ -1,5 +1,5 @@
 import { memo, useDeferredValue, useMemo, useState } from "react";
-import { ChevronDown, GripVertical, PanelRightClose, PanelRightOpen, Search, Star, Users, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, GripVertical, PanelRightClose, PanelRightOpen, Search, Star, Users, X } from "lucide-react";
 import {
   DndContext,
   type DragEndEvent,
@@ -49,7 +49,30 @@ import {
  * Só no desktop (lg+): no celular a lateral direita roubaria a tela inteira.
  * A largura é decidida pelo AppShell, que também empurra o conteúdo.
  * Recolhido, o painel vira uma faixa só com quem está online.
+ *
+ * Botão de olho (05/11/2026, pedido do Pablo): esconde quem está offline —
+ * ficam só os disponíveis e os ausentes (aba aberta, mas parados), e somem os
+ * setores sem ninguém conectado. A escolha fica no navegador (localStorage),
+ * é conveniência de quem olha. Com o filtro ligado não dá para arrastar
+ * pessoas: a ordem salva é da lista inteira, e reordenar só a metade visível
+ * embaralharia os offline escondidos.
  */
+
+const CHAVE_SO_ONLINE = "painel-online:so-online";
+function lerSoOnline(): boolean {
+  try {
+    return localStorage.getItem(CHAVE_SO_ONLINE) === "1";
+  } catch {
+    return false;
+  }
+}
+function gravarSoOnline(v: boolean) {
+  try {
+    localStorage.setItem(CHAVE_SO_ONLINE, v ? "1" : "0");
+  } catch {
+    /* navegador sem storage: vale só nesta aba */
+  }
+}
 
 export const LARGURA_PAINEL_ONLINE = { aberto: "264px", recolhido: "60px" } as const;
 
@@ -242,18 +265,33 @@ export function PainelOnline({ aberto, onAlternar }: { aberto: boolean; onAltern
   const { prefs, salvar } = usePreferenciasPresenca(aberto);
   const [busca, setBusca] = useState("");
   const buscaAdiada = useDeferredValue(busca);
+  const [soOnline, setSoOnline] = useState(lerSoOnline);
+  const alternarSoOnline = () =>
+    setSoOnline((v) => {
+      gravarSoOnline(!v);
+      return !v;
+    });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   // Sem o elenco (migration 20261030003600 ainda não aplicada, ou a RPC
   // falhou) o painel cai para a lista de quem deu sinal — a primeira versão.
   const elenco: UsuarioElenco[] = elencoQ.data ?? presenca.linhas;
-  const grupos = useMemo(
+  const gruposTodos = useMemo(
     () => montarGruposPresenca(elenco, presenca.linhas, presenca.agora ?? new Date(), prefs, buscaAdiada),
     [elenco, presenca.linhas, presenca.agora, prefs, buscaAdiada],
   );
+  const grupos = useMemo(
+    () =>
+      soOnline
+        ? gruposTodos
+            .map((g) => ({ ...g, pessoas: g.pessoas.filter((p) => p.status !== "offline") }))
+            .filter((g) => g.pessoas.length > 0)
+        : gruposTodos,
+    [gruposTodos, soOnline],
+  );
   const online = presenca.pessoas.filter((p) => p.status === "online").length;
   const total = elencoQ.data?.length ?? presenca.pessoas.length;
-  const arrastavel = !buscaAdiada.trim();
+  const arrastavel = !buscaAdiada.trim() && !soOnline;
   const idsSetores = useMemo(
     () => grupos.filter((g) => g.chave !== CHAVE_FAVORITOS).map((g) => idSetor(g.chave)),
     [grupos],
@@ -287,6 +325,20 @@ export function PainelOnline({ aberto, onAlternar }: { aberto: boolean; onAltern
               <span className="text-emerald-600">{online}</span> de {total}
             </span>
           </span>
+        )}
+        {aberto && (
+          <button
+            type="button"
+            onClick={alternarSoOnline}
+            aria-pressed={soOnline}
+            className={cn(
+              "ml-auto mr-1 rounded-md p-1.5 hover:bg-muted hover:text-foreground",
+              soOnline ? "text-emerald-600" : "text-muted-foreground",
+            )}
+            title={soOnline ? "Mostrar todo mundo" : "Ver só quem está online"}
+          >
+            {soOnline ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
         )}
         <button
           type="button"
@@ -331,7 +383,13 @@ export function PainelOnline({ aberto, onAlternar }: { aberto: boolean; onAltern
               )}
               {!elencoQ.isLoading && grupos.length === 0 && (
                 <p className="px-2 py-3 text-xs text-muted-foreground">
-                  {busca ? "Ninguém com esse nome." : "Ninguém por aqui ainda."}
+                  {busca
+                    ? soOnline
+                      ? "Ninguém online com esse nome."
+                      : "Ninguém com esse nome."
+                    : soOnline
+                      ? "Ninguém online agora."
+                      : "Ninguém por aqui ainda."}
                 </p>
               )}
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>

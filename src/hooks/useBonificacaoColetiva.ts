@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   entregaDaLinha,
   intervaloDaCompetencia,
+  intervaloDaEquipe,
   type Dificuldade,
   type EntregaDetalhada,
   type LinhaEntregaRpc,
@@ -30,6 +31,26 @@ export function useEntregasBonificacao(mes: string) {
       const { data, error } = await db.rpc("bonificacao_dev_entregas", { p_inicio: inicio, p_fim: fim });
       if (error) throw new Error(error.message);
       return ((data ?? []) as LinhaEntregaRpc[]).map(entregaDaLinha);
+    },
+  });
+}
+
+/**
+ * Quem é da equipe: responsáveis por chamado concluído nos últimos meses
+ * (intervaloDaEquipe). Mesma RPC das entregas, só que num intervalo maior —
+ * sem migration nova. Serve para mostrar com 0 quem não entregou no mês.
+ */
+export function useEquipeBonificacao(mes: string) {
+  return useQuery({
+    queryKey: [CHAVE, "equipe", mes],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<{ devId: string; devNome: string }[]> => {
+      const { inicio, fim } = intervaloDaEquipe(mes);
+      const { data, error } = await db.rpc("bonificacao_dev_entregas", { p_inicio: inicio, p_fim: fim });
+      if (error) throw new Error(error.message);
+      const porId = new Map<string, string>();
+      for (const e of ((data ?? []) as LinhaEntregaRpc[]).map(entregaDaLinha)) porId.set(e.devId, e.devNome);
+      return [...porId].map(([devId, devNome]) => ({ devId, devNome })).sort((a, b) => a.devNome.localeCompare(b.devNome, "pt-BR"));
     },
   });
 }

@@ -6,6 +6,7 @@ import type { DetalheVaga, PainelVagas } from "@/lib/relatorios/vagasPainel";
 import type { MovRecrutadores } from "@/lib/relatorios/recrutadoresPainel";
 import type { DadosCustoFaltas } from "@/lib/relatorios/custoFaltas";
 import type { VariacaoEfetivo } from "@/lib/diretoria/variacaoEfetivo";
+import type { LinhaDemissao } from "@/lib/relatorios/demissoesMotivos";
 
 // =====================================================================
 // Diretoria › Relatórios — acesso a dados (mig 20261005000006).
@@ -188,4 +189,37 @@ export function useCustoFaltas(de: string, ate: string) {
       return data as DadosCustoFaltas;
     },
   });
+}
+
+/**
+ * Relatórios › Demissões — uma linha por solicitação do período, com os dois
+ * motivos de lista, o relato e a categoria da I.A (mig 20261105008300).
+ * O cruzamento contrato × motivo é feito em lib/relatorios/demissoesMotivos.
+ */
+export function useDemissoesLinhas(f: FiltroRelatorio) {
+  return useQuery({
+    queryKey: [CHAVE, "demissoes-linhas", ...chaveFiltro(f)],
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<LinhaDemissao[]> => {
+      const { data, error } = await sb.rpc("dir_rel_demissoes_linhas", argsFiltro(f));
+      if (error) throw error;
+      return (data ?? []) as LinhaDemissao[];
+    },
+  });
+}
+
+/**
+ * Um lote da Edge demissao-relato-ia (classifica até 25 relatos pendentes e
+ * grava). A tela chama de novo enquanto `restantes` cair.
+ */
+export async function classificarLoteRelatos(): Promise<{ gravados: number; restantes: number; aviso?: string | null }> {
+  const { data, error } = await supabase.functions.invoke("demissao-relato-ia", { body: {} });
+  if (error) {
+    let msg = error.message;
+    try { const corpo = await (error as { context?: Response }).context?.json(); if (corpo?.error) msg = corpo.error; } catch { /* sem corpo */ }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return { gravados: Number(data?.gravados ?? 0), restantes: Number(data?.restantes ?? 0), aviso: data?.aviso ?? null };
 }
