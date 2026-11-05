@@ -1,6 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { CheckCircle2, CircleX, Clock3, Download, Hourglass, Paperclip, UploadCloud, X } from "lucide-react";
+import {
+  CheckCircle2, CircleX, Clock3, Download, Hourglass, Loader2, Paperclip, Sparkles, UploadCloud, X,
+} from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { urlAssinadaHoraExtra } from "@/hooks/useHoraExtra";
 import { cn } from "@/lib/utils";
 import { formatarDuracao, mensagemErro, rotuloFaseAnexo, statusExibicao } from "./horaExtraUtils";
@@ -57,6 +60,39 @@ export function BadgeExecucao({ status }: { status?: StatusExecucao | null }) {
       <item.Icone className="h-3 w-3" />
       {item.label}
     </span>
+  );
+}
+
+/**
+ * Botão "✨ Gerar mensagem" à direita do título de uma SecaoForm (puxado para
+ * cima com -mt-10). Usado na justificativa da solicitação e, desde 04/11/2026,
+ * no resumo da conclusão — mesmo visual nas duas telas.
+ */
+export function BotaoGerarMensagem({
+  gerando,
+  desabilitado,
+  dica,
+  aoClicar,
+}: {
+  gerando: boolean;
+  desabilitado?: boolean;
+  /** Tooltip quando desabilitado (o que falta para gerar). */
+  dica?: string;
+  aoClicar: () => void;
+}) {
+  return (
+    <div className="-mt-10 mb-3 flex justify-end">
+      <span title={desabilitado ? dica : undefined}>
+        <Button type="button" size="sm" variant="outline" disabled={desabilitado || gerando} onClick={aoClicar}>
+          {gerando ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Sparkles className="mr-2 h-4 w-4 text-violet-600" />
+          )}
+          {gerando ? "Gerando…" : "Gerar mensagem"}
+        </Button>
+      </span>
+    </div>
   );
 }
 

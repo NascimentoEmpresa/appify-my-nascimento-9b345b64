@@ -14,9 +14,14 @@
 // (GROQ_API_KEY, modelo openai/gpt-oss-120b). Chaves nos secrets da Edge
 // Function, nunca em arquivo. Falha devolve a mensagem de erro — a tela
 // mostra o toast e cai no texto por modelo (gerarJustificativaModelo).
+//
+// Modo "conclusao" (04/11/2026): `{ modo: "conclusao", conclusao: {...} }`
+// gera o "Resumo e observações" do modal de conclusão (até 1000 caracteres),
+// a partir das PRs da tabela e das horas realizadas. Sem `modo`, segue igual.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  limparResposta, montarPrompt, normalizarChamados, SYSTEM_PROMPT,
+  LIMITE_JUSTIFICATIVA, LIMITE_RESUMO_CONCLUSAO, limparResposta, montarPrompt, montarPromptConclusao,
+  normalizarChamados, normalizarConclusao, SYSTEM_PROMPT, SYSTEM_PROMPT_CONCLUSAO,
 } from "../_shared/hora-extra-justificativa.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -124,20 +129,33 @@ Deno.serve(async (req) => {
     if (!pode) return respostaJson({ error: "Você não tem acesso para solicitar hora extra." }, 403);
 
     const corpo = await req.json().catch(() => ({}));
-    const chamados = normalizarChamados(corpo?.chamados);
-    if (!chamados.length) return respostaJson({ error: "Adicione ao menos um chamado antes de gerar a mensagem." }, 400);
+    // modo "conclusao" (04/11/2026): resumo do que FOI feito, no modal de
+    // conclusão. A resposta devolve o `modo` para a tela saber que a Edge já
+    // conhece a conclusão — uma versão antiga ignoraria o campo e escreveria
+    // uma justificativa de solicitação no lugar do resumo.
+    const conclusao = corpo?.modo === "conclusao";
+    let prompt: string;
+    if (conclusao) {
+      const dados = normalizarConclusao(corpo?.conclusao);
+      if (!dados.chamados.length) return respostaJson({ error: "Informe ao menos uma PR antes de gerar o resumo." }, 400);
+      prompt = montarPromptConclusao(dados);
+    } else {
+      const chamados = normalizarChamados(corpo?.chamados);
+      if (!chamados.length) return respostaJson({ error: "Adicione ao menos um chamado antes de gerar a mensagem." }, 400);
+      prompt = montarPrompt(chamados);
+    }
 
     const provs = provedores();
     if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
     const res = await chamarIA(provs, [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: montarPrompt(chamados) },
+      { role: "system", content: conclusao ? SYSTEM_PROMPT_CONCLUSAO : SYSTEM_PROMPT },
+      { role: "user", content: prompt },
     ]);
     if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
-    const texto = limparResposta(res.texto);
+    const texto = limparResposta(res.texto, conclusao ? LIMITE_RESUMO_CONCLUSAO : LIMITE_JUSTIFICATIVA);
     if (!texto) return respostaJson({ error: "A IA devolveu resposta vazia. Tente de novo." }, 502);
-    return respostaJson({ texto });
+    return respostaJson({ texto, modo: conclusao ? "conclusao" : "solicitacao" });
   } catch (e) {
     console.error(e);
     return respostaJson({ error: e instanceof Error ? e.message : "Não foi possível gerar a mensagem agora." }, 500);
