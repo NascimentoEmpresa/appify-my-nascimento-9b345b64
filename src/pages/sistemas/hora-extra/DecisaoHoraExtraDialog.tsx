@@ -19,12 +19,14 @@ import {
   JORNADA_PADRAO_MIN,
   jornadaParaCalculoHoraExtra,
   mensagemErro,
+  minutosHeEfetivos,
   podeAlterarHorariosNaLiberacao,
   somenteHora,
 } from "./horaExtraUtils";
 import { BadgeStatus, ListaAnexos } from "./HoraExtraUI";
 import { linhaSemChamado } from "./prHoraExtraUtils";
 import type { SolicitacaoHoraExtra } from "./types";
+import { useConfirmacaoLimite } from "./useConfirmacaoLimite";
 
 export default function DecisaoHoraExtraDialog({
   aberto,
@@ -39,6 +41,7 @@ export default function DecisaoHoraExtraDialog({
   const liberarComHorarios = useLiberarHoraExtraComHorarios();
   const validar = useValidarHoraExtra();
   const validarComHorarios = useValidarHoraExtraComHorarios();
+  const { conferirLimite, dialogoLimite } = useConfirmacaoLimite();
   const { data: podeAlterar = false } = useScreenAccess("sistemas_hora_extra", "alterar");
   const [rejeitando, setRejeitando] = useState(false);
   const [motivo, setMotivo] = useState("");
@@ -79,6 +82,16 @@ export default function DecisaoHoraExtraDialog({
       toast.error(`Os horários ${conclusao ? "efetivos" : "ajustados"} não geram hora extra para a jornada da escala.`);
       return;
     }
+    // Rejeitar ou devolver não confirma hora nenhuma: só a aprovação pergunta.
+    if (aprovar) {
+      const seguir = await conferirLimite({
+        colaboradorId: dados.colaborador_id,
+        data: dados.data_he,
+        minutos: podeEditarHorarios && horariosAlterados ? calculo.excedente : minutosHeEfetivos(dados),
+        ignorarId: dados.id,
+      });
+      if (!seguir) return;
+    }
     try {
       if (conclusao && aprovar && podeEditarHorarios && horariosAlterados) await validarComHorarios.mutateAsync({ p_id: dados.id, p_horarios: horarios });
       else if (conclusao) await validar.mutateAsync({ p_id: dados.id, p_aprovar: aprovar, p_motivo: motivo || null });
@@ -108,6 +121,7 @@ export default function DecisaoHoraExtraDialog({
     );
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
+      {dialogoLimite}
       <DialogContent className="max-h-[94vh] w-[calc(100vw-2rem)] max-w-4xl overflow-x-hidden overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl text-[#07194b]">Detalhes da Solicitação de HE</DialogTitle>

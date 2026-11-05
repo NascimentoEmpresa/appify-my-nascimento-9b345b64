@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Download,
   FileText,
@@ -23,9 +25,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/hooks/useAuth";
-import { useExcluirHoraExtra, useSolicitacoesHoraExtra, useStatsHoraExtra } from "@/hooks/useHoraExtra";
+import { useExcluirHoraExtra, usePontoMesHoraExtra, useSolicitacoesHoraExtra, useStatsHoraExtra } from "@/hooks/useHoraExtra";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import {
+  LIMITE_HE_MES_MIN,
+  deslocarMes,
+  mesDeHoje,
+  periodoDoMes,
+  resumirMesHoraExtra,
+  rotuloMesHoraExtra,
+} from "@/lib/horaExtraLimite";
 import { cn } from "@/lib/utils";
 import {
   conclusaoExibicao,
@@ -48,15 +59,7 @@ import EscalasHoraExtraDialog from "./EscalasHoraExtraDialog";
 import NovaSolicitacaoDialog from "./NovaSolicitacaoDialog";
 import type { SolicitacaoHoraExtra, StatusHoraExtra } from "./types";
 
-function inicioMes() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-}
-function fimMes() {
-  const d = new Date();
-  return dataLocalISO(new Date(d.getFullYear(), d.getMonth() + 1, 0));
-}
-type Aba = "todas" | "minhas" | "aguardando" | "pendentes" | "concluidas";
+type Aba = "minhas" | "aguardando" | "pendentes" | "concluidas";
 
 export default function SolicitacoesHoraExtra() {
   const { user } = useAuth();
@@ -64,18 +67,22 @@ export default function SolicitacoesHoraExtra() {
   const { data: podeIncluir = false } = useScreenAccess("sistemas_hora_extra", "incluir");
   const { data: podeAlterar = false } = useScreenAccess("sistemas_hora_extra", "alterar");
   const { data: podeExcluir = false } = useScreenAccess("sistemas_hora_extra", "excluir");
-  const [inicio, setInicio] = useState(inicioMes);
-  const [fim, setFim] = useState(fimMes);
-  const { data: lista = [], isLoading } = useSolicitacoesHoraExtra(inicio, fim);
+  // Criar HE para outra pessoa segue a mesma chave de enxergar a HE dela
+  // (hora_extra_ve_de_outros, mig 20261104010000): 'aprovar' vem no toggle da
+  // tela, então sozinho não diz que a pessoa é quem aprova.
+  const { data: podeLiberacao = false } = useScreenAccess("sistemas_hora_extra_liberacao", "visualizar");
+  const [mes, setMes] = useState(() => mesDeHoje());
+  const { inicio, fim } = periodoDoMes(mes);
+  // Esta tela é só das próprias HEs (Pablo, 04/11/2026), mesmo para quem aprova.
+  const { data: lista = [], isLoading } = useSolicitacoesHoraExtra(inicio, fim, user?.id ?? null);
   const { data: stats } = useStatsHoraExtra(inicio, fim);
   const excluir = useExcluirHoraExtra();
   const [empresa, setEmpresa] = useState("todos"),
     [setor, setSetor] = useState("todos"),
-    [colaborador, setColaborador] = useState("todos"),
     [status, setStatus] = useState("todos"),
     [tipo, setTipo] = useState("todos"),
     [busca, setBusca] = useState("");
-  const [aba, setAba] = useState<Aba>(podeAprovar ? "todas" : "minhas");
+  const [aba, setAba] = useState<Aba>("minhas");
   const [pagina, setPagina] = useState(1),
     [porPagina, setPorPagina] = useState(10);
   const [escalas, setEscalas] = useState(false);
@@ -83,9 +90,6 @@ export default function SolicitacoesHoraExtra() {
     [editar, setEditar] = useState<SolicitacaoHoraExtra | null>(null),
     [detalhes, setDetalhes] = useState<SolicitacaoHoraExtra | null>(null),
     [concluir, setConcluir] = useState<SolicitacaoHoraExtra | null>(null);
-  useEffect(() => {
-    if (podeAprovar) setAba("todas");
-  }, [podeAprovar]);
   const hoje = useMemo(() => {
     const data = new Date();
     data.setHours(0, 0, 0, 0);
@@ -99,8 +103,7 @@ export default function SolicitacoesHoraExtra() {
         const exibido = statusExibicao(s.status, s.data_he).label;
         const termo = `${s.numero} ${s.colaborador_nome} ${s.setor ?? ""}`.toLowerCase();
         const porAba =
-          aba === "todas" ||
-          (aba === "minhas" && s.colaborador_id === user?.id) ||
+          aba === "minhas" ||
           (aba === "aguardando" && s.status === "aguardando_liberacao") ||
           (aba === "pendentes" && s.status === "aprovada" && new Date(`${s.data_he}T12:00:00`) < hoje) ||
           (aba === "concluidas" && s.status === "concluida");
@@ -108,13 +111,12 @@ export default function SolicitacoesHoraExtra() {
           porAba &&
           (empresa === "todos" || s.empresa === empresa) &&
           (setor === "todos" || s.setor === setor) &&
-          (colaborador === "todos" || s.colaborador_id === colaborador) &&
           (status === "todos" || exibido === status) &&
           (tipo === "todos" || s.tipo === tipo) &&
           termo.includes(busca.toLowerCase())
         );
       }),
-    [lista, aba, user?.id, empresa, setor, colaborador, status, tipo, busca, hoje],
+    [lista, aba, empresa, setor, status, tipo, busca, hoje],
   );
   const paginaItens = filtrada.slice((pagina - 1) * porPagina, pagina * porPagina);
   const pct = (n = 0) =>
@@ -122,12 +124,10 @@ export default function SolicitacoesHoraExtra() {
   const limpar = () => {
     setEmpresa("todos");
     setSetor("todos");
-    setColaborador("todos");
     setStatus("todos");
     setTipo("todos");
     setBusca("");
-    setInicio(inicioMes());
-    setFim(fimMes());
+    setMes(mesDeHoje());
     setPagina(1);
   };
   const apagar = async (s: SolicitacaoHoraExtra) => {
@@ -156,7 +156,7 @@ export default function SolicitacoesHoraExtra() {
         <div>
           <h1 className="text-2xl font-extrabold">Solicitações de Hora Extra</h1>
           <p className="text-sm text-slate-500">
-            Acompanhe, solicite e conclua horas extras da sua equipe, com total controle e transparência.
+            Acompanhe, solicite e conclua as suas horas extras, mês a mês.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -173,6 +173,7 @@ export default function SolicitacoesHoraExtra() {
           )}
         </div>
       </div>
+      <CartaoLimiteMes mes={mes} colaboradorId={user?.id} />
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <CartaoMetrica
           icone={<FileText />}
@@ -213,17 +214,16 @@ export default function SolicitacoesHoraExtra() {
         />
       </div>
       <Filtros
-        inicio={inicio}
-        fim={fim}
-        setInicio={setInicio}
-        setFim={setFim}
+        mes={mes}
+        setMes={(novo) => {
+          setMes(novo);
+          setPagina(1);
+        }}
         lista={lista}
         empresa={empresa}
         setEmpresa={setEmpresa}
         setor={setor}
         setSetor={setSetor}
-        colaborador={colaborador}
-        setColaborador={setColaborador}
         status={status}
         setStatus={setStatus}
         tipo={tipo}
@@ -231,7 +231,6 @@ export default function SolicitacoesHoraExtra() {
         busca={busca}
         setBusca={setBusca}
         limpar={limpar}
-        podeAprovar={podeAprovar}
       />
       <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_255px]">
         <div className="overflow-hidden rounded-lg border bg-white">
@@ -239,8 +238,7 @@ export default function SolicitacoesHoraExtra() {
             <div className="flex overflow-x-auto">
               {(
                 [
-                  ...(podeAprovar ? [["todas", "Todas", lista.length]] : []),
-                  ["minhas", "Minhas solicitações", conta((s) => s.colaborador_id === user?.id)],
+                  ["minhas", "Minhas solicitações", lista.length],
                   ["aguardando", "Aguardando aprovação", conta((s) => s.status === "aguardando_liberacao")],
                   [
                     "pendentes",
@@ -507,7 +505,7 @@ export default function SolicitacoesHoraExtra() {
           setNovo(false);
           setEditar(null);
         }}
-        podeAprovar={podeAprovar}
+        podeAprovar={podeAprovar && podeLiberacao}
         solicitacao={editar}
       />
       <DetalhesHoraExtraDialog aberto={!!detalhes} aoFechar={() => setDetalhes(null)} solicitacao={detalhes} />
@@ -517,18 +515,71 @@ export default function SolicitacoesHoraExtra() {
   );
 }
 
+/** O total do mês e o aviso de 48h. A conta é a da Gestão de Ponto (horaExtraLimite.ts). */
+function CartaoLimiteMes({ mes, colaboradorId }: { mes: string; colaboradorId?: string }) {
+  const { data, isLoading, isError } = usePontoMesHoraExtra(mes, colaboradorId);
+  const resumo = data ? resumirMesHoraExtra(data) : null;
+  const limite = `${LIMITE_HE_MES_MIN / 60}h`;
+  return (
+    <section
+      className={cn(
+        "mb-4 rounded-lg border bg-white p-4 text-sm",
+        resumo?.passouLimite && "border-red-300 bg-red-50",
+      )}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-bold">
+          <Clock3 className="mr-2 inline h-4 w-4" />
+          Horas extras em {rotuloMesHoraExtra(mes)}
+        </h3>
+        {resumo && (
+          <strong className={cn("text-lg", resumo.passouLimite && "text-red-700")}>
+            {formatarDuracao(resumo.total, true)} de {limite}
+          </strong>
+        )}
+      </div>
+      {isLoading && <p className="mt-2 text-xs text-slate-500">Lendo o ponto da Senior...</p>}
+      {isError && (
+        <p className="mt-2 text-xs text-red-700">Não foi possível ler o total do mês. Tente abrir a tela de novo.</p>
+      )}
+      {resumo && (
+        <>
+          <Progress value={Math.min(100, (resumo.total / LIMITE_HE_MES_MIN) * 100)} className="mt-2 h-2" />
+          <p className="mt-2 text-xs text-slate-600">
+            Ponto da Senior, com feriados: <strong>{formatarDuracao(resumo.minutosPonto, true)}</strong>
+            {resumo.minutosForaDoPonto > 0 && (
+              <>
+                {" "}
+                · Solicitadas e ainda fora do ponto: <strong>{formatarDuracao(resumo.minutosForaDoPonto, true)}</strong>
+              </>
+            )}
+          </p>
+          {!resumo.pontoDisponivel && (
+            <p className="mt-1 text-xs font-medium text-amber-700">
+              {data?.motivo === "sem_vinculo"
+                ? "Seu usuário não está vinculado a um colaborador da Senior: o total considera só as HEs solicitadas aqui."
+                : "O ponto da Senior não está disponível agora: o total considera só as HEs solicitadas aqui."}
+            </p>
+          )}
+          {resumo.passouLimite && (
+            <p className="mt-2 font-semibold text-red-700">
+              Você passou do limite de {limite} de horas extras neste mês ({formatarDuracao(resumo.excedente, true)} a mais).
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function Filtros(p: {
-  inicio: string;
-  fim: string;
-  setInicio: (v: string) => void;
-  setFim: (v: string) => void;
+  mes: string;
+  setMes: (v: string) => void;
   lista: SolicitacaoHoraExtra[];
   empresa: string;
   setEmpresa: (v: string) => void;
   setor: string;
   setSetor: (v: string) => void;
-  colaborador: string;
-  setColaborador: (v: string) => void;
   status: string;
   setStatus: (v: string) => void;
   tipo: string;
@@ -536,31 +587,45 @@ function Filtros(p: {
   busca: string;
   setBusca: (v: string) => void;
   limpar: () => void;
-  /** Quem não aprova só enxerga as próprias HEs (RLS): o filtro de colaborador não serve. */
-  podeAprovar: boolean;
 }) {
   const unicos = (xs: (string | null | undefined)[]) => Array.from(new Set(xs.filter(Boolean) as string[])).sort();
   return (
     <div className="rounded-lg border bg-white p-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_.8fr_.8fr_.9fr_.85fr_.8fr_1.45fr_auto_auto]">
-        <label className="text-xs text-slate-600">
-          Período
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.3fr_.8fr_.8fr_.85fr_.8fr_1.45fr_auto_auto]">
+        <div className="text-xs text-slate-600">
+          <label htmlFor="hora-extra-mes">Mês</label>
           <div className="mt-1 flex items-center gap-1">
-            <Input type="date" value={p.inicio} onChange={(e) => p.setInicio(e.target.value)} />
-            <span>→</span>
-            <Input type="date" value={p.fim} onChange={(e) => p.setFim(e.target.value)} />
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="shrink-0"
+              aria-label="Mês anterior"
+              onClick={() => p.setMes(deslocarMes(p.mes, -1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Input
+              id="hora-extra-mes"
+              type="month"
+              value={p.mes}
+              onChange={(e) => e.target.value && p.setMes(e.target.value)}
+              className="min-w-0"
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="shrink-0"
+              aria-label="Próximo mês"
+              onClick={() => p.setMes(deslocarMes(p.mes, 1))}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
-        </label>
+        </div>
         <Filtro label="Empresa" value={p.empresa} set={p.setEmpresa} opcoes={unicos(p.lista.map((x) => x.empresa))} />
         <Filtro label="Setor" value={p.setor} set={p.setSetor} opcoes={unicos(p.lista.map((x) => x.setor))} />
-        {p.podeAprovar && (
-          <Filtro
-            label="Colaborador"
-            value={p.colaborador}
-            set={p.setColaborador}
-            opcoes={Array.from(new Map(p.lista.map((x) => [x.colaborador_id, x.colaborador_nome])).entries())}
-          />
-        )}
         <Filtro
           label="Status"
           value={p.status}

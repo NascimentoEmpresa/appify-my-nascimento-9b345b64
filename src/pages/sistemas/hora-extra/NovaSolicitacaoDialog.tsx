@@ -17,8 +17,10 @@ import {
   useColaboradoresHoraExtra,
   useEnviarAnexosHoraExtra,
   useEscalasHoraExtra,
+  usePontoMesHoraExtra,
   useSalvarHoraExtra,
 } from "@/hooks/useHoraExtra";
+import { mesDaData, resumirMesHoraExtra } from "@/lib/horaExtraLimite";
 import { cn } from "@/lib/utils";
 import {
   calcularHoraExtra,
@@ -39,6 +41,7 @@ import { BotaoGerarMensagem, Campo, DropzoneAnexos, SecaoForm, TotalHoras } from
 import { pedirMensagemHoraExtra } from "./gerarMensagemHoraExtra";
 import { ASSUNTO_EMERGENCIAL_SEM_CHAMADO, linhaSemChamado, NUMERO_SEM_CHAMADO } from "./prHoraExtraUtils";
 import SeletorChamadoDialog from "./SeletorChamadoDialog";
+import { useConfirmacaoLimite } from "./useConfirmacaoLimite";
 import type { ChamadoDisponivel, PrioridadeHoraExtra, SolicitacaoHoraExtra, TipoHoraExtra } from "./types";
 import { CLASSE_PRIORIDADE, LABEL_PRIORIDADE } from "./types";
 
@@ -80,6 +83,7 @@ export default function NovaSolicitacaoDialog({
   const { data: colaboradoresRpc = [] } = useColaboradoresHoraExtra();
   const { data: escalas = [] } = useEscalasHoraExtra();
   const salvar = useSalvarHoraExtra();
+  const { conferirLimite, dialogoLimite } = useConfirmacaoLimite();
   const colaboradores = useMemo(() => {
     if (!user || colaboradoresRpc.some((c) => c.id === user.id)) return colaboradoresRpc;
     return [
@@ -213,6 +217,16 @@ export default function NovaSolicitacaoDialog({
     jornadaCalculo,
   );
   const minutos = calculo.excedente;
+  const { data: pontoMes } = usePontoMesHoraExtra(
+    aberto && form.data_he ? mesDaData(form.data_he) : null,
+    form.colaborador_id,
+  );
+  const resumoMes = pontoMes
+    ? resumirMesHoraExtra(pontoMes, {
+        ignorarId: solicitacao?.id,
+        novaHe: { data: form.data_he, minutos },
+      })
+    : null;
   const media = mediaConclusao(chamados.map((c) => c.percentual_previsto));
   const semChamado = chamados.some((c) => c.sem_chamado);
   const gerencial = podeAprovar && !!user && form.colaborador_id !== user.id && !solicitacao;
@@ -282,6 +296,13 @@ export default function NovaSolicitacaoDialog({
       erros.forEach((e) => toast.error(e));
       return;
     }
+    const seguir = await conferirLimite({
+      colaboradorId: form.colaborador_id,
+      data: form.data_he,
+      minutos,
+      ignorarId: solicitacao?.id,
+    });
+    if (!seguir) return;
     try {
       const id = (await salvar.mutateAsync({
         p: {
@@ -694,6 +715,15 @@ export default function NovaSolicitacaoDialog({
                   />
                   <Resumo rotulo="Total trabalhado" valor={formatarDuracao(calculo.trabalhado)} />
                   <Resumo rotulo="Total de hora extra" valor={formatarDuracao(minutos)} />
+                  {resumoMes && (
+                    <div>
+                      <dt className="text-slate-500">Total do mês com esta HE</dt>
+                      <dd className={cn("font-semibold text-[#07194b]", resumoMes.passouLimite && "text-red-700")}>
+                        {formatarDuracao(resumoMes.total)} de 48h
+                        {resumoMes.passouLimite && " — acima do limite"}
+                      </dd>
+                    </div>
+                  )}
                   <Resumo
                     rotulo="Chamados"
                     valor={semChamado ? "Emergencial, sem chamado" : `${chamados.length} ${chamados.length === 1 ? "chamado" : "chamados"}`}
@@ -750,6 +780,7 @@ export default function NovaSolicitacaoDialog({
           </div>
         </DialogContent>
       </Dialog>
+      {dialogoLimite}
       <SeletorChamadoDialog
         aberto={seletor}
         aoFechar={() => setSeletor(false)}
