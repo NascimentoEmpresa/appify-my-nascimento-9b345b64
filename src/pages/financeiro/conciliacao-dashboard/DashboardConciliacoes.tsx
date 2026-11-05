@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowDown, ArrowUp, CheckCircle2, ClipboardList, Clock, Info, Landmark, Pencil, PieChart, Scale } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, ClipboardList, Clock, Info, Landmark, Pencil, PieChart, Scale, Trash2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -16,6 +16,7 @@ import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes, useSalvarS
 import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, totaisDoExtrato, totaisFluxoDosBancosConciliados, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
 import { useContasBanco, useContasDosLancamentos } from "@/hooks/useContasBanco";
 import { comContaBanco, rotuloConta } from "@/lib/contaBanco";
@@ -24,6 +25,7 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import {
   useConciliacoesFluxoCaixaSalvas,
   useDivergenciasTratadas,
+  useExcluirConciliacaoFluxoCaixa,
   useSaldosIniciaisConciliacao,
   useSalvarSaldoInicialConciliacao,
 } from "@/hooks/useConciliacaoFluxoCaixa";
@@ -101,6 +103,22 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   // saldo final do extrato digitado à mão numa linha (chave = empresa|banco|mês)
   const [editSaldo, setEditSaldo] = useState<{ chave: string; texto: string } | null>(null);
   const salvarSaldoManual = useSalvarSaldoFinalManual();
+  // Excluir a conciliação de uma competência para refazê-la (exige 'excluir' em Conciliação Bancária; fica registrado com o motivo).
+  const excluirConciliacao = useExcluirConciliacaoFluxoCaixa();
+  const [excluindo, setExcluindo] = useState<{ id: string; rotulo: string } | null>(null);
+  const [motivoExclusao, setMotivoExclusao] = useState("");
+  async function confirmarExclusao() {
+    if (!excluindo) return;
+    if (motivoExclusao.trim().length < 5) { toast.error("Informe o motivo da exclusão."); return; }
+    try {
+      await excluirConciliacao.mutateAsync({ id: excluindo.id, motivo: motivoExclusao.trim() });
+      toast.success("Conciliação excluída. A competência pode ser conciliada de novo.");
+      setExcluindo(null);
+      setMotivoExclusao("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível excluir a conciliação.");
+    }
+  }
 
   const empresaNome = (id: string) => empresas.find((e) => e.id === id)?.nome ?? "—";
   const bancoNome = (id: string | null) => (id ? bancos.find((b) => b.id === id)?.nome ?? "—" : "—");
@@ -783,6 +801,19 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                           <Button size="sm" variant="ghost" disabled={!s.conciliacaoId} title={s.conciliacaoId ? undefined : "Sem conciliação salva neste mês"} onClick={() => s.conciliacaoId && onVerDetalhes(s.conciliacaoId)}>
                             Ver detalhes
                           </Button>
+                          {s.conciliacaoId && (
+                            <AcessoGate menu="conciliacao-fluxo-caixa" acao="excluir">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive"
+                                title="Excluir esta conciliação para refazê-la"
+                                onClick={() => { setMotivoExclusao(""); setExcluindo({ id: s.conciliacaoId!, rotulo: `${empresaNome(s.empresaId)} · ${bancoNome(s.bancoId)}${s.conta ? ` · ${s.conta}` : ""} · ${mesParaBR(s.mes)}` }); }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AcessoGate>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -795,6 +826,28 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
       </div>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={!!excluindo} onOpenChange={(o) => { if (!o) setExcluindo(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir a conciliação de {excluindo?.rotulo}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A conciliação salva desta competência (e as repetições dela) sai do Dashboard, e o mês volta a ficar pendente para ser conciliado de novo.
+              Os ajustes e lançamentos que ela fez no Fluxo de Caixa continuam valendo, e os arquivos .OFX ficam guardados. A exclusão fica registrada com seu nome e o motivo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div>
+            <Label className="text-xs">Motivo da exclusão *</Label>
+            <Input value={motivoExclusao} onChange={(e) => setMotivoExclusao(e.target.value)} placeholder="Ex.: extrato errado; conciliar de novo com o OFX correto." />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button variant="destructive" disabled={excluirConciliacao.isPending || motivoExclusao.trim().length < 5} onClick={() => void confirmarExclusao()}>
+              {excluirConciliacao.isPending ? "Excluindo…" : "Excluir conciliação"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
