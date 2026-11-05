@@ -22,6 +22,11 @@ import {
 } from "@/lib/organograma/pessoas";
 import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound, Copy, AlertTriangle, Upload, Trash2, Link2, Link2Off, Loader2, IdCard } from "lucide-react";
 
+// O types.ts gerado está atrasado: não conhece setor_catalogo, user_setor nem
+// profiles.telefone/bio. Um ponto só sem tipos, em vez de um cast por chamada.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sbSemTipos = supabase as any;
+
 // Situações de desligamento (mesma regra das RPCs de vínculo): nunca vincula
 // nem aparece na busca.
 
@@ -42,12 +47,12 @@ function useSetoresDisponiveis() {
   const q = useQuery({
     queryKey: ["setores_catalogo"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await sbSemTipos
         .from("setor_catalogo")
         .select("nome")
         .order("nome");
       if (error) throw error;
-      return (data ?? []).map((r: any) => r.nome as string);
+      return ((data ?? []) as { nome: string }[]).map((r) => r.nome);
     },
   });
   return q.data ?? [];
@@ -81,7 +86,7 @@ export function UsuariosReal() {
         .select("id,email,display_name,empresa_id,avatar_url,telefone,cargo")
         .order("display_name");
       if (error) throw error;
-      return (data ?? []) as ProfileRow[];
+      return (data ?? []) as unknown as ProfileRow[];
     },
   });
 
@@ -97,9 +102,9 @@ export function UsuariosReal() {
   const setoresQ = useQuery({
     queryKey: ["all-user-setores"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("user_setor").select("user_id,setor");
+      const { data, error } = await sbSemTipos.from("user_setor").select("user_id,setor");
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as { user_id: string; setor: string }[];
     },
   });
 
@@ -322,7 +327,7 @@ function EditarUsuarioDialog({
     if (!open) return;
     let cancel = false;
     (async () => {
-      const { data: prof } = await (supabase as any)
+      const { data: prof } = await sbSemTipos
         .from("profiles")
         .select("acessa_todas_empresas, bio")
         .eq("id", profile.id)
@@ -334,8 +339,8 @@ function EditarUsuarioDialog({
       // Quem não pode mexer no organograma só não vê o bloco.
       const pos = await carregarPosicao({ user: profile.id }).catch(() => null);
       if (cancel) return;
-      setAcessaTodas(!!(prof as any)?.acessa_todas_empresas);
-      setOQueFaz((prof as any)?.bio ?? "");
+      setAcessaTodas(!!prof?.acessa_todas_empresas);
+      setOQueFaz(prof?.bio ?? "");
       setEmpresasAtua(new Set((vinc ?? []).map((v: any) => v.empresa_id)));
       setPosicao(pos);
       setPosicaoBase(JSON.stringify(pos));
@@ -391,13 +396,13 @@ function EditarUsuarioDialog({
       const toRemove = currentSetores.filter((s) => !selectedSetores.includes(s));
 
       if (toRemove.length > 0) {
-        const { error: dErr } = await supabase
+        const { error: dErr } = await sbSemTipos
           .from("user_setor").delete()
           .eq("user_id", profile.id).in("setor", toRemove);
         if (dErr) throw dErr;
       }
       if (toAdd.length > 0) {
-        const { error: iErr } = await supabase
+        const { error: iErr } = await sbSemTipos
           .from("user_setor")
           .insert(toAdd.map((s) => ({ user_id: profile.id, setor: s })));
         if (iErr) throw iErr;
@@ -820,8 +825,8 @@ function NovoUsuarioDialog({
     if (p.setor && setoresCatalogo.includes(p.setor)) setSelectedSetores((s) => (s.includes(p.setor!) ? s : [...s, p.setor!]));
     try {
       setPosicao(await carregarPosicao({ empregado: p.empregado_id }));
-    } catch (e: any) {
-      toast({ title: "Não foi possível ler a posição", description: e.message, variant: "destructive" });
+    } catch (e) {
+      toast({ title: "Não foi possível ler a posição", description: (e as Error).message, variant: "destructive" });
     }
   };
 
@@ -906,7 +911,7 @@ function NovoUsuarioDialog({
       // (user_setor referencia auth.users, não dá pra gravar antes de criar).
       const newUserId = (data as any)?.user_id as string | undefined;
       if (newUserId && selectedSetores.length > 0) {
-        const { error: setorErr } = await supabase
+        const { error: setorErr } = await sbSemTipos
           .from("user_setor")
           .insert(selectedSetores.map((s) => ({ user_id: newUserId, setor: s })));
         if (setorErr) {
