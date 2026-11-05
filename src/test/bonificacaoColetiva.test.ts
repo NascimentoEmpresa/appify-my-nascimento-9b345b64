@@ -5,6 +5,7 @@ import {
   configDoPeriodo,
   distribuirPorPeso,
   pesosPadrao,
+  redistribuirPesos,
   completarComEquipe,
   percentil,
   referenciaDoPeriodo,
@@ -301,6 +302,24 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     const d = distribuirPorPeso(1000, [dev("p", 90, "Pablo"), { ...devs[0], entregas: [] }]);
     expect(d.linhas.map((l) => [l.peso, l.valor])).toEqual([[100, 1000], [0, 0]]);
     expect(d.pesosPadrao).toBe(true);
+  });
+  it("editar um peso redistribui entre os outros com peso, na proporção, e fecha em 100", () => {
+    const base = { e: 22.22, i: 22.22, j: 22.22, p: 22.22, o: 11.11, t: 0 };
+    const r = redistribuirPesos(base, "o", 5);
+    expect(r.o).toBe(5);
+    expect(r.t).toBe(0); // sem entrega continua em 0
+    expect(Math.round(Object.values(r).reduce((a, b) => a + b, 0) * 100)).toBe(10000);
+    for (const id of ["e", "i", "j", "p"]) expect(Math.abs(r[id] - 23.75)).toBeLessThanOrEqual(0.01);
+    // aumentar: os outros diminuem na mesma proporção
+    const r2 = redistribuirPesos({ a: 50, b: 30, c: 20 }, "a", 60);
+    expect(r2).toEqual({ a: 60, b: 24, c: 16 });
+    // nada sem destino depois da edição
+    const d = distribuirPorPeso(1000, [dev("a", 90), dev("b", 80), dev("c", 70)], r2);
+    expect(d.saldo).toBe(0);
+    // ninguém mais com peso: o editado fica com 100
+    expect(redistribuirPesos({ a: 100, b: 0 }, "a", 40)).toEqual({ a: 100, b: 0 });
+    // acima de 100 vira 100 e os outros 0
+    expect(redistribuirPesos({ a: 50, b: 50 }, "a", 150)).toEqual({ a: 100, b: 0 });
   });
   it("ninguém com nota: nada distribuído", () => {
     const d = distribuirPorPeso(1000, [dev("a", null)], {}, "nota");

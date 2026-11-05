@@ -364,6 +364,35 @@ export function pesosPadrao(devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota
 }
 
 /**
+ * Editar o peso de UM dev redistribui a diferença entre os OUTROS que já têm
+ * peso > 0, na proporção do peso de cada um — a soma fica sempre em 100%
+ * (Pablo, 05/11: "quando diminuir a porcentagem de um tem que aumentar pros
+ * outros que já tem alguma porcentagem"; antes Otavio a 5% deixava 93,9% e
+ * R$ 270,59 sem destino). Quem está com 0% (sem entrega) continua em 0.
+ * Se ninguém mais tem peso, o editado fica com 100% (não há para quem
+ * repassar). Arredonda a 2 casas e joga o resíduo no maior dos outros.
+ * `base` deve ser o retrato dos pesos ANTES da edição (tela tira no foco),
+ * para a proporção entre os outros não se perder digitando "1" → "10" → "100".
+ */
+export function redistribuirPesos(base: Record<string, number>, devId: string, novo: number): Record<string, number> {
+  const out: Record<string, number> = { ...base };
+  const outros = Object.keys(base).filter((id) => id !== devId && finito(base[id]) && base[id] > 0);
+  const soma = outros.reduce((a, id) => a + base[id], 0);
+  if (!outros.length || soma <= 0) {
+    out[devId] = 100;
+    return out;
+  }
+  const v = Math.round(limitar(finito(novo) ? novo : 0) * 100) / 100;
+  out[devId] = v;
+  const resto = Math.round((100 - v) * 100); // em centésimos de %
+  let usado = 0;
+  outros.forEach((id) => { out[id] = Math.floor((base[id] * resto) / soma) / 100; usado += Math.round(out[id] * 100); });
+  const maior = outros.reduce((a, id) => (base[id] > base[a] ? id : a), outros[0]);
+  out[maior] = Math.round(out[maior] * 100 + (resto - usado)) / 100;
+  return out;
+}
+
+/**
  * Como o liberado é dividido (Pablo, 05/11/2026):
  *  - "peso" (PADRÃO): cada um leva liberado × peso ÷ 100 — Eduardo, Iury,
  *    João e Pablo recebem IGUAL; a nota individual não mexe no valor.

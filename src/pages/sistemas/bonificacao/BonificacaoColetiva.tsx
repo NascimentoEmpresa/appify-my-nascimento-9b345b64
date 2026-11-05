@@ -18,7 +18,7 @@
 // de desenvolvedor só muda o que se VÊ — nota coletiva e rateio usam sempre
 // todas as entregas do mês.
 // =====================================================================
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle, BarChart3, ChevronDown, ClipboardList, Download, ExternalLink, Lock, Printer, RefreshCw,
@@ -41,7 +41,7 @@ import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, u
 import { completarComEquipe, type ModoDivisao } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
-  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
+  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, redistribuirPesos, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
   mediasDosCriterios, noPrazo, notaDaEntrega, notaDoGrupo, notasDaEntrega, pendenciasDaEntrega, pontosPerdidos,
   ratearBonificacao, referenciaDoPeriodo, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
   type ConfigBonificacao, type Criterio, type EntregaDetalhada, type NotasCriterios, type Rateio, type ResumoDev,
@@ -664,11 +664,17 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, tot
  * Pesos editáveis só na tela (simulação, não gravam); "Pesos padrão" volta a
  * Eduardo/Iury/João/Pablo iguais e os demais com metade (pesosPadrao).
  * A régua dos pesos é o MÊS inteiro: filtrar um dev não muda o peso dele.
+ * Editar um peso redistribui a diferença entre os outros com peso > 0, na
+ * proporção (redistribuirPesos) — a soma fica em 100% (Pablo, 05/11).
  */
 function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: ResumoDev[]; visiveis: ResumoDev[] }) {
   const [pesos, setPesos] = useState<Record<string, number>>({});
   const [modo, setModo] = useState<ModoDivisao>("peso");
   const d = useMemo(() => distribuirPorPeso(base, devs, pesos, modo), [base, devs, pesos, modo]);
+  // Retrato dos pesos no foco do campo: a proporção entre os outros sai dele,
+  // não do valor a cada tecla (digitar "100" no caminho zeraria os outros).
+  const retrato = useRef<Record<string, number> | null>(null);
+  const pesosAtuais = () => Object.fromEntries(d.linhas.map((l) => [l.devId, l.peso]));
   const ids = new Set(visiveis.map((v) => v.devId));
   const linhas = d.linhas.filter((l) => ids.has(l.devId));
   const totalOk = Math.abs(d.pesoTotal - 100) < 0.05;
@@ -676,7 +682,7 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido entre os desenvolvedores. Pela porcentagem (padrão): cada um leva liberado × peso — Eduardo, Iury, João e Pablo recebem igual. Pela nota: a parte é proporcional a peso × nota individual. Peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade; sem entrega no mês, 0%. Os pesos aqui são simulação e não são gravados.">
+          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido entre os desenvolvedores. Pela porcentagem (padrão): cada um leva liberado × peso — Eduardo, Iury, João e Pablo recebem igual. Pela nota: a parte é proporcional a peso × nota individual. Peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade; sem entrega no mês, 0%. Ao mudar o peso de um, a diferença é repartida entre os outros que têm peso, na proporção de cada um — a soma fica em 100%. Os pesos aqui são simulação e não são gravados.">
             Desempenho por desenvolvedor — com peso no valor
           </Titulo>
           <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor liberado à equipe é dividido {modo === "peso" ? "pela porcentagem de cada um" : "por porcentagem × nota"}.</p>
@@ -707,9 +713,11 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
               <div className="relative">
                 <Input type="number" min={0} max={100} step={1} className="w-24 pr-6 text-center font-semibold tabular-nums"
                   value={String(l.peso)}
+                  onFocus={() => { retrato.current = pesosAtuais(); }}
+                  onBlur={() => { retrato.current = null; }}
                   onChange={(e) => {
                     const n = Number(e.target.value.replace(",", "."));
-                    setPesos((p) => ({ ...p, [l.devId]: Number.isFinite(n) ? n : 0 }));
+                    setPesos(redistribuirPesos(retrato.current ?? pesosAtuais(), l.devId, Number.isFinite(n) ? n : 0));
                   }} />
                 <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs">%</span>
               </div>
