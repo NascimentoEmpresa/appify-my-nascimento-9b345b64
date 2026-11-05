@@ -61,6 +61,7 @@ import {
 } from "@/components/suprimentos/dashboard/PainelBase";
 import { RotatividadeEstoque } from "@/components/suprimentos/dashboard/RotatividadeEstoque";
 import { EstoqueSaudavel } from "@/components/suprimentos/dashboard/EstoqueSaudavel";
+import { SaidasPorContrato } from "@/components/suprimentos/dashboard/SaidasPorContrato";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useDashboardComprasEstoque } from "@/hooks/useDashboardComprasEstoque";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -543,7 +544,7 @@ export default function DashboardComprasEstoque() {
         {consulta.isLoading && <Carregando />}
         {consulta.error && <Alert variant="destructive"><AlertTitle>Não foi possível carregar o dashboard</AlertTitle><AlertDescription>{(consulta.error as Error).message}. Se a migration do SIS-2026-0607 ainda não foi aplicada no Supabase, execute-a antes de abrir esta tela.</AlertDescription></Alert>}
         {dados && <Tabs defaultValue="geral" className="space-y-3">
-          <TabsList className="grid h-auto w-full grid-cols-5 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger><TabsTrigger value="rotatividade" className="gap-2 py-2.5"><Repeat className="h-4 w-4" /><span className="hidden sm:inline">Rotatividade do Estoque</span></TabsTrigger><TabsTrigger value="saudavel" className="gap-2 py-2.5"><Gauge className="h-4 w-4" /><span className="hidden sm:inline">Estoque Saudável</span></TabsTrigger></TabsList>
+          <TabsList className="grid h-auto w-full grid-cols-6 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger><TabsTrigger value="rotatividade" className="gap-2 py-2.5"><Repeat className="h-4 w-4" /><span className="hidden sm:inline">Rotatividade do Estoque</span></TabsTrigger><TabsTrigger value="saudavel" className="gap-2 py-2.5"><Gauge className="h-4 w-4" /><span className="hidden sm:inline">Estoque Saudável</span></TabsTrigger><TabsTrigger value="saidas" className="gap-2 py-2.5"><Truck className="h-4 w-4" /><span className="hidden sm:inline">Saídas por Contrato</span></TabsTrigger></TabsList>
           <p className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-900">
             <strong>Escopos conferíveis:</strong> “Pedidos cadastrados” é o total histórico da mesma empresa e da mesma tabela usada em Pedidos de Materiais. Pendentes e despachadas usam os mesmos status operacionais dessa rota, inclusive a identificação de pedido parcialmente despachado. Os demais indicadores respeitam empresa, contrato, categoria e o período de {new Date(`${filtros.inicio}T12:00:00`).toLocaleDateString("pt-BR")} a {new Date(`${filtros.fim}T12:00:00`).toLocaleDateString("pt-BR")}.
           </p>
@@ -562,6 +563,7 @@ export default function DashboardComprasEstoque() {
               dizer nada. Recebe o contrato para o gerente poder ver o
               planejamento de um contrato só. */}
           <TabsContent value="saudavel">{empresaId ? <EstoqueSaudavel empresaId={empresaId} contratoId={filtros.contratoId} /> : <Alert><AlertTitle>Selecione uma empresa para planejar o estoque saudável</AlertTitle><AlertDescription>Mínimo, máximo, lead time e aprovações são políticas próprias de cada empresa e não podem ser alterados em um consolidado.</AlertDescription></Alert>}</TabsContent>
+          <TabsContent value="saidas"><SaidasPorContrato empresaId={empresaId} inicio={filtros.inicio} fim={filtros.fim} contratoId={filtros.contratoId} /></TabsContent>
         </Tabs>}
       </div>
     </AcessoGate>
