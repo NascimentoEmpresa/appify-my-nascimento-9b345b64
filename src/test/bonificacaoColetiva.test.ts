@@ -262,10 +262,25 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     ]);
     expect(p).toEqual({ e: 22.22, i: 22.22, j: 22.22, p: 22.22, o: 11.11 });
   });
-  it("divide o LIBERADO inteiro por peso × nota (fecha no centavo)", () => {
+  it("padrão pela porcentagem: os quatro recebem IGUAL, Otavio metade, fecha no liberado", () => {
     const d = distribuirPorPeso(4411.5, [
       dev("e", 100, "Eduardo"), dev("i", 96.3, "Iury"), dev("j", 91.4, "João"), dev("o", 82, "Otavio"), dev("p", 84.7, "Pablo"),
     ]);
+    const v = Object.fromEntries(d.linhas.map((l) => [l.devId, l.valor]));
+    expect(d.distribuido).toBe(4411.5);
+    expect(new Set([v.e, v.i, v.j, v.p]).size).toBeLessThanOrEqual(2); // iguais (±1 centavo)
+    expect(Math.abs(v.e - v.p)).toBeLessThanOrEqual(0.01);
+    expect(Math.abs(v.o - v.p / 2)).toBeLessThan(0.5);
+  });
+  it("pela porcentagem com pesos abaixo de 100: sobra saldo", () => {
+    const d = distribuirPorPeso(1000, [dev("a", 50), dev("b", 90)], { a: 40, b: 40 });
+    expect(d.linhas.map((l) => l.valor)).toEqual([400, 400]);
+    expect(d.saldo).toBe(200);
+  });
+  it("divide o LIBERADO inteiro por peso × nota (fecha no centavo)", () => {
+    const d = distribuirPorPeso(4411.5, [
+      dev("e", 100, "Eduardo"), dev("i", 96.3, "Iury"), dev("j", 91.4, "João"), dev("o", 82, "Otavio"), dev("p", 84.7, "Pablo"),
+    ], {}, "nota");
     expect(d.distribuido).toBe(4411.5);
     expect(d.saldo).toBe(0);
     expect(d.pesosPadrao).toBe(true);
@@ -274,7 +289,7 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     expect(v.o).toBeLessThan(v.p / 2 + 1);
   });
   it("peso personalizado e dev sem nota (leva 0, os outros levam tudo)", () => {
-    const d = distribuirPorPeso(1000, [dev("a", 100), dev("b", null)], { a: 70, b: 30 });
+    const d = distribuirPorPeso(1000, [dev("a", 100), dev("b", null)], { a: 70, b: 30 }, "nota");
     expect(d.linhas.map((l) => l.valor)).toEqual([1000, 0]);
     expect(d.saldo).toBe(0);
     expect(d.pesosPadrao).toBe(false);
@@ -288,7 +303,7 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     expect(d.pesosPadrao).toBe(true);
   });
   it("ninguém com nota: nada distribuído", () => {
-    const d = distribuirPorPeso(1000, [dev("a", null)]);
+    const d = distribuirPorPeso(1000, [dev("a", null)], {}, "nota");
     expect(d.distribuido).toBe(0);
     expect(d.saldo).toBe(1000);
   });

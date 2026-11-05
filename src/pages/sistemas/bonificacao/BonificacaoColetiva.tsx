@@ -38,7 +38,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
-import { completarComEquipe } from "@/lib/sistemas/bonificacaoColetiva";
+import { completarComEquipe, type ModoDivisao } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
   configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
@@ -667,7 +667,8 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, tot
  */
 function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: ResumoDev[]; visiveis: ResumoDev[] }) {
   const [pesos, setPesos] = useState<Record<string, number>>({});
-  const d = useMemo(() => distribuirPorPeso(base, devs, pesos), [base, devs, pesos]);
+  const [modo, setModo] = useState<ModoDivisao>("peso");
+  const d = useMemo(() => distribuirPorPeso(base, devs, pesos, modo), [base, devs, pesos, modo]);
   const ids = new Set(visiveis.map((v) => v.devId));
   const linhas = d.linhas.filter((l) => ids.has(l.devId));
   const totalOk = Math.abs(d.pesoTotal - 100) < 0.05;
@@ -675,10 +676,18 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido inteiro: cada desenvolvedor leva a parte proporcional a peso × nota individual. Padrão: Eduardo, Iury, João e Pablo com o mesmo peso; os demais com metade. Os pesos aqui são simulação e não são gravados.">
+          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido entre os desenvolvedores. Pela porcentagem (padrão): cada um leva liberado × peso — Eduardo, Iury, João e Pablo recebem igual. Pela nota: a parte é proporcional a peso × nota individual. Peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade; sem entrega no mês, 0%. Os pesos aqui são simulação e não são gravados.">
             Desempenho por desenvolvedor — com peso no valor
           </Titulo>
-          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor liberado à equipe é dividido por peso × nota.</p>
+          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor liberado à equipe é dividido {modo === "peso" ? "pela porcentagem de cada um" : "por porcentagem × nota"}.</p>
+          <div className="mt-3 inline-flex rounded-md border p-0.5 text-sm" role="radiogroup" aria-label="Como dividir">
+            {([["peso", "Dividir pela porcentagem"], ["nota", "Dividir pela nota"]] as const).map(([m, rot]) => (
+              <button key={m} type="button" role="radio" aria-checked={modo === m} onClick={() => setModo(m)}
+                className={`rounded px-3 py-1 transition-colors ${modo === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                {rot}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="grid min-w-[16rem] gap-1 rounded-lg border bg-muted/30 px-4 py-2 text-sm">
           <div className="flex justify-between gap-6"><span className="text-muted-foreground">Valor liberado à equipe:</span><b className="tabular-nums">{moeda(d.base)}</b></div>
@@ -716,9 +725,9 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
 
       <div className="mt-5 grid gap-2 rounded-lg border bg-muted/30 px-4 py-3 text-sm md:grid-cols-3 md:divide-x">
         <div><b>Distribuído:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
-        <div className="md:pl-4"><b>Sem destino:</b> <span className="tabular-nums">{moeda(d.saldo)}</span>{d.saldo > 0 && <span className="text-xs text-muted-foreground"> (ninguém com nota)</span>}</div>
+        <div className="md:pl-4"><b>Sem destino:</b> <span className="tabular-nums">{moeda(d.saldo)}</span>{d.saldo > 0 && <span className="text-xs text-muted-foreground"> ({modo === "peso" ? "pesos abaixo de 100%" : "ninguém com nota"})</span>}</div>
         <div className="flex flex-wrap items-center gap-2 md:pl-4">
-          <span><b>Critério atual:</b> {d.pesosPadrao ? "padrão (Eduardo, Iury, João e Pablo iguais; demais com metade)" : "pesos personalizados (simulação)"}</span>
+          <span><b>Critério atual:</b> {modo === "peso" ? "pela porcentagem" : "pela nota"} · {d.pesosPadrao ? "pesos padrão (Eduardo, Iury, João e Pablo iguais; demais com metade)" : "pesos personalizados (simulação)"}</span>
           {!d.pesosPadrao && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos padrão</Button>}
         </div>
       </div>

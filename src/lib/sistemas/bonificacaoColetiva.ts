@@ -363,22 +363,37 @@ export function pesosPadrao(devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota
   return out;
 }
 
+/**
+ * Como o liberado é dividido (Pablo, 05/11/2026):
+ *  - "peso" (PADRÃO): cada um leva liberado × peso ÷ 100 — Eduardo, Iury,
+ *    João e Pablo recebem IGUAL; a nota individual não mexe no valor.
+ *  - "nota": a parte é proporcional a peso × nota individual (quem tem nota
+ *    maior leva mais do mesmo liberado).
+ */
+export type ModoDivisao = "peso" | "nota";
+
 export function distribuirPorPeso(
   base: number,
   devs: Pick<ResumoDev, "devId" | "devNome" | "nota" | "entregas">[],
   pesos: Record<string, number> = {},
+  modo: ModoDivisao = "peso",
 ): DistribuicaoPorPeso {
   const baseCent = Math.max(0, Math.round((finito(base) ? base : 0) * 100));
   const padrao = pesosPadrao(devs);
   const base1 = devs.map((d) => {
     const peso = finito(pesos[d.devId]) ? limitar(pesos[d.devId]) : padrao[d.devId] ?? 0;
     const nota = d.nota === null || !finito(d.nota) ? null : limitar(d.nota);
-    return { d, peso, nota, w: nota === null ? 0 : peso * nota };
+    return { d, peso, nota, w: modo === "peso" ? peso : nota === null ? 0 : peso * nota };
   });
   const W = base1.reduce((a, x) => a + x.w, 0);
-  const brutos = base1.map((x) => (W > 0 ? (baseCent * x.w) / W : 0));
+  // "nota": normaliza por Σ(peso × nota), o liberado sai inteiro.
+  // "peso": liberado × peso ÷ 100 — se os pesos não somam 100, a diferença
+  // fica como saldo (nunca passa do liberado).
+  const brutos = base1.map((x) =>
+    modo === "peso" ? (baseCent * x.w) / (Math.abs(W - 100) < 0.05 ? W : Math.max(100, W)) : W > 0 ? (baseCent * x.w) / W : 0);
   const cents = brutos.map(Math.floor);
-  let sobra = W > 0 ? baseCent - cents.reduce((a, c) => a + c, 0) : 0;
+  const alvo = modo === "peso" ? Math.round(brutos.reduce((a, b) => a + b, 0)) : W > 0 ? baseCent : 0;
+  let sobra = alvo - cents.reduce((a, c) => a + c, 0);
   brutos
     .map((b, i) => ({ i, frac: b - Math.floor(b) }))
     .sort((a, b) => b.frac - a.frac)
