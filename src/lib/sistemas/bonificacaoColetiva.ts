@@ -643,6 +643,9 @@ export interface LinhaPeriodo {
   fechado_em: string | null;
   fechado_por: string | null;
   resultado: unknown;
+  /** Peso no valor por dev ({responsavel_id: %}) — mig 20261105011000. */
+  pesos_devs?: Record<string, number> | null;
+  modo_divisao?: ModoDivisao | null;
 }
 
 export const configDaLinha = (l: LinhaPeriodo): ConfigBonificacao => ({
@@ -687,6 +690,64 @@ export interface PeriodoResolvido {
   /** Mês de onde a configuração foi herdada (YYYY-MM) ou "padrao". null = própria. */
   herdadoDe: string | null;
   fechado: boolean;
+}
+
+// ── Pesos por dev salvos (Pablo, 05/11/2026: "tem que ter um botão de
+// salvar e manter fixo") ────────────────────────────────────────────────
+// Ficam NO MÊS (BONIFICACAO_DEV_PERIODO.pesos_devs/modo_divisao) e o mês sem
+// pesos próprios herda do último mês anterior que tenha — o que se salva hoje
+// vale para os meses seguintes até alguém mudar; mexer num mês não reescreve
+// o passado (nem período fechado).
+
+export interface PesosSalvos {
+  pesos: Record<string, number>;
+  modo: ModoDivisao;
+  /** null = salvos no próprio mês; 'AAAA-MM' = herdados desse mês. */
+  herdadoDe: string | null;
+}
+
+export function pesosSalvosDoMes(mes: string, linhas: LinhaPeriodo[]): PesosSalvos | null {
+  const chave = (l: LinhaPeriodo) => String(l.competencia).slice(0, 7);
+  const l = linhas
+    .filter((x) => chave(x) <= mes && x.pesos_devs && typeof x.pesos_devs === "object")
+    .sort((a, b) => chave(b).localeCompare(chave(a)))[0];
+  if (!l || !l.pesos_devs) return null;
+  const pesos: Record<string, number> = {};
+  for (const [id, v] of Object.entries(l.pesos_devs)) { const n = Number(v); if (finito(n)) pesos[id] = n; }
+  return { pesos, modo: l.modo_divisao === "nota" ? "nota" : "peso", herdadoDe: chave(l) === mes ? null : chave(l) };
+}
+
+/** Reescala os pesos > 0 para somarem 100 (2 casas; resíduo no maior). */
+function normalizar100(p: Record<string, number>): Record<string, number> {
+  const ids = Object.keys(p).filter((id) => p[id] > 0);
+  const soma = ids.reduce((a, id) => a + p[id], 0);
+  if (!ids.length || Math.abs(soma - 100) < 0.005) return { ...p };
+  const out: Record<string, number> = { ...p };
+  let usado = 0;
+  ids.forEach((id) => { out[id] = Math.floor((p[id] * 10000) / soma) / 100; usado += Math.round(out[id] * 100); });
+  const maior = ids.reduce((a, id) => (p[id] > p[a] ? id : a), ids[0]);
+  out[maior] = Math.round(out[maior] * 100 + (10000 - usado)) / 100;
+  return out;
+}
+
+/**
+ * Pesos salvos aplicados à equipe do mês: quem está salvo e tem nota leva o
+ * seu peso; quem não entregou no mês (nota null) ou não estava salvo fica 0;
+ * os pesos > 0 são reescalados para somar 100 (ex.: salvo em outubro com um
+ * dev que não entregou em novembro — a parte dele volta para os outros, na
+ * proporção). Ninguém com peso → padrão.
+ */
+export function aplicarPesosSalvos(
+  devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota?: number | null })[],
+  salvos: Record<string, number>,
+): Record<string, number> {
+  const p: Record<string, number> = {};
+  for (const d of devs) {
+    const v = salvos[d.devId];
+    p[d.devId] = d.nota !== null && finito(v) && v > 0 ? limitar(v) : 0;
+  }
+  if (!Object.values(p).some((v) => v > 0)) return pesosPadrao(devs);
+  return normalizar100(p);
 }
 
 /**
