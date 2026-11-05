@@ -41,6 +41,9 @@ export interface NfEmissaoRow {
   situacao_site_pmt: string | null;
   situacao_dominio: string | null;
   desconto_conta_vinculada: number;
+  // SIS-2026-0794: o que efetivamente entrou na conta vinculada (e quando). Ausentes enquanto a migration 20261105006000 não foi aplicada.
+  conta_vinculada_data_recebimento?: string | null;
+  conta_vinculada_valor_recebido?: number | null;
   // SIS-2026-0609: soma das multas/glosas/outros descontos pós-emissão dos itens (não está no líquido).
   descontos_pos_emissao_total?: number | null;
   recebimento_extra: number;
@@ -356,6 +359,8 @@ interface RegistrarPagamentoNfInput {
   situacao_site_pmt?: string | null;
   situacao_dominio?: string | null;
   desconto_conta_vinculada?: number;
+  conta_vinculada_data_recebimento?: string | null;
+  conta_vinculada_valor_recebido?: number;
   recebimento_extra?: number;
   falta_receber?: number;
   pago_a_mais?: number;
@@ -459,6 +464,8 @@ export function useRegistrarPagamentoNf() {
           ...(input.situacao_site_pmt !== undefined ? { situacao_site_pmt: input.situacao_site_pmt } : {}),
           ...(input.situacao_dominio !== undefined ? { situacao_dominio: input.situacao_dominio } : {}),
           ...(input.desconto_conta_vinculada !== undefined ? { desconto_conta_vinculada: input.desconto_conta_vinculada } : {}),
+          ...(input.conta_vinculada_data_recebimento !== undefined ? { conta_vinculada_data_recebimento: input.conta_vinculada_data_recebimento } : {}),
+          ...(input.conta_vinculada_valor_recebido !== undefined ? { conta_vinculada_valor_recebido: input.conta_vinculada_valor_recebido } : {}),
           ...(input.recebimento_extra !== undefined ? { recebimento_extra: input.recebimento_extra } : {}),
           ...(input.falta_receber !== undefined ? { falta_receber: input.falta_receber } : {}),
           ...(input.pago_a_mais !== undefined ? { pago_a_mais: input.pago_a_mais } : {}),

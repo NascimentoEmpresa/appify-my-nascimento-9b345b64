@@ -17,7 +17,7 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
 import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio } from "./totais";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
-import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, pendenciaContaVinculada, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
@@ -247,6 +247,9 @@ export default function RelatorioGeralTab() {
         PIS: nf.pis_total,
         CSLL: nf.csll_total,
         "Desconto conta vinculada": nf.desconto_conta_vinculada,
+        "Recebido conta vinculada": nf.conta_vinculada_valor_recebido ?? 0,
+        "Data recebimento conta vinculada": fmtDate(nf.conta_vinculada_data_recebimento ?? null),
+        "Pendência conta vinculada": pendenciaContaVinculada(nf),
         "Falta receber": nf.falta_receber,
         "Pago a mais": nf.pago_a_mais,
         "Recebimento extra": nf.recebimento_extra,
@@ -276,7 +279,9 @@ export default function RelatorioGeralTab() {
           cor={kpis.divergencia === 0 ? "emerald" : "amber"}
           valorClass={kpis.divergencia === 0 ? undefined : "text-amber-600 dark:text-amber-400"}
         />
-        <KpiTile label="Conta Vinculada" valor={fmtMoney(kpis.contaVinculada)} sub="Retida nas notas" icon={<Landmark />} cor="amber" />
+        <KpiTile label="Conta Vinculada (Descontado)" valor={fmtMoney(kpis.contaVinculada)} sub="Total de retenções descontadas das NFs" icon={<Landmark />} cor="amber" />
+        <KpiTile label="Conta Vinculada (Recebido)" valor={fmtMoney(kpis.contaVinculadaRecebida)} sub="Valor efetivamente recebido" icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+        <KpiTile label="Pendência Conta Vinculada" valor={fmtMoney(kpis.pendenciaContaVinculada)} sub="Diferença entre o descontado e o recebido" icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
         <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} sub="Pago nas notas" icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
         <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kpis.pendente)} sub="A receber" icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
       </div>
@@ -425,7 +430,9 @@ export default function RelatorioGeralTab() {
                 <TableHead className="text-center bg-sky-50 dark:bg-sky-950/20">COFINS</TableHead>
                 <TableHead className="text-center bg-sky-50 dark:bg-sky-950/20">PIS</TableHead>
                 <TableHead className="text-center bg-sky-50 dark:bg-sky-950/20">CSLL</TableHead>
-                <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinculada</TableHead>
+                <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinc. Descontado</TableHead>
+                <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinc. Recebido</TableHead>
+                <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinc. Pendência</TableHead>
                 <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Falta Receber</TableHead>
                 <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Pago a Mais</TableHead>
                 <TableHead className="text-center bg-emerald-50 dark:bg-emerald-950/20">Receb. Extra</TableHead>
@@ -437,7 +444,7 @@ export default function RelatorioGeralTab() {
             <TableBody>
               {!isLoading && linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={podeExcluir ? 25 : 24} className="text-center text-muted-foreground py-10">{verLixeira ? "A lixeira está vazia." : "Nenhum registro encontrado com os filtros atuais."}</TableCell>
+                  <TableCell colSpan={podeExcluir ? 27 : 26} className="text-center text-muted-foreground py-10">{verLixeira ? "A lixeira está vazia." : "Nenhum registro encontrado com os filtros atuais."}</TableCell>
                 </TableRow>
               )}
               {linhas.map((nf: NfEmissaoRow) => {
@@ -470,6 +477,8 @@ export default function RelatorioGeralTab() {
                     <TableCell className="text-center whitespace-nowrap bg-sky-50/50 dark:bg-sky-950/10">{fmtMoney(nf.pis_total)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-sky-50/50 dark:bg-sky-950/10">{fmtMoney(nf.csll_total)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10">{fmtMoney(nf.desconto_conta_vinculada)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10">{fmtMoney(nf.conta_vinculada_valor_recebido ?? 0)}</TableCell>
+                    <TableCell className={cn("text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10 font-medium", pendenciaContaVinculada(nf) > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>{fmtMoney(pendenciaContaVinculada(nf))}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10">{fmtMoney(nf.falta_receber)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10">{fmtMoney(nf.pago_a_mais)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-emerald-50/50 dark:bg-emerald-950/10">{fmtMoney(nf.recebimento_extra)}</TableCell>
