@@ -15,6 +15,8 @@ interface Props {
   dataInicio: string;
   dataFim: string;
   turno: Turno;
+  /** Provável chegada (datetime-local), pergunta do passo 2. */
+  chegadaPrevista: string;
   contratos: string[];
   destino: string;
   motivo: string;
@@ -30,6 +32,7 @@ export function PassoConfirmar({
   dataInicio,
   dataFim,
   turno,
+  chegadaPrevista,
   contratos,
   destino,
   motivo,
@@ -66,6 +69,9 @@ export function PassoConfirmar({
         <dl className="divide-y divide-primary/15">
           <Linha icone={CalendarRange} rotulo="Período" valor={periodo} />
           <Linha icone={Clock} rotulo="Turno" valor={`${LABEL_TURNO[turno]} · ${HORARIO_TURNO[turno]}`} />
+          {chegadaPrevista && (
+            <Linha icone={Clock} rotulo="Chegada" valor={new Date(chegadaPrevista).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) + " (provável)"} />
+          )}
           <Linha icone={FileText} rotulo="Contratos" valor={contratos.join(", ")} />
           {destino.trim() && <Linha icone={MapPin} rotulo="Destino" valor={destino.trim()} />}
           {motivo.trim() && <Linha icone={MessageSquare} rotulo="Motivo" valor={motivo.trim()} />}
@@ -79,8 +85,9 @@ export function PassoConfirmar({
           <Gauge className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
           <p className="text-sm text-foreground">
             <b>KM do painel na retirada:</b> se já estiver com o carro, registre agora; se não, deixe em
-            branco e preencha depois na viagem, em <b>Meus Agendamentos</b>. Ao voltar, informe o KM final
-            e outra foto. Se o carro nem saiu, use <b>Não usei o carro no dia</b>.
+            branco e preencha depois na viagem, em <b>Meus Agendamentos</b>. Na saída e na volta, preencha
+            o <b>checklist de saída</b> e o <b>de chegada</b> (fotos do carro e do KM) em <b>Meus Agendamentos</b> —
+            quem agenda outro veículo sem eles fica registrado no histórico. Se o carro nem saiu, use <b>Não usei o carro no dia</b>.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">

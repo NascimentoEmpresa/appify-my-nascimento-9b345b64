@@ -1,5 +1,8 @@
 import { Suspense, lazy, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Car, Gauge } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { ArrowLeft, ArrowRight, Car, ClipboardCheck, Gauge } from "lucide-react";
+import { useChecklists } from "@/hooks/useChecklistVeiculo";
+import { agendamentosComPendencia, avisoParaUsuario, validarChegadaPrevista } from "@/lib/checklistVeiculo";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +56,9 @@ const rascunhoInicial = () => ({
   // KM do painel na retirada + foto (22/09/2026, chamado dos abastecimentos).
   kmInicial: "",
   fotoKm: null as File | null,
+  // Provável data/hora da chegada (04/11/2026) — pergunta nova, obrigatória.
+  // Nasce vazia de propósito: é a pessoa que tem de dizer quando volta.
+  chegadaPrevista: "",
 });
 type Rascunho = ReturnType<typeof rascunhoInicial>;
 
@@ -81,6 +87,23 @@ export default function AgendamentoVeiculos() {
   const pendentes = useKmPendentes();
   const listaPendentes = pendentes.data ?? [];
   const [naoUsei, setNaoUsei] = useState<AlvoNaoUsei | null>(null);
+  // Checklist de saída/chegada (04/11/2026): o que está atrasado nos MEUS
+  // agendamentos vira o aviso "VOCÊ PRECISA PREENCHER…" no topo da tela.
+  const checklists = useChecklists();
+  const listaChecklists = useMemo(() => checklists.data ?? [], [checklists.data]);
+  const meusAtrasados = useMemo(
+    () => agendamentosComPendencia((agenda.data ?? []).filter((a) => a.solicitante_id === user?.id), listaChecklists),
+    [agenda.data, listaChecklists, user?.id],
+  );
+
+  // Aba controlada: o sino manda para ?aba=meus.
+  const [params, setParams] = useSearchParams();
+  const aba = params.get("aba") ?? "novo";
+  const mudarAba = (v: string) => {
+    const p = new URLSearchParams(params);
+    if (v === "novo") p.delete("aba"); else p.set("aba", v);
+    setParams(p, { replace: true });
+  };
 
   const [passo, setPasso] = useState<IndicePasso>(0);
   const [maximo, setMaximo] = useState<IndicePasso>(0);
@@ -150,11 +173,13 @@ export default function AgendamentoVeiculos() {
     if (passo === 1) {
       if (!veiculo || !dataInicio || !dataFim || dataFim < dataInicio) return false;
       if (!disponibilidadeDoVeiculo(veiculo, dataInicio).disponivel) return false;
+      if (validarChegadaPrevista(rascunho.chegadaPrevista, { data_inicio: dataInicio, turno })) return false;
       return !conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
     }
     if (passo === 2) return ctr.length > 0;
     // KM inicial + foto opcionais aqui (23/09/2026). Pendência de viagem
-    // anterior NÃO trava mais (05/11/2026) — "libera o pessoal".
+    // anterior (05/11/2026) ou de checklist (04/11/2026) NÃO trava mais —
+    // "libera o pessoal"; o banco só registra no histórico quem agendou sem preencher.
     return true;
   })();
 
@@ -171,6 +196,7 @@ export default function AgendamentoVeiculos() {
         observacoes: rascunho.observacoes,
         km_inicial: rascunho.kmInicial.trim() ? Number(rascunho.kmInicial) : null,
         km_inicial_foto: rascunho.fotoKm,
+        chegada_prevista: rascunho.chegadaPrevista,
         contratos: rascunho.contratos.map((id) => {
           const c = acharContrato(id);
           return {
@@ -189,7 +215,7 @@ export default function AgendamentoVeiculos() {
     }
   };
 
-  const atualizar = () => { frota.refetch(); agenda.refetch(); };
+  const atualizar = () => { frota.refetch(); agenda.refetch(); checklists.refetch(); };
 
   return (
     <div>
@@ -203,8 +229,34 @@ export default function AgendamentoVeiculos() {
         actions={<ComoUsarDialog />}
       />
 
+      {/* "VOCÊ PRECISA PREENCHER A CHEGADA do veículo X" (04/11/2026): acima
+          das abas, para aparecer em qualquer uma. Não trava nada. */}
+      {meusAtrasados.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-destructive/40 bg-destructive/10 p-4">
+          <div className="flex items-start gap-3">
+            <ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1 space-y-1">
+              {meusAtrasados.map(({ agendamento, pendencia: p }) => (
+                <p key={agendamento.id} className="text-sm font-bold text-destructive">
+                  {avisoParaUsuario(agendamento, p)}
+                </p>
+              ))}
+              <p className="text-xs text-foreground">
+                Abra <b>Meus Agendamentos</b> e toque no checklist do agendamento. Dá para agendar outro veículo
+                mesmo assim, mas o novo agendamento fica registrado como feito sem o checklist.
+              </p>
+            </div>
+            {aba !== "meus" && (
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => mudarAba("meus")}>
+                Preencher agora
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Tabs defaultValue="novo">
+        <Tabs value={aba} onValueChange={mudarAba}>
           <TabsList className="mb-4">
             <TabsTrigger value="novo">Novo Agendamento</TabsTrigger>
             <TabsTrigger value="meus">Meus Agendamentos</TabsTrigger>
@@ -315,11 +367,13 @@ export default function AgendamentoVeiculos() {
                     dataInicio={rascunho.dataInicio}
                     dataFim={rascunho.dataFim}
                     turno={rascunho.turno}
+                    chegadaPrevista={rascunho.chegadaPrevista}
                     onMudar={(v) =>
                       mudar({
                         ...(v.dataInicio !== undefined ? { dataInicio: v.dataInicio } : {}),
                         ...(v.dataFim !== undefined ? { dataFim: v.dataFim } : {}),
                         ...(v.turno !== undefined ? { turno: v.turno } : {}),
+                        ...(v.chegadaPrevista !== undefined ? { chegadaPrevista: v.chegadaPrevista } : {}),
                       })
                     }
                   />
@@ -351,6 +405,7 @@ export default function AgendamentoVeiculos() {
                     dataInicio={rascunho.dataInicio}
                     dataFim={rascunho.dataFim}
                     turno={rascunho.turno}
+                    chegadaPrevista={rascunho.chegadaPrevista}
                     contratos={nomesDosContratos}
                     destino={rascunho.destino}
                     motivo={rascunho.motivo}
@@ -404,6 +459,7 @@ export default function AgendamentoVeiculos() {
                 agendamentos={agendamentos.filter((a) => a.solicitante_id === user?.id)}
                 podeCancelarDeTerceiros={false}
                 usuarioId={user?.id ?? null}
+                checklists={listaChecklists}
               />
             )}
           </TabsContent>
@@ -414,6 +470,7 @@ export default function AgendamentoVeiculos() {
                 agendamentos={agendamentos}
                 podeCancelarDeTerceiros
                 usuarioId={user?.id ?? null}
+                checklists={listaChecklists}
               />
             </TabsContent>
           )}
