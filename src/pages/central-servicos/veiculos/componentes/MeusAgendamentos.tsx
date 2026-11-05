@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, CalendarRange, Car, CheckCircle2, Clock, FileText, Fuel, Gauge, MapPin } from "lucide-react";
+import { Ban, CalendarRange, Car, CheckCircle2, ClipboardCheck, Clock, FileText, Fuel, Gauge, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,17 +12,34 @@ import {
   LABEL_TURNO,
   formatarData,
   hojeISO,
+  podeMarcarNaoUsei,
   useCancelarAgendamento,
   type Agendamento,
 } from "@/hooks/useAgendamentoVeiculos";
 import { ViagemDialog } from "./ViagemDialog";
+import { NaoUseiDialog } from "./NaoUseiDialog";
+import { ChecklistDialog } from "./ChecklistDialog";
+import {
+  LABEL_TIPO_CHECKLIST, situacaoChecklist,
+  type ChecklistVeiculo, type SituacaoChecklist, type TipoChecklist,
+} from "@/lib/checklistVeiculo";
 
 interface Props {
   agendamentos: Agendamento[];
   /** Passa a valer para reservas de terceiros quando o usuário é gestor da frota. */
   podeCancelarDeTerceiros: boolean;
   usuarioId: string | null;
+  /** Checklists de saída/chegada que a RLS deixa ver (04/11/2026). */
+  checklists: ChecklistVeiculo[];
 }
+
+const ESTILO_CHECKLIST: Record<SituacaoChecklist, { classe: string; texto: string }> = {
+  preenchido: { classe: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", texto: "preenchido" },
+  incompleto: { classe: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400", texto: "incompleto" },
+  pendente: { classe: "border-destructive/50 bg-destructive/10 text-destructive", texto: "pendente" },
+  aguardando: { classe: "border-border bg-muted/60 text-muted-foreground", texto: "a preencher" },
+  nao_exigido: { classe: "border-border bg-muted/40 text-muted-foreground", texto: "opcional" },
+};
 
 const ESTILO_STATUS: Record<string, string> = {
   confirmado: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -30,12 +47,17 @@ const ESTILO_STATUS: Record<string, string> = {
   concluido: "border-border bg-muted text-muted-foreground",
 };
 
-export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuarioId }: Props) {
+export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuarioId, checklists }: Props) {
   const [cancelando, setCancelando] = useState<Agendamento | null>(null);
+  const [checklistAberto, setChecklistAberto] = useState<{ agendamento: Agendamento; tipo: TipoChecklist } | null>(null);
+  const checklistDe = (id: string, tipo: TipoChecklist) =>
+    checklists.find((c) => c.agendamento_id === id && c.tipo === tipo) ?? null;
+  const agora = new Date();
   // Clicar no card abre A VIAGEM: KM, contratos e notas de abastecimento
   // (22/09/2026 — chamado dos abastecimentos).
   const [viagem, setViagem] = useState<Agendamento | null>(null);
   const [motivo, setMotivo] = useState("");
+  const [naoUsei, setNaoUsei] = useState<Agendamento | null>(null);
   const cancelar = useCancelarAgendamento();
   const hoje = hojeISO();
 
@@ -68,6 +90,9 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
           const meu = a.solicitante_id === usuarioId;
           const futuro = a.data_fim >= hoje;
           const podeCancelar = a.status === "confirmado" && futuro && (meu || podeCancelarDeTerceiros);
+          // Já começou e não foi finalizada: dá para dizer que o carro nem saiu
+          // (05/11/2026) — sem isso a pessoa ficava presa a um KM que não existe.
+          const podeNaoUsei = podeMarcarNaoUsei(a, hoje) && (meu || podeCancelarDeTerceiros);
 
           return (
             <Card
@@ -134,15 +159,59 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
                         Cancelado: {a.motivo_cancelamento}
                       </p>
                     )}
-                    {/* KM e notas ficam a um clique: o card inteiro abre a viagem. */}
-                    <p className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-primary">
-                      <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" /> KM da viagem</span>
-                      <span className="inline-flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Anexar nota de gasolina</span>
-                    </p>
+                    {/* Agendou com checklist atrasado de outro agendamento —
+                        não barra nada, mas fica escrito (04/11/2026). */}
+                    {a.checklist_pendente_ao_agendar && (
+                      <div className="mt-1.5 space-y-0.5 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] font-semibold text-destructive">
+                        {a.checklist_pendente_ao_agendar.split("\n").map((linha) => <p key={linha}>{linha}</p>)}
+                      </div>
+                    )}
+                    {/* Checklist de saída e de chegada: cada chip abre o seu. */}
+                    {a.status !== "cancelado" && !a.nao_utilizado_em && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {(["saida", "chegada"] as TipoChecklist[]).map((tipo) => {
+                          const sit = situacaoChecklist(a, tipo, checklistDe(a.id, tipo), agora);
+                          const estilo = ESTILO_CHECKLIST[sit];
+                          return (
+                            <button
+                              key={tipo}
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setChecklistAberto({ agendamento: a, tipo }); }}
+                              className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors hover:opacity-80", estilo.classe)}
+                            >
+                              <ClipboardCheck className="h-3.5 w-3.5" />
+                              {LABEL_TIPO_CHECKLIST[tipo]}: {estilo.texto}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {a.nao_utilizado_em ? (
+                      <p className="mt-1.5 text-xs font-medium text-muted-foreground">
+                        Carro não utilizado — marcado por {a.nao_utilizado_por_nome ?? "—"} em{" "}
+                        {new Date(a.nao_utilizado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                        {a.nao_utilizado_motivo && ` · ${a.nao_utilizado_motivo}`}
+                      </p>
+                    ) : (
+                      /* KM e notas ficam a um clique: o card inteiro abre a viagem. */
+                      <p className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-primary">
+                        <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" /> KM da viagem</span>
+                        <span className="inline-flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Anexar nota de gasolina</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {podeNaoUsei && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); setNaoUsei(a); }}
+                    >
+                      Não usei o carro no dia
+                    </Button>
+                  )}
                   <span
                     className={cn(
                       "flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
@@ -175,6 +244,16 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
         aberto={!!viagem}
         onFechar={() => setViagem(null)}
         souDono={!!viagem && (viagem.solicitante_id === usuarioId || podeCancelarDeTerceiros)}
+      />
+
+      <NaoUseiDialog alvo={naoUsei} onFechar={() => setNaoUsei(null)} />
+      <ChecklistDialog
+        agendamento={checklistAberto?.agendamento ?? null}
+        tipo={checklistAberto?.tipo ?? "saida"}
+        checklist={checklistAberto ? checklistDe(checklistAberto.agendamento.id, checklistAberto.tipo) : null}
+        aberto={!!checklistAberto}
+        onFechar={() => setChecklistAberto(null)}
+        podeEditar={!!checklistAberto && (checklistAberto.agendamento.solicitante_id === usuarioId || podeCancelarDeTerceiros)}
       />
 
       <Dialog open={!!cancelando} onOpenChange={(o) => !o && setCancelando(null)}>

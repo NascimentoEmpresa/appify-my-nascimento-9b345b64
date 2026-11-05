@@ -92,6 +92,18 @@ export interface Agendamento {
   solicitante_nome: string | null;
   created_at: string;
   contratos: ContratoDoAgendamento[];
+  /** Viagem finalizada (mig 286). null = ainda aberta. */
+  finalizada_em?: string | null;
+  /** "Não usei o carro no dia" (mig 20261105009200). */
+  nao_utilizado_em?: string | null;
+  nao_utilizado_por_nome?: string | null;
+  nao_utilizado_motivo?: string | null;
+  /** Provável data/hora da chegada (04/11/2026, mig 20261105009300). Antigos: null. */
+  chegada_prevista?: string | null;
+  /** false = agendamento anterior ao checklist de saída/chegada (não cobra nada). */
+  checklist_exigido?: boolean | null;
+  /** "FULANO NÃO PREENCHEU A SAÍDA E A CHEGADA do agendamento nº…", gravado pelo banco ao agendar. */
+  checklist_pendente_ao_agendar?: string | null;
 }
 
 export interface NovoAgendamento {
@@ -109,6 +121,8 @@ export interface NovoAgendamento {
    *  (cs_veiculo_km_inicial). Desde 02/10/2026 (mig 286) nada de KM é obrigatório, nem para finalizar. */
   km_inicial: number | null;
   km_inicial_foto: File | null;
+  /** Provável data/hora da chegada, do input datetime-local ("2026-11-04T18:00"). Obrigatória na tela. */
+  chegada_prevista: string;
 }
 
 // ── Foto do veículo ──────────────────────────────────────────────────
@@ -357,6 +371,8 @@ function useInvalidar() {
     qc.invalidateQueries({ queryKey: ["cs_veiculos_frota"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_minhas_pendencias"] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_checklist"] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento_log"] });
   };
 }
 
@@ -403,6 +419,9 @@ export function useCriarAgendamento() {
           solicitante_id: user.id,
           km_inicial: n.km_inicial,
           km_inicial_foto: fotoKm?.path ?? null,
+          // datetime-local vem sem fuso: new Date() lê no fuso do navegador
+          // e o ISO leva o deslocamento certo para o timestamptz.
+          chegada_prevista: n.chegada_prevista ? new Date(n.chegada_prevista).toISOString() : null,
         })
         .select("*")
         .single();
@@ -558,6 +577,7 @@ function useInvalidarViagem() {
   const qc = useQueryClient();
   return (id?: string) => {
     qc.invalidateQueries({ queryKey: ["cs_veiculo_viagem", id] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento_log"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_minhas_pendencias"] });
@@ -591,6 +611,28 @@ export function useFecharKm() {
     onSuccess: (_d, v) => { invalidar(v.id); toast.success("Viagem atualizada."); },
     onError: (e: any) => toast.error(mensagemDeErro(e)),
   });
+}
+
+/**
+ * "Não usei o carro no dia" (05/11/2026): reserva que passou sem o carro sair
+ * fecha a pendência sem KM nem foto. Registra quem marcou e quando; o banco
+ * recusa reserva futura (é Cancelar) e viagem com KM final/nota.
+ */
+export function useNaoUsei() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; motivo?: string }) => {
+      const { error } = await sb.rpc("cs_veiculo_nao_utilizado", { p_agendamento: v.id, p_motivo: v.motivo?.trim() || null });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Registrado: o carro não foi usado. A pendência saiu."); },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+/** Reserva que já começou, segue aberta e pode ser marcada como "não usei". */
+export function podeMarcarNaoUsei(a: Pick<Agendamento, "status" | "data_inicio" | "finalizada_em" | "nao_utilizado_em">, hoje = hojeISO()): boolean {
+  return a.status === "confirmado" && a.data_inicio <= hoje && !a.finalizada_em && !a.nao_utilizado_em;
 }
 
 export function useDefinirContratosDaViagem() {

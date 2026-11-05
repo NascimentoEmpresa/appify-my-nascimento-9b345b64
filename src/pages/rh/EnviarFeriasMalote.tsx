@@ -90,8 +90,8 @@ export async function abrirReciboFerias(path: string) {
   window.open(data.signedUrl, "_blank", "noopener");
 }
 
-/** Caixa de confirmação dentro do próprio diálogo. */
-function Confirmacao({ titulo, children, rotulo, ocupado, onConfirmar, onVoltar, desabilitado }: {
+/** Caixa de confirmação dentro do próprio diálogo (também no Malote em massa). */
+export function Confirmacao({ titulo, children, rotulo, ocupado, onConfirmar, onVoltar, desabilitado }: {
   titulo: string; children: React.ReactNode; rotulo: string; ocupado?: boolean; desabilitado?: boolean;
   onConfirmar: () => void; onVoltar: () => void;
 }) {

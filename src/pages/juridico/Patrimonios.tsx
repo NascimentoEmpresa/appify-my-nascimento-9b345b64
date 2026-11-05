@@ -132,7 +132,10 @@ export default function Patrimonios() {
   const [pagina, setPagina] = useState(1);
   const POR_PAGINA = 10;
   const [soPendentesTransf, setSoPendentesTransf] = useState(false);
-  const [viewPag, setViewPag] = useState<"painel" | "lista" | "contas">("lista");
+  const [viewPag, setViewPag] = useState<"painel" | "lista" | "contas" | "listagem">("lista");
+  // Listagem de Contas (05/11/2026): todas as contas numa lista só, com filtro.
+  const [filtroListagem, setFiltroListagem] = useState<string>("abertas");
+  const [buscaListagem, setBuscaListagem] = useState("");
   const [mesContas, setMesContas] = useState<string>(hoje().slice(0, 7));
   // Cartão escolhido no Lançamento de Contas. null = "Gestão Patrimônios",
   // que é a soma de todos — é por onde a tela abre.
@@ -834,7 +837,7 @@ export default function Patrimonios() {
                   </div>
                 );
               })}
-              {contasAlerta.length > 6 && <div style={{ fontSize: 12, color: "#9a3412", fontWeight: 600 }}>+{contasAlerta.length - 6} outra(s). Veja em “Listagem de Contas”.</div>}
+              {contasAlerta.length > 6 && <div style={{ fontSize: 12, color: "#9a3412", fontWeight: 600 }}>+{contasAlerta.length - 6} outra(s). Veja em <button type="button" onClick={() => { setFiltroListagem("30dias"); setViewPag("listagem"); }} style={{ background: "none", border: 0, padding: 0, color: "#9a3412", fontWeight: 800, textDecoration: "underline", cursor: "pointer" }}>“Listagem de Contas”</button>.</div>}
             </div>
           </div>
         )}
@@ -847,6 +850,7 @@ export default function Patrimonios() {
           <button className="jp-btn" disabled title="Em breve" style={{ background: "#f8fafc", color: "#cbd5e1", border: "1px solid #e2e8f0", cursor: "not-allowed" }}>📗 Livro de patrimônios</button>
           <button className="jp-btn" onClick={() => { setViewPag("contas"); setPagina(1); }} style={{ background: viewPag === "contas" ? "#0f3171" : "#fff", color: viewPag === "contas" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "contas" ? "#0f3171" : "#e2e8f0") }}>📑 Lançamento de Contas</button>
           <button className="jp-btn" onClick={() => { setViewPag("painel"); setPagina(1); }} style={{ background: viewPag === "painel" ? "#0f3171" : "#fff", color: viewPag === "painel" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "painel" ? "#0f3171" : "#e2e8f0") }}>📊 Painel</button>
+          <button className="jp-btn" onClick={() => { setViewPag("listagem"); setPagina(1); }} style={{ background: viewPag === "listagem" ? "#0f3171" : "#fff", color: viewPag === "listagem" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "listagem" ? "#0f3171" : "#e2e8f0") }}>📋 Listagem de Contas</button>
         </div>
 
         {/* ── PAINEL (dashboard) ── */}
@@ -1119,6 +1123,91 @@ export default function Patrimonios() {
             </div>
           </>);
         })()}
+      {/* ── LISTAGEM DE CONTAS (05/11/2026) ──
+          Todas as contas de todos os patrimônios numa lista só, por
+          vencimento. É o destino do "+N outra(s)" do alerta, que citava esta
+          tela antes de ela existir. Mesmos botões das tabelas de cima — as
+          guardas (podeEnviarAoMalote/podeBaixarManualmente) são as mesmas. */}
+      {viewPag === "listagem" && (() => {
+        const patNomeL = (id: number) => pats.find(p => p.id === id)?.descricao || "—";
+        const filtros: [string, string, (o: Obrigacao, st: StatusConta) => boolean][] = [
+          ["abertas", "Em aberto", (_o, st) => st !== "Pago"],
+          ["vencidas", "Vencidas", (_o, st) => st === "Vencido"],
+          ["30dias", "Vencidas e próximos 30 dias", (o, st) => entraNoAlerta(st) && !!o.vencimento && o.vencimento <= em30dias],
+          ["malote", "Enviadas ao Malote", (_o, st) => st === "Enviado ao Malote"],
+          ["pagas", "Pagas", (_o, st) => st === "Pago"],
+          ["todas", "Todas", () => true],
+        ];
+        const regra = (filtros.find(x => x[0] === filtroListagem) ?? filtros[0])[2];
+        const termo = buscaListagem.trim().toLowerCase();
+        const linhas = obrAll
+          .map(o => ({ o, st: seloDaConta(o) }))
+          .filter(({ o, st }) => regra(o, st))
+          .filter(({ o }) => !termo || [patNomeL(o.patrimonio_id), o.categoria, o.descricao, o.responsavel].some(v => String(v || "").toLowerCase().includes(termo)))
+          .sort((a, b) => String(a.o.vencimento || "9999").localeCompare(String(b.o.vencimento || "9999")));
+        const total = linhas.reduce((t, l) => t + (Number(l.o.valor) || 0), 0);
+        return (
+          <div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+              {filtros.map(([k, rot]) => (
+                <button key={k} className="jp-btn" onClick={() => setFiltroListagem(k)} style={{ background: filtroListagem === k ? "#0f3171" : "#fff", color: filtroListagem === k ? "#fff" : "#64748b", border: "1px solid " + (filtroListagem === k ? "#0f3171" : "#e2e8f0"), padding: "5px 12px" }}>{rot}</button>
+              ))}
+              <input value={buscaListagem} onChange={e => setBuscaListagem(e.target.value)} placeholder="Buscar patrimônio, categoria, descrição…" style={{ flex: "1 1 220px", minWidth: 180, height: 34, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 10px", fontSize: 13 }} />
+              <span style={{ fontSize: 12.5, color: "#64748b", whiteSpace: "nowrap" }}>{linhas.length} conta(s) · <b style={{ color: "#0f172a" }}>{money(total)}</b></span>
+            </div>
+            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflowX: "auto", boxShadow: "0 8px 24px rgba(15,23,42,.05)" }}>
+              {linhas.length === 0 ? (
+                <div style={{ padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhuma conta neste filtro.</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", color: "#64748b", fontSize: 11, textTransform: "uppercase", textAlign: "left" }}>
+                      <th style={{ padding: "8px 16px" }}>Patrimônio / conta</th>
+                      <th style={{ padding: "8px 14px" }}>Vencimento</th>
+                      <th style={{ padding: "8px 14px" }}>Parcela</th>
+                      <th style={{ padding: "8px 14px", textAlign: "right" }}>Valor</th>
+                      <th style={{ padding: "8px 14px", textAlign: "center" }}>Status</th>
+                      <th style={{ padding: "8px 16px" }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {linhas.map(({ o, st }) => {
+                      const cor = corDaConta(st);
+                      const dias = o.vencimento ? Math.round((new Date(o.vencimento + "T00:00:00").getTime() - new Date(hoje() + "T00:00:00").getTime()) / 86400000) : null;
+                      return (
+                        <tr key={o.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "10px 16px" }}>
+                            <div style={{ fontWeight: 700, color: "#0f172a" }}>{patNomeL(o.patrimonio_id)}<span style={{ color: "#94a3b8", fontWeight: 500 }}> · {o.categoria}</span></div>
+                            {o.descricao && <div style={{ fontSize: 11.5, color: "#94a3b8" }}>{o.descricao}</div>}
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
+                            {o.vencimento ? fmtDt(o.vencimento) : "—"}
+                            {dias !== null && st !== "Pago" && st !== "Suspensa" && (
+                              <div style={{ fontSize: 11, fontWeight: 700, color: dias < 0 ? "#dc2626" : dias <= 30 ? "#ea580c" : "#94a3b8" }}>{dias < 0 ? `Vencida há ${Math.abs(dias)}d` : dias === 0 ? "Vence hoje" : `Em ${dias}d`}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>{o.parcelas || "—"}</td>
+                          <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a", textAlign: "right", whiteSpace: "nowrap" }}>{money(o.valor)}</td>
+                          <td style={{ padding: "10px 14px", textAlign: "center" }}><span style={{ fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 20, background: cor + "20", color: cor, whiteSpace: "nowrap" }}>{st}</span></td>
+                          <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                            <div style={{ display: "inline-flex", gap: 6 }}>
+                              {o.comprovante_path && <button className="jp-btn" title="Ver comprovante" onClick={() => verComprovante(o)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0", padding: "5px 9px" }}>📎</button>}
+                              {st === "Enviado ao Malote"
+                                ? <button className="jp-btn" title="A conta já virou despesa no Malote — o pagamento se resolve lá" onClick={() => nav("/app/malote/aprovacoes")} style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", padding: "5px 13px", fontWeight: 700 }}>Ver no Malote</button>
+                                : podeEnviarAoMalote(st) && <button className="jp-btn" title="Abre o Malote com os dados desta conta já preenchidos. A conta só sai de Pendente quando você concluir o envio lá." onClick={() => pagarConta(o)} style={{ background: "#0f3171", color: "#fff", border: "1px solid #0f3171", padding: "5px 13px", fontWeight: 700 }}>Enviar ao Malote</button>}
+                              {podeBaixarManualmente(st) && <button className="jp-btn" title="Já foi paga por fora: anexar o comprovante e dar baixa" onClick={() => baixarConta(o)} style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "5px 10px", fontWeight: 700 }}>✓</button>}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       </div>
 
       {/* ── Modal Patrimônio ── */}

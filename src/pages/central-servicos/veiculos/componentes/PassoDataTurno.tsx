@@ -2,6 +2,7 @@ import { AlertTriangle, Sun, Sunset, Clock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { chegadaPrevistaPadrao, validarChegadaPrevista } from "@/lib/checklistVeiculo";
 import {
   HORARIO_TURNO,
   LABEL_TURNO,
@@ -19,7 +20,9 @@ interface Props {
   dataInicio: string;
   dataFim: string;
   turno: Turno;
-  onMudar: (v: { dataInicio?: string; dataFim?: string; turno?: Turno }) => void;
+  /** Provável data/hora da chegada (datetime-local). Pergunta nova de 04/11/2026, obrigatória. */
+  chegadaPrevista: string;
+  onMudar: (v: { dataInicio?: string; dataFim?: string; turno?: Turno; chegadaPrevista?: string }) => void;
 }
 
 const ICONE_TURNO: Record<Turno, typeof Sun> = { manha: Sun, tarde: Sunset, dia_todo: Clock };
@@ -30,9 +33,10 @@ const ORDEM_TURNOS: Turno[] = ["manha", "tarde", "dia_todo"];
  * usuário ainda está escolhendo, e não como erro depois de confirmar: cada
  * turno mostra na hora se já está tomado.
  */
-export function PassoDataTurno({ veiculo, agendamentos, dataInicio, dataFim, turno, onMudar }: Props) {
+export function PassoDataTurno({ veiculo, agendamentos, dataInicio, dataFim, turno, chegadaPrevista, onMudar }: Props) {
   const conflito = conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
   const periodoInvalido = !!dataInicio && !!dataFim && dataFim < dataInicio;
+  const erroChegada = chegadaPrevista ? validarChegadaPrevista(chegadaPrevista, { data_inicio: dataInicio, turno }) : null;
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -110,6 +114,36 @@ export function PassoDataTurno({ veiculo, agendamentos, dataInicio, dataFim, tur
           })}
         </div>
       </div>
+
+      {/* Pergunta nova (04/11/2026): depois desta hora, o checklist de
+          chegada passa a ser cobrado — e o aviso aparece para a pessoa. */}
+      <div className="space-y-1.5 rounded-xl border border-primary/30 bg-primary/5 p-4">
+        <Label htmlFor="chegada-prevista">Provável data e hora da chegada *</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            id="chegada-prevista"
+            type="datetime-local"
+            className="max-w-xs"
+            value={chegadaPrevista}
+            min={`${dataInicio}T00:00`}
+            onChange={(e) => onMudar({ chegadaPrevista: e.target.value })}
+          />
+          {dataFim && (
+            <button
+              type="button"
+              className="text-xs font-semibold text-primary hover:underline"
+              onClick={() => onMudar({ chegadaPrevista: chegadaPrevistaPadrao(dataFim, turno) })}
+            >
+              Usar fim do turno ({formatarData(dataFim)}, {chegadaPrevistaPadrao(dataFim, turno).slice(11)})
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Quando você deve devolver o carro. Passou dessa hora sem o <b>checklist de chegada</b>, o sistema avisa você.
+        </p>
+      </div>
+
+      {erroChegada && <Aviso texto={erroChegada} />}
 
       {periodoInvalido && (
         <Aviso texto="A data de retorno não pode ser anterior à data de saída." />
