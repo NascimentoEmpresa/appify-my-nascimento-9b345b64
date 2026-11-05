@@ -5,6 +5,7 @@ import {
   configDoPeriodo,
   distribuirPorPeso,
   pesosPadrao,
+  completarComEquipe,
   percentil,
   referenciaDoPeriodo,
   contribuicaoParaEquipe,
@@ -277,6 +278,14 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     expect(d.linhas.map((l) => l.valor)).toEqual([1000, 0]);
     expect(d.saldo).toBe(0);
     expect(d.pesosPadrao).toBe(false);
+  });
+  it("dev da equipe sem entrega no mês: aparece com 0% e R$ 0", () => {
+    const devs = completarComEquipe([], [{ devId: "t", devNome: "Thamires" }]);
+    expect(devs).toHaveLength(1);
+    expect(devs[0].nota).toBeNull();
+    const d = distribuirPorPeso(1000, [dev("p", 90, "Pablo"), { ...devs[0], entregas: [] }]);
+    expect(d.linhas.map((l) => [l.peso, l.valor])).toEqual([[100, 1000], [0, 0]]);
+    expect(d.pesosPadrao).toBe(true);
   });
   it("ninguém com nota: nada distribuído", () => {
     const d = distribuirPorPeso(1000, [dev("a", null)]);

@@ -37,7 +37,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useEntregasBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
+import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
+import { completarComEquipe } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
   configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
@@ -86,6 +87,7 @@ function Painel() {
 
   const { data: entregas = [], isLoading, isFetching, error, refetch } = useEntregasBonificacao(mes);
   const { data: periodos = [] } = usePeriodosBonificacao();
+  const { data: equipe = [] } = useEquipeBonificacao(mes);
   const { data: podeAvaliar = false } = useScreenAccess(MENU, "alterar");
   const { data: podeExportar = false } = useScreenAccess(MENU, "exportar");
   const { data: podeConfigurar = false } = useScreenAccess(MENU_REGRAS, "alterar");
@@ -106,6 +108,8 @@ function Painel() {
   const cfg = useMemo(() => configDoPeriodo(periodo.config, validas), [periodo.config, validas]);
   const devsDoMes = useMemo(() => resumoPorDev(validas, cfg), [validas, cfg]);
   const devSelecionado = dev !== "todos" && devsDoMes.some((d) => d.devId === dev) ? dev : "todos";
+  // Peso no valor: a equipe inteira, quem não entregou no mês com 0 (Thamires, 05/11).
+  const devsEquipe = useMemo(() => completarComEquipe(devsDoMes, equipe), [devsDoMes, equipe]);
   const filtradas = useMemo(
     () => (devSelecionado === "todos" ? validas : validas.filter((e) => e.devId === devSelecionado)),
     [validas, devSelecionado],
@@ -226,7 +230,7 @@ function Painel() {
             </TabsContent>
             <TabsContent value="bonificacao" className="space-y-4">
               <AbaBonificacao
-                mes={mes} cfg={cfg} rateio={rateio} devs={devsFiltro} devsMes={devsDoMes} filtradas={filtradas} totalPeriodo={validas.length}
+                mes={mes} cfg={cfg} rateio={rateio} devs={devsFiltro} devsMes={devsEquipe} todos={devSelecionado === "todos"} filtradas={filtradas} totalPeriodo={validas.length}
                 verba={periodo.verba} fechado={periodo.fechado} foto={periodo.linha?.resultado ?? null}
                 podeConfigurar={podeConfigurar} podeExportar={podeExportar} imprimir={imprimir}
                 verIndividual={(id) => verDev(id, "individual")} pendentes={comPendencia.length}
@@ -522,8 +526,8 @@ function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
 // ── Distribuição da bonificação ──────────────────────────────────────────
 interface FotoFechamento { nota_equipe?: number | null; verba?: number; liberado?: number; saldo?: number; participantes?: { devNome: string; valor: number }[]; gerado_em?: string }
 
-function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
-  mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; devsMes: ResumoDev[]; filtradas: EntregaDetalhada[]; totalPeriodo: number;
+function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
+  mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; devsMes: ResumoDev[]; todos: boolean; filtradas: EntregaDetalhada[]; totalPeriodo: number;
   verba: number; fechado: boolean; foto: unknown; podeConfigurar: boolean; podeExportar: boolean; imprimir: () => void;
   verIndividual: (id: string) => void; pendentes: number;
 }) {
@@ -593,7 +597,7 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPerio
       )}
 
       <div className="grid gap-4">
-        <CartaoPesoNoValor base={rateio.liberado} devs={devsMes} visiveis={devs} />
+        <CartaoPesoNoValor base={rateio.liberado} devs={devsMes} visiveis={todos ? devsMes : devs} />
         <Card className="p-5">
           <Titulo ajuda="Explica a fórmula: verba disponível × nota coletiva ÷ 100; depois divide-se igualmente entre os participantes.">Cálculo da bonificação coletiva</Titulo>
           <ol className="list-decimal space-y-1 rounded-md border-l-4 border-primary bg-muted/40 p-3 pl-8 text-sm text-muted-foreground">
@@ -687,7 +691,7 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
           <div className="min-w-0">
             <div className="mb-1.5 flex justify-between gap-3 text-sm"><span className="truncate">{l.devNome}</span><b className="tabular-nums">{num(l.nota)}/100</b></div>
             <Progress value={l.nota ?? 0} className="h-2" />
-            <small className="text-muted-foreground">{l.entregas} entrega(s)</small>
+            <small className="text-muted-foreground">{l.entregas ? `${l.entregas} entrega(s)` : "0 entregas — sem entrega no mês"}</small>
           </div>
           <div className="flex gap-3 md:border-l md:pl-4">
             <label className="grid gap-1 text-center text-xs text-muted-foreground">Peso no valor

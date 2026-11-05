@@ -349,9 +349,14 @@ export const PESO_RELATIVO_DEMAIS = 0.5;
 const primeiroNome = (nome: string) =>
   (nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().split(/\s+/)[0] ?? "";
 
-/** Peso padrão de cada dev (% que somam 100): cheio para os de DEVS_PESO_CHEIO, metade para os demais. */
-export function pesosPadrao(devs: Pick<ResumoDev, "devId" | "devNome">[]): Record<string, number> {
-  const rel = devs.map((d) => ((DEVS_PESO_CHEIO as readonly string[]).includes(primeiroNome(d.devNome)) ? 1 : PESO_RELATIVO_DEMAIS));
+/**
+ * Peso padrão de cada dev (% que somam 100): cheio para os de DEVS_PESO_CHEIO,
+ * metade para os demais, e 0 para quem está sem nota no mês (sem entrega —
+ * Pablo, 05/11: "se tiver 0 deixa a porcentagem em 0 também").
+ */
+export function pesosPadrao(devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota?: number | null })[]): Record<string, number> {
+  const rel = devs.map((d) =>
+    d.nota === null ? 0 : (DEVS_PESO_CHEIO as readonly string[]).includes(primeiroNome(d.devNome)) ? 1 : PESO_RELATIVO_DEMAIS);
   const soma = rel.reduce((a, r) => a + r, 0);
   const out: Record<string, number> = {};
   devs.forEach((d, i) => { out[d.devId] = soma > 0 ? Math.round((rel[i] * 10000) / soma) / 100 : 0; });
@@ -652,6 +657,32 @@ export interface ResumoDev {
   mercado: number;
   freelancer: number;
   clt: number;
+}
+
+/** Meses para trás em que quem foi responsável por chamado concluído conta como "da equipe". */
+export const MESES_EQUIPE = 6;
+
+/** Intervalo da equipe: do 1º dia de MESES_EQUIPE meses antes até o fim da competência. */
+export function intervaloDaEquipe(mes: string): { inicio: string; fim: string } {
+  const { fim } = intervaloDaCompetencia(mes);
+  const [ano, mm] = fim.split("-").map(Number);
+  const d = new Date(Date.UTC(ano, mm - 1 - MESES_EQUIPE, 1));
+  return { inicio: d.toISOString().slice(0, 10), fim };
+}
+
+/**
+ * Soma à lista do mês quem é da equipe mas não teve entrega nele (Pablo,
+ * 05/11/2026: "por que a Thamires não aparece aqui?"). Entra com 0 entregas,
+ * sem nota — no peso no valor leva R$ 0 e não tira nada de ninguém. "Equipe"
+ * = responsável por chamado concluído nos últimos MESES_EQUIPE meses.
+ */
+export function completarComEquipe(devs: ResumoDev[], equipe: { devId: string; devNome: string }[]): ResumoDev[] {
+  const tem = new Set(devs.map((d) => d.devId));
+  const vazio = Object.fromEntries(CRITERIOS.map((k) => [k, null])) as NotasCriterios;
+  const extras = equipe
+    .filter((e) => !tem.has(e.devId))
+    .map((e) => ({ devId: e.devId, devNome: e.devNome, entregas: [], medias: { ...vazio }, nota: null, mercado: 0, freelancer: 0, clt: 0 }));
+  return [...devs, ...extras];
 }
 
 export function resumoPorDev(entregas: EntregaBonificacao[], cfg: ConfigBonificacao): ResumoDev[] {
