@@ -186,6 +186,38 @@ export function useHistoricoAplicacao(aplicacaoId: string | null) {
   });
 }
 
+// Histórico de uma linha das Movimentações (aplicação, resgate ou lançamento importado do Fluxo), com o nome de quem fez (RPC aplicacao_financeira_historico_movimento).
+export interface AlvoHistoricoAplicacao {
+  tipo: "aplicacao" | "resgate" | "importado";
+  id: string;
+  titulo: string;
+}
+export interface EventoHistoricoAplicacao {
+  quando: string | null;
+  fonte: string;
+  tipo: string;
+  descricao: string | null;
+  usuario: string | null;
+}
+
+export function useHistoricoMovimentacaoAplicacao(alvo: AlvoHistoricoAplicacao | null) {
+  return useQuery({
+    queryKey: ["aplicacao_financeira_historico_movimento", alvo?.tipo, alvo?.id],
+    enabled: !!alvo,
+    queryFn: async (): Promise<EventoHistoricoAplicacao[]> => {
+      // A função é nova e não está nos tipos gerados do Supabase: tipa só o que usa, sem any (a catraca do lint não deixa subir).
+      const cliente = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message: string } | null }> };
+      const { data, error } = await cliente.rpc("aplicacao_financeira_historico_movimento", { _tipo: alvo!.tipo, _id: alvo!.id });
+      if (error) {
+        // Migration ainda não aplicada: lista vazia, sem quebrar a tela.
+        if (error.code === "PGRST202" || error.code === "42883") return [];
+        throw new Error(error.message);
+      }
+      return (data ?? []) as EventoHistoricoAplicacao[];
+    },
+  });
+}
+
 export interface CriarAplicacaoInput {
   data_aplicacao: string;
   competencia: string;

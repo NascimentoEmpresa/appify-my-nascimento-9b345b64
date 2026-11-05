@@ -40,12 +40,13 @@ import {
   useDefinirBancoResgates,
   type AplicacaoFinanceiraResgateCaixa,
   useExcluirAplicacao,
-  useHistoricoAplicacao,
+  type AlvoHistoricoAplicacao,
   type AplicacaoFinanceiraLinha,
   type ProdutoAplicacao,
   type TipoAplicacao,
   type StatusAplicacaoExibicao,
 } from "@/hooks/useAplicacaoFinanceira";
+import { HistoricoMovimentacaoDialog } from "./aplicacao-financeira/HistoricoMovimentacaoDialog";
 
 // SIS-2026-0473 (Iury, mockup HTML via Discord): submódulo Aplicações
 // Financeiras, parecido com Débito Automático — registra aplicações
@@ -93,7 +94,8 @@ export default function AplicacoesFinanceiras() {
   const excluirResgate = useExcluirResgate();
   const [registroEditar, setRegistroEditar] = useState<AplicacaoFinanceiraLinha | null>(null);
   const [registroRendimento, setRegistroRendimento] = useState<AplicacaoFinanceiraLinha | null>(null);
-  const [registroHistorico, setRegistroHistorico] = useState<AplicacaoFinanceiraLinha | null>(null);
+  // Histórico (duplo clique na linha ou menu): aplicação da carteira, resgate ou lançamento importado do Fluxo.
+  const [alvoHistorico, setAlvoHistorico] = useState<AlvoHistoricoAplicacao | null>(null);
   const [registroExcluir, setRegistroExcluir] = useState<AplicacaoFinanceiraLinha | null>(null);
 
   const [empresaFiltro, setEmpresaFiltro] = useState("");
@@ -162,13 +164,13 @@ export default function AplicacoesFinanceiras() {
     const itens: {
       chave: string; data: string; tipo: "aplicacao" | "resgate" | "rendimento"; empresa: string; descricao: string;
       principal: number; rendimento: number; observacao: string | null;
-      resgate?: AplicacaoFinanceiraResgateCaixa; historico?: boolean;
+      resgate?: AplicacaoFinanceiraResgateCaixa; historico?: boolean; linhaId?: string;
       bancoNome?: string | null; bancoLogo?: string | null;
     }[] = [];
     // SIS-2026-0651: histórico importado do Fluxo — só leitura (corrige-se no Fluxo de Caixa).
     for (const h of historico) {
       itens.push({
-        chave: `h-${h.linha_id}`, data: h.data_pagamento, tipo: h.movimento, empresa_id: h.empresa_id,
+        chave: `h-${h.linha_id}`, linhaId: h.linha_id, data: h.data_pagamento, tipo: h.movimento, empresa_id: h.empresa_id,
         empresa: h.empresa_nome ?? "—", descricao: `${h.id_malote} · ${h.banco_nome ?? "Importado"}`,
         principal: h.movimento === "rendimento" ? 0 : h.valor,
         rendimento: h.movimento === "rendimento" ? h.valor : 0,
@@ -205,6 +207,12 @@ export default function AplicacoesFinanceiras() {
   const resgatesVisiveis = useMemo(() => movimentacoes.flatMap((m) => (m.resgate ? [m.resgate] : [])), [movimentacoes]);
   const resgatesSemBancoVisiveis = useMemo(() => resgatesVisiveis.filter((r) => !r.banco_id), [resgatesVisiveis]);
   const totalSemBanco = useMemo(() => resgatesCaixa.filter((r) => !r.banco_id).length, [resgatesCaixa]);
+  // Alvo do histórico de uma linha das Movimentações: lançamento importado do Fluxo, resgate ou aplicação da carteira (chave "a-<id>").
+  const alvoDaMovimentacao = (m: (typeof movimentacoes)[number]): AlvoHistoricoAplicacao =>
+    m.historico && m.linhaId ? { tipo: "importado", id: m.linhaId, titulo: m.descricao }
+      : m.resgate ? { tipo: "resgate", id: m.resgate.id, titulo: m.descricao }
+      : { tipo: "aplicacao", id: m.chave.slice(2), titulo: m.descricao };
+
   const idsSelecionados = useMemo(() => resgatesVisiveis.filter((r) => selecionados.has(r.id)).map((r) => r.id), [resgatesVisiveis, selecionados]);
 
   function alternarSelecao(id: string, marcado: boolean) {
@@ -389,7 +397,7 @@ export default function AplicacoesFinanceiras() {
                   {filtradas.map((l) => {
                     const badge = STATUS_BADGE[l.status_exibicao];
                     return (
-                      <TableRow key={l.id} className="[&>td]:px-2 [&>td]:py-2">
+                      <TableRow key={l.id} className="[&>td]:px-2 [&>td]:py-2" title="Duplo clique abre o histórico" onDoubleClick={() => setAlvoHistorico({ tipo: "aplicacao", id: l.id, titulo: `${l.numero} · ${l.produto}` })}>
                         <TableCell className="font-mono text-xs whitespace-nowrap">{l.numero}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{fmtData(l.data_aplicacao)}</TableCell>
                         <TableCell className="text-xs max-w-[90px] truncate" title={l.empresa_nome ?? ""}>{l.empresa_nome ?? "—"}</TableCell>
@@ -411,7 +419,7 @@ export default function AplicacoesFinanceiras() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => setRegistroHistorico(l)}>
+                              <DropdownMenuItem onClick={() => setAlvoHistorico({ tipo: "aplicacao", id: l.id, titulo: `${l.numero} · ${l.produto}` })}>
                                 <History className="mr-2 h-3.5 w-3.5" /> Histórico
                               </DropdownMenuItem>
                               <AcessoGate menu={MENU_CODIGO} acao="alterar">
@@ -507,7 +515,7 @@ export default function AplicacoesFinanceiras() {
                   {movimentacoesPagina.map((m) => {
                     const entrada = m.tipo !== "aplicacao";
                     return (
-                      <TableRow key={m.chave} className="[&>td]:px-2 [&>td]:py-2">
+                      <TableRow key={m.chave} className="[&>td]:px-2 [&>td]:py-2" title="Duplo clique abre o histórico" onDoubleClick={() => setAlvoHistorico(alvoDaMovimentacao(m))}>
                         <TableCell>
                           {m.resgate && (
                             <AcessoGate menu={MENU_CODIGO} acao="alterar">
@@ -548,6 +556,9 @@ export default function AplicacoesFinanceiras() {
                                 <Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => setAlvoHistorico(alvoDaMovimentacao(m))}>
+                                  <History className="mr-2 h-3.5 w-3.5" /> Histórico
+                                </DropdownMenuItem>
                                 <AcessoGate menu={MENU_CODIGO} acao="alterar">
                                   <DropdownMenuItem onClick={() => setResgateEditar(m.resgate!)}>
                                     <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
@@ -639,7 +650,7 @@ export default function AplicacoesFinanceiras() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <DialogHistoricoAplicacao registro={registroHistorico} onClose={() => setRegistroHistorico(null)} />
+      <HistoricoMovimentacaoDialog alvo={alvoHistorico} onClose={() => setAlvoHistorico(null)} />
 
       <AlertDialog open={!!registroExcluir} onOpenChange={(o) => !o && setRegistroExcluir(null)}>
         <AlertDialogContent>
@@ -1134,48 +1145,6 @@ function DialogEditarResgate({ resgate, onClose }: { resgate: AplicacaoFinanceir
           <Button variant="outline" size="sm" onClick={onClose} disabled={editar.isPending}>Cancelar</Button>
           <Button size="sm" onClick={confirmar} disabled={editar.isPending}>{editar.isPending ? "Salvando..." : "Salvar"}</Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Dialog: Histórico de eventos ─────────────────────────────────────────
-
-const EVENTO_LABEL: Record<string, string> = {
-  criacao: "Criação",
-  edicao: "Edição",
-  rendimento_atualizado: "Rendimento atualizado",
-  resgate_parcial: "Resgate parcial",
-  resgate_total: "Resgate total",
-  exclusao: "Exclusão",
-};
-
-function DialogHistoricoAplicacao({ registro, onClose }: { registro: AplicacaoFinanceiraLinha | null; onClose: () => void }) {
-  const { data: eventos = [], isLoading } = useHistoricoAplicacao(registro?.id ?? null);
-
-  return (
-    <Dialog open={!!registro} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Histórico — {registro?.numero}</DialogTitle>
-        </DialogHeader>
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground text-center py-6">Carregando...</p>
-        ) : eventos.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6">Nenhum evento registrado.</p>
-        ) : (
-          <div className="space-y-2">
-            {eventos.map((ev) => (
-              <div key={ev.id} className="border-b border-border pb-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold">{EVENTO_LABEL[ev.tipo_evento] ?? ev.tipo_evento}</span>
-                  <span className="text-muted-foreground">{new Date(ev.created_at).toLocaleString("pt-BR")}</span>
-                </div>
-                {ev.descricao && <p className="text-muted-foreground mt-0.5">{ev.descricao}</p>}
-              </div>
-            ))}
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );
