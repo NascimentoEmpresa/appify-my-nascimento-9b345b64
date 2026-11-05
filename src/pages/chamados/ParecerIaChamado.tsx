@@ -210,11 +210,13 @@ export function ResumoParecerIaLinha({ resumo }: { resumo?: ResumoParecerIa }) {
   );
 }
 
-export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
+export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstimadas = false }: {
   chamadoId: string;
   podeGerar: boolean;
   /** CHAMADO_SISTEMA.horas_gastas — sem elas, não há parecer. */
   horasReais?: number | string | null;
+  /** CHAMADO_SISTEMA.horas_gastas_estimadas — horas supostas pela complexidade (mig 20261105005500). */
+  horasEstimadas?: boolean | null;
 }) {
   const reais = Number(horasReais) > 0 ? Number(horasReais) : null;
   const qc = useQueryClient();
@@ -312,7 +314,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
               <p className="text-2xl font-bold">{fmtReais(conta!.valor_medio)}</p>
               {conta!.horas != null && (
                 <p className="text-[11px] text-muted-foreground">
-                  {conta!.pelasHorasGastas ? `${fmtHorasGastas(conta!.horas)} h gastas` : `~${conta!.horas.toLocaleString("pt-BR")} h em média`}
+                  {conta!.pelasHorasGastas ? (horasEstimadas ? `~${fmtHorasGastas(conta!.horas)} h (estimadas)` : `${fmtHorasGastas(conta!.horas)} h gastas`) : `~${conta!.horas.toLocaleString("pt-BR")} h em média`}
                 </p>
               )}
             </div>
@@ -357,7 +359,9 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
             {conta!.pelasHorasGastas ? (
               <>
-                <p className="font-semibold">Calculado pelas {fmtHorasGastas(conta!.horas)} h gastas</p>
+                <p className="font-semibold">{horasEstimadas
+                  ? <>Calculado por ~{fmtHorasGastas(conta!.horas)} h <b>estimadas</b> pela complexidade (chamado antigo, sem horas informadas)</>
+                  : <>Calculado pelas {fmtHorasGastas(conta!.horas)} h gastas</>}</p>
                 <p className="mt-0.5 text-muted-foreground">
                   Freelancer e software house usam as horas informadas pelo desenvolvedor ao concluir; muda só o valor/hora de cada um, e o valor médio de mercado é a média dos dois. O card verde é o custo real conosco.
                   {parecer.horas_estimadas != null && Number(parecer.horas_estimadas) !== conta!.horas
