@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { baixarCsv } from "@/lib/efetividade";
+import type { ResumoChatFaturamento } from "@/hooks/useFaturamentoJustificativa";
+import { CelulaJustificativa } from "./faturamento/JustificativaFaturamentoDialog";
 import { ETAPA_LABEL, EtapaNf, etapaDaNf, impactoDoContratoPct, resumirPendencias } from "./pendentesNf";
 
 // SIS-2026-0650: layout da aba "NFs Não Emitidas" conforme o mockup do Ruan — KPIs, tabela
@@ -35,6 +37,10 @@ interface Props {
   // Código da nota escolhido no Controle de Faturamento (N por padrão; R, M, DH ou todos).
   codigos: Set<string>;
   rotuloCodigo: string;
+  // SIS-2026-0808: chat de justificativa do contrato não faturado (resumo da competência selecionada).
+  chatDoContrato: (contratoId: string) => ResumoChatFaturamento | undefined;
+  podeJustificar: boolean;
+  onJustificar: (contratoId: string) => void;
 }
 
 const ETAPA_CLASSE: Record<EtapaNf, string> = {
@@ -57,7 +63,7 @@ function KpiCard({ label, valor, sub, borda, valorClass }: { label: string; valo
   );
 }
 
-export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel, competenciaISO, nfs, empresaNomePorId, filtros, onLimparFiltros, codigos, rotuloCodigo }: Props) {
+export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel, competenciaISO, nfs, empresaNomePorId, filtros, onLimparFiltros, codigos, rotuloCodigo, chatDoContrato, podeJustificar, onJustificar }: Props) {
   const linhas = useMemo(() => {
     const etapaPorContrato = new Map<string, { status?: string | null }[]>();
     for (const n of nfs) {
@@ -89,7 +95,7 @@ export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel
 
   function exportarCsv() {
     baixarCsv(`nfs-nao-emitidas-${competenciaISO.slice(0, 7)}.csv`, [
-      ["Prioridade", "Empresa", "Contrato", "Etapa atual", "Valor executável", "Valor não emitido", "Impacto no mês (%)"],
+      ["Prioridade", "Empresa", "Contrato", "Etapa atual", "Valor executável", "Valor não emitido", "Impacto no mês (%)", "Mensagens no chat", "Última mensagem"],
       ...linhas.map((l) => [
         l.prioridade,
         l.empresaNome,
@@ -98,6 +104,8 @@ export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel
         l.executavel.toFixed(2).replace(".", ","),
         l.naoEmitido.toFixed(2).replace(".", ","),
         l.impactoPct.toFixed(2).replace(".", ","),
+        chatDoContrato(l.contratoId)?.total ?? 0,
+        chatDoContrato(l.contratoId)?.ultima.texto ?? "",
       ]),
     ]);
   }
@@ -144,12 +152,13 @@ export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel
                     <TableHead className="text-right text-[11px] uppercase">Valor executável</TableHead>
                     <TableHead className="text-right text-[11px] uppercase">Valor não emitido</TableHead>
                     <TableHead className="min-w-[120px] text-right text-[11px] uppercase">Impacto no mês</TableHead>
+                    <TableHead className="min-w-[200px] text-[11px] uppercase">Justificativa</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {linhas.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">Nenhum contrato pendente — tudo faturado nessa competência.</TableCell>
+                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">Nenhum contrato pendente — tudo faturado nessa competência.</TableCell>
                     </TableRow>
                   )}
                   {linhas.map((l) => (
@@ -169,6 +178,9 @@ export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel
                         <div className="mt-1 h-1 w-full overflow-hidden rounded bg-muted">
                           <div className="h-full rounded bg-orange-400" style={{ width: `${Math.min(100, l.impactoPct)}%` }} />
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <CelulaJustificativa resumo={chatDoContrato(l.contratoId)} podeEscrever={podeJustificar} onAbrir={() => onJustificar(l.contratoId)} />
                       </TableCell>
                     </TableRow>
                   ))}
