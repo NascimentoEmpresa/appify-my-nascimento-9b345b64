@@ -95,6 +95,10 @@ const COR_MODULO: Record<string, string> = {
   whatsapp: "#22c55e",
   bi: "#0f3171",
   "plano-acoes": "#dc2626",
+  // SIS-2026-0772: departamentos cujo id é o do módulo principal e não tinham cor.
+  diretoria: "#0e7490",
+  treinamentos: "#be123c",
+  ti: "#6366f1",
   integracao: "#475569",
 };
 const COR_PADRAO = "#0f3171";
