@@ -3,6 +3,7 @@ import {
   CONFIG_PADRAO,
   PISO_VALOR,
   configDoPeriodo,
+  distribuirPorPeso,
   percentil,
   referenciaDoPeriodo,
   contribuicaoParaEquipe,
@@ -247,6 +248,25 @@ describe("régua do valor (05/11/2026)", () => {
     const cfg = configDoPeriodo(CONFIG_PADRAO, vals);
     expect(cfg.referenciaValor).toBe(2000);
     expect(notasDaEntrega(entrega({ valorMercado: 1000 }), cfg).valor).toBe(75);
+  });
+});
+
+describe("distribuição com peso no valor (05/11/2026)", () => {
+  const dev = (devId: string, nota: number | null) => ({ devId, devNome: devId, nota, entregas: [] });
+  it("pesos iguais: verba × 20% × nota (o desenho: 68,4 → R$ 684 de R$ 5.000)", () => {
+    const d = distribuirPorPeso(5000, [dev("eduardo", 68.4), dev("iury", 64.3), dev("joao", 70.7), dev("pablo", 79.5), dev("thamires", 70.5)]);
+    expect(d.linhas.map((l) => l.peso)).toEqual([20, 20, 20, 20, 20]);
+    expect(d.linhas.map((l) => l.valor)).toEqual([684, 643, 707, 795, 705]);
+    expect(d.distribuido).toBe(3534);
+    expect(d.saldo).toBe(1466);
+    expect(d.pesoTotal).toBe(100);
+    expect(d.pesosIguais).toBe(true);
+  });
+  it("peso personalizado e dev sem nota", () => {
+    const d = distribuirPorPeso(1000, [dev("a", 100), dev("b", null)], { a: 70, b: 30 });
+    expect(d.linhas.map((l) => l.valor)).toEqual([700, 0]);
+    expect(d.saldo).toBe(300);
+    expect(d.pesosIguais).toBe(false);
   });
 });
 

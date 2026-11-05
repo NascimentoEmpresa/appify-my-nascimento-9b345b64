@@ -40,7 +40,7 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useEntregasBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
-  configDoPeriodo, contribuicao, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
+  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
   mediasDosCriterios, noPrazo, notaDaEntrega, notaDoGrupo, notasDaEntrega, pendenciasDaEntrega, pontosPerdidos,
   ratearBonificacao, referenciaDoPeriodo, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
   type ConfigBonificacao, type Criterio, type EntregaDetalhada, type NotasCriterios, type Rateio, type ResumoDev,
@@ -226,7 +226,7 @@ function Painel() {
             </TabsContent>
             <TabsContent value="bonificacao" className="space-y-4">
               <AbaBonificacao
-                mes={mes} cfg={cfg} rateio={rateio} devs={devsFiltro} filtradas={filtradas} totalPeriodo={validas.length}
+                mes={mes} cfg={cfg} rateio={rateio} devs={devsFiltro} devsMes={devsDoMes} filtradas={filtradas} totalPeriodo={validas.length}
                 verba={periodo.verba} fechado={periodo.fechado} foto={periodo.linha?.resultado ?? null}
                 podeConfigurar={podeConfigurar} podeExportar={podeExportar} imprimir={imprimir}
                 verIndividual={(id) => verDev(id, "individual")} pendentes={comPendencia.length}
@@ -522,8 +522,8 @@ function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
 // ── Distribuição da bonificação ──────────────────────────────────────────
 interface FotoFechamento { nota_equipe?: number | null; verba?: number; liberado?: number; saldo?: number; participantes?: { devNome: string; valor: number }[]; gerado_em?: string }
 
-function AbaBonificacao({ mes, cfg, rateio, devs, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
-  mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; filtradas: EntregaDetalhada[]; totalPeriodo: number;
+function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPeriodo, verba, fechado, foto, podeConfigurar, podeExportar, imprimir, verIndividual, pendentes }: {
+  mes: string; cfg: ConfigBonificacao; rateio: Rateio; devs: ResumoDev[]; devsMes: ResumoDev[]; filtradas: EntregaDetalhada[]; totalPeriodo: number;
   verba: number; fechado: boolean; foto: unknown; podeConfigurar: boolean; podeExportar: boolean; imprimir: () => void;
   verIndividual: (id: string) => void; pendentes: number;
 }) {
@@ -592,18 +592,8 @@ function AbaBonificacao({ mes, cfg, rateio, devs, filtradas, totalPeriodo, verba
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-5">
-          <Titulo ajuda="Apresenta a nota individual e a quantidade de entregas de cada desenvolvedor, sem valores financeiros individuais.">Desempenho por desenvolvedor — sem valores individuais</Titulo>
-          <p className="mb-2 text-sm text-muted-foreground">As barras mostram só a nota e o número de entregas. O pagamento é igual para todos.</p>
-          {devs.length ? devs.map((d) => (
-            <div key={d.devId} className="my-3">
-              <div className="mb-1.5 flex justify-between text-sm"><span>{d.devNome}</span><b className="tabular-nums">{num(d.nota)}/100</b></div>
-              <Progress value={d.nota ?? 0} className="h-2" />
-              <small className="text-muted-foreground">{d.entregas.length} entrega(s) • avaliação individual sem impacto no rateio</small>
-            </div>
-          )) : <Vazio>Nenhum desenvolvedor no filtro.</Vazio>}
-        </Card>
+      <div className="grid gap-4">
+        <CartaoPesoNoValor base={rateio.verba} devs={devsMes} visiveis={devs} />
         <Card className="p-5">
           <Titulo ajuda="Explica a fórmula: verba disponível × nota coletiva ÷ 100; depois divide-se igualmente entre os participantes.">Cálculo da bonificação coletiva</Titulo>
           <ol className="list-decimal space-y-1 rounded-md border-l-4 border-primary bg-muted/40 p-3 pl-8 text-sm text-muted-foreground">
@@ -660,5 +650,72 @@ function AbaBonificacao({ mes, cfg, rateio, devs, filtradas, totalPeriodo, verba
         ) : <Vazio>Sem tarefas.</Vazio>}
       </Card>
     </>
+  );
+}
+
+/**
+ * "Desempenho por desenvolvedor — com peso no valor" (desenho do Pablo, 05/11/2026).
+ * Valor previsto = verba disponível × peso ÷ 100 × nota ÷ 100. Pesos editáveis
+ * só na tela (simulação, não gravam); "Pesos iguais" volta ao padrão.
+ * A régua dos pesos é o MÊS inteiro: filtrar um dev não muda o peso dele.
+ */
+function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: ResumoDev[]; visiveis: ResumoDev[] }) {
+  const [pesos, setPesos] = useState<Record<string, number>>({});
+  const d = useMemo(() => distribuirPorPeso(base, devs, pesos), [base, devs, pesos]);
+  const ids = new Set(visiveis.map((v) => v.devId));
+  const linhas = d.linhas.filter((l) => ids.has(l.devId));
+  const totalOk = Math.abs(d.pesoTotal - 100) < 0.05;
+  return (
+    <Card className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <Titulo ajuda="Valor previsto = verba disponível para a equipe × peso do desenvolvedor × nota individual (a própria nota já aplica o desconto; não passa antes pela nota coletiva). O que as notas não alcançam fica como saldo não distribuído. Os pesos aqui são simulação e não são gravados.">
+            Desempenho por desenvolvedor — com peso no valor
+          </Titulo>
+          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor pode ser ponderado por peso e calculado sobre a verba disponível para a equipe.</p>
+        </div>
+        <div className="grid min-w-[16rem] gap-1 rounded-lg border bg-muted/30 px-4 py-2 text-sm">
+          <div className="flex justify-between gap-6"><span className="text-muted-foreground">Verba disponível para a equipe:</span><b className="tabular-nums">{moeda(d.base)}</b></div>
+          <div className="flex justify-between gap-6"><span className="text-muted-foreground">Peso total considerado:</span><b className={`tabular-nums ${totalOk ? "" : "text-warning"}`}>{num(d.pesoTotal)}%</b></div>
+        </div>
+      </div>
+
+      {linhas.length ? linhas.map((l) => (
+        <div key={l.devId} className="mt-4 grid items-center gap-3 md:grid-cols-[1fr_auto]">
+          <div className="min-w-0">
+            <div className="mb-1.5 flex justify-between gap-3 text-sm"><span className="truncate">{l.devNome}</span><b className="tabular-nums">{num(l.nota)}/100</b></div>
+            <Progress value={l.nota ?? 0} className="h-2" />
+            <small className="text-muted-foreground">{l.entregas} entrega(s)</small>
+          </div>
+          <div className="flex gap-3 md:border-l md:pl-4">
+            <label className="grid gap-1 text-center text-xs text-muted-foreground">Peso no valor
+              <div className="relative">
+                <Input type="number" min={0} max={100} step={1} className="w-24 pr-6 text-center font-semibold tabular-nums"
+                  value={String(l.peso)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value.replace(",", "."));
+                    setPesos((p) => ({ ...p, [l.devId]: Number.isFinite(n) ? n : 0 }));
+                  }} />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs">%</span>
+              </div>
+            </label>
+            <div className="grid gap-1 text-center text-xs text-muted-foreground">Valor previsto
+              <div className="flex h-10 min-w-[8rem] items-center justify-center rounded-md bg-muted/50 px-3 text-base font-semibold text-foreground tabular-nums">{moeda(l.valor)}</div>
+            </div>
+          </div>
+        </div>
+      )) : <Vazio>Nenhum desenvolvedor no filtro.</Vazio>}
+
+      {!totalOk && <p className="mt-3 text-xs text-warning">Os pesos somam {num(d.pesoTotal)}% — ajuste para 100% para distribuir o valor liberado inteiro.</p>}
+
+      <div className="mt-5 grid gap-2 rounded-lg border bg-muted/30 px-4 py-3 text-sm md:grid-cols-3 md:divide-x">
+        <div><b>Distribuído pela nota:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
+        <div className="md:pl-4"><b>Saldo não distribuído:</b> <span className="tabular-nums">{moeda(d.saldo)}</span></div>
+        <div className="flex flex-wrap items-center gap-2 md:pl-4">
+          <span><b>Critério atual:</b> {d.pesosIguais ? `pesos iguais (${num(pesoIgual(devs.length))}% para cada)` : "pesos personalizados (simulação)"}</span>
+          {!d.pesosIguais && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos iguais</Button>}
+        </div>
+      </div>
+    </Card>
   );
 }

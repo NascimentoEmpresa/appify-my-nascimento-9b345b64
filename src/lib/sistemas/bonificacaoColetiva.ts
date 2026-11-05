@@ -300,6 +300,63 @@ export function ratearBonificacao(
   };
 }
 
+// ── Distribuição com peso no valor (05/11/2026) ──────────────────────────
+//
+// Bloco "Desempenho por desenvolvedor — com peso no valor" da aba
+// Distribuição (desenho do Pablo, 05/11): cada dev tem um PESO (% do valor
+// liberado; padrão = pesos iguais, 100 ÷ nº de devs) e o valor previsto é
+//   verba × peso ÷ 100 × nota individual ÷ 100 (a verba, não o liberado:
+// passar antes pela nota coletiva descontaria a nota duas vezes).
+// O que a nota individual não alcança fica como saldo não distribuído.
+// É simulação na tela: o fechamento continua gravando o rateio igual.
+
+export interface LinhaPesoValor {
+  devId: string;
+  devNome: string;
+  entregas: number;
+  nota: number | null;
+  /** % do valor liberado reservado a este dev. */
+  peso: number;
+  valor: number;
+}
+
+export interface DistribuicaoPorPeso {
+  linhas: LinhaPesoValor[];
+  base: number;
+  pesoTotal: number;
+  distribuido: number;
+  saldo: number;
+  /** true quando todos os pesos são iguais (o critério padrão). */
+  pesosIguais: boolean;
+}
+
+/** Peso igual para cada dev (100 ÷ n), arredondado a 2 casas. */
+export const pesoIgual = (n: number) => (n > 0 ? Math.round((10000 / n)) / 100 : 0);
+
+export function distribuirPorPeso(
+  base: number,
+  devs: Pick<ResumoDev, "devId" | "devNome" | "nota" | "entregas">[],
+  pesos: Record<string, number> = {},
+): DistribuicaoPorPeso {
+  const baseCent = Math.max(0, Math.round((finito(base) ? base : 0) * 100));
+  const padrao = pesoIgual(devs.length);
+  const linhas = devs.map((d) => {
+    const peso = finito(pesos[d.devId]) ? limitar(pesos[d.devId]) : padrao;
+    const nota = d.nota === null || !finito(d.nota) ? null : limitar(d.nota);
+    const cent = nota === null ? 0 : Math.round((baseCent * peso * nota) / 10000);
+    return { devId: d.devId, devNome: d.devNome, entregas: d.entregas.length, nota, peso, valor: cent / 100 };
+  });
+  const distribuidoCent = linhas.reduce((a, l) => a + Math.round(l.valor * 100), 0);
+  return {
+    linhas,
+    base: baseCent / 100,
+    pesoTotal: Math.round(linhas.reduce((a, l) => a + l.peso, 0) * 100) / 100,
+    distribuido: distribuidoCent / 100,
+    saldo: (baseCent - distribuidoCent) / 100,
+    pesosIguais: linhas.every((l) => l.peso === linhas[0]?.peso),
+  };
+}
+
 // ── Sugestões a partir dos dados reais ───────────────────────────────────
 
 /** Complexidade 1–5 do parecer da IA → nível de dificuldade do bônus. */
