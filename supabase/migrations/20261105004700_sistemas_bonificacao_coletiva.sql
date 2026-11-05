@@ -143,6 +143,13 @@ CREATE TABLE IF NOT EXISTS public."BONIFICACAO_DEV_ENTREGA" (
 COMMENT ON TABLE public."BONIFICACAO_DEV_ENTREGA" IS
   'Avaliação do gestor sobre uma entrega (chamado) para a bonificação coletiva: qualidade, dificuldade e valores (sobrescrevem a sugestão e o parecer da IA).';
 
+-- Índice em toda FK (guardião de desempenho, regra M2): sem ele, apagar um
+-- usuário em auth.users varre as tabelas inteiras.
+CREATE INDEX IF NOT EXISTS bonificacao_dev_periodo_fechado_por_idx ON public."BONIFICACAO_DEV_PERIODO" (fechado_por);
+CREATE INDEX IF NOT EXISTS bonificacao_dev_periodo_created_by_idx ON public."BONIFICACAO_DEV_PERIODO" (created_by);
+CREATE INDEX IF NOT EXISTS bonificacao_dev_periodo_updated_by_idx ON public."BONIFICACAO_DEV_PERIODO" (updated_by);
+CREATE INDEX IF NOT EXISTS bonificacao_dev_entrega_avaliado_por_idx ON public."BONIFICACAO_DEV_ENTREGA" (avaliado_por);
+
 DROP TRIGGER IF EXISTS trg_bonificacao_dev_periodo_updated_at ON public."BONIFICACAO_DEV_PERIODO";
 CREATE TRIGGER trg_bonificacao_dev_periodo_updated_at
   BEFORE UPDATE ON public."BONIFICACAO_DEV_PERIODO"
