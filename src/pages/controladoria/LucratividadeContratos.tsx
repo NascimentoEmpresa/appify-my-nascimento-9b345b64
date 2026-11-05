@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { KpiTile } from "@/components/financeiro/KpiTile";
-import { FileDown, Percent, Printer, TrendingUp, Wallet, Receipt } from "lucide-react";
+import { FileDown, MessageSquarePlus, Percent, Printer, TrendingUp, Wallet, Receipt } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
@@ -22,6 +23,9 @@ import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
+import { useJustificativas } from "@/hooks/useJustificativasValor";
+import { resumoPorContrato } from "./justificativas/regras";
+import { SolicitarJustificativaDialog, type AlvoJustificativa } from "./justificativas/SolicitarJustificativaDialog";
 
 // SIS-2026-0556: Lucratividade de Contratos (Controladoria). Faturamento vem
 // das NFs Código N (competência); custo realizado vem das SAÍDAS do Fluxo de
@@ -78,6 +82,12 @@ export default function LucratividadeContratos() {
   const { data: ligacoes } = useLigacoesRubrica();
   const { data: podeVerRubricas } = useScreenAccess("lucratividade-rubricas", "visualizar");
   const { data: podeAlterarRubricas } = useScreenAccess("lucratividade-rubricas", "alterar");
+  // SIS-2026-0807: coluna "Justificativa de valor": a Controladoria cobra de um gerente a explicação de um valor da linha.
+  const { data: podeVerJustificativas = false } = useScreenAccess("justificativas-valor", "visualizar");
+  const { data: podeCobrarJustificativa = false } = useScreenAccess("justificativas-valor", "incluir");
+  const { data: justificativas = [] } = useJustificativas(podeVerJustificativas);
+  const resumoJustificativas = useMemo(() => resumoPorContrato(justificativas, mes), [justificativas, mes]);
+  const [alvoJustificativa, setAlvoJustificativa] = useState<AlvoJustificativa | null>(null);
   const custos = useMemo(() => custosPorContratoMes(fluxo, ligacoes), [fluxo, ligacoes]);
   // Contratos ADMINISTRATIVO - ... ficam fora da tela (linhas, totais, exportação e aviso de lançamento sem classificação).
   const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
@@ -263,6 +273,9 @@ export default function LucratividadeContratos() {
                     />
                   </TableHead>
                   <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." /></TableHead>
+                  {podeVerJustificativas && (
+                    <TableHead className={`${CAB} text-center print:hidden`}><TituloComFormula alinhar="center" titulo="Justificativa de valor" formula="A Controladoria pede a um gerente que justifique um valor de qualquer coluna desta linha. Mostra quantas cobranças estão aguardando resposta, respondidas ou encerradas neste mês; clique para ver todas." /></TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -285,9 +298,32 @@ export default function LucratividadeContratos() {
                     <TableCell className={`${CEL} text-center`}>
                       <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${l.status === "ativo" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{l.status}</span>
                     </TableCell>
+                    {podeVerJustificativas && (
+                      <TableCell className={`${CEL} text-center print:hidden`}>
+                        <div className="flex items-center justify-center gap-1">
+                          {(() => {
+                            const r = resumoJustificativas.get(l.id);
+                            if (!r) return null;
+                            return (
+                              <Link to="/app/controladoria/justificativas" className="flex items-center gap-0.5" title="Ver as justificativas desta linha">
+                                {r.abertas > 0 && <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${r.vencidas > 0 ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`} title={`${r.abertas} aguardando resposta${r.vencidas ? `, ${r.vencidas} com prazo vencido` : ""}`}>{r.abertas} aberta{r.abertas === 1 ? "" : "s"}</span>}
+                                {r.respondidas > 0 && <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800" title="Respondidas, aguardando a Controladoria">{r.respondidas} resp.</span>}
+                                {r.encerradas > 0 && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800" title="Encerradas">{r.encerradas} ok</span>}
+                              </Link>
+                            );
+                          })()}
+                          {podeCobrarJustificativa && (
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6" title="Cobrar justificativa de valor desta linha"
+                              onClick={() => setAlvoJustificativa({ contratoId: l.id, contratoNome: l.contrato, valores: l })}>
+                              <MessageSquarePlus className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
-                {linhas.length === 0 && <TableRow><TableCell colSpan={detalhar ? 17 : 9} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
+                {linhas.length === 0 && <TableRow><TableCell colSpan={(detalhar ? 17 : 9) + (podeVerJustificativas ? 1 : 0)} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
               </TableBody>
               <TableFooter>
                 <TableRow>
@@ -303,6 +339,7 @@ export default function LucratividadeContratos() {
                     <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(total.margem)}`}>{pctTxt(total.margem)}</span>
                   </TableCell>
                   <TableCell />
+                  {podeVerJustificativas && <TableCell className="print:hidden" />}
                 </TableRow>
               </TableFooter>
             </Table>
@@ -331,6 +368,7 @@ export default function LucratividadeContratos() {
           </TabsContent>
         )}
       </Tabs>
+      <SolicitarJustificativaDialog alvo={alvoJustificativa} onClose={() => setAlvoJustificativa(null)} mes={mes} base={base} fluxo={fluxo} ligacoes={ligacoes} />
     </div>
   );
 }
