@@ -24,6 +24,7 @@ import Inicio from "./pages/Inicio";
 import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
+import GestaoOrganograma from "./pages/organograma/GestaoOrganograma";
 import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
 import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
@@ -727,6 +728,7 @@ const App = () => (
             <Route path="painel-executivo/tv" element={<PainelExecutivoTV />} />
             <Route path="presidencia" element={<Presidencia />} />
             <Route path="organograma" element={<Organograma />} />
+            <Route path="organograma/gestao" element={<GestaoOrganograma />} />
             {/* Estrutura de Setores e Processos (mig 20261020000060) — organograma NOVO, o de cima fica como está. */}
             <Route path="organograma/processos" element={<EstruturaProcessos />} />
             <Route path="organograma/processos/cadastro" element={<CadastroEstruturaProcessos />} />

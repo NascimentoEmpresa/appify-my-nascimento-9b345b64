@@ -6,6 +6,8 @@ import ExportarDados from "@/components/rh/ExportarDados";
 import CarregandoLogo from "@/components/ui/CarregandoLogo";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { empresaDe, parseSalario, parseData, fmtData, nomeCargoDe } from "@/lib/rh/colaboradoresUtils";
+import { PosicaoCampos } from "@/components/organograma/PosicaoCampos";
+import { carregarPosicao, posicaoFaltando, salvarPosicao, type PosicaoForm } from "@/lib/organograma/pessoas";
 import { buscarCustoDoPosto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 
 // =========================================================================
@@ -305,6 +307,8 @@ export default function Colaboradores() {
   const [mesRef, setMesRef] = useState<{ ano: number; mes: number }>({ ano: hoje.getFullYear(), mes: hoje.getMonth() }); // competência
 
   const [editing, setEditing] = useState<any | null>(null);
+  const [posOrg, setPosOrg] = useState<PosicaoForm | null>(null);
+  const [posOrgBase, setPosOrgBase] = useState("");
   const [form, setForm] = useState<Record<string, string>>({});
   const [ficha, setFicha] = useState<FichaSenior | null | "carregando" | "erro">(null);
   const [custoFicha, setCustoFicha] = useState<CustoPosto | null | "carregando">(null);
@@ -571,6 +575,9 @@ export default function Colaboradores() {
   };
   const abrirEdit = (e: any) => {
     setEditing(e);
+    // Posição no organograma (mig 20261104009000). Quem não pode mexer só não vê o bloco.
+    setPosOrg(null); setPosOrgBase("");
+    carregarPosicao({ empregado: e["ID"] }).then((p) => { setPosOrg(p); setPosOrgBase(JSON.stringify(p)); }).catch(() => undefined);
     const f: Record<string, string> = {};
     for (const [col] of MAIN_FIELDS) f[col] = e[col] ?? "";
     f["Título do Cargo"] = String(e["Título do Cargo"] ?? "").trim();
@@ -597,6 +604,12 @@ export default function Colaboradores() {
   };
   const salvarEdit = async () => {
     if (!editing) return;
+    // "O superior imediato deve ser vinculado a primeira vez" (chamado do
+    // organograma): atualizar a ficha de quem ainda não tem superior cobra isso.
+    // Desligado não entra na árvore, então não há o que cobrar.
+    const desligando = /demitid|rescis|desligad/i.test(form["Situação"] ?? "");
+    const faltaSuperior = posOrg && !desligando ? posicaoFaltando(posOrg) : null;
+    if (faltaSuperior) { aviso(faltaSuperior, "err"); return; }
     const patch: any = {};
     for (const k of Object.keys(form)) {
       if (!(k in editing)) continue;
@@ -604,6 +617,10 @@ export default function Colaboradores() {
     }
     const { error } = await (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]);
     if (error) { aviso("Erro ao salvar: " + error.message, "err"); return; }
+    if (posOrg && !desligando && JSON.stringify(posOrg) !== posOrgBase) {
+      try { await salvarPosicao(posOrg); }
+      catch (e) { aviso("Ficha salva, mas o organograma recusou: " + (e as Error).message, "err"); return; }
+    }
     setRows(rs => rs.map(r => r["ID"] === editing["ID"] ? { ...r, ...patch } : r));
     setEditing(null); aviso("Colaborador atualizado.");
     if (modo === "rpc") buscarRpc();   // os números vêm do banco: refaz a consulta
@@ -864,6 +881,10 @@ export default function Colaboradores() {
                   </select>
                 </div>
               </div>
+
+              {posOrg && !/demitid|rescis|desligad/i.test(form["Situação"] ?? "") && (
+                <div style={{ marginTop: 16 }}><PosicaoCampos valor={posOrg} onValor={setPosOrg} /></div>
+              )}
 
               <FichaSeniorBlocos ficha={ficha} custo={custoFicha} verSalario={!!verSalario} />
 
