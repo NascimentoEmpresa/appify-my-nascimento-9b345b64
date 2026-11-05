@@ -37,11 +37,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
+import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, useSalariosBonificacao, useSalvarPeriodo } from "@/hooks/useBonificacaoColetiva";
 import { completarComEquipe, type ModoDivisao } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
-  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, redistribuirPesos, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
+  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, redistribuirPesos, cltDoMes, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
   mediasDosCriterios, noPrazo, notaDaEntrega, notaDoGrupo, notasDaEntrega, pendenciasDaEntrega, pontosPerdidos,
   ratearBonificacao, referenciaDoPeriodo, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
   type ConfigBonificacao, type Criterio, type EntregaDetalhada, type NotasCriterios, type Rateio, type ResumoDev,
@@ -220,7 +220,7 @@ function Painel() {
               />
             </TabsContent>
             <TabsContent value="individual" className="space-y-4">
-              <AbaIndividual devs={devsFiltro} cfg={cfg} />
+              <AbaIndividual devs={devsFiltro} cfg={cfg} mes={mes} hoje={hoje} />
             </TabsContent>
             <TabsContent value="tarefas" className="space-y-4">
               <AbaTarefas
@@ -338,7 +338,11 @@ function AbaEquipe({ filtradas, validas, cfg, notaEquipe, notaFiltro, filtrando,
   );
 }
 
-function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: (d: ResumoDev) => ReactNode; extras?: boolean }) {
+function TabelaDevs({ devs, acao, extras = false, clt }: {
+  devs: ResumoDev[]; acao?: (d: ResumoDev) => ReactNode; extras?: boolean;
+  /** Substitui o "CLT IA" pelo salário do mês (Comparativo individual). */
+  clt?: (d: ResumoDev) => number | null;
+}) {
   if (!devs.length) return <Vazio>Sem dados.</Vazio>;
   return (
     <div className="overflow-x-auto">
@@ -348,7 +352,7 @@ function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: 
             <TableHead>Desenvolvedor</TableHead><TableHead>Entregas</TableHead>
             {CRITERIOS.map((k) => <TableHead key={k}>{ROTULO_CRITERIO[k]}</TableHead>)}
             <TableHead>Nota final</TableHead>
-            {extras && <><TableHead>Mercado IA</TableHead><TableHead>Freelancer IA</TableHead><TableHead>CLT IA</TableHead></>}
+            {extras && <><TableHead>Mercado IA</TableHead><TableHead>Freelancer IA</TableHead><TableHead>{clt ? <span className="inline-flex items-center gap-1">CLT (salário do mês)<Ajuda texto="Salário do colaborador (cadastro da Senior) proporcional aos dias corridos já passados no mês atual — sobe sozinho a cada dia. Meses anteriores ficam R$ 0,00 por enquanto. Só aparece para quem tem 'Colaboradores — Ver salário'; os demais veem —." /></span> : "CLT IA"}</TableHead></>}
             {acao && <TableHead />}
           </TableRow>
         </TableHeader>
@@ -359,7 +363,7 @@ function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: 
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell>{moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className="tabular-nums">{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}
@@ -370,13 +374,19 @@ function TabelaDevs({ devs, acao, extras = false }: { devs: ResumoDev[]; acao?: 
 }
 
 // ── Individual ───────────────────────────────────────────────────────────
-function AbaIndividual({ devs, cfg }: { devs: ResumoDev[]; cfg: ConfigBonificacao }) {
+function AbaIndividual({ devs, cfg, mes, hoje }: { devs: ResumoDev[]; cfg: ConfigBonificacao; mes: string; hoje: string }) {
+  // "CLT" = salário gasto no mês (Pablo, 05/11/2026): só o mês atual busca o
+  // salário; meses anteriores são 0 (cltDoMes). O banco corta quem não pode
+  // ver salário (mig 20261105010500).
+  const mesAtual = mes === hoje.slice(0, 7);
+  const { data: salarios = {} } = useSalariosBonificacao(devs.map((d) => d.devId), mesAtual);
+  const clt = (d: ResumoDev) => (mesAtual ? cltDoMes(salarios[d.devId], mes, hoje) : 0);
   return (
     <>
       <Card className="p-5">
         <Titulo ajuda="Apresenta a nota por critério de cada profissional e os valores estimados das tarefas que executou.">Comparativo individual</Titulo>
         <p className="mb-3 text-sm text-muted-foreground">Selecione um desenvolvedor no filtro para ver só ele. As notas individuais não alteram a cota da bonificação.</p>
-        <TabelaDevs devs={devs} extras />
+        <TabelaDevs devs={devs} extras clt={clt} />
       </Card>
       <Card className="p-5">
         <Titulo ajuda="Detalhamento dos cinco componentes da nota individual, antes e depois da aplicação dos pesos.">Pontuação por critério do profissional</Titulo>

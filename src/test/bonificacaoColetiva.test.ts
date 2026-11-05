@@ -6,6 +6,7 @@ import {
   distribuirPorPeso,
   pesosPadrao,
   redistribuirPesos,
+  cltDoMes,
   completarComEquipe,
   percentil,
   referenciaDoPeriodo,
@@ -302,6 +303,13 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
     const d = distribuirPorPeso(1000, [dev("p", 90, "Pablo"), { ...devs[0], entregas: [] }]);
     expect(d.linhas.map((l) => [l.peso, l.valor])).toEqual([[100, 1000], [0, 0]]);
     expect(d.pesosPadrao).toBe(true);
+  });
+  it("CLT do mês: salário proporcional aos dias corridos; meses anteriores 0", () => {
+    expect(cltDoMes(3200, "2026-11", "2026-11-05")).toBe(533.33); // 3200 × 5/30
+    expect(cltDoMes(3100, "2026-10", "2026-10-31")).toBe(3100); // último dia = salário cheio
+    expect(cltDoMes(2800, "2026-02", "2026-02-14")).toBe(1400); // fevereiro: 28 dias
+    expect(cltDoMes(3200, "2026-10", "2026-11-05")).toBe(0); // mês anterior
+    expect(cltDoMes(null, "2026-11", "2026-11-05")).toBeNull(); // sem salário / sem permissão
   });
   it("editar um peso redistribui entre os outros com peso, na proporção, e fecha em 100", () => {
     const base = { e: 22.22, i: 22.22, j: 22.22, p: 22.22, o: 11.11, t: 0 };

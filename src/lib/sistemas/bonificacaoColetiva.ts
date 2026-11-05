@@ -364,6 +364,25 @@ export function pesosPadrao(devs: (Pick<ResumoDev, "devId" | "devNome"> & { nota
 }
 
 /**
+ * "CLT" do Comparativo individual (Pablo, 05/11/2026): o salário do
+ * colaborador GASTO no mês, por dias corridos já passados — no mês atual,
+ * salário × dia de hoje ÷ dias do mês (o dia de hoje conta: "5 dias
+ * passados" no dia 5), e vai subindo sozinho a cada dia. Meses anteriores
+ * (e futuros) ficam 0 por enquanto — "os meses anteriores ainda são
+ * incertos". Sem salário (ou sem permissão de ver salário, ver mig
+ * 20261105010500) → null, a tela mostra "—".
+ * `mes` = 'AAAA-MM'; `hoje` = 'AAAA-MM-DD' no fuso de Brasília.
+ */
+export function cltDoMes(salario: number | null | undefined, mes: string, hoje: string): number | null {
+  if (!finito(salario)) return null;
+  if (mes !== hoje.slice(0, 7)) return 0;
+  const [a, m] = mes.split("-").map(Number);
+  const diasNoMes = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  const dia = Math.min(diasNoMes, Math.max(1, Number(hoje.slice(8, 10)) || 1));
+  return Math.round((salario * 100 * dia) / diasNoMes) / 100;
+}
+
+/**
  * Editar o peso de UM dev redistribui a diferença entre os OUTROS que já têm
  * peso > 0, na proporção do peso de cada um — a soma fica sempre em 100%
  * (Pablo, 05/11: "quando diminuir a porcentagem de um tem que aumentar pros
