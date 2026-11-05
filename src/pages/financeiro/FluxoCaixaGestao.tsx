@@ -481,7 +481,8 @@ export default function FluxoCaixaGestao() {
   // e o valor que ele mostra (?esperado=), que a faixa de conferência compara com o total filtrado.
   const [competencia, setCompetencia] = useState(searchParams.get("competenciaDe") ?? "");
   const [competenciaAte, setCompetenciaAte] = useState(searchParams.get("competenciaAte") ?? "");
-  const [tipoFiltro, setTipoFiltro] = useState<"" | "saida">(searchParams.get("tipo") === "saida" ? "saida" : "");
+  // SIS-2026-0776: filtro Tipo (Entrada / Saída) na tela; o link do Fechamento (?tipo=saida) já entra com Saída marcada. Lista vazia = os dois.
+  const [tiposFiltro, setTiposFiltro] = useState<string[]>(searchParams.get("tipo") === "saida" ? ["saida"] : []);
   const [conferenciaFechamento, setConferenciaFechamento] = useState(searchParams.get("origemTela") === "fechamento" ? Number(searchParams.get("esperado")) : null);
   // SIS-2026-0725: todos os filtros de lista aceitam mais de um item (lista vazia = todos); os parâmetros da URL entram como 1 item.
   const doParametro = (k: string) => (searchParams.get(k) ? [searchParams.get(k) as string] : []);
@@ -574,7 +575,7 @@ export default function FluxoCaixaGestao() {
     setDataAte("");
     setCompetencia("");
     setCompetenciaAte("");
-    setTipoFiltro("");
+    setTiposFiltro([]);
     setConferenciaFechamento(null);
     setEmpresaIds([]);
     setOrigensFiltro([]);
@@ -598,7 +599,7 @@ export default function FluxoCaixaGestao() {
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (!competenciaNoIntervalo(l, competencia, competenciaAte)) return false;
-      if (tipoFiltro && l.tipo !== tipoFiltro) return false;
+      if (tiposFiltro.length > 0 && !tiposFiltro.includes(l.tipo)) return false;
       if (empresaIds.length > 0 && !empresaIds.includes(l.empresa_id ?? "")) return false;
       if (origensFiltro.length > 0 && !origensFiltro.some((o) => linhaDaOrigemDoCard(l, o))) return false;
       // Rateio com cota no contrato escolhido também entra (a fatia dele é somada abaixo).
@@ -612,7 +613,7 @@ export default function FluxoCaixaGestao() {
       if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     }).map((l) => fatiaDoContratoNaLinha(l, contratoIds.filter((id) => id !== FILTRO_SEM_VALOR)));
-  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tipoFiltro, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, contaIds, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tiposFiltro, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, contaIds, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -649,7 +650,7 @@ export default function FluxoCaixaGestao() {
   function abrirExportacao() {
     setFx({
       dataDe, dataAte, competencia, competenciaAte, empresaIds, bancoIds, contratoIds, classificacaoIds, formasPagamento: formasFiltro, valor,
-      tipo: "todos", origens: origensFiltro.filter((o): o is FluxoCaixaMaloteLinha["origem"] => o in LABEL_ORIGEM), soRevisar: soInconsistentes,
+      tipo: tiposFiltro.length === 1 ? (tiposFiltro[0] as FiltrosExport["tipo"]) : "todos", origens: origensFiltro.filter((o): o is FluxoCaixaMaloteLinha["origem"] => o in LABEL_ORIGEM), soRevisar: soInconsistentes,
     });
     setExportando(true);
   }
@@ -1103,6 +1104,10 @@ export default function FluxoCaixaGestao() {
                   <Input type="month" className="h-8 text-xs" value={competenciaAte} onChange={(e) => setCompetenciaAte(e.target.value)} />
                 )}
               </div>
+            </div>
+            <div>
+              <Label className="text-xs">Tipo</Label>
+              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
