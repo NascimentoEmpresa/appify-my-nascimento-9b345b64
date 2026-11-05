@@ -147,6 +147,8 @@ export interface Chamado {
   horas_gastas?: number | null;
   horas_gastas_por?: string | null;
   horas_gastas_em?: string | null;
+  /** Horas supostas pela complexidade do parecer (mig 20261105005500), não informadas pelo dev. */
+  horas_gastas_estimadas?: boolean | null;
   /** Gravado ao concluir: true = no prazo, false = com atraso, null = sem prazo. */
   concluido_no_prazo?: boolean | null;
   /** Prazo esperado informado por quem abriu (mig 20261028001420). */

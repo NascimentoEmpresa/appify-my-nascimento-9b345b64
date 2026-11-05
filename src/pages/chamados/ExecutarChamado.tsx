@@ -276,7 +276,7 @@ export default function ExecutarChamado() {
           <InformacoesGithubChamado eventos={eventos} />
 
           {/* Parecer da I.A (mig 20261029000900): preço de mercado + complexidade. */}
-          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} horasReais={chamado.horas_gastas} />
+          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} horasReais={chamado.horas_gastas} horasEstimadas={chamado.horas_gastas_estimadas} />
 
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">

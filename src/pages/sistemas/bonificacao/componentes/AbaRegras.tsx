@@ -28,6 +28,10 @@ import {
   type Criterio,
   type Dificuldade,
   type PeriodoResolvido,
+  type ReferenciaValor,
+  PERCENTIL_REFERENCIA,
+  MIN_ENTREGAS_REFERENCIA,
+  PISO_VALOR,
 } from "@/lib/sistemas/bonificacaoColetiva";
 import { AJUDA, Ajuda, Titulo, dataBr, moeda } from "./comum";
 
@@ -35,8 +39,10 @@ const AJUDA_CRITERIO: Record<Criterio, string> = {
   qualidade: AJUDA.qualidade, satisfacao: AJUDA.satisfacao, prazo: AJUDA.prazo, dificuldade: AJUDA.dificuldade, valor: AJUDA.valor,
 };
 
-export function AbaRegras({ periodo, podeAlterar, podeAprovar, fotoDoResultado }: {
+export function AbaRegras({ periodo, referencia: refMes, podeAlterar, podeAprovar, fotoDoResultado }: {
   periodo: PeriodoResolvido;
+  /** Régua do Valor efetiva no mês (relativa às entregas, ou a fixa). */
+  referencia: ReferenciaValor;
   podeAlterar: boolean;
   podeAprovar: boolean;
   /** Resultado atual, gravado em `resultado` no fechamento. */
@@ -144,9 +150,17 @@ export function AbaRegras({ periodo, podeAlterar, podeAprovar, fotoDoResultado }
         <Card className="p-5">
           <Titulo ajuda={AJUDA.referencia}>Critério de valor da tarefa</Titulo>
           <p className="mb-3 text-sm text-muted-foreground">
-            O valor de mercado estimado pela IA é comparado com esta referência, gerando uma nota limitada a 100.
+            Toda entrega vale no mínimo {PISO_VALOR} — um bug rápido que destrava muita gente é tão entrega quanto um sistema novo. O valor de mercado (IA) só diferencia de {PISO_VALOR} a 100, comparado com a régua do mês: o percentil {Math.round(PERCENTIL_REFERENCIA * 100)} das entregas do período.
           </p>
-          <label className="text-xs text-muted-foreground">Valor de mercado para atingir nota 100 (R$)
+          <p className="mb-3 rounded-md bg-muted/40 p-3 text-sm">
+            Régua de {rotuloCompetencia(periodo.mes)}: <b>{moeda(refMes.valor)}</b> = nota 100{" "}
+            <span className="text-muted-foreground">
+              {refMes.automatica
+                ? `(calculada sobre ${refMes.base} entrega(s) com valor da IA)`
+                : `(referência fixa abaixo: o mês tem ${refMes.base} entrega(s) com valor da IA, menos de ${MIN_ENTREGAS_REFERENCIA})`}
+            </span>
+          </p>
+          <label className="text-xs text-muted-foreground">Referência fixa, só para mês com menos de {MIN_ENTREGAS_REFERENCIA} entregas com valor (R$)
             <Input type="number" min={1} step={500} value={referencia} disabled={travado} onChange={(e) => setReferencia(e.target.value)} />
           </label>
           {!travado && <Button className="mt-3" onClick={aplicarReferencia} disabled={salvar.isPending}>Aplicar referência</Button>}
@@ -189,7 +203,7 @@ export function AbaRegras({ periodo, podeAlterar, podeAprovar, fotoDoResultado }
             <TableRow><TableCell>Satisfação</TableCell><TableCell>Nota do solicitante na avaliação do chamado (1 a 5) ÷ 5 × 100</TableCell></TableRow>
             <TableRow><TableCell>Prazo</TableCell><TableCell>Dentro do prazo = 100; fora do prazo = 0 (situação gravada na conclusão do chamado)</TableCell></TableRow>
             <TableRow><TableCell>Dificuldade</TableCell><TableCell>Fácil, médio, difícil ou muito difícil = pontos configuráveis (IA: complexidade 1 = fácil, 2–3 = médio, 4 = difícil, 5 = muito difícil)</TableCell></TableRow>
-            <TableRow><TableCell>Valor</TableCell><TableCell>Valor de mercado da IA ÷ referência × 100 (limitado a 100)</TableCell></TableRow>
+            <TableRow><TableCell>Valor</TableCell><TableCell>{PISO_VALOR} + {100 - PISO_VALOR} × (valor de mercado da IA ÷ régua do mês), limitado a 100. Régua = percentil {Math.round(PERCENTIL_REFERENCIA * 100)} do valor de mercado das entregas do mês</TableCell></TableRow>
           </TableBody>
         </Table>
         <p className="mt-3 text-sm text-muted-foreground">
