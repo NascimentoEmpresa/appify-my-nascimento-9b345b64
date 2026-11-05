@@ -357,6 +357,7 @@ import ChecklistModuloDetalhe from "./pages/sistemas/checklist/ModuloDetalhe";
 import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
 import LiberacaoHoraExtra from "./pages/sistemas/hora-extra/LiberacaoHoraExtra";
 import DashboardHoraExtra from "./pages/sistemas/hora-extra/DashboardHoraExtra";
+import BonificacaoColetiva from "./pages/sistemas/bonificacao/BonificacaoColetiva";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
@@ -611,6 +612,8 @@ const App = () => (
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao/dashboards" element={<DashboardHoraExtra />} />
+            {/* Bonificação coletiva por nota da equipe (05/11/2026, mig 20261105004700). */}
+            <Route path="sistemas/bonificacao" element={<BonificacaoColetiva />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
                 aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
             {/* A tela do solicitante mora na Central de Serviços. Estas duas
