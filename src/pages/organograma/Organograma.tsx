@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as RMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import {
-  ArrowLeft, ArrowRight, BarChart3, Building2, Check, ChevronDown, ChevronUp, FileText, GraduationCap, HardHat, Loader2, Maximize,
-  Megaphone, Minus, Monitor, Network, Package, Pencil, Plus, Printer, Scale, Search, ShieldCheck, Trash2, UserPlus, Users, X,
+  AlertTriangle, ArrowLeft, ArrowRight, BarChart3, Building2, Check, ChevronDown, ChevronUp, FileText, GraduationCap, HardHat, LayoutDashboard, Loader2, Maximize,
+  Megaphone, Minus, Monitor, Network, Package, Pencil, Plus, Printer, RefreshCw, Scale, Search, ShieldCheck, Trash2, UserPlus, Users, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,12 +14,19 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
-  chefeDoNo, lerValorChefe, mesmoChefe, montarArvore, podeSerPar, valorChefe,
+  chaveContrato, chefeDoNo, mesmoChefe, montarArvore, podeSerPar, visaoDaArvore,
   type Arvore, type Chefe, type Grupo, type Item,
 } from "@/lib/organograma/arvore";
+import {
+  carregarArvore, carregarPosicao, funcaoDe, moverNaArvore, posicaoFaltando, posicaoVazia, salvarPosicao,
+  type DestinoEquipe, type NoPessoa, type PessoaBusca, type PosicaoForm,
+} from "@/lib/organograma/pessoas";
+import { BuscaPessoa } from "@/components/organograma/BuscaPessoa";
+import { PosicaoCampos } from "@/components/organograma/PosicaoCampos";
+import { PerfilPessoaDialog } from "@/components/organograma/PerfilPessoaDialog";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 
 // =====================================================================
 // ORGANOGRAMA (30/09/2026, mig 20260930000277)
@@ -41,22 +49,23 @@ import {
 // lado, ligadas por uma barra). Subordinado pode reportar a um dos pares ou
 // ao grupo inteiro ("Grupo …" no "Reporta a", ou soltar o card no quadro do
 // grupo). A regra de montar a árvore está em src/lib/organograma/arvore.ts.
+//
+// A EMPRESA TODA (04/11/2026, mig 20261104009000) — "organograma 100% dinâmico,
+// alimentado pelo cadastro, de TODA a empresa, não só o escritório" (a dona).
+// Todo colaborador ativo está aqui, com ou sem login: o gatilho em EMPREGADOS
+// põe e tira. São ~2.500 pessoas, então a tela abre recolhida; o filtro de
+// contrato mostra a operação e a linha de comando dela; quem ainda não tem
+// superior fica nas Pendências (dá para definir em lote). Fora da montagem,
+// clicar no card abre o perfil, com o histórico para quem pode ver.
 // =====================================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = supabase as any;
 const MENU = "organograma";
+// Acima disto a árvore abre recolhida: desenhar milhares de cards de uma vez trava.
+const LIMITE_ABERTA = 150;
 
-interface No {
-  id: string; user_id: string; parent_id: string | null; ordem: number; funcao_manual: string | null;
-  nome: string; email: string | null; avatar_url: string | null; cargo: string | null; setor: string | null; ativo: boolean;
-  cor: string | null; par_grupo: string | null; do_grupo: boolean;
-}
-interface Usuario {
-  user_id: string; nome: string; email: string | null; avatar_url: string | null; cargo: string | null; setor: string | null; no_organograma: boolean;
-}
-
-const funcaoDe = (n: Pick<No, "funcao_manual" | "cargo">) => n.funcao_manual || n.cargo || "";
+type No = NoPessoa;
 
 const CORES = ["#0f3171", "#1d4ed8", "#0e7490", "#047857", "#7c3aed", "#be123c", "#b45309", "#334155"];
 const corDe = (s: string) => CORES[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % CORES.length];
@@ -108,31 +117,46 @@ export default function Organograma() {
   const podeExcluir = can("excluir", undefined, MENU);
   const podeMontar = podeIncluir || podeAlterar;
 
-  const nosQ = useQuery({
-    queryKey: ["organograma-nos"],
-    queryFn: async () => {
-      const { data, error } = await sb.rpc("organograma_nos");
-      if (error) throw error;
-      return (data ?? []) as No[];
-    },
-  });
-  const nos = useMemo(() => nosQ.data ?? [], [nosQ.data]);
+  const podeVerGestao = useScreenAccess("organograma_gestao", "visualizar").data === true;
+
+  const nosQ = useQuery({ queryKey: ["organograma-arvore"], queryFn: carregarArvore, enabled: podeVer });
+  const todos = useMemo(() => nosQ.data?.nos ?? [], [nosQ.data]);
+  const contratos = useMemo(() => nosQ.data?.contratos ?? [], [nosQ.data]);
 
   const [edicao, setEdicao] = useState(false);
   const [busca, setBusca] = useState("");
+  const [contrato, setContrato] = useState<string | null>(null);
   const [escala, setEscala] = useState(1);
   const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
   const [adicionar, setAdicionar] = useState<{ parentId: string | null } | null>(null);
   const [editando, setEditando] = useState<No | null>(null);
+  const [perfilDe, setPerfilDe] = useState<string | null>(null);
+  const [verPendencias, setVerPendencias] = useState(false);
+  const [moverLider, setMoverLider] = useState<{ no: No; chefe: Chefe } | null>(null);
   const [arrastando, setArrastando] = useState<string | null>(null);
   const [alvoDrop, setAlvoDrop] = useState<string | null>(null);
 
   // ── Árvore ──────────────────────────────────────────────────────────
+  // `visao` é o desenho (pode ser só um contrato); `geral`, a empresa toda: é
+  // nela que se confere ciclo e se escolhe superior, mesmo com filtro ligado.
+  const visao = useMemo(() => visaoDaArvore(todos, contrato), [todos, contrato]);
+  const nos = visao.visiveis;
   const arv = useMemo(() => montarArvore(nos), [nos]);
-  const { porId, descendentes } = arv;
+  const geral = useMemo(() => montarArvore(todos), [todos]);
+  const { porId } = arv;
+  const descendentes = geral.descendentes;
+
+  // Abre recolhida se for grande. Só quando muda o que se está vendo: depois
+  // disso quem manda é quem clicou.
+  const chaveVisao = `${contrato ?? ""}|${nosQ.isSuccess}`;
+  useEffect(() => {
+    if (!nosQ.isSuccess) return;
+    // Num contrato a linha de comando já vem aberta: é para ela que se olha.
+    setRecolhidos(nos.length > LIMITE_ABERTA ? new Set(arv.recolhiveis().filter((k) => !visao.linhaDeComando.has(k))) : new Set());
+  }, [chaveVisao]); // eslint-disable-line react-hooks/exhaustive-deps
   // Contagem do botão de recolher: só o que desce daquele card (quem
   // responde ao grupo conta no botão do grupo, não no do par).
-  const contar = (l: No[]) => l.reduce((s, f) => s + 1 + descendentes(f.id).size, 0);
+  const contar = (l: No[]) => l.reduce((s, f) => s + 1 + arv.descendentes(f.id).size, 0);
   const totalAbaixo = (id: string) => contar(arv.equipeDe(id));
   const totalDoGrupo = (g: Grupo<No>) => contar(arv.equipeDoGrupo(g));
   const alternar = (chave: string) => setRecolhidos((s) => { const x = new Set(s); if (x.has(chave)) x.delete(chave); else x.add(chave); return x; });
@@ -140,7 +164,7 @@ export default function Organograma() {
   // Busca: acha, abre os ramos até a pessoa e rola até ela.
   const termo = busca.trim().toLowerCase();
   const achados = useMemo(() => (termo.length < 2 ? new Set<string>() : new Set(
-    nos.filter((n) => `${n.nome} ${funcaoDe(n)} ${n.setor ?? ""}`.toLowerCase().includes(termo)).map((n) => n.id),
+    nos.filter((n) => `${n.nome} ${funcaoDe(n)} ${n.setor ?? ""} ${n.contrato ?? ""} ${n.posto_nome ?? ""}`.toLowerCase().includes(termo)).map((n) => n.id),
   )), [nos, termo]);
   useEffect(() => {
     if (!achados.size) return;
@@ -174,19 +198,20 @@ export default function Organograma() {
   };
 
   // ── Gravações ───────────────────────────────────────────────────────
-  const recarregar = () => { qc.invalidateQueries({ queryKey: ["organograma-nos"] }); qc.invalidateQueries({ queryKey: ["organograma-usuarios"] }); };
+  const recarregar = () => { qc.invalidateQueries({ queryKey: ["organograma-arvore"] }); qc.invalidateQueries({ queryKey: ["organograma-busca"] }); };
   // Trocar o chefe arrastando tira a pessoa do grupo de pares em que estava
   // (os pares dela ficam; a equipe que respondia ao grupo o banco repassa).
+  // Quem tem equipe direta passa antes pela pergunta "e a equipe?".
   const mudarChefe = async (id: string, chefe: Chefe) => {
     const { parentId, doGrupo } = chefe;
     if (parentId && (parentId === id || descendentes(id).has(parentId))) {
       toast.error("Essa pessoa não pode reportar a alguém que está abaixo dela."); return;
     }
-    const g = parentId && doGrupo ? arv.grupoDe(parentId) : undefined;
-    const ordem = g ? arv.equipeDoGrupo(g).length : parentId ? arv.equipeDe(parentId).length : arv.raiz.length;
-    const { error } = await sb.from("ORGANOGRAMA_NO")
-      .update({ parent_id: parentId, do_grupo: !!g, ordem, par_grupo: null }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
+    const n = geral.porId.get(id);
+    if (n && geral.equipeDe(id).length) { setMoverLider({ no: n, chefe }); return; }
+    try {
+      await moverNaArvore({ no: id, parent: parentId, doGrupo, topo: !parentId });
+    } catch (e) { toast.error((e as Error).message); return; }
     recarregar();
   };
   const mover = async (n: No, d: -1 | 1) => {
@@ -248,15 +273,17 @@ export default function Organograma() {
     onDragOver: (e: DragEvent) => onDragOver(e, n.id),
     onDragLeave: () => setAlvoDrop((a) => (a === n.id ? null : a)),
     onDrop: (e: DragEvent) => onDrop(e, n.id),
-    onClick: () => edicao && podeMontar && setEditando(n),
+    onClick: () => (edicao && podeMontar ? setEditando(n) : setPerfilDe(n.id)),
   });
   const estadoCard = (n: No) => cn(
-    edicao && podeMontar && "cursor-pointer hover:border-primary/50 hover:shadow-md",
+    "cursor-pointer hover:border-primary/50 hover:shadow-md",
     edicao && podeAlterar && "cursor-grab active:cursor-grabbing",
     achados.has(n.id) && "ring-4 ring-amber-300",
     alvoDrop === n.id && "ring-4 ring-primary/40",
     arrastando === n.id && "opacity-40",
     !n.ativo && "opacity-60",
+    visao.linhaDeComando.has(n.id) && "border-dashed bg-muted/60",
+    n.superior_pendente && "border-amber-400",
   );
 
   // Largura FIXA do painel (02/10/2026): sem ela o galho da árvore encolhia
@@ -374,8 +401,10 @@ export default function Organograma() {
           <div className="min-w-0 flex-1 pr-2">
             <p className="line-clamp-2 text-[12.5px] font-bold uppercase leading-tight">{n.nome}</p>
             {funcaoDe(n) && <p className="mt-0.5 line-clamp-2 text-[10.5px] font-semibold uppercase leading-tight text-primary" style={n.cor ? { color: n.cor } : undefined}>{funcaoDe(n)}</p>}
-            {n.setor && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{n.setor}</p>}
+            {(n.setor || n.contrato) && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{n.setor || n.contrato}</p>}
             {!n.ativo && <p className="text-[10px] font-semibold text-destructive">usuário inativo</p>}
+            {n.superior_pendente && <p className="text-[10px] font-semibold text-amber-700">sem superior definido</p>}
+            {visao.linhaDeComando.has(n.id) && <p className="text-[10px] font-semibold text-muted-foreground">linha de comando</p>}
           </div>
           {edicao && podeMontar && <Pencil className="absolute right-2 top-2 h-3.5 w-3.5 text-muted-foreground" />}
           {subs.length > 0 && (
@@ -404,11 +433,12 @@ export default function Organograma() {
       <style>{CSS_ORGANOGRAMA}</style>
       <PageHeader
         title="Organograma"
-        subtitle="Quem é quem e quem reporta a quem — com foto, nome e função de cada pessoa do ERP."
+        subtitle="A empresa toda, ligada ao cadastro: quem é quem, quem reporta a quem e em qual contrato."
         module="Organograma"
         breadcrumb={["Organograma"]}
         actions={
           <div className="flex flex-wrap gap-2 print:hidden">
+            {podeVerGestao && <Button variant="outline" asChild className="gap-1.5"><Link to="/app/organograma/gestao"><LayoutDashboard className="h-4 w-4" /> Dashboard de Gestão</Link></Button>}
             <Button variant="outline" onClick={() => window.print()} className="gap-1.5"><Printer className="h-4 w-4" /> Imprimir</Button>
             {podeMontar && (
               <Button variant={edicao ? "default" : "outline"} onClick={() => setEdicao((v) => !v)} className="gap-1.5">
@@ -416,19 +446,34 @@ export default function Organograma() {
               </Button>
             )}
             {podeIncluir && edicao && (
-              <Button onClick={() => setAdicionar({ parentId: null })} className="gap-1.5"><UserPlus className="h-4 w-4" /> Adicionar pessoa</Button>
+              <Button onClick={() => setAdicionar({ parentId: null })} className="gap-1.5"><UserPlus className="h-4 w-4" /> Posicionar pessoa</Button>
             )}
           </div>
         }
       />
 
+      {visao.semSuperior.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 print:hidden dark:bg-amber-950/40 dark:text-amber-100">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="flex-1"><b>{visao.semSuperior.length.toLocaleString("pt-BR")}</b> pessoa(s) ainda sem superior imediato{contrato ? " neste contrato" : ""}: o cadastro não deu certeza de quem é o chefe.</span>
+          {podeMontar && <Button size="sm" variant="outline" className="bg-background" onClick={() => setVerPendencias(true)}>Definir superior</Button>}
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2 print:hidden">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-9 w-72 pl-8" placeholder="Buscar pessoa, função ou setor…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+          <Input className="h-9 w-64 pl-8" placeholder="Buscar pessoa, função ou posto…" value={busca} onChange={(e) => setBusca(e.target.value)} />
         </div>
+        <select aria-label="Contrato" className="h-9 w-72 max-w-full rounded-md border border-input bg-background px-2 text-sm"
+          value={contrato ?? ""} onChange={(e) => setContrato(e.target.value || null)}>
+          <option value="">Empresa toda</option>
+          {contratos.map((c) => <option key={chaveContrato(c.empresa, c.filial)} value={chaveContrato(c.empresa, c.filial)}>{c.nome}</option>)}
+        </select>
         {termo.length >= 2 && <span className="text-xs text-muted-foreground">{achados.size} encontrado(s)</span>}
-        <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground"><Users className="h-3.5 w-3.5" /> {nos.length} pessoa(s)</span>
+        <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+          <Users className="h-3.5 w-3.5" /> {(nos.length - visao.linhaDeComando.size).toLocaleString("pt-BR")} pessoa(s){visao.linhaDeComando.size ? ` + ${visao.linhaDeComando.size} na linha de comando` : ""}
+        </span>
         <div className="flex items-center gap-1 rounded-lg border bg-background p-0.5">
           <Button variant="ghost" size="icon" className="h-7 w-7" title="Diminuir" onClick={() => setEscala((s) => Math.max(0.3, +(s - 0.1).toFixed(2)))}><Minus className="h-3.5 w-3.5" /></Button>
           <button type="button" className="w-12 text-center text-xs font-semibold tabular-nums" onClick={() => setEscala(1)} title="Tamanho real">{Math.round(escala * 100)}%</button>
@@ -461,9 +506,11 @@ export default function Organograma() {
       ) : nos.length === 0 ? (
         <Card className="flex flex-col items-center gap-3 p-12 text-center">
           <Network className="h-12 w-12 text-muted-foreground/40" />
-          <p className="font-medium">O organograma ainda está vazio</p>
-          <p className="max-w-md text-sm text-muted-foreground">Comece pela pessoa do topo (a presidência ou a diretoria) e vá adicionando quem reporta a ela.</p>
-          {podeIncluir && <Button onClick={() => { setEdicao(true); setAdicionar({ parentId: null }); }} className="gap-1.5"><UserPlus className="h-4 w-4" /> Adicionar a primeira pessoa</Button>}
+          <p className="font-medium">{contrato ? "Ninguém deste contrato está na árvore ainda" : "O organograma ainda está vazio"}</p>
+          <p className="max-w-md text-sm text-muted-foreground">
+            {contrato ? "Quem aparece nas pendências acima entra na árvore assim que tiver um superior." : "Comece pela pessoa do topo (a presidência ou a diretoria) e vá adicionando quem reporta a ela."}
+          </p>
+          {podeIncluir && !contrato && <Button onClick={() => { setEdicao(true); setAdicionar({ parentId: null }); }} className="gap-1.5"><UserPlus className="h-4 w-4" /> Posicionar a primeira pessoa</Button>}
         </Card>
       ) : (
         <div ref={caixaRef} onMouseDown={inicioPan} onMouseMove={movePan} onMouseUp={fimPan} onMouseLeave={fimPan}
@@ -476,13 +523,13 @@ export default function Organograma() {
 
       {adicionar && (
         <AdicionarPessoa
-          nos={nos} arv={arv} parentInicial={adicionar.parentId} onFechar={() => setAdicionar(null)}
+          nos={todos} arv={geral} parentInicial={adicionar.parentId} onFechar={() => setAdicionar(null)}
           onSalvo={() => { setAdicionar(null); recarregar(); }}
         />
       )}
       {editando && (
         <EditarPessoa
-          no={editando} nos={nos} arv={arv} descendentes={descendentes(editando.id)}
+          no={editando} nos={todos} arv={geral} descendentes={descendentes(editando.id)}
           podeAlterar={podeAlterar} podeExcluir={podeExcluir} podeIncluir={podeIncluir}
           onMover={(d) => mover(editando, d)}
           onAdicionarAbaixo={() => { const id = editando.id; setEditando(null); setAdicionar({ parentId: id }); }}
@@ -490,126 +537,243 @@ export default function Organograma() {
           onSalvo={() => { setEditando(null); recarregar(); }}
         />
       )}
+      {perfilDe && geral.porId.get(perfilDe) && (
+        <PerfilPessoaDialog no={geral.porId.get(perfilDe)!} onFechar={() => setPerfilDe(null)} onAbrirPessoa={setPerfilDe} />
+      )}
+      {verPendencias && (
+        <PendenciasDialog pendentes={visao.semSuperior} nos={todos} arv={geral} podeRecalcular={podeAlterar}
+          onFechar={() => setVerPendencias(false)} onSalvo={recarregar} />
+      )}
+      {moverLider && (
+        <MoverLiderDialog no={moverLider.no} chefe={moverLider.chefe} nos={todos} arv={geral}
+          onFechar={() => setMoverLider(null)} onSalvo={() => { setMoverLider(null); recarregar(); }} />
+      )}
     </div>
   );
 }
 
 // ── Diálogos ───────────────────────────────────────────────────────────
 
-const SEM_CHEFE = "__topo";
-
-// "Reporta a": uma pessoa, ou um grupo de pares inteiro (valor "grupo:<1º par>").
-function SeletorChefe({ nos, arv, valor, onValor, excluir }: {
-  nos: No[]; arv: Arvore<No>; valor: Chefe; onValor: (v: Chefe) => void; excluir?: Set<string>;
+// "Reporta a": uma pessoa, ou um grupo de pares inteiro. Busca em vez de lista:
+// com a empresa toda seriam 2.500 opções num menu.
+function SeletorChefe({ nos, arv, valor, onValor, excluir, pendente = false, semTopo = false }: {
+  nos: No[]; arv: Arvore<No>; valor: Chefe; onValor: (v: Chefe) => void; excluir?: Set<string>; pendente?: boolean; semTopo?: boolean;
 }) {
-  const opcoes = nos.filter((n) => !excluir?.has(n.id)).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  const grupos = [...new Map(nos.map((n) => [arv.grupoDe(n.id)?.chave, arv.grupoDe(n.id)])).values()]
-    .filter((g): g is Grupo<No> => !!g && !g.membros.some((m) => excluir?.has(m.id)));
+  const [busca, setBusca] = useState("");
+  const termo = busca.trim().toLowerCase();
+  const atual = valor.parentId ? arv.porId.get(valor.parentId) : undefined;
+  const grupoAtual = valor.parentId && valor.doGrupo ? arv.grupoDe(valor.parentId) : undefined;
+  const rotulo = grupoAtual ? `Grupo «${grupoAtual.nome}»` : atual ? `${atual.nome}${funcaoDe(atual) ? ` · ${funcaoDe(atual)}` : ""}`
+    : valor.topo || !pendente ? "Ninguém — fica no topo" : "Ninguém definido ainda";
+
+  const opcoes = termo.length < 2 ? [] : nos
+    .filter((n) => !excluir?.has(n.id) && `${n.nome} ${funcaoDe(n)} ${n.contrato ?? ""}`.toLowerCase().includes(termo))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+    .slice(0, 30);
+  const grupos = termo.length < 2 ? [] : [...new Map(nos.map((n) => [arv.grupoDe(n.id)?.chave, arv.grupoDe(n.id)])).values()]
+    .filter((g): g is Grupo<No> => !!g && !g.membros.some((m) => excluir?.has(m.id))
+      && `${g.nome} ${g.membros.map((m) => m.nome).join(" ")}`.toLowerCase().includes(termo));
+  const escolher = (c: Chefe) => { onValor(c); setBusca(""); };
+
   return (
-    <Select value={valorChefe(valor) ?? SEM_CHEFE} onValueChange={(v) => onValor(lerValorChefe(v === SEM_CHEFE ? null : v))}>
-      <SelectTrigger><SelectValue /></SelectTrigger>
-      <SelectContent className="max-h-72">
-        <SelectItem value={SEM_CHEFE}>Ninguém — fica no topo</SelectItem>
-        {grupos.map((g) => (
-          <SelectItem key={g.chave} value={valorChefe({ parentId: g.membros[0].id, doGrupo: true })!}>
-            Grupo «{g.nome}» — {g.membros.map((m) => m.nome.split(/\s+/)[0]).join(", ")}
-          </SelectItem>
-        ))}
-        {opcoes.map((n) => <SelectItem key={n.id} value={n.id}>{n.nome}{funcaoDe(n) ? ` · ${funcaoDe(n)}` : ""}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5 text-sm">
+        <span className="min-w-0 flex-1 truncate font-semibold">{rotulo}</span>
+        {!semTopo && (valor.parentId || !valor.topo) && (
+          <button type="button" className="shrink-0 text-[11px] font-semibold text-primary hover:underline"
+            onClick={() => escolher({ parentId: null, doGrupo: false, topo: true })}>Pôr no topo</button>
+        )}
+      </div>
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input className="pl-8" placeholder="Trocar: busque o superior ou um grupo pelo nome…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+      </div>
+      {termo.length >= 2 && (
+        <div className="max-h-52 space-y-0.5 overflow-y-auto rounded-lg border p-1">
+          {grupos.map((g) => (
+            <button key={g.chave} type="button" className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+              onClick={() => escolher({ parentId: g.membros[0].id, doGrupo: true })}>
+              <b>Grupo «{g.nome}»</b> — {g.membros.map((m) => m.nome.split(/\s+/)[0]).join(", ")}
+            </button>
+          ))}
+          {opcoes.map((n) => (
+            <button key={n.id} type="button" className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-muted"
+              onClick={() => escolher({ parentId: n.id, doGrupo: false })}>
+              <span className="block truncate text-sm font-semibold">{n.nome}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">{[funcaoDe(n), n.contrato].filter(Boolean).join(" · ")}</span>
+            </button>
+          ))}
+          {!opcoes.length && !grupos.length && <p className="p-2 text-xs text-muted-foreground">Ninguém encontrado.</p>}
+        </div>
+      )}
+    </div>
   );
 }
 
-function AdicionarPessoa({ nos, arv, parentInicial, onFechar, onSalvo }: {
-  nos: No[]; arv: Arvore<No>; parentInicial: string | null; onFechar: () => void; onSalvo: () => void;
+// E a equipe? O que acontece com quem responde direto a um líder que muda.
+function CamposEquipe({ no, nos, arv, destino, onDestino, novoLider, onNovoLider, excluir }: {
+  no: No; nos: No[]; arv: Arvore<No>; destino: DestinoEquipe; onDestino: (d: DestinoEquipe) => void;
+  novoLider: No | null; onNovoLider: (n: No | null) => void; excluir: Set<string>;
 }) {
-  const usuariosQ = useQuery({
-    queryKey: ["organograma-usuarios"],
-    queryFn: async () => {
-      const { data, error } = await sb.rpc("organograma_usuarios");
-      if (error) throw error;
-      return (data ?? []) as Usuario[];
-    },
-  });
+  const diretos = arv.equipeDe(no.id).length;
+  const primeiro = no.nome.split(/\s+/)[0];
+  const chefeAtual = no.parent_id ? arv.porId.get(no.parent_id)?.nome : null;
   const [busca, setBusca] = useState("");
-  const [escolhido, setEscolhido] = useState<Usuario | null>(null);
-  const [chefe, setChefe] = useState<Chefe>({ parentId: parentInicial, doGrupo: false });
-  const [funcao, setFuncao] = useState("");
-  const [salvando, setSalvando] = useState(false);
-
   const termo = busca.trim().toLowerCase();
-  const lista = (usuariosQ.data ?? [])
-    .filter((u) => !u.no_organograma)
-    .filter((u) => !termo || `${u.nome} ${u.email ?? ""} ${u.cargo ?? ""} ${u.setor ?? ""}`.toLowerCase().includes(termo))
-    .slice(0, 60);
+  const candidatos = termo.length < 2 ? [] : nos
+    .filter((n) => n.id !== no.id && !excluir.has(n.id) && `${n.nome} ${funcaoDe(n)}`.toLowerCase().includes(termo))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).slice(0, 20);
+  // Quem assume pode estar na própria equipe: é o caso mais comum.
+  const daEquipe = arv.equipeDe(no.id).filter((n) => !termo || n.nome.toLowerCase().includes(termo)).slice(0, 20);
+
+  const Opcao = ({ valor, titulo, sub }: { valor: DestinoEquipe; titulo: string; sub: string }) => (
+    <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-sm hover:bg-muted/60">
+      <input type="radio" name="destino-equipe" className="mt-0.5 accent-primary" checked={destino === valor} onChange={() => onDestino(valor)} />
+      <span><b>{titulo}</b><span className="block text-xs text-muted-foreground">{sub}</span></span>
+    </label>
+  );
+  return (
+    <div className="space-y-1.5 rounded-xl border border-amber-300/70 bg-amber-50/50 p-3 dark:bg-amber-950/20">
+      <p className="text-xs font-semibold">{primeiro} tem {diretos} pessoa(s) respondendo direto. O que acontece com elas?</p>
+      <Opcao valor="acompanha" titulo="Vão junto" sub={`A equipe continua respondendo a ${primeiro}, na posição nova.`} />
+      <Opcao valor="chefe_anterior" titulo={chefeAtual ? `Passam para ${chefeAtual}` : "Sobem para o topo"} sub={`A equipe fica onde está; ${chefeAtual ?? "ninguém"} assume até haver um novo líder.`} />
+      <Opcao valor="novo_lider" titulo="Passam para um novo líder" sub={`Quem você escolher assume o lugar de ${primeiro} e a equipe.`} />
+      {destino === "novo_lider" && (
+        novoLider ? (
+          <div className="flex items-center gap-2 rounded-md border bg-background px-2.5 py-1.5 text-sm">
+            <span className="min-w-0 flex-1 truncate font-semibold">{novoLider.nome}</span>
+            <button type="button" title="Trocar" onClick={() => onNovoLider(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar quem assume…" className="h-8 text-xs" />
+            <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border bg-background p-1">
+              {[...new Map([...daEquipe, ...candidatos].map((n) => [n.id, n])).values()].map((n) => (
+                <button key={n.id} type="button" onClick={() => onNovoLider(n)} className="block w-full truncate rounded-md px-2 py-1 text-left text-xs hover:bg-muted">
+                  <b>{n.nome}</b>{funcaoDe(n) ? ` · ${funcaoDe(n)}` : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+function MoverLiderDialog({ no, chefe, nos, arv, onFechar, onSalvo }: {
+  no: No; chefe: Chefe; nos: No[]; arv: Arvore<No>; onFechar: () => void; onSalvo: () => void;
+}) {
+  const [destino, setDestino] = useState<DestinoEquipe>("acompanha");
+  const [novoLider, setNovoLider] = useState<No | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const para = chefe.parentId ? arv.porId.get(chefe.parentId)?.nome : null;
 
   const salvar = async () => {
-    if (!escolhido) { toast.error("Escolha a pessoa."); return; }
+    if (destino === "novo_lider" && !novoLider) { toast.error("Escolha quem assume a equipe."); return; }
     setSalvando(true);
-    const g = chefe.parentId && chefe.doGrupo ? arv.grupoDe(chefe.parentId) : undefined;
-    const irmaos = g ? arv.equipeDoGrupo(g).length : chefe.parentId ? arv.equipeDe(chefe.parentId).length : arv.raiz.length;
-    const { error } = await sb.from("ORGANOGRAMA_NO").insert({
-      user_id: escolhido.user_id, parent_id: chefe.parentId, do_grupo: !!g, funcao: funcao.trim() || null, ordem: irmaos,
-    });
-    setSalvando(false);
-    if (error) { toast.error(/duplicate|unique/i.test(error.message) ? "Essa pessoa já está no organograma." : error.message); return; }
-    toast.success(`${escolhido.nome} entrou no organograma.`);
-    onSalvo();
+    try {
+      await moverNaArvore({ no: no.id, parent: chefe.parentId, doGrupo: chefe.doGrupo, topo: !chefe.parentId, destinoEquipe: destino, novoLider: novoLider?.id, motivo: motivo.trim() || null });
+      toast.success("Organograma reorganizado.");
+      onSalvo();
+    } catch (e) { toast.error((e as Error).message); setSalvando(false); }
   };
 
   return (
     <Dialog open onOpenChange={(v) => !v && onFechar()}>
       <DialogContent className="max-h-[88vh] max-w-lg grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-primary" /> Adicionar pessoa</DialogTitle>
-          <DialogDescription>Escolha um usuário do ERP e a quem ele reporta.</DialogDescription>
+          <DialogTitle>Mudar a posição de {no.nome}</DialogTitle>
+          <DialogDescription>Vai passar a reportar a {para ?? "ninguém (topo da empresa)"}.</DialogDescription>
+        </DialogHeader>
+        <CamposEquipe no={no} nos={nos} arv={arv} destino={destino} onDestino={setDestino} novoLider={novoLider} onNovoLider={setNovoLider} excluir={new Set()} />
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold">Motivo <span className="font-normal text-muted-foreground">(fica no histórico)</span></p>
+          <Input value={motivo} maxLength={200} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: Promovido a coordenador" />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onFechar}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Confirmar"}</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Posicionar alguém pelo nome. Todo colaborador ativo já está na árvore; aqui é
+// para definir o superior dele (ou pôr quem só tem login, sem cadastro).
+function AdicionarPessoa({ nos, arv, parentInicial, onFechar, onSalvo }: {
+  nos: No[]; arv: Arvore<No>; parentInicial: string | null; onFechar: () => void; onSalvo: () => void;
+}) {
+  const [escolhido, setEscolhido] = useState<PessoaBusca | null>(null);
+  const [posicao, setPosicao] = useState<PosicaoForm>(posicaoVazia());
+  const [carregando, setCarregando] = useState(false);
+  const [chefe, setChefe] = useState<Chefe>({ parentId: parentInicial, doGrupo: false });
+  const [salvando, setSalvando] = useState(false);
+
+  const escolher = async (p: PessoaBusca) => {
+    setEscolhido(p); setCarregando(true);
+    try {
+      const atual = await carregarPosicao({ empregado: p.empregado_id, user: p.user_id });
+      setPosicao(atual);
+      if (!parentInicial && atual.superior) setChefe({ parentId: atual.superior.id, doGrupo: atual.doGrupo });
+      if (atual.topo && !parentInicial) setChefe({ parentId: null, doGrupo: false, topo: true });
+    } catch (e) { toast.error((e as Error).message); }
+    setCarregando(false);
+  };
+  const excluir = useMemo(() => {
+    const id = escolhido?.no_id;
+    return id ? new Set([id, ...arv.descendentes(id)]) : new Set<string>();
+  }, [escolhido, arv]);
+
+  const salvar = async () => {
+    if (!escolhido) { toast.error("Escolha a pessoa."); return; }
+    const final: PosicaoForm = { ...posicao, superior: chefe.parentId ? { id: chefe.parentId, nome: "" } : null, doGrupo: chefe.doGrupo, topo: !chefe.parentId && !!chefe.topo };
+    const falta = posicaoFaltando(final);
+    if (falta) { toast.error(falta); return; }
+    setSalvando(true);
+    try {
+      await salvarPosicao(final, { user: escolhido.user_id });
+      toast.success(`${escolhido.nome} está no organograma.`);
+      onSalvo();
+    } catch (e) { toast.error((e as Error).message); setSalvando(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onFechar()}>
+      <DialogContent className="max-h-[88vh] max-w-lg grid-cols-[minmax(0,1fr)] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-primary" /> Posicionar pessoa</DialogTitle>
+          <DialogDescription>Busque pelo nome: cargo, posto e contrato vêm do cadastro. Você define a quem a pessoa se reporta.</DialogDescription>
         </DialogHeader>
 
         {!escolhido ? (
-          <div className="space-y-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input autoFocus className="pl-8" placeholder="Buscar por nome, e-mail, cargo ou setor…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-            </div>
-            <div className="max-h-80 space-y-1 overflow-y-auto rounded-lg border p-1">
-              {usuariosQ.isLoading && <p className="flex items-center gap-2 p-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando usuários…</p>}
-              {usuariosQ.isError && <p className="p-3 text-sm text-destructive">{(usuariosQ.error as Error).message}</p>}
-              {lista.map((u) => (
-                <button key={u.user_id} type="button" onClick={() => { setEscolhido(u); setFuncao(""); }}
-                  className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-muted">
-                  <Avatar nome={u.nome} url={u.avatar_url} tamanho={34} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold">{u.nome}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{[u.cargo, u.setor].filter(Boolean).join(" · ") || u.email}</span>
-                  </span>
-                </button>
-              ))}
-              {!usuariosQ.isLoading && !lista.length && <p className="p-3 text-sm text-muted-foreground">Ninguém encontrado (quem já está no organograma não aparece aqui).</p>}
-            </div>
-          </div>
+          <BuscaPessoa autoFocus placeholder="Buscar colaborador ou usuário pelo nome…" onEscolher={escolher} />
         ) : (
           <div className="space-y-4">
             <div className="flex items-center gap-3 rounded-xl border p-3">
-              <Avatar nome={escolhido.nome} url={escolhido.avatar_url} tamanho={48} />
+              <Avatar nome={escolhido.nome} url={null} tamanho={48} />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{escolhido.nome}</p>
-                <p className="truncate text-xs text-muted-foreground">{[escolhido.cargo, escolhido.setor].filter(Boolean).join(" · ") || escolhido.email}</p>
+                <p className="truncate text-xs text-muted-foreground">{[escolhido.cargo, escolhido.contrato ?? escolhido.setor].filter(Boolean).join(" · ") || "Usuário sem cadastro de colaborador"}</p>
               </div>
-              <Button variant="ghost" size="icon" title="Trocar pessoa" onClick={() => setEscolhido(null)}><X className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="icon" title="Trocar pessoa" onClick={() => { setEscolhido(null); setPosicao(posicaoVazia()); }}><X className="h-4 w-4" /></Button>
             </div>
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold">Reporta a</p>
-              <SeletorChefe nos={nos} arv={arv} valor={chefe} onValor={setChefe} />
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold">Função no organograma <span className="font-normal text-muted-foreground">(opcional)</span></p>
-              <Input value={funcao} onChange={(e) => setFuncao(e.target.value)} maxLength={80} placeholder={escolhido.cargo || "Ex.: Diretor Administrativo"} />
-              <p className="text-[11px] text-muted-foreground">Em branco, vale o cargo do cadastro{escolhido.cargo ? ` (${escolhido.cargo})` : ""}.</p>
-            </div>
+            {carregando ? (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando a posição…</p>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold">Reporta a (superior imediato)</p>
+                  <SeletorChefe nos={nos} arv={arv} valor={chefe} onValor={setChefe} excluir={excluir} pendente />
+                </div>
+                <PosicaoCampos valor={posicao} onValor={setPosicao} semSuperior titulo="Função, posto e contrato" />
+              </>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={onFechar}>Cancelar</Button>
-              <Button onClick={salvar} disabled={salvando} className="gap-1.5">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Adicionar</Button>
+              <Button onClick={salvar} disabled={salvando || carregando} className="gap-1.5">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Salvar</Button>
             </div>
           </div>
         )}
@@ -618,7 +782,107 @@ function AdicionarPessoa({ nos, arv, parentInicial, onFechar, onSalvo }: {
   );
 }
 
+// Pendências: quem o sistema não teve certeza de onde pôr. Em lote, porque são
+// muitos de uma vez ("os 40 deste contrato respondem a este supervisor").
+function PendenciasDialog({ pendentes, nos, arv, podeRecalcular, onFechar, onSalvo }: {
+  pendentes: No[]; nos: No[]; arv: Arvore<No>; podeRecalcular: boolean; onFechar: () => void; onSalvo: () => void;
+}) {
+  const [busca, setBusca] = useState("");
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [chefe, setChefe] = useState<Chefe>({ parentId: null, doGrupo: false });
+  const [salvando, setSalvando] = useState(false);
+  const [recalculando, setRecalculando] = useState(false);
+
+  const termo = busca.trim().toLowerCase();
+  const filtrados = useMemo(() => pendentes.filter((n) => !termo || `${n.nome} ${funcaoDe(n)} ${n.contrato ?? ""}`.toLowerCase().includes(termo)), [pendentes, termo]);
+  const porContrato = useMemo(() => {
+    const m = new Map<string, No[]>();
+    filtrados.forEach((n) => { const k = n.contrato || "Sem contrato"; m.set(k, [...(m.get(k) ?? []), n]); });
+    return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [filtrados]);
+  const alternar = (ids: string[], ligar: boolean) => setMarcados((s) => {
+    const x = new Set(s);
+    ids.forEach((i) => (ligar ? x.add(i) : x.delete(i)));
+    return x;
+  });
+
+  const aplicar = async () => {
+    if (!chefe.parentId) { toast.error("Escolha o superior imediato."); return; }
+    if (!marcados.size) { toast.error("Marque ao menos uma pessoa."); return; }
+    setSalvando(true);
+    const { data, error } = await sb.rpc("organograma_definir_superior_lote", { p_nos: [...marcados], p_parent: chefe.parentId });
+    setSalvando(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${data?.ok ?? 0} pessoa(s) posicionada(s).${data?.falhas ? ` ${data.falhas} ficou(aram) de fora: estão acima desse superior.` : ""}`);
+    setMarcados(new Set());
+    onSalvo();
+  };
+  const recalcular = async () => {
+    setRecalculando(true);
+    const { data, error } = await sb.rpc("organograma_recalcular");
+    setRecalculando(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Recalculado: ${(data?.ligados_posto ?? 0) + (data?.ligados_contrato ?? 0)} pessoa(s) ligada(s) sozinha(s). Restam ${data?.pendentes ?? 0}.`);
+    onSalvo();
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onFechar()}>
+      <DialogContent className="max-h-[90vh] max-w-2xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Sem superior imediato ({pendentes.length.toLocaleString("pt-BR")})</DialogTitle>
+          <DialogDescription>O cadastro não deu certeza do chefe (ex.: dois supervisores no mesmo contrato). Marque as pessoas e escolha a quem elas se reportam.</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold">Reportam a</p>
+          <SeletorChefe nos={nos.filter((n) => !n.superior_pendente || arv.equipeDe(n.id).length)} arv={arv} valor={chefe} onValor={setChefe} excluir={marcados} pendente semTopo />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={aplicar} disabled={salvando || !marcados.size || !chefe.parentId}>{salvando ? "Salvando…" : `Definir para ${marcados.size} pessoa(s)`}</Button>
+          {podeRecalcular && (
+            <Button variant="outline" onClick={recalcular} disabled={recalculando} className="gap-1.5" title="Tenta de novo pela Hierarquia de Postos e pelo responsável do contrato. Não mexe em quem já foi definido.">
+              <RefreshCw className={cn("h-4 w-4", recalculando && "animate-spin")} /> Tentar automático de novo
+            </Button>
+          )}
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Filtrar por nome, cargo ou contrato…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        </div>
+
+        <div className="space-y-2">
+          {porContrato.map(([nome, lista]) => {
+            const ids = lista.map((n) => n.id);
+            const todosMarcados = ids.every((i) => marcados.has(i));
+            return (
+              <details key={nome} className="rounded-lg border" open={porContrato.length === 1}>
+                <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm font-semibold">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={todosMarcados} aria-label={`Marcar todos de ${nome}`}
+                    onClick={(e) => e.stopPropagation()} onChange={(e) => alternar(ids, e.target.checked)} />
+                  <span className="min-w-0 flex-1 truncate">{nome}</span>
+                  <span className="shrink-0 text-xs font-normal text-muted-foreground">{lista.length}</span>
+                </summary>
+                <div className="max-h-64 space-y-0.5 overflow-y-auto border-t p-1">
+                  {lista.slice(0, 300).map((n) => (
+                    <label key={n.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-muted">
+                      <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={marcados.has(n.id)} onChange={(e) => alternar([n.id], e.target.checked)} />
+                      <span className="min-w-0 flex-1 truncate"><b>{n.nome}</b>{funcaoDe(n) ? ` · ${funcaoDe(n)}` : ""}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
+          {!porContrato.length && <p className="p-3 text-sm text-muted-foreground">Ninguém com esse filtro.</p>}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const NOME_GRUPO_PADRAO = "Mesmo nível";
+
 
 function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, podeIncluir, onMover, onAdicionarAbaixo, onFechar, onSalvo }: {
   no: No; nos: No[]; arv: Arvore<No>; descendentes: Set<string>; podeAlterar: boolean; podeExcluir: boolean; podeIncluir: boolean;
@@ -629,8 +893,24 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
   const [cor, setCor] = useState<string | null>(no.cor);
   const [corNaEquipe, setCorNaEquipe] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [destino, setDestino] = useState<DestinoEquipe>("acompanha");
+  const [novoLider, setNovoLider] = useState<No | null>(null);
+  const [motivo, setMotivo] = useState("");
   const excluir = new Set([no.id, ...descendentes]);
   const equipe = descendentes.size;
+  const equipeDireta = arv.equipeDe(no.id).length;
+
+  // Função, posto e contratos vêm do banco ao abrir: a árvore só traz o resumo.
+  const posicaoQ = useQuery({
+    queryKey: ["organograma-posicao", no.id],
+    queryFn: () => carregarPosicao({ empregado: no.empregado_id, user: no.user_id }),
+    enabled: podeAlterar,
+    staleTime: 0,
+  });
+  const [posicao, setPosicao] = useState<PosicaoForm | null>(null);
+  useEffect(() => { if (posicaoQ.data) setPosicao({ ...posicaoQ.data, funcao: no.funcao_manual ?? "" }); }, [posicaoQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const postoOuContratoMudou = !!posicao && !!posicaoQ.data && (posicao.postoCodigo !== posicaoQ.data.postoCodigo
+    || JSON.stringify(posicao.extras.map((c) => [c.empresa, c.filial])) !== JSON.stringify(posicaoQ.data.extras.map((c) => [c.empresa, c.filial])));
 
   // Mesmo nível: pares atuais (grupo ativo) e os escolhidos agora.
   const grupoAtual = arv.grupoDe(no.id);
@@ -639,7 +919,8 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
   const [nomeGrupo, setNomeGrupo] = useState(grupoAtual?.nome ?? no.par_grupo ?? "");
   const [equipeAoGrupo, setEquipeAoGrupo] = useState(false);
   const [buscaPar, setBuscaPar] = useState("");
-  const chefeMudou = !mesmoChefe(arv, no, chefe);
+  // Pendente que escolheu "Pôr no topo": o chefe segue vazio, mas é uma decisão.
+  const chefeMudou = !mesmoChefe(arv, no, chefe) || (no.superior_pendente && !!chefe.topo);
   // Valendo para todos os pares: mantém o parent_id de hoje se o chefe não mudou
   // (quem responde ao grupo pode estar pendurado em outro par que não o 1º).
   const efetivo: Chefe = chefeMudou ? chefe : { parentId: no.parent_id && arv.porId.has(no.parent_id) ? no.parent_id : null, doGrupo: no.do_grupo };
@@ -655,22 +936,26 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
   const equipeDosPares = nos.filter((n) => n.parent_id && membrosNovos.includes(n.parent_id) && !n.do_grupo).length;
 
   const salvar = async () => {
+    if (chefeMudou && equipeDireta && destino === "novo_lider" && !novoLider) { toast.error("Escolha quem assume a equipe."); return; }
     setSalvando(true);
     const falhou = (e: { message: string } | null) => { if (!e) return false; setSalvando(false); toast.error(e.message); return true; };
     const nome = paresValidos.length ? (nomeGrupo.trim() || NOME_GRUPO_PADRAO).slice(0, 60) : null;
-    const g = efetivo.parentId && efetivo.doGrupo ? arv.grupoDe(efetivo.parentId) : undefined;
-    let proximaOrdem = g ? arv.equipeDoGrupo(g).length : efetivo.parentId ? arv.equipeDe(efetivo.parentId).length : arv.raiz.length;
+    // Mudar de chefe passa pelo banco: é lá que a equipe é reorganizada e a
+    // pendência cai. Vem antes do par_grupo porque mover desfaz o grupo antigo.
+    const moverPara = async (id: string, extra: { destinoEquipe?: DestinoEquipe; novoLider?: string | null; motivo?: string | null } = {}) => {
+      try {
+        await moverNaArvore({ no: id, parent: efetivo.parentId, doGrupo: efetivo.doGrupo, topo: !efetivo.parentId, ...extra });
+        return null;
+      } catch (e) { return e as Error; }
+    };
+    if (chefeMudou && falhou(await moverPara(no.id, { destinoEquipe: equipeDireta ? destino : "acompanha", novoLider: novoLider?.id, motivo: motivo.trim() || null }))) return;
     const patch: Record<string, unknown> = { funcao: funcao.trim() || null, cor, par_grupo: nome };
-    if (chefeMudou) Object.assign(patch, { parent_id: efetivo.parentId, do_grupo: efetivo.doGrupo, ordem: proximaOrdem++ });
     if (falhou((await sb.from("ORGANOGRAMA_NO").update(patch).eq("id", no.id)).error)) return;
     // Pares: mesmo chefe (e mesmo do_grupo) que esta pessoa, mesmo nome de grupo.
     for (const id of paresValidos) {
       const p = arv.porId.get(id)!;
-      const patchPar: Record<string, unknown> = { par_grupo: nome };
-      if (p.parent_id !== efetivo.parentId || p.do_grupo !== efetivo.doGrupo) {
-        Object.assign(patchPar, { parent_id: efetivo.parentId, do_grupo: efetivo.doGrupo, ordem: proximaOrdem++ });
-      }
-      if (falhou((await sb.from("ORGANOGRAMA_NO").update(patchPar).eq("id", id)).error)) return;
+      if ((p.parent_id !== efetivo.parentId || p.do_grupo !== efetivo.doGrupo) && falhou(await moverPara(id))) return;
+      if (falhou((await sb.from("ORGANOGRAMA_NO").update({ par_grupo: nome }).eq("id", id)).error)) return;
     }
     const saiu = [...paresAtuais].filter((id) => !paresValidos.includes(id));
     if (saiu.length && falhou((await sb.from("ORGANOGRAMA_NO").update({ par_grupo: null }).in("id", saiu)).error)) return;
@@ -680,15 +965,26 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
       const { error: e2 } = await sb.from("ORGANOGRAMA_NO").update({ cor }).in("id", [...descendentes]);
       if (falhou(e2)) return;
     }
+    if (postoOuContratoMudou && posicao) {
+      try {
+        const { error } = await sb.rpc("organograma_salvar_posicao", {
+          p_no: no.id, p_posto: posicao.empregadoId ? posicao.postoCodigo ?? "" : null,
+          p_contratos: posicao.extras.map((c) => ({ empresa: c.empresa, filial: c.filial })),
+        });
+        if (falhou(error)) return;
+      } catch (e) { if (falhou(e as Error)) return; }
+    }
     setSalvando(false);
     toast.success("Organograma atualizado.");
     onSalvo();
   };
+  // Colaborador ativo não sai da árvore: perde a posição e volta às pendências.
   const remover = async () => {
-    if (!window.confirm(`Tirar ${no.nome} do organograma?${equipe ? ` A equipe dele(a) (${equipe} pessoa(s)) sobe para quem ele(a) reporta.` : ""}`)) return;
-    const { error } = await sb.from("ORGANOGRAMA_NO").delete().eq("id", no.id);
+    const aviso = no.empregado_id ? `${no.nome} perde a posição e volta para as pendências.` : `${no.nome} sai do organograma.`;
+    if (!window.confirm(`${aviso}${equipe ? ` A equipe (${equipe} pessoa(s)) sobe para quem ele(a) reporta.` : ""} Continuar?`)) return;
+    const { error } = await sb.rpc("organograma_tirar", { p_no: no.id });
     if (error) { toast.error(error.message); return; }
-    toast.success(`${no.nome} saiu do organograma.`);
+    toast.success(no.empregado_id ? `${no.nome} voltou para as pendências.` : `${no.nome} saiu do organograma.`);
     onSalvo();
   };
 
@@ -715,8 +1011,20 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
           <>
             <div className="space-y-1.5">
               <p className="text-xs font-semibold">Reporta a</p>
-              <SeletorChefe nos={nos} arv={arv} valor={chefe} onValor={setChefe} excluir={excluir} />
+              <SeletorChefe nos={nos} arv={arv} valor={chefe} onValor={setChefe} excluir={excluir} pendente={no.superior_pendente} />
+              {no.superior_origem !== "manual" && !no.superior_pendente && no.parent_id && !chefeMudou && (
+                <p className="text-[11px] text-amber-700">Sugerido pelo {no.superior_origem === "posto" ? "posto" : "contrato"}; escolha outra pessoa se não for esta.</p>
+              )}
             </div>
+            {chefeMudou && equipeDireta > 0 && (
+              <CamposEquipe no={no} nos={nos} arv={arv} destino={destino} onDestino={setDestino} novoLider={novoLider} onNovoLider={setNovoLider} excluir={new Set()} />
+            )}
+            {chefeMudou && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold">Motivo da mudança <span className="font-normal text-muted-foreground">(fica no histórico)</span></p>
+                <Input value={motivo} maxLength={200} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: Promovido a coordenador" />
+              </div>
+            )}
             <div className="space-y-1.5 rounded-xl border border-dashed border-primary/30 p-3">
               <p className="flex items-center gap-1.5 text-xs font-semibold"><Users className="h-3.5 w-3.5 text-primary" /> Mesmo nível <span className="font-normal text-muted-foreground">(pares lado a lado, ligados por uma barra)</span></p>
               <p className="text-[11px] text-muted-foreground">
@@ -778,6 +1086,8 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
                 </label>
               )}
             </div>
+            {/* Função e "reporta a" têm campos próprios aqui em cima, por causa dos grupos. */}
+            {posicao && <PosicaoCampos valor={posicao} onValor={setPosicao} semSuperior semFuncao titulo="Posto e contrato" />}
             <div className="flex items-center gap-2">
               <p className="text-xs font-semibold">Posição entre os colegas</p>
               <Button variant="outline" size="sm" className="h-7 gap-1" onClick={() => onMover(-1)}><ArrowLeft className="h-3.5 w-3.5" /> Esquerda</Button>
