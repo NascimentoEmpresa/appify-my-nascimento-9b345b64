@@ -1453,6 +1453,8 @@ const organogramaModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Organograma", to: "/app/organograma", icon: Network },
+        // Movimentações e feedbacks por contrato/setor (mig 20261104009000).
+        { label: "Dashboard de Gestão", to: "/app/organograma/gestao", icon: ClipboardList },
         // Estrutura de Setores e Processos (mig 20261020000060): o organograma
         // das atividades — setores, equipe do gerente ao jovem, processos e as
         // ligações entre setores. O Geral lê a última publicação; o Cadastro edita.

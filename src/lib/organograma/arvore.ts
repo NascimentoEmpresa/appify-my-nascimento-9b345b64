@@ -16,6 +16,8 @@
 export interface NoBase {
   id: string; parent_id: string | null; ordem: number; nome: string; setor: string | null;
   par_grupo: string | null; do_grupo: boolean;
+  /** Rótulo do contrato: quem não tem setor no cadastro (a operação) vai para o painel do contrato. */
+  contrato?: string | null;
 }
 
 export interface Grupo<T extends NoBase> { chave: string; nome: string; membros: T[] }
@@ -101,7 +103,7 @@ export function montarArvore<T extends NoBase>(nos: T[]): Arvore<T> {
         return;
       }
       if (equipeDe(n.id).length) { out.push({ tipo: "no", no: n }); return; }
-      const setor = n.setor?.trim() || "Sem setor";
+      const setor = n.setor?.trim() || n.contrato?.trim() || "Sem setor";
       if (!paineis.has(setor)) { const membros: T[] = []; paineis.set(setor, membros); out.push({ tipo: "painel", setor, membros }); }
       paineis.get(setor)!.push(n);
     });
@@ -155,8 +157,64 @@ export function montarArvore<T extends NoBase>(nos: T[]): Arvore<T> {
   return { porId, grupoDe, equipeDe, equipeDoGrupo, raiz, itens, irmaosDe, respondeAoGrupo, descendentes, caminhoAte, recolhiveis };
 }
 
-/** Chefe escolhido no seletor: uma pessoa, ou o grupo dela inteiro. */
-export interface Chefe { parentId: string | null; doGrupo: boolean }
+// =====================================================================
+// A empresa toda na árvore (04/11/2026, mig 20261104009000)
+// =====================================================================
+
+export interface NoComContrato extends NoBase {
+  superior_pendente: boolean;
+  empresa: number | null; filial: number | null;
+  /** Contratos além do cadastro (quem lidera mais de uma operação): [empresa, filial]. */
+  contratos_extras: [number, number][];
+}
+
+export const chaveContrato = (empresa: number | null | undefined, filial: number | null | undefined) =>
+  `${empresa ?? ""}-${filial ?? ""}`;
+
+export interface Visao<T extends NoComContrato> {
+  /** O que entra no desenho. */
+  visiveis: T[];
+  /** Quem espera alguém definir o superior (e ninguém responde a ele). */
+  semSuperior: T[];
+  /** Na visão de contrato: quem só aparece porque está acima de alguém do contrato. */
+  linhaDeComando: Set<string>;
+}
+
+/**
+ * O que desenhar. Pendente sem equipe não tem onde ficar na árvore: vai para a
+ * lista de Pendências. Pendente COM equipe fica no desenho (sem isso a equipe
+ * inteira sumiria junto).
+ *
+ * Com contrato escolhido: quem é do contrato (pelo cadastro ou por vínculo
+ * extra) e toda a linha de comando acima, para ver a quem a operação responde.
+ */
+export function visaoDaArvore<T extends NoComContrato>(nos: T[], contrato: string | null = null): Visao<T> {
+  const temEquipe = new Set(nos.map((n) => n.parent_id).filter(Boolean) as string[]);
+  const ehDoContrato = (n: T) => !contrato
+    || chaveContrato(n.empresa, n.filial) === contrato
+    || n.contratos_extras.some(([e, f]) => chaveContrato(e, f) === contrato);
+  const fora = (n: T) => n.superior_pendente && !temEquipe.has(n.id);
+
+  const semSuperior = nos.filter((n) => fora(n) && ehDoContrato(n));
+  if (!contrato) return { visiveis: nos.filter((n) => !fora(n)), semSuperior, linhaDeComando: new Set() };
+
+  const porId = new Map(nos.map((n) => [n.id, n]));
+  const membros = nos.filter((n) => !fora(n) && ehDoContrato(n));
+  const entra = new Set(membros.map((n) => n.id));
+  const linhaDeComando = new Set<string>();
+  membros.forEach((m) => {
+    let pai = m.parent_id ? porId.get(m.parent_id) : undefined;
+    let passos = 0;
+    while (pai && passos++ < 500) {
+      if (!entra.has(pai.id)) { entra.add(pai.id); linhaDeComando.add(pai.id); }
+      pai = pai.parent_id ? porId.get(pai.parent_id) : undefined;
+    }
+  });
+  return { visiveis: nos.filter((n) => entra.has(n.id)), semSuperior, linhaDeComando };
+}
+
+/** Chefe escolhido no seletor: uma pessoa, ou o grupo dela inteiro. `topo` = escolheu "ninguém" de propósito. */
+export interface Chefe { parentId: string | null; doGrupo: boolean; topo?: boolean }
 
 const PREFIXO_GRUPO = "grupo:";
 export const valorChefe = (c: Chefe) => (c.parentId ? `${c.doGrupo ? PREFIXO_GRUPO : ""}${c.parentId}` : null);

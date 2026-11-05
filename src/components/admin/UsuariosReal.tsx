@@ -13,6 +13,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { maskFone } from "@/lib/telefone";
+import { Textarea } from "@/components/ui/textarea";
+import { BuscaPessoa } from "@/components/organograma/BuscaPessoa";
+import { PosicaoCampos } from "@/components/organograma/PosicaoCampos";
+import {
+  carregarPosicao, posicaoFaltando, posicaoParaParametros, posicaoVazia, salvarPosicao,
+  type PessoaBusca, type PosicaoForm,
+} from "@/lib/organograma/pessoas";
 import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound, Copy, AlertTriangle, Upload, Trash2, Link2, Link2Off, Loader2, IdCard } from "lucide-react";
 
 // Situações de desligamento (mesma regra das RPCs de vínculo): nunca vincula
@@ -301,6 +308,10 @@ function EditarUsuarioDialog({
   const [saving, setSaving] = useState(false);
   const [deletando, setDeletando] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // O que faz e onde fica no organograma (mig 20261104009000).
+  const [oQueFaz, setOQueFaz] = useState("");
+  const [posicao, setPosicao] = useState<PosicaoForm | null>(null);
+  const [posicaoBase, setPosicaoBase] = useState("");
   const catalogoExibido = useMemo(() => {
     const set = new Set([...setoresCatalogo, ...selectedSetores]);
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -311,18 +322,23 @@ function EditarUsuarioDialog({
     if (!open) return;
     let cancel = false;
     (async () => {
-      const { data: prof } = await supabase
+      const { data: prof } = await (supabase as any)
         .from("profiles")
-        .select("acessa_todas_empresas")
+        .select("acessa_todas_empresas, bio")
         .eq("id", profile.id)
         .maybeSingle();
       const { data: vinc } = await supabase
         .from("user_empresa")
         .select("empresa_id")
         .eq("user_id", profile.id);
+      // Quem não pode mexer no organograma só não vê o bloco.
+      const pos = await carregarPosicao({ user: profile.id }).catch(() => null);
       if (cancel) return;
       setAcessaTodas(!!(prof as any)?.acessa_todas_empresas);
+      setOQueFaz((prof as any)?.bio ?? "");
       setEmpresasAtua(new Set((vinc ?? []).map((v: any) => v.empresa_id)));
+      setPosicao(pos);
+      setPosicaoBase(JSON.stringify(pos));
     })();
     return () => { cancel = true; };
   }, [open, profile.id]);
@@ -346,6 +362,14 @@ function EditarUsuarioDialog({
   };
 
   const salvar = async () => {
+    const posicaoMudou = !!posicao && JSON.stringify(posicao) !== posicaoBase;
+    // Usuário antigo sem posição não trava quem só veio trocar o telefone: o
+    // aviso fica na tela. Mexeu na posição, ela tem que ficar completa.
+    const faltaPosicao = posicaoMudou && posicao ? posicaoFaltando(posicao) : null;
+    if (faltaPosicao) {
+      toast({ title: "Organograma incompleto", description: faltaPosicao, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       // 1) profile (inclui flag acessa_todas_empresas)
@@ -354,6 +378,7 @@ function EditarUsuarioDialog({
         .update({
           display_name: displayName || null,
           cargo: cargo.trim() || null,
+          bio: oQueFaz.trim() || null,
           empresa_id: empresaId === "_none" ? null : empresaId,
           acessa_todas_empresas: acessaTodas,
           telefone: telefone.replace(/\D/g, "") ? `55${telefone.replace(/\D/g, "")}` : null,
@@ -396,6 +421,9 @@ function EditarUsuarioDialog({
           if (error) throw error;
         }
       }
+
+      // 4) posição no organograma
+      if (posicaoMudou && posicao) await salvarPosicao(posicao, { user: profile.id });
 
       toast({ title: "Usuário atualizado" });
       setOpen(false);
@@ -457,6 +485,20 @@ function EditarUsuarioDialog({
             <Label>Cargo</Label>
             <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
           </div>
+          <div>
+            <Label>O que faz na empresa</Label>
+            <Textarea rows={2} maxLength={500} value={oQueFaz} onChange={(e) => setOQueFaz(e.target.value)} placeholder="Ex.: Cuida da folha de pagamento e atende os encarregados." />
+          </div>
+          {posicao && (
+            <>
+              {!posicao.superior && !posicao.topo && (
+                <p className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" /> Este usuário ainda não tem lugar no organograma. Defina a quem ele se reporta.
+                </p>
+              )}
+              <PosicaoCampos valor={posicao} onValor={setPosicao} />
+            </>
+          )}
           <div>
             <Label>Telefone</Label>
             <Input value={telefone} onChange={(e) => setTelefone(maskFone(e.target.value))} placeholder="(51) 99659-4681" />
@@ -756,10 +798,32 @@ function NovoUsuarioDialog({
   const [empresaId, setEmpresaId] = useState<string>("_none");
   const [selectedSetores, setSelectedSetores] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  // Pedido do chamado do organograma: ao criar um usuário, dizer o que ele faz e
+  // onde fica. Sem isso a conta não é criada. O colaborador é opcional (há
+  // usuário que não está no cadastro), mas ao escolher, o resto vem preenchido.
+  const [colaborador, setColaborador] = useState<PessoaBusca | null>(null);
+  const [oQueFaz, setOQueFaz] = useState("");
+  const [posicao, setPosicao] = useState<PosicaoForm>(posicaoVazia());
   const catalogoExibido = useMemo(() => {
     const set = new Set([...setoresCatalogo, ...selectedSetores]);
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [setoresCatalogo, selectedSetores]);
+
+  const escolherColaborador = async (p: PessoaBusca) => {
+    if (p.user_id) {
+      toast({ title: "Esta pessoa já tem usuário", description: `${p.nome} já tem login no ERP. Edite o usuário dela em vez de criar outro.`, variant: "destructive" });
+      return;
+    }
+    setColaborador(p);
+    setDisplayName(p.nome);
+    if (p.cargo) setCargo(p.cargo);
+    if (p.setor && setoresCatalogo.includes(p.setor)) setSelectedSetores((s) => (s.includes(p.setor!) ? s : [...s, p.setor!]));
+    try {
+      setPosicao(await carregarPosicao({ empregado: p.empregado_id }));
+    } catch (e: any) {
+      toast({ title: "Não foi possível ler a posição", description: e.message, variant: "destructive" });
+    }
+  };
 
   // Credenciais geradas após criação (mostrado em modal flutuante)
   const [credenciaisCriadas, setCredenciaisCriadas] = useState<{
@@ -769,6 +833,7 @@ function NovoUsuarioDialog({
   const reset = () => {
     setDisplayName(""); setCargo(""); setEmail(""); setPassword(""); setTelefone("");
     setEmpresaId("_none"); setSelectedSetores([]); setShowPwd(false);
+    setColaborador(null); setOQueFaz(""); setPosicao(posicaoVazia());
   };
 
   const toggleSetor = (s: string) => {
@@ -792,16 +857,36 @@ function NovoUsuarioDialog({
       toast({ title: "Senha deve ter ao menos 6 caracteres", variant: "destructive" });
       return;
     }
+    if (!displayName.trim() || !cargo.trim() || !oQueFaz.trim()) {
+      toast({ title: "Diga quem é e o que faz", description: "Nome, cargo e o que a pessoa faz na empresa são obrigatórios.", variant: "destructive" });
+      return;
+    }
+    const faltaPosicao = posicaoFaltando(posicao);
+    if (faltaPosicao) {
+      toast({ title: "Falta o lugar no organograma", description: faltaPosicao, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
+      const params = posicaoParaParametros(posicao);
       const { data, error } = await supabase.functions.invoke("admin-create-user", {
         body: {
           email: email.trim(),
           password,
           display_name: displayName.trim() || null,
           cargo: cargo.trim() || null,
+          bio: oQueFaz.trim(),
           empresa_id: empresaId === "_none" ? null : empresaId,
           telefone: telefone.trim() || null,
+          organograma: {
+            empregado_id: posicao.empregadoId,
+            parent_id: params.p_parent,
+            topo: params.p_topo,
+            do_grupo: params.p_do_grupo,
+            funcao: params.p_funcao,
+            posto: params.p_posto,
+            contratos: params.p_contratos,
+          },
         },
       });
       if (error) {
@@ -858,22 +943,44 @@ function NovoUsuarioDialog({
             <UserPlus className="h-3.5 w-3.5" /> Novo usuário
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-h-[90vh] max-w-lg grid-cols-[minmax(0,1fr)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Novo usuário</DialogTitle>
             <DialogDescription>
-              Cria o acesso e vincula setor e empresa. Apenas administradores.
+              Cria o acesso, diz o que a pessoa faz e onde ela fica no organograma. Apenas administradores.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label>Nome completo</Label>
+              <Label>Colaborador do cadastro</Label>
+              {colaborador ? (
+                <div className="mt-1 flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold">{colaborador.nome}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{[colaborador.cargo, colaborador.contrato].filter(Boolean).join(" · ")}</span>
+                  </span>
+                  <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => { setColaborador(null); setPosicao(posicaoVazia()); }}>Trocar</Button>
+                </div>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  <BuscaPessoa placeholder="Busque pelo nome (cargo, posto e contrato vêm junto)…" onEscolher={escolherColaborador} />
+                  <p className="text-[11px] text-muted-foreground">Quem não está no cadastro: deixe em branco e preencha abaixo.</p>
+                </div>
+              )}
+            </div>
+            <div>
+              <Label>Nome completo *</Label>
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ex.: Messias Souza" />
             </div>
             <div>
-              <Label>Cargo</Label>
+              <Label>Cargo *</Label>
               <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
             </div>
+            <div>
+              <Label>O que faz na empresa *</Label>
+              <Textarea rows={2} maxLength={500} value={oQueFaz} onChange={(e) => setOQueFaz(e.target.value)} placeholder="Ex.: Cuida da folha de pagamento e atende os encarregados." />
+            </div>
+            <PosicaoCampos valor={{ ...posicao, cargo: posicao.cargo ?? (cargo.trim() || null) }} onValor={setPosicao} />
             <div>
               <Label>E-mail corporativo *</Label>
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nome@empresa.com.br" />
