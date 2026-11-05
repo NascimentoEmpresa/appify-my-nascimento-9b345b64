@@ -966,6 +966,8 @@ const sistemasModule: ModuleDef = {
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
         { label: "Controle de Pull Requests (PR)", to: "/app/sistemas/chamados/pull-requests", icon: GitPullRequest },
+        // Bonificação coletiva por nota da equipe (05/11/2026, mig 20261105004700).
+        { label: "Bonificação Coletiva", to: "/app/sistemas/bonificacao", icon: Trophy },
       ],
     },
     {
