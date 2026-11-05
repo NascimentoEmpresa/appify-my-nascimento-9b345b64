@@ -14,22 +14,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  BUCKET, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_CANCELAMENTO_SOLICITADO, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
+  BUCKET, MOTIVO_AJUSTE_MIN, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_AJUSTE_SOLICITADO, STATUS_CANCELAMENTO_SOLICITADO, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
   aprovarPedeMotivoSemVaga, temMotivoSemVaga,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
   erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
-  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver,
+  fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver, podePedirAjuste,
   resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao,
   type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
-  ArrowUpRight, Ban, CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
+  ArrowUpRight, Ban, CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Pencil, Search, Stethoscope,
   ThumbsDown, ThumbsUp, Undo2, X, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
 import { BlocoCancelarReconsideracaoRH, BlocoDecidirCancelamentoRH } from "@/components/demissao/CancelarReconsideracaoRH";
+import { AvisoAjusteDemissao } from "@/components/demissao/AjustarDemissao";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { TABELA_RESCISAO, corStatusRescisao } from "@/lib/demissao/rescisao";
 import { toast } from "sonner";
@@ -83,7 +84,7 @@ export type Etapa = "analista" | "operacional" | "diretoria" | "rh" | "sst";
 
 /** Os status que cada etapa enxerga, na ordem em que fazem sentido na fila. */
 const TODOS_OS_STATUS = [
-  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
+  "Pendente Operacional", "Pendente Diretoria", "Pendente RH", STATUS_AJUSTE_SOLICITADO, "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
   "Concluída", "Reprovada", STATUS_CANCELAMENTO_SOLICITADO, "Cancelada",
 ];
@@ -107,7 +108,9 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   // E os PEDIDOS DE CANCELAMENTO do encarregado (25/09/2026), que só o RH decide.
   // E as "Concluída" do desenho antigo (19/10/2026): a tabela de rescisões
   // do RH é o histórico inteiro, como a planilha que ela substitui.
-  rh: [STATUS_CANCELAMENTO_SOLICITADO, "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída", "Cancelada"],
+  // E as que o RH mandou ajustar (SIS-2026-0805): continuam à vista enquanto
+  // estão com o encarregado, senão o pedido sumiria da fila de quem o fez.
+  rh: [STATUS_CANCELAMENTO_SOLICITADO, "Pendente RH", STATUS_AJUSTE_SOLICITADO, "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída", "Cancelada"],
 };
 
 /**
@@ -316,6 +319,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     ] : [
       { titulo: "Aguardando você", grupo: ["Pendente RH"], icone: Clock, cor: "bg-purple-100 text-purple-700" },
       { titulo: "Pedidos de cancelamento", grupo: [STATUS_CANCELAMENTO_SOLICITADO], icone: Ban, cor: "bg-red-600 text-white" },
+      { titulo: "Com o solicitante", grupo: [STATUS_AJUSTE_SOLICITADO], icone: Pencil, cor: "bg-orange-100 text-orange-800" },
       { titulo: "No SST", grupo: ["Pendente SST", STATUS_SST_RECEBIDA], icone: Stethoscope, cor: "bg-cyan-100 text-cyan-700" },
       { titulo: "Concluídas", grupo: [STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída"], icone: CheckCircle2, cor: "bg-green-100 text-green-700" },
     ];
@@ -501,6 +505,8 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
   // exceção — campo próprio, porque o `motivo` acima é o da reprovação.
   const [motivoSemVaga, setMotivoSemVaga] = useState("");
   const [devolvendo, setDevolvendo] = useState(false);
+  // O pedido de AJUSTE ao encarregado (SIS-2026-0805): outra recusa, outro campo.
+  const [motivoAjuste, setMotivoAjuste] = useState("");
   // O ASO demissional — os mesmos quatro campos do ASO de admissão.
   const [aso, setAso] = useState({ data: "", hora: "", local: "", maps: "" });
   // Texto que centraliza o mapa; só muda quando o SST sai do campo "local",
@@ -508,7 +514,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
   const [mapPrev, setMapPrev] = useState("");
 
   useEffect(() => {
-    setMotivo(""); setObservacao(""); setMotivoSemVaga(""); setUltimaData(""); setConfirmandoData(false); setAnexos([]);
+    setMotivo(""); setObservacao(""); setMotivoSemVaga(""); setMotivoAjuste(""); setUltimaData(""); setConfirmandoData(false); setAnexos([]);
     // Reabrir uma já marcada mostra o que está gravado — reagendar é editar o
     // que está lá, não redigitar do zero.
     setAso({
@@ -635,6 +641,20 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
       `Solicitação #${s.id} devolvida ${volta === "Pendente Diretoria" ? "à Diretoria" : "ao Operacional"}.`,
     );
     setSalvando(false);
+  };
+
+  /** O RH pede ao encarregado que corrija o próprio pedido (mig 20261105020000). */
+  const pedirAjuste = async () => {
+    if (motivoAjuste.trim().length < MOTIVO_AJUSTE_MIN) {
+      toast.error(`Escreva o que precisa ser ajustado (mín. ${MOTIVO_AJUSTE_MIN} caracteres) — é o que o solicitante vai ler.`);
+      return;
+    }
+    setSalvando(true);
+    const { error } = await sb.rpc("demissao_pedir_ajuste", { p_id: s.id, p_motivo: motivoAjuste.trim() });
+    setSalvando(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Ajuste da solicitação #${s.id} pedido a ${s.solicitante_nome ?? "quem solicitou"}.`);
+    onCancelada();
   };
 
   /**
@@ -794,6 +814,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
             <p>{s.devolvido_motivo}</p>
           </div>
         )}
+
+        {/* Ajuste pedido ao encarregado, ou o que ele corrigiu (SIS-2026-0805). */}
+        <AvisoAjusteDemissao solicitacao={s} />
 
         {/* O analista acompanha, não decide. Dizer isso é melhor do que
             simplesmente não desenhar botão nenhum: sem a frase, quem abria o
@@ -1001,6 +1024,31 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
                 <CheckCircle2 className="mr-2 h-4 w-4" /> ASO válido — concluir sem exame
               </Button>
             </div>
+          </div>
+        )}
+
+        {/* PEDIR AJUSTE (SIS-2026-0805): o erro é de quem abriu, e só ele corrige.
+            Vem antes de devolver porque mantém a aprovação: é o caminho comum. */}
+        {podePedirAjuste(etapa, s.status) && (
+          <div className="space-y-3 rounded-lg border border-orange-300 bg-orange-50 p-4">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Pencil className="h-4 w-4" /> Pedir ajuste ao solicitante
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {s.solicitante_nome ?? "Quem solicitou"} recebe o aviso, corrige o pedido (datas, motivos, contato e
+              documentos) e ele volta para cá, sem passar de novo pela aprovação.
+            </p>
+            <div>
+              <Label htmlFor="motivo-ajuste">
+                O que precisa ser ajustado <span className="text-destructive">*</span>
+              </Label>
+              <Textarea id="motivo-ajuste" className="mt-1 bg-white"
+                placeholder="Ex.: a data do aviso está diferente do documento assinado; confira e corrija."
+                value={motivoAjuste} onChange={(e) => setMotivoAjuste(e.target.value)} />
+            </div>
+            <Button variant="outline" onClick={pedirAjuste} disabled={salvando}>
+              <Pencil className="mr-2 h-4 w-4" /> Pedir ajuste
+            </Button>
           </div>
         )}
 

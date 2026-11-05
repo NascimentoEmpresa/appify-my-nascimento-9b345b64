@@ -159,6 +159,7 @@ import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/Detalhe
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 import { descreverPeriodo, validarPeriodoFerias, type PeriodoFerias } from "@/lib/solicitacoes/feriasFracionamento";
 import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
+import { BotaoAjustarDemissao } from "@/components/demissao/AjustarDemissao";
 import { CredenciaisProntas } from "@/components/sistemas/CredenciaisProntas";
 import { resumoDaTroca } from "@/lib/trocaFuncao/solicitacao";
 import { PerguntaLoginErp, loginErpParaBanco } from "@/components/recrutamento/PerguntaLoginErp";
@@ -1279,6 +1280,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                           style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #dbe4f0", background: "#fff", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                           📆 Alterar data
                         </button>
+                      )}
+                      {/* Demissão: o RH pediu ajuste (SIS-2026-0805) — corrige aqui, sem abrir outro pedido. */}
+                      {s.tipo === "Demissão" && typeof s.id === "number" && (
+                        <BotaoAjustarDemissao compacto solicitacao={{ id: s.id, status: s.status }}
+                          onAjustada={carregarMinhasSols} avisar={(m, t) => toast(m, t)} />
                       )}
                       {/* Demissão: reconsiderar — desde 25/09/2026 pede ao RH, que aprova ou recusa. */}
                       {s.tipo === "Demissão" && typeof s.id === "number" && (

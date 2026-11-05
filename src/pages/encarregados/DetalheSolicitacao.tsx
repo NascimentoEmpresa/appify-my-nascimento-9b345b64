@@ -9,6 +9,7 @@ import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 import { resumoDaTroca, ROTULO_TIPO, type TipoTroca } from "@/lib/trocaFuncao/solicitacao";
 import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
+import { AvisoAjusteDemissao } from "@/components/demissao/AjustarDemissao";
 import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
@@ -150,6 +151,8 @@ const OCULTAS = new Set([
   // Demissao: ids e carimbos de quem tratou nao dizem nada a quem solicitou.
   "colaborador_id", "colaborador_cpf", "contrato_id", "atualizado_em",
   "operacional_por", "operacional_em", "rh_por", "rh_em",
+  // Ajuste pedido pelo RH (SIS-2026-0805): já aparece no aviso, no topo da ficha.
+  "ajuste_por", "ajuste_em", "ajuste_motivo", "ajuste_feito_por", "ajuste_feito_em", "ajuste_observacao", "ajuste_alteracoes",
   // Férias › envio ao Malote (04/11/2026, mig 20261104007000): recibo,
   // valor líquido e a despesa são do RH — o encarregado vê o status Senior,
   // a data do malote e a documentação, não o dinheiro nem o arquivo.
@@ -363,6 +366,11 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
         {/* Pedido de cancelamento com o RH, ou recusado por ele (25/09/2026). */}
         {tipo === "Demissão" && ficha && (ficha.status === "Cancelamento solicitado" || ficha.cancel_recusa_em) && (
           <div style={{ marginBottom: 14 }}><AvisoPedidoCancelamento solicitacao={ficha as Parameters<typeof AvisoPedidoCancelamento>[0]["solicitacao"]} /></div>
+        )}
+
+        {/* O RH pediu ajuste, ou o que foi corrigido depois (SIS-2026-0805). */}
+        {tipo === "Demissão" && ficha && !!ficha.ajuste_em && (
+          <div style={{ marginBottom: 14 }}><AvisoAjusteDemissao solicitacao={ficha as Parameters<typeof AvisoAjusteDemissao>[0]["solicitacao"]} /></div>
         )}
 
         {/* Férias canceladas pelo RH (24/09/2026): motivo em destaque, e o
