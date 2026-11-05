@@ -47,6 +47,17 @@ export interface FiltroSaidas {
   inicio: string;
   fim: string;
   contratoId: string | null;
+  /**
+   * Recorte por empresa do grupo, vindo do seletor do Dashboard de Compras.
+   * `null` = consolidado ("Todas"), que é sempre o caso na tela própria do
+   * relatório — ela não tem seletor de empresa.
+   *
+   * Com empresa escolhida, a saída SEM contrato identificado fica de fora: a
+   * empresa vem do contrato, e sem contrato não há a que atribuir. Quem lê o
+   * recorte de uma empresa precisa saber disso, senão o cartão "sem destino"
+   * zerado parece ausência de buraco — por isso o painel avisa.
+   */
+  empresaId?: string | null;
 }
 
 /**
