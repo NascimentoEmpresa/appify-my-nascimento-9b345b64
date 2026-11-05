@@ -34,7 +34,13 @@ import {
   normalizarPontoSemIntervalo,
   validarConclusao,
 } from "./horaExtraUtils";
-import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
+import {
+  type DadosConclusao,
+  gerarResumoConclusaoModelo,
+  LIMITE_RESUMO_CONCLUSAO,
+} from "../../../../supabase/functions/_shared/hora-extra-justificativa";
+import { BotaoGerarMensagem, Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
+import { pedirMensagemHoraExtra } from "./gerarMensagemHoraExtra";
 import {
   contarRelatorioPr,
   linhaSemChamado,
@@ -44,6 +50,7 @@ import {
   totalizarLinhasRelatorioPr,
 } from "./prHoraExtraUtils";
 import type { ChamadoHoraExtra, SolicitacaoHoraExtra, StatusExecucao } from "./types";
+import { useConfirmacaoLimite } from "./useConfirmacaoLimite";
 
 interface LinhaConclusao {
   id: string;
@@ -87,6 +94,7 @@ export default function ConcluirHoraExtraDialog({
   solicitacao: SolicitacaoHoraExtra | null;
 }) {
   const concluir = useConcluirHoraExtra();
+  const { conferirLimite, dialogoLimite } = useConfirmacaoLimite();
   const [linhas, setLinhas] = useState<LinhaConclusao[]>([]);
   const [adicionais, setAdicionais] = useState<LinhaConclusao[]>([]);
   const [arquivos, setArquivos] = useState<File[]>([]);
@@ -95,6 +103,7 @@ export default function ConcluirHoraExtraDialog({
   const [prsEmEdicao, setPrsEmEdicao] = useState<Record<string, boolean>>({});
   const [linhaParaRemover, setLinhaParaRemover] = useState<LinhaConclusao | null>(null);
   const [resumo, setResumo] = useState("");
+  const [gerando, setGerando] = useState(false);
   const [horarios, setHorarios] = useState({
     ponto_entrada_real: "07:30",
     ponto_saida_intervalo_real: "12:00",
@@ -320,6 +329,43 @@ export default function ConcluirHoraExtraDialog({
     }
     setLinhaParaRemover(linha);
   };
+  // "Gerar mensagem" na conclusão (04/11/2026, Pablo: "esse mesmo botão tem
+  // que ter quando for concluir a H.E"): o mesmo botão da justificativa da
+  // solicitação, no modo "conclusao" da Edge hora-extra-justificativa-ia.
+  // Conta só as linhas com PR validada — é o que de fato foi entregue. Falha
+  // da I.A cai no resumo por modelo, como na solicitação.
+  const linhasComPr = [...linhas, ...adicionais].filter((l) => l.pr_numero && l.pr_url);
+  const gerarMensagem = async () => {
+    const dados: DadosConclusao = {
+      tipo: solicitacao.tipo,
+      total_he: minutos ? formatarDuracao(minutos) : null,
+      horario: calculo.excedente ? `${calculo.inicio} - ${calculo.fim}` : null,
+      chamados: linhasComPr.map((l) => ({
+        numero: l.sem_chamado ? null : l.numero || null,
+        assunto: l.assunto || null,
+        setor: l.setor ?? null,
+        sem_chamado: l.sem_chamado,
+        adicional: l.adicional,
+        percentual_concluido: l.concluido,
+        pr_numero: l.pr_numero,
+        pr_titulo: l.pr_titulo,
+        pr_linhas_adicionadas: l.pr_linhas_adicionadas,
+        pr_commits: l.pr_commits,
+      })),
+    };
+    setGerando(true);
+    try {
+      const texto = await pedirMensagemHoraExtra({ modo: "conclusao", conclusao: dados }, "conclusao");
+      setResumo(texto.slice(0, LIMITE_RESUMO_CONCLUSAO));
+    } catch (erro: unknown) {
+      setResumo(gerarResumoConclusaoModelo(dados));
+      toast.error(
+        `${mensagemErro(erro, "Não foi possível gerar com a I.A.")} Usamos um texto padrão — revise antes de enviar.`,
+      );
+    } finally {
+      setGerando(false);
+    }
+  };
   const enviar = async () => {
     const erros = validarConclusao(
       ponto,
@@ -342,6 +388,13 @@ export default function ConcluirHoraExtraDialog({
       toast.error("Aguarde a validação do chamado encontrado no título da PR.");
       return;
     }
+    const seguir = await conferirLimite({
+      colaboradorId: solicitacao.colaborador_id,
+      data: solicitacao.data_he,
+      minutos,
+      ignorarId: solicitacao.id,
+    });
+    if (!seguir) return;
     try {
       await concluir.mutateAsync({
         p: {
@@ -501,8 +554,21 @@ export default function ConcluirHoraExtraDialog({
                 }
                 icone={<FileText className="h-5 w-5" />}
               >
-                <Textarea maxLength={1000} rows={3} value={resumo} onChange={(e) => setResumo(e.target.value)} />
-                <div className="mt-1 text-right text-xs text-slate-500">{resumo.length}/1000</div>
+                <BotaoGerarMensagem
+                  gerando={gerando}
+                  desabilitado={!linhasComPr.length}
+                  dica="Informe e valide ao menos uma PR na seção 3."
+                  aoClicar={gerarMensagem}
+                />
+                <Textarea
+                  maxLength={LIMITE_RESUMO_CONCLUSAO}
+                  rows={3}
+                  value={resumo}
+                  onChange={(e) => setResumo(e.target.value)}
+                />
+                <div className="mt-1 text-right text-xs text-slate-500">
+                  {resumo.length}/{LIMITE_RESUMO_CONCLUSAO}
+                </div>
               </SecaoForm>
               <SecaoForm titulo="5. Anexos (opcional)" icone={<FileText className="h-5 w-5" />}>
                 <DropzoneAnexos
@@ -583,6 +649,7 @@ export default function ConcluirHoraExtraDialog({
           </div>
         </DialogContent>
       </Dialog>
+      {dialogoLimite}
       <AlertDialog open={Boolean(linhaParaRemover)} onOpenChange={(v) => !v && setLinhaParaRemover(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

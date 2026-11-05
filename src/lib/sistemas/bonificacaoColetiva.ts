@@ -1,0 +1,609 @@
+// =====================================================================
+// BONIFICAÇÃO COLETIVA POR NOTA DA EQUIPE — regras de cálculo (puras).
+//
+// Especificação: protótipo Painel_ERP_Bonificacao_Coletiva.html (05/11/2026).
+// Banco: mig 20261105004700 (BONIFICACAO_DEV_PERIODO / _ENTREGA e a RPC
+// bonificacao_dev_entregas). Tela: src/pages/sistemas/bonificacao/.
+//
+// Toda conta mora AQUI, com teste em src/test/bonificacaoColetiva.test.ts —
+// a tela só exibe e o banco só guarda. Sem DOM, sem structuredClone.
+//
+// Diferença deliberada em relação ao protótipo: lá todo dado existia (era
+// fictício). Aqui um critério pode faltar numa entrega real (sem avaliação do
+// solicitante, sem prazo, sem parecer da IA). Regra adotada:
+//   · a média de um critério usa só as entregas que TÊM aquele critério;
+//   · a nota final pondera só os critérios que têm nota, renormalizando os
+//     pesos para 100 (com tudo presente, é exatamente Σ nota × peso ÷ 100).
+// A tela mostra as pendências para o gestor completar antes de fechar o mês.
+// =====================================================================
+
+export type Criterio = "qualidade" | "satisfacao" | "prazo" | "dificuldade" | "valor";
+export const CRITERIOS: Criterio[] = ["qualidade", "satisfacao", "prazo", "dificuldade", "valor"];
+export const ROTULO_CRITERIO: Record<Criterio, string> = {
+  qualidade: "Qualidade",
+  satisfacao: "Satisfação",
+  prazo: "Prazo",
+  dificuldade: "Dificuldade",
+  valor: "Valor da tarefa",
+};
+
+export type Qualidade = "sem_ajuste" | "ajuste_pequeno" | "retrabalho";
+export const QUALIDADES: Qualidade[] = ["sem_ajuste", "ajuste_pequeno", "retrabalho"];
+export const ROTULO_QUALIDADE: Record<Qualidade, string> = {
+  sem_ajuste: "Atendeu sem ajustes",
+  ajuste_pequeno: "Exigiu ajuste pequeno",
+  retrabalho: "Exigiu retrabalho",
+};
+const NOTA_QUALIDADE: Record<Qualidade, number> = { sem_ajuste: 100, ajuste_pequeno: 50, retrabalho: 0 };
+
+export type Dificuldade = "facil" | "medio" | "dificil" | "muito_dificil";
+export const DIFICULDADES: Dificuldade[] = ["facil", "medio", "dificil", "muito_dificil"];
+export const ROTULO_DIFICULDADE: Record<Dificuldade, string> = {
+  facil: "Fácil",
+  medio: "Médio",
+  dificil: "Difícil",
+  muito_dificil: "Muito difícil",
+};
+
+export interface ConfigBonificacao {
+  pesos: Record<Criterio, number>;
+  pontosDificuldade: Record<Dificuldade, number>;
+  /** Valor de mercado (R$) que vale nota 100 no critério Valor. */
+  referenciaValor: number;
+}
+
+export const CONFIG_PADRAO: ConfigBonificacao = {
+  pesos: { qualidade: 30, satisfacao: 20, prazo: 20, dificuldade: 15, valor: 15 },
+  pontosDificuldade: { facil: 25, medio: 50, dificil: 75, muito_dificil: 100 },
+  referenciaValor: 10000,
+};
+
+/** Uma entrega (chamado concluído) já com a avaliação efetiva resolvida. */
+export interface EntregaBonificacao {
+  chamadoId: string;
+  numero: string | null;
+  assunto: string;
+  devId: string;
+  devNome: string;
+  /** Dia da conclusão (YYYY-MM-DD, fuso de Brasília). */
+  concluidoDia: string;
+  /** Data limite (YYYY-MM-DD) ou null quando o chamado não tinha prazo. */
+  prazoLimite: string | null;
+  /** Resultado gravado pelo gatilho do chamado; null = usar as datas. */
+  concluidoNoPrazo: boolean | null;
+  /** Nota do solicitante, 1 a 5. */
+  satisfacao: number | null;
+  qualidade: Qualidade | null;
+  dificuldade: Dificuldade | null;
+  valorMercado: number | null;
+  valorFreelancer: number | null;
+  valorClt: number | null;
+}
+
+export type NotasCriterios = Record<Criterio, number | null>;
+
+const finito = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+const limitar = (n: number, min = 0, max = 100) => Math.min(max, Math.max(min, n));
+
+/** Dentro do prazo? null quando não há como saber (chamado sem prazo). */
+export function noPrazo(e: Pick<EntregaBonificacao, "concluidoNoPrazo" | "prazoLimite" | "concluidoDia">): boolean | null {
+  if (e.concluidoNoPrazo !== null && e.concluidoNoPrazo !== undefined) return e.concluidoNoPrazo;
+  if (!e.prazoLimite || !e.concluidoDia) return null;
+  return e.concluidoDia <= e.prazoLimite;
+}
+
+/** As 5 notas (0–100) de uma entrega; null = critério sem dado. */
+export function notasDaEntrega(e: EntregaBonificacao, cfg: ConfigBonificacao): NotasCriterios {
+  const prazo = noPrazo(e);
+  const sat = finito(e.satisfacao) && e.satisfacao >= 1 && e.satisfacao <= 5 ? e.satisfacao : null;
+  const pontos = e.dificuldade ? cfg.pontosDificuldade[e.dificuldade] : null;
+  return {
+    qualidade: e.qualidade ? NOTA_QUALIDADE[e.qualidade] : null,
+    satisfacao: sat === null ? null : sat * 20,
+    prazo: prazo === null ? null : prazo ? 100 : 0,
+    dificuldade: finito(pontos) ? limitar(pontos) : null,
+    valor: finito(e.valorMercado) && cfg.referenciaValor > 0
+      ? limitar((e.valorMercado / cfg.referenciaValor) * 100)
+      : null,
+  };
+}
+
+/** Média de cada critério sobre as entregas que têm aquele critério. */
+export function mediasDosCriterios(entregas: EntregaBonificacao[], cfg: ConfigBonificacao): NotasCriterios {
+  const soma: Record<Criterio, number> = { qualidade: 0, satisfacao: 0, prazo: 0, dificuldade: 0, valor: 0 };
+  const qtd: Record<Criterio, number> = { qualidade: 0, satisfacao: 0, prazo: 0, dificuldade: 0, valor: 0 };
+  for (const e of entregas) {
+    const n = notasDaEntrega(e, cfg);
+    for (const k of CRITERIOS) {
+      const v = n[k];
+      if (v !== null) { soma[k] += v; qtd[k] += 1; }
+    }
+  }
+  const out = {} as NotasCriterios;
+  for (const k of CRITERIOS) out[k] = qtd[k] ? soma[k] / qtd[k] : null;
+  return out;
+}
+
+/** Peso efetivo de cada critério: os ausentes saem e os demais voltam a somar 100. */
+export function pesosEfetivos(notas: NotasCriterios, pesos: Record<Criterio, number>): Record<Criterio, number> {
+  const presentes = CRITERIOS.filter((k) => notas[k] !== null);
+  const total = presentes.reduce((a, k) => a + (pesos[k] || 0), 0);
+  const out = {} as Record<Criterio, number>;
+  for (const k of CRITERIOS) out[k] = total > 0 && notas[k] !== null ? ((pesos[k] || 0) * 100) / total : 0;
+  return out;
+}
+
+/** Pontos que o critério soma na nota final (nota × peso efetivo ÷ 100). */
+export function contribuicao(notas: NotasCriterios, pesos: Record<Criterio, number>): Record<Criterio, number> {
+  const ef = pesosEfetivos(notas, pesos);
+  const out = {} as Record<Criterio, number>;
+  for (const k of CRITERIOS) out[k] = notas[k] === null ? 0 : ((notas[k] as number) * ef[k]) / 100;
+  return out;
+}
+
+/** Nota final 0–100 a partir das notas dos critérios; null sem nenhum critério. */
+export function notaFinal(notas: NotasCriterios, pesos: Record<Criterio, number>): number | null {
+  if (!CRITERIOS.some((k) => notas[k] !== null)) return null;
+  const ef = pesosEfetivos(notas, pesos);
+  if (!CRITERIOS.some((k) => ef[k] > 0)) return null;
+  const c = contribuicao(notas, pesos);
+  return CRITERIOS.reduce((a, k) => a + c[k], 0);
+}
+
+export const notaDaEntrega = (e: EntregaBonificacao, cfg: ConfigBonificacao) =>
+  notaFinal(notasDaEntrega(e, cfg), cfg.pesos);
+
+/** Nota de um grupo (a equipe ou um dev): médias dos critérios, depois os pesos. */
+export const notaDoGrupo = (entregas: EntregaBonificacao[], cfg: ConfigBonificacao) =>
+  notaFinal(mediasDosCriterios(entregas, cfg), cfg.pesos);
+
+/** Pontos que o critério deixou de somar na entrega (peso − contribuição). */
+export function pontosPerdidos(notas: NotasCriterios, pesos: Record<Criterio, number>): Record<Criterio, number> {
+  const ef = pesosEfetivos(notas, pesos);
+  const c = contribuicao(notas, pesos);
+  const out = {} as Record<Criterio, number>;
+  for (const k of CRITERIOS) out[k] = Math.max(0, ef[k] - c[k]);
+  return out;
+}
+
+/** Quanto a entrega acrescenta à média da equipe (nota ÷ nº de entregas do período). */
+export function contribuicaoParaEquipe(notaEntrega: number | null, totalEntregasPeriodo: number): number {
+  if (notaEntrega === null || totalEntregasPeriodo <= 0) return 0;
+  return notaEntrega / totalEntregasPeriodo;
+}
+
+// ── Validação da configuração ────────────────────────────────────────────
+
+export function validarPesos(pesos: Record<Criterio, number>): string | null {
+  const vals = CRITERIOS.map((k) => pesos[k]);
+  if (vals.some((n) => !finito(n) || n < 0 || n > 100 || !Number.isInteger(n))) {
+    return "Cada peso deve ser um número inteiro entre 0 e 100.";
+  }
+  const soma = vals.reduce((a, b) => a + b, 0);
+  if (soma !== 100) return `Os pesos devem somar exatamente 100% (hoje: ${soma}%).`;
+  return null;
+}
+
+export function validarPontosDificuldade(p: Record<Dificuldade, number>): string | null {
+  if (DIFICULDADES.some((k) => !finito(p[k]) || p[k] < 0 || p[k] > 100 || !Number.isInteger(p[k]))) {
+    return "Informe pontos inteiros de 0 a 100 para cada nível de dificuldade.";
+  }
+  return null;
+}
+
+export function validarReferencia(n: number): string | null {
+  return finito(n) && n > 0 ? null : "Informe uma referência maior que zero.";
+}
+
+export function validarVerba(n: number): string | null {
+  return finito(n) && n >= 0 && n <= 100_000_000 ? null : "Informe uma verba válida (de R$ 0 a R$ 100 milhões).";
+}
+
+// ── Rateio igualitário ───────────────────────────────────────────────────
+
+export interface Rateio {
+  /** Participantes (devs com entrega no período), em ordem alfabética. */
+  participantes: { devId: string; devNome: string; valor: number }[];
+  notaEquipe: number | null;
+  verba: number;
+  liberado: number;
+  saldo: number;
+  /** Cota "nominal" (liberado ÷ participantes), antes do ajuste de centavos. */
+  cotaMedia: number;
+}
+
+/**
+ * Liberado = verba × nota ÷ 100 (em centavos, arredondado), dividido em
+ * partes IGUAIS; os centavos que sobram da divisão vão, um a um, para os
+ * primeiros em ordem alfabética, para a soma fechar exatamente o liberado.
+ */
+export function ratearBonificacao(
+  verba: number,
+  notaEquipe: number | null,
+  devs: { devId: string; devNome: string }[],
+): Rateio {
+  const unicos = new Map<string, string>();
+  for (const d of devs) if (!unicos.has(d.devId)) unicos.set(d.devId, d.devNome);
+  const lista = [...unicos.entries()]
+    .map(([devId, devNome]) => ({ devId, devNome }))
+    .sort((a, b) => a.devNome.localeCompare(b.devNome, "pt-BR") || a.devId.localeCompare(b.devId));
+
+  const verbaCent = Math.max(0, Math.round((finito(verba) ? verba : 0) * 100));
+  const nota = notaEquipe === null || !finito(notaEquipe) ? null : limitar(notaEquipe);
+  const liberadoCent = lista.length && nota !== null ? Math.round((verbaCent * nota) / 100) : 0;
+  const base = lista.length ? Math.floor(liberadoCent / lista.length) : 0;
+  const sobra = liberadoCent - base * lista.length;
+
+  return {
+    participantes: lista.map((d, i) => ({ ...d, valor: (base + (i < sobra ? 1 : 0)) / 100 })),
+    notaEquipe: nota,
+    verba: verbaCent / 100,
+    liberado: liberadoCent / 100,
+    saldo: (verbaCent - liberadoCent) / 100,
+    cotaMedia: lista.length ? liberadoCent / lista.length / 100 : 0,
+  };
+}
+
+// ── Sugestões a partir dos dados reais ───────────────────────────────────
+
+/** Complexidade 1–5 do parecer da IA → nível de dificuldade do bônus. */
+export function dificuldadeDaComplexidade(nivel: number | null | undefined): Dificuldade | null {
+  if (!finito(nivel)) return null;
+  const n = Math.round(nivel);
+  if (n <= 0 || n > 5) return null;
+  if (n === 1) return "facil";
+  if (n <= 3) return "medio";
+  if (n === 4) return "dificil";
+  return "muito_dificil";
+}
+
+/** Reaberturas do chamado → qualidade sugerida (o gestor confirma ou troca). */
+export function qualidadeSugerida(reaberturas: number | null | undefined): Qualidade {
+  const n = finito(reaberturas) ? reaberturas : 0;
+  if (n <= 0) return "sem_ajuste";
+  if (n === 1) return "ajuste_pequeno";
+  return "retrabalho";
+}
+
+// ── Linha da RPC → entrega ───────────────────────────────────────────────
+
+/** Linha devolvida por bonificacao_dev_entregas (mig 20261105004700). */
+export interface LinhaEntregaRpc {
+  chamado_id: string;
+  numero: string | null;
+  assunto: string | null;
+  tipo_solicitacao: string | null;
+  responsavel_id: string;
+  responsavel_nome: string | null;
+  concluido_em: string;
+  prazo_limite: string | null;
+  concluido_no_prazo: boolean | null;
+  horas_gastas: number | string | null;
+  satisfacao: number | null;
+  reaberturas: number | null;
+  ia_status: string | null;
+  ia_complexidade: number | null;
+  ia_valor_mercado: number | string | null;
+  ia_valor_freelancer: number | string | null;
+  ia_valor_clt: number | string | null;
+  qualidade: string | null;
+  dificuldade: string | null;
+  valor_mercado: number | string | null;
+  valor_freelancer: number | string | null;
+  valor_clt: number | string | null;
+  fora_da_bonificacao: boolean | null;
+  motivo_exclusao: string | null;
+  observacao: string | null;
+  avaliado_em: string | null;
+}
+
+/** Entrega com a origem de cada dado, para a tela mostrar o que é sugestão. */
+export interface EntregaDetalhada extends EntregaBonificacao {
+  tipoSolicitacao: string | null;
+  horasGastas: number | null;
+  reaberturas: number;
+  iaStatus: string | null;
+  iaComplexidade: number | null;
+  qualidadeAvaliada: boolean;
+  dificuldadeAvaliada: boolean;
+  valoresAvaliados: boolean;
+  foraDaBonificacao: boolean;
+  motivoExclusao: string | null;
+  observacao: string | null;
+  avaliadoEm: string | null;
+}
+
+const numOuNull = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const ehQualidade = (v: unknown): v is Qualidade => QUALIDADES.includes(v as Qualidade);
+const ehDificuldade = (v: unknown): v is Dificuldade => DIFICULDADES.includes(v as Dificuldade);
+
+/** Dia (YYYY-MM-DD) de um timestamp no fuso de Brasília (UTC−3, sem horário de verão). */
+export function diaEmBrasilia(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  return new Date(t - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Resolve a avaliação EFETIVA: o que o gestor gravou vence; sem isso, a
+ * sugestão (reaberturas → qualidade; parecer da IA → dificuldade e valores).
+ */
+export function entregaDaLinha(l: LinhaEntregaRpc): EntregaDetalhada {
+  const qualidadeAvaliada = ehQualidade(l.qualidade);
+  const dificuldadeAvaliada = ehDificuldade(l.dificuldade);
+  const valoresAvaliados = numOuNull(l.valor_mercado) !== null;
+  return {
+    chamadoId: l.chamado_id,
+    numero: l.numero,
+    assunto: l.assunto ?? "(sem assunto)",
+    devId: l.responsavel_id,
+    devNome: l.responsavel_nome ?? "Sem nome",
+    concluidoDia: diaEmBrasilia(l.concluido_em),
+    prazoLimite: l.prazo_limite ? l.prazo_limite.slice(0, 10) : null,
+    concluidoNoPrazo: l.concluido_no_prazo,
+    satisfacao: numOuNull(l.satisfacao),
+    qualidade: qualidadeAvaliada ? (l.qualidade as Qualidade) : qualidadeSugerida(l.reaberturas),
+    dificuldade: dificuldadeAvaliada ? (l.dificuldade as Dificuldade) : dificuldadeDaComplexidade(l.ia_complexidade),
+    valorMercado: valoresAvaliados ? numOuNull(l.valor_mercado) : numOuNull(l.ia_valor_mercado),
+    valorFreelancer: numOuNull(l.valor_freelancer) ?? numOuNull(l.ia_valor_freelancer),
+    valorClt: numOuNull(l.valor_clt) ?? numOuNull(l.ia_valor_clt),
+    tipoSolicitacao: l.tipo_solicitacao,
+    horasGastas: numOuNull(l.horas_gastas),
+    reaberturas: numOuNull(l.reaberturas) ?? 0,
+    iaStatus: l.ia_status,
+    iaComplexidade: numOuNull(l.ia_complexidade),
+    qualidadeAvaliada,
+    dificuldadeAvaliada,
+    valoresAvaliados,
+    foraDaBonificacao: !!l.fora_da_bonificacao,
+    motivoExclusao: l.motivo_exclusao,
+    observacao: l.observacao,
+    avaliadoEm: l.avaliado_em,
+  };
+}
+
+/** O que falta para a nota da entrega estar completa (para a lista de pendências). */
+export function pendenciasDaEntrega(e: EntregaDetalhada): string[] {
+  const p: string[] = [];
+  if (!e.qualidadeAvaliada) p.push("qualidade não confirmada pelo gestor");
+  if (e.satisfacao === null) p.push("sem avaliação do solicitante");
+  if (noPrazo(e) === null) p.push("chamado sem prazo");
+  if (e.dificuldade === null) p.push("sem dificuldade (IA ou gestor)");
+  if (e.valorMercado === null) p.push("sem valor de mercado (IA ou gestor)");
+  return p;
+}
+
+// ── Período (competência) ────────────────────────────────────────────────
+
+/** "2026-10" → { inicio: "2026-10-01", fim: "2026-10-31", competencia: "2026-10-01" }. */
+export function intervaloDaCompetencia(mes: string): { inicio: string; fim: string; competencia: string } {
+  const m = /^(\d{4})-(\d{2})/.exec(mes);
+  if (!m) throw new Error(`Competência inválida: ${mes}`);
+  const ano = Number(m[1]);
+  const mm = Number(m[2]);
+  const ultimo = new Date(Date.UTC(ano, mm, 0)).getUTCDate();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return { inicio: `${ano}-${p(mm)}-01`, fim: `${ano}-${p(mm)}-${p(ultimo)}`, competencia: `${ano}-${p(mm)}-01` };
+}
+
+const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+export function rotuloCompetencia(mes: string): string {
+  const m = /^(\d{4})-(\d{2})/.exec(mes);
+  return m ? `${MESES[Number(m[2]) - 1]}/${m[1]}` : mes;
+}
+
+/** Os últimos `n` meses (YYYY-MM), do mais recente para o mais antigo, a partir de `hoje` (YYYY-MM-DD). */
+export function ultimasCompetencias(hoje: string, n = 12): string[] {
+  let ano = Number(hoje.slice(0, 4));
+  let mes = Number(hoje.slice(5, 7));
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(`${ano}-${String(mes).padStart(2, "0")}`);
+    mes -= 1;
+    if (mes === 0) { mes = 12; ano -= 1; }
+  }
+  return out;
+}
+
+/** Linha de BONIFICACAO_DEV_PERIODO. */
+export interface LinhaPeriodo {
+  competencia: string;
+  verba: number | string;
+  peso_qualidade: number;
+  peso_satisfacao: number;
+  peso_prazo: number;
+  peso_dificuldade: number;
+  peso_valor: number;
+  pontos_facil: number;
+  pontos_medio: number;
+  pontos_dificil: number;
+  pontos_muito_dificil: number;
+  referencia_valor: number | string;
+  observacao: string | null;
+  fechado_em: string | null;
+  fechado_por: string | null;
+  resultado: unknown;
+}
+
+export const configDaLinha = (l: LinhaPeriodo): ConfigBonificacao => ({
+  pesos: {
+    qualidade: Number(l.peso_qualidade),
+    satisfacao: Number(l.peso_satisfacao),
+    prazo: Number(l.peso_prazo),
+    dificuldade: Number(l.peso_dificuldade),
+    valor: Number(l.peso_valor),
+  },
+  pontosDificuldade: {
+    facil: Number(l.pontos_facil),
+    medio: Number(l.pontos_medio),
+    dificil: Number(l.pontos_dificil),
+    muito_dificil: Number(l.pontos_muito_dificil),
+  },
+  referenciaValor: Number(l.referencia_valor),
+});
+
+export function linhaDaConfig(cfg: ConfigBonificacao) {
+  return {
+    peso_qualidade: cfg.pesos.qualidade,
+    peso_satisfacao: cfg.pesos.satisfacao,
+    peso_prazo: cfg.pesos.prazo,
+    peso_dificuldade: cfg.pesos.dificuldade,
+    peso_valor: cfg.pesos.valor,
+    pontos_facil: cfg.pontosDificuldade.facil,
+    pontos_medio: cfg.pontosDificuldade.medio,
+    pontos_dificil: cfg.pontosDificuldade.dificil,
+    pontos_muito_dificil: cfg.pontosDificuldade.muito_dificil,
+    referencia_valor: cfg.referenciaValor,
+  };
+}
+
+export interface PeriodoResolvido {
+  /** YYYY-MM */
+  mes: string;
+  config: ConfigBonificacao;
+  verba: number;
+  /** Linha própria do mês (null = ainda não salvo). */
+  linha: LinhaPeriodo | null;
+  /** Mês de onde a configuração foi herdada (YYYY-MM) ou "padrao". null = própria. */
+  herdadoDe: string | null;
+  fechado: boolean;
+}
+
+/**
+ * Configuração do mês: a linha do próprio mês; sem ela, a do último mês
+ * anterior que tenha linha (verba NÃO é herdada — cada mês tem a sua);
+ * sem nenhuma, o padrão do protótipo.
+ */
+export function resolverPeriodo(mes: string, linhas: LinhaPeriodo[]): PeriodoResolvido {
+  const chave = (l: LinhaPeriodo) => String(l.competencia).slice(0, 7);
+  const propria = linhas.find((l) => chave(l) === mes) ?? null;
+  if (propria) {
+    return { mes, config: configDaLinha(propria), verba: Number(propria.verba) || 0, linha: propria, herdadoDe: null, fechado: !!propria.fechado_em };
+  }
+  const anterior = linhas
+    .filter((l) => chave(l) < mes)
+    .sort((a, b) => chave(b).localeCompare(chave(a)))[0];
+  if (anterior) {
+    return { mes, config: configDaLinha(anterior), verba: 0, linha: null, herdadoDe: chave(anterior), fechado: false };
+  }
+  return { mes, config: CONFIG_PADRAO, verba: 0, linha: null, herdadoDe: "padrao", fechado: false };
+}
+
+// ── Agrupamento por desenvolvedor ────────────────────────────────────────
+
+export interface ResumoDev {
+  devId: string;
+  devNome: string;
+  entregas: EntregaBonificacao[];
+  medias: NotasCriterios;
+  nota: number | null;
+  mercado: number;
+  freelancer: number;
+  clt: number;
+}
+
+export function resumoPorDev(entregas: EntregaBonificacao[], cfg: ConfigBonificacao): ResumoDev[] {
+  const grupos = new Map<string, EntregaBonificacao[]>();
+  for (const e of entregas) {
+    const g = grupos.get(e.devId);
+    if (g) g.push(e); else grupos.set(e.devId, [e]);
+  }
+  return [...grupos.values()]
+    .map((lista) => ({
+      devId: lista[0].devId,
+      devNome: lista[0].devNome,
+      entregas: lista,
+      medias: mediasDosCriterios(lista, cfg),
+      nota: notaDoGrupo(lista, cfg),
+      mercado: somar(lista, "valorMercado"),
+      freelancer: somar(lista, "valorFreelancer"),
+      clt: somar(lista, "valorClt"),
+    }))
+    .sort((a, b) => a.devNome.localeCompare(b.devNome, "pt-BR"));
+}
+
+export function somar(lista: EntregaBonificacao[], campo: "valorMercado" | "valorFreelancer" | "valorClt"): number {
+  return lista.reduce((a, e) => a + (finito(e[campo]) ? (e[campo] as number) : 0), 0);
+}
+
+// ── Exportação ───────────────────────────────────────────────────────────
+
+const fmt1 = (n: number | null) => (n === null ? "" : n.toFixed(1).replace(".", ","));
+const fmt2 = (n: number | null) => (n === null ? "" : n.toFixed(2).replace(".", ","));
+const dataBr = (d: string | null) => (d ? d.slice(0, 10).split("-").reverse().join("/") : "");
+const celula = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+
+/** CSV (";" + BOM, abre direto no Excel) das entregas filtradas, com a cota igual de cada dev. */
+export function gerarCsv(entregas: EntregaBonificacao[], cfg: ConfigBonificacao, rateio: Rateio): string {
+  const cota = new Map(rateio.participantes.map((p) => [p.devId, p.valor]));
+  const cab = [
+    "Chamado", "Tarefa", "Desenvolvedor", "Conclusão", "Prazo", "No prazo", "Qualidade", "Satisfação (1-5)",
+    "Dificuldade", "Mercado IA", "Freelancer IA", "CLT IA",
+    ...CRITERIOS.map((k) => `Nota ${ROTULO_CRITERIO[k]}`), "Nota final", "Cota igual da equipe",
+  ];
+  const linhas = entregas.map((e) => {
+    const n = notasDaEntrega(e, cfg);
+    const p = noPrazo(e);
+    return [
+      e.numero ?? "", e.assunto, e.devNome, dataBr(e.concluidoDia), dataBr(e.prazoLimite),
+      p === null ? "" : p ? "Sim" : "Não",
+      e.qualidade ? ROTULO_QUALIDADE[e.qualidade] : "", e.satisfacao ?? "",
+      e.dificuldade ? ROTULO_DIFICULDADE[e.dificuldade] : "",
+      fmt2(e.valorMercado), fmt2(e.valorFreelancer), fmt2(e.valorClt),
+      ...CRITERIOS.map((k) => fmt1(n[k])), fmt1(notaFinal(n, cfg.pesos)), fmt2(cota.get(e.devId) ?? 0),
+    ];
+  });
+  return "﻿" + [cab, ...linhas].map((l) => l.map(celula).join(";")).join("\r\n");
+}
+
+const esc = (s: unknown) =>
+  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const moeda = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const num1 = (n: number | null) => (n === null ? "—" : n.toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
+
+/** HTML autossuficiente da proposta (para abrir numa janela e imprimir). */
+export function htmlProposta(args: {
+  mes: string;
+  cfg: ConfigBonificacao;
+  rateio: Rateio;
+  medias: NotasCriterios;
+  devs: ResumoDev[];
+  totalEntregas: number;
+  geradoEm: string;
+  fechado: boolean;
+}): string {
+  const { mes, cfg, rateio, medias, devs, totalEntregas, geradoEm, fechado } = args;
+  const contrib = contribuicao(medias, cfg.pesos);
+  const linhasCriterios = CRITERIOS.map((k) =>
+    `<tr><td>${esc(ROTULO_CRITERIO[k])}</td><td>${cfg.pesos[k]}%</td><td>${num1(medias[k])}</td><td>${num1(medias[k] === null ? null : contrib[k])}</td></tr>`).join("");
+  const linhasDevs = devs.map((d) =>
+    `<tr><td>${esc(d.devNome)}</td><td>${d.entregas.length}</td><td>${num1(d.nota)}</td></tr>`).join("");
+  const cota = rateio.participantes.length ? moeda(rateio.participantes[rateio.participantes.length - 1].valor) : moeda(0);
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Proposta de bonificação coletiva — ${esc(rotuloCompetencia(mes))}</title>
+<style>body{font:13px system-ui,Segoe UI,Arial,sans-serif;color:#111;margin:32px}h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 8px}
+.sub{color:#555}.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.kpi{border:1px solid #bbb;border-radius:8px;padding:10px}
+.kpi b{display:block;font-size:18px;margin-top:4px}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ccc;padding:6px 8px;text-align:left}
+th{font-size:11px;text-transform:uppercase;color:#555}.nota{border-left:3px solid #2468bc;padding:8px 12px;background:#f3f6fa;margin:14px 0}</style></head><body>
+<div class="sub">Sistemas • Gestão de desempenho</div>
+<h1>Proposta de bonificação coletiva — ${esc(rotuloCompetencia(mes))}</h1>
+<div class="sub">${fechado ? "Período fechado" : "Simulação (período aberto)"} • gerado em ${esc(geradoEm)}</div>
+<div class="kpis">
+<div class="kpi">Verba máxima<b>${moeda(rateio.verba)}</b></div>
+<div class="kpi">Nota coletiva<b>${num1(rateio.notaEquipe)}/100</b></div>
+<div class="kpi">Liberado à equipe<b>${moeda(rateio.liberado)}</b></div>
+<div class="kpi">Saldo não liberado<b>${moeda(rateio.saldo)}</b></div>
+<div class="kpi">Participantes<b>${rateio.participantes.length}</b></div>
+<div class="kpi">Valor igual por participante<b>${rateio.participantes.length ? "≈ " + moeda(rateio.cotaMedia) : moeda(0)}</b></div>
+</div>
+<div class="nota">Cálculo: ${moeda(rateio.verba)} × ${num1(rateio.notaEquipe)}% = ${moeda(rateio.liberado)} liberados à equipe, divididos igualmente por ${rateio.participantes.length} participante(s). Centavos ajustados só para fechar o total (menor cota: ${cota}). ${totalEntregas} entrega(s) no período.</div>
+<h2>Nota da equipe por critério</h2>
+<table><thead><tr><th>Critério</th><th>Peso</th><th>Média (0–100)</th><th>Pontos na nota</th></tr></thead><tbody>${linhasCriterios}</tbody></table>
+<h2>Desempenho por desenvolvedor (acompanhamento — não altera a cota)</h2>
+<table><thead><tr><th>Desenvolvedor</th><th>Entregas</th><th>Nota</th></tr></thead><tbody>${linhasDevs}</tbody></table>
+<p class="sub">O valor por participante é único. Notas individuais servem só para acompanhamento gerencial. Os valores estimados pela IA (mercado, freelancer, CLT) não são economia comprovada.</p>
+</body></html>`;
+}

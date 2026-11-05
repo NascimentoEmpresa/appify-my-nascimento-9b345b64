@@ -9,6 +9,13 @@
 // Tom pedido: adiantar as demandas para manter tudo organizado e em dia,
 // citando o que vai ser desenvolvido. 2 a 4 frases, cabendo nos 500
 // caracteres da textarea.
+//
+// Modo "conclusao" (04/11/2026, Pablo: "esse mesmo botão tem que ter quando
+// for concluir a H.E"): o mesmo botão no "4. Resumo e observações" do modal
+// de conclusão. Escreve o que FOI feito, a partir das PRs validadas na tabela
+// (chamado, título, % concluído, linhas/commits) e das horas realizadas,
+// dentro dos 1000 caracteres daquele campo. Mesma Edge, mesmo provedor, mesmo
+// plano B por modelo — só o prompt e o limite mudam.
 
 export const LIMITE_JUSTIFICATIVA = 500;
 
@@ -92,7 +99,7 @@ function cortar(texto: string, limite = LIMITE_JUSTIFICATIVA): string {
 }
 
 /** Tira cerca, markdown, aspas e quebra de linha que a I.A às vezes devolve. */
-export function limparResposta(bruto: string): string {
+export function limparResposta(bruto: string, limite = LIMITE_JUSTIFICATIVA): string {
   const texto = String(bruto ?? "")
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/```[a-z]*\n?|```/gi, "")
@@ -103,7 +110,7 @@ export function limparResposta(bruto: string): string {
     .replace(/^["“'](.*)["”']$/, "$1")
     .replace(/^\s*justificativa\s*:\s*/i, "")
     .trim();
-  return cortar(texto);
+  return cortar(texto, limite);
 }
 
 /** Plano B, sem I.A: texto por modelo a partir dos títulos da tela. */
@@ -142,4 +149,131 @@ export function gerarJustificativaModelo(chamados: ChamadoJustificativa[]): stri
     texto = frases.join(" ");
   }
   return cortar(texto);
+}
+
+// ---------------------------------------------------------------------------
+// Modo "conclusao": resumo do que foi realizado na HE.
+// ---------------------------------------------------------------------------
+
+export const LIMITE_RESUMO_CONCLUSAO = 1000;
+
+export interface ChamadoConclusao extends ChamadoJustificativa {
+  percentual_concluido?: number | null;
+  pr_numero?: number | null;
+  pr_titulo?: string | null;
+  pr_linhas_adicionadas?: number | null;
+  pr_commits?: number | null;
+  adicional?: boolean;
+}
+
+export interface DadosConclusao {
+  /** "normal" | "emergencial". */
+  tipo?: string | null;
+  /** Total de HE já formatado pela tela, ex. "2h 30min". */
+  total_he?: string | null;
+  /** Faixa da HE, ex. "17:18 - 19:48". */
+  horario?: string | null;
+  chamados: ChamadoConclusao[];
+}
+
+const inteiro = (v: unknown, max: number): number | null => {
+  const n = Number(v);
+  return v != null && v !== "" && Number.isFinite(n) ? Math.max(0, Math.min(max, Math.round(n))) : null;
+};
+
+/** Corpo do navegador: no máximo 15 linhas, campos cortados. */
+export function normalizarConclusao(corpo: unknown): DadosConclusao {
+  const c = (corpo && typeof corpo === "object" ? corpo : {}) as Record<string, unknown>;
+  const lista = Array.isArray(c.chamados) ? c.chamados.slice(0, 15) : [];
+  const chamados = lista.flatMap((item): ChamadoConclusao[] => {
+    if (!item || typeof item !== "object") return [];
+    const l = item as Record<string, unknown>;
+    const linha: ChamadoConclusao = {
+      numero: limpar(l.numero, 30) || null,
+      assunto: limpar(l.assunto) || null,
+      setor: limpar(l.setor, 80) || null,
+      sem_chamado: l.sem_chamado === true,
+      adicional: l.adicional === true,
+      percentual_concluido: inteiro(l.percentual_concluido, 100),
+      pr_numero: inteiro(l.pr_numero, 10_000_000),
+      pr_titulo: limpar(l.pr_titulo) || null,
+      pr_linhas_adicionadas: inteiro(l.pr_linhas_adicionadas, 10_000_000),
+      pr_commits: inteiro(l.pr_commits, 100_000),
+    };
+    return linha.assunto || linha.numero || linha.pr_titulo || linha.sem_chamado ? [linha] : [];
+  });
+  return {
+    tipo: limpar(c.tipo, 20) || null,
+    total_he: limpar(c.total_he, 20) || null,
+    horario: limpar(c.horario, 20) || null,
+    chamados,
+  };
+}
+
+export const SYSTEM_PROMPT_CONCLUSAO =
+  "Você escreve o resumo da conclusão de uma hora extra de um desenvolvedor do time de Sistemas " +
+  "de uma empresa brasileira. Escreva em português do Brasil, primeira pessoa do plural ou impessoal, " +
+  "tom profissional e direto. Regras: de 2 a 5 frases; no máximo 800 caracteres; texto corrido, sem " +
+  "listas, sem markdown, sem aspas, sem saudação nem assinatura. Diga de forma resumida o que FOI " +
+  "realizado em cada chamado (pode citar o número SIS, o setor e a PR) e quanto tempo de hora extra foi " +
+  "feito. Se algum chamado não chegou a 100%, diga que ficou parcial e segue em andamento; se todos " +
+  "chegaram a 100%, diga que não houve impedimentos. Não invente prazos, datas, valores, nomes de " +
+  "pessoas nem detalhes técnicos que não estejam nos dados. Responda só com o texto do resumo.";
+
+function descreverRealizado(c: ChamadoConclusao): string {
+  const titulo = c.sem_chamado
+    ? `Sem chamado: ${c.pr_titulo ?? c.assunto ?? "ajuste emergencial"}`
+    : `${c.numero ? `${c.numero}: ` : ""}${c.assunto ?? c.pr_titulo ?? "(sem título)"}`;
+  const partes = [`- ${titulo}`];
+  if (c.setor) partes.push(`solicitado por ${c.setor}`);
+  if (c.adicional) partes.push("chamado adicional, fora do planejado");
+  if (c.pr_numero) partes.push(`PR #${c.pr_numero}${c.pr_titulo && !c.sem_chamado ? ` (${c.pr_titulo})` : ""}`);
+  if (c.pr_commits != null) partes.push(`${c.pr_commits} commits`);
+  if (c.pr_linhas_adicionadas != null) partes.push(`${c.pr_linhas_adicionadas} linhas adicionadas`);
+  if (c.percentual_concluido != null) partes.push(`${c.percentual_concluido}% concluído`);
+  return partes.join(" · ");
+}
+
+export function montarPromptConclusao(dados: DadosConclusao): string {
+  return [
+    `Hora extra ${dados.tipo === "emergencial" ? "emergencial" : "normal"}` +
+      `${dados.total_he ? `, total de ${dados.total_he}` : ""}${dados.horario ? ` (das ${dados.horario.replace(" - ", " às ")})` : ""}.`,
+    "Chamados realizados durante a hora extra:",
+    ...dados.chamados.map(descreverRealizado),
+    "",
+    "Exemplo do tom esperado: Durante a hora extra foram desenvolvidos o novo cadastro do X (SIS-...) e os " +
+      "ajustes do submódulo Y, entregues nas PRs #... e #.... Não houve impedimentos.",
+    "",
+    "Escreva o resumo da conclusão.",
+  ].join("\n");
+}
+
+/** Plano B, sem I.A: resumo por modelo a partir das linhas da tabela. */
+export function gerarResumoConclusaoModelo(dados: DadosConclusao): string {
+  const lista = dados.chamados.filter((c) => c.assunto || c.numero || c.pr_titulo || c.sem_chamado);
+  if (!lista.length) return "";
+  const itens = lista.map((c) => {
+    const titulo = (c.sem_chamado ? c.pr_titulo ?? c.assunto ?? "ajuste emergencial sem chamado" : c.assunto ?? c.pr_titulo ?? "o chamado")
+      .replace(/[.;\s]+$/, "");
+    const refs = [c.numero, c.pr_numero ? `PR #${c.pr_numero}` : null].filter(Boolean).join(", ");
+    return `${titulo}${refs ? ` (${refs})` : ""}`;
+  });
+  const juntar = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join("; ")} e ${xs[xs.length - 1]}` : xs[0]);
+  const parciais = lista.filter((c) => c.percentual_concluido != null && c.percentual_concluido < 100);
+  const abertura = `Durante a hora extra${dados.total_he ? ` (${dados.total_he}${dados.horario ? `, das ${dados.horario.replace(" - ", " às ")}` : ""})` : ""}`;
+  const frases = [
+    `${abertura}, ${lista.length > 1 ? "foram realizados os chamados" : "foi realizado o chamado"}: ${juntar(itens)}.`,
+    parciais.length
+      ? `${parciais.length > 1 ? "Os chamados" : "O chamado"} ${parciais
+          .map((c) => c.numero || (c.pr_numero ? `da PR #${c.pr_numero}` : "sem chamado"))
+          .join(", ")} ${parciais.length > 1 ? "ficaram parciais e seguem" : "ficou parcial e segue"} em andamento.`
+      : "As entregas foram concluídas e não houve impedimentos.",
+  ];
+  let texto = frases.join(" ");
+  if (texto.length > LIMITE_RESUMO_CONCLUSAO) {
+    const refs = lista.map((c) => c.numero || (c.pr_numero ? `PR #${c.pr_numero}` : "")).filter(Boolean).join(", ");
+    frases[0] = `${abertura}, foram realizados ${lista.length} chamados (${refs}).`;
+    texto = frases.join(" ");
+  }
+  return cortar(texto, LIMITE_RESUMO_CONCLUSAO);
 }

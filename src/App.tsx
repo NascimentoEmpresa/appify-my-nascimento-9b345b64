@@ -24,6 +24,7 @@ import Inicio from "./pages/Inicio";
 import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
+import GestaoOrganograma from "./pages/organograma/GestaoOrganograma";
 import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
 import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
@@ -234,6 +235,12 @@ import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
 // Solicitação de Treinamento (mig 20261026000910): o encarregado pede, Treinamentos decide.
 import SolicitarTreinamento from "./pages/encarregados/SolicitarTreinamento";
 import SolicitacoesTreinamento from "./pages/treinamentos/SolicitacoesTreinamento";
+// Treinamentos por Contrato (mig 20261104006000): empresa → contrato → treinamento.
+import TreinamentosContratos from "./pages/treinamentos/contratos/TreinamentosContratos";
+import ContratoTreinamentos from "./pages/treinamentos/contratos/ContratoTreinamentos";
+import TreinamentoContratoPagina from "./pages/treinamentos/contratos/TreinamentoContrato";
+import RelatorioTreinamentoContrato from "./pages/treinamentos/contratos/RelatorioTreinamento";
+import RelatoriosTreinamentosContrato from "./pages/treinamentos/contratos/RelatoriosTreinamentosContrato";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
@@ -351,6 +358,7 @@ import ChecklistModuloDetalhe from "./pages/sistemas/checklist/ModuloDetalhe";
 import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
 import LiberacaoHoraExtra from "./pages/sistemas/hora-extra/LiberacaoHoraExtra";
 import DashboardHoraExtra from "./pages/sistemas/hora-extra/DashboardHoraExtra";
+import BonificacaoColetiva from "./pages/sistemas/bonificacao/BonificacaoColetiva";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
@@ -605,6 +613,8 @@ const App = () => (
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao/dashboards" element={<DashboardHoraExtra />} />
+            {/* Bonificação coletiva por nota da equipe (05/11/2026, mig 20261105004700). */}
+            <Route path="sistemas/bonificacao" element={<BonificacaoColetiva />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
                 aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
             {/* A tela do solicitante mora na Central de Serviços. Estas duas
@@ -722,6 +732,7 @@ const App = () => (
             <Route path="painel-executivo/tv" element={<PainelExecutivoTV />} />
             <Route path="presidencia" element={<Presidencia />} />
             <Route path="organograma" element={<Organograma />} />
+            <Route path="organograma/gestao" element={<GestaoOrganograma />} />
             {/* Estrutura de Setores e Processos (mig 20261020000060) — organograma NOVO, o de cima fica como está. */}
             <Route path="organograma/processos" element={<EstruturaProcessos />} />
             <Route path="organograma/processos/cadastro" element={<CadastroEstruturaProcessos />} />
@@ -1058,6 +1069,11 @@ const App = () => (
             <Route path="treinamentos" element={<TreinamentosDashboard />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
             <Route path="treinamentos/solicitacoes" element={<SolicitacoesTreinamento />} />
+            <Route path="treinamentos/contratos" element={<TreinamentosContratos />} />
+            <Route path="treinamentos/contratos/relatorios" element={<RelatoriosTreinamentosContrato />} />
+            <Route path="treinamentos/contratos/treinamento/:id" element={<TreinamentoContratoPagina />} />
+            <Route path="treinamentos/contratos/treinamento/:id/relatorio" element={<RelatorioTreinamentoContrato />} />
+            <Route path="treinamentos/contratos/:empresa/:filial" element={<ContratoTreinamentos />} />
             <Route path="treinamentos/alunos" element={<TrnAlunosLista />} />
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}

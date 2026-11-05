@@ -7,6 +7,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { EnviarFeriasMalote, abrirReciboFerias, type MaloteDaFerias } from "./EnviarFeriasMalote";
 
 // SISTEMA_SOLICITACOES_FERIAS e o histórico não estão no types.ts gerado;
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -60,6 +62,28 @@ interface SolicitacaoFerias {
   /** Documentação (04/11/2026, mig 20261104002200): o dia em que foi para o malote e como voltou assinada. */
   data_malote?: string | null;
   retorno_documentacao?: string | null;
+  /**
+   * Mig 20261104007000 (04/11/2026): status Senior (Pendente/Gerado — as férias
+   * já geradas na Senior), "Enviado em" da documentação e o fluxo do botão
+   * "Enviar ao Malote" (recibo → valor confirmado → despesa no Malote).
+   */
+  status_senior?: string | null;
+  status_senior_por?: string | null;
+  status_senior_em?: string | null;
+  documentacao_enviada_em?: string | null;
+  colaborador_id?: number | null;
+  recibo_path?: string | null;
+  recibo_nome?: string | null;
+  recibo_anexado_por?: string | null;
+  recibo_anexado_em?: string | null;
+  valor_liquido?: number | string | null;
+  valor_origem?: string | null;
+  valor_leitura?: { pagamento?: string | null } | null;
+  valor_confirmado_por?: string | null;
+  valor_confirmado_em?: string | null;
+  malote_despesa_id?: string | null;
+  malote_enviado_por?: string | null;
+  malote_enviado_em?: string | null;
   criado_em?: string | null;
   atualizado_em?: string | null;
 }
@@ -99,6 +123,14 @@ function StatusBadge({ status }: { status: string }) {
 
 const FILTROS = ["", "Pendente", "Aprovada", "Reprovada", "Cancelada"];
 
+/** Status Senior: as férias já foram geradas na Senior? (coluna STATUS das planilhas) */
+function SeniorBadge({ status }: { status?: string | null }) {
+  const gerado = status === "Gerado";
+  return <span style={{ display: "inline-flex", padding: "2px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap",
+    background: gerado ? "#e0f2fe" : "#f8fafc", color: gerado ? "#0369a1" : "#94a3b8", border: `1px solid ${gerado ? "#bae6fd" : "#e2e8f0"}` }}>{gerado ? "Gerado" : "Pendente"}</span>;
+}
+const fmtReais = (v?: number | string | null) => (v == null || v === "" ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+
 const inputData: CSSProperties = { padding: "7px 10px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none", background: "#fff", color: "#0f172a" };
 
 export default function Ferias() {
@@ -123,9 +155,12 @@ export default function Ferias() {
   // Escolher o mês preenche De/Até; mexer em De/Até à mão desfaz o mês.
   const escolherMes = (v: string) => { setMes(v); setDe(v ? `${v}-01` : ""); setAte(v ? ultimoDiaDoMes(v) : ""); };
   const limparPeriodo = () => { setMes(""); setDe(""); setAte(""); };
+  // Status Senior (04/11/2026): "Pendente" = ainda não gerou na Senior.
+  const [fSenior, setFSenior] = useState("");
   const rowsFiltradas = useMemo(
-    () => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos) && passaNoPeriodo(r, basePeriodo, de, ate)),
-    [rows, fContratos, basePeriodo, de, ate],
+    () => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos) && passaNoPeriodo(r, basePeriodo, de, ate)
+      && (!fSenior || (r.status_senior || "Pendente") === fSenior)),
+    [rows, fContratos, basePeriodo, de, ate, fSenior],
   );
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
@@ -145,17 +180,27 @@ export default function Ferias() {
   const [cancelando, setCancelando] = useState(false);
   const [motivoCanc, setMotivoCanc] = useState("");
   // Documentação (04/11/2026): o RH edita no drawer; o rascunho nasce do registro aberto.
-  const [docMalote, setDocMalote] = useState("");
+  // A DATA DO MALOTE não se digita mais (mig 20261104007000): ela é gravada
+  // pelo botão "Enviar ao Malote" — o banco recusa UPDATE direto. Ficam
+  // editáveis o status Senior, o "Enviado em" e o retorno da documentação.
+  const [docSenior, setDocSenior] = useState("Pendente");
+  const [docEnviado, setDocEnviado] = useState("");
   const [docRetorno, setDocRetorno] = useState("");
   const [salvandoDoc, setSalvandoDoc] = useState(false);
-  // Só o RH define malote e retorno (04/11/2026) — o banco confere o mesmo
-  // (trg_ferias_documentacao_so_rh, mig 20261104002300). Sem o "alterar": só lê.
+  // Só o RH define status Senior e documentação (04/11/2026) — o banco confere
+  // o mesmo (trg_ferias_documentacao_so_rh). Sem o "alterar": só lê.
   const { can } = usePermissoes();
   const podeDoc = can("alterar", undefined, "rh_ferias");
+  // Enviar ao Malote: ação própria do menu, fora do toggle (como no Rateio).
+  const { data: podeEnviarMalote = false } = useScreenAccess("rh_ferias", "enviar_malote");
+  const [enviandoMalote, setEnviandoMalote] = useState(false);
+  // Número/status da despesa no Malote, por solicitação (RPC: quem só tem o RH não lê malote_despesa).
+  const [malotes, setMalotes] = useState<Map<number, MaloteDaFerias>>(new Map());
   useEffect(() => {
-    setDocMalote(sol?.data_malote ? String(sol.data_malote).slice(0, 10) : "");
+    setDocSenior(sol?.status_senior || "Pendente");
+    setDocEnviado(sol?.documentacao_enviada_em ?? "");
     setDocRetorno(sol?.retorno_documentacao ?? "");
-  }, [sol?.id, sol?.data_malote, sol?.retorno_documentacao]);
+  }, [sol?.id, sol?.status_senior, sol?.documentacao_enviada_em, sol?.retorno_documentacao]);
 
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
   const toastId = useRef(0);
@@ -189,7 +234,29 @@ export default function Ferias() {
     setLoading(false);
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
     setRows(data);
+    carregarMalotes(data.filter(r => r.malote_despesa_id).map(r => r.id));
   }, [statusFilter, busca, toast]);
+
+  async function carregarMalotes(ids: number[]) {
+    if (!ids.length) { setMalotes(new Map()); return; }
+    const { data } = await db.rpc("ferias_malote_info", { p_ids: ids });
+    setMalotes(new Map(((data ?? []) as MaloteDaFerias[]).map(m => [Number(m.solicitacao_id), m])));
+  }
+
+  /** Relê a solicitação aberta (depois de cada passo do envio ao Malote). */
+  const recarregarSol = async () => {
+    if (!drawerId) return;
+    const { data: novo } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("*").eq("id", drawerId).maybeSingle();
+    if (!novo) return;
+    setSol(novo);
+    setRows(rs => rs.map(r => (r.id === drawerId ? novo : r)));
+    carregarHist(drawerId);
+    if (novo.malote_despesa_id) {
+      const { data } = await db.rpc("ferias_malote_info", { p_ids: [drawerId] });
+      const m = ((data ?? []) as MaloteDaFerias[])[0];
+      if (m) setMalotes(ms => new Map(ms).set(drawerId, m));
+    }
+  };
 
   const carregarStats = useCallback(async () => {
     // Mesma coisa nos cartões do topo: `.limit(2000)` parava em 1000 (teto do servidor).
@@ -215,7 +282,7 @@ export default function Ferias() {
     setVerHist(false);
     carregarHist(row.id);
   };
-  const fecharDrawer = () => { setDrawerId(null); setSol(null); setHist([]); setVerHist(false); };
+  const fecharDrawer = () => { setDrawerId(null); setSol(null); setHist([]); setVerHist(false); setEnviandoMalote(false); };
 
   const recarregarTudo = () => { carregar(); carregarStats(); };
 
@@ -255,12 +322,17 @@ export default function Ferias() {
   const salvarDocumentacao = async () => {
     if (!drawerId || salvandoDoc) return;
     setSalvandoDoc(true);
-    const patch = { data_malote: docMalote || null, retorno_documentacao: docRetorno.trim() || null, atualizado_em: new Date().toISOString() };
-    const { error } = await db.from("SISTEMA_SOLICITACOES_FERIAS").update(patch).eq("id", drawerId);
+    const patch = {
+      status_senior: docSenior, documentacao_enviada_em: docEnviado.trim() || null,
+      retorno_documentacao: docRetorno.trim() || null, atualizado_em: new Date().toISOString(),
+    };
+    const { data: novo, error } = await db.from("SISTEMA_SOLICITACOES_FERIAS").update(patch).eq("id", drawerId).select("*").maybeSingle();
     setSalvandoDoc(false);
     if (error) { toast("Erro: " + error.message, "err"); return; }
-    setSol(s => (s ? { ...s, ...patch } : s));
-    setRows(rs => rs.map(r => (r.id === drawerId ? { ...r, ...patch } : r)));
+    // O gatilho carimba quem/quando mudou o status Senior: vale o que voltou do banco.
+    const linha = novo ?? patch;
+    setSol(s => (s ? { ...s, ...linha } : s));
+    setRows(rs => rs.map(r => (r.id === drawerId ? { ...r, ...linha } : r)));
     toast("Documentação salva.", "ok");
   };
 
@@ -312,6 +384,11 @@ export default function Ferias() {
             <option value="ferias">Em férias no período (inclui quem já saiu antes)</option>
             <option value="criado">Data da solicitação</option>
           </select>],
+          ["Status Senior", <select key="s" value={fSenior} onChange={e => setFSenior(e.target.value)} style={inputData}>
+            <option value="">Todos</option>
+            <option value="Pendente">Pendente (não gerado)</option>
+            <option value="Gerado">Gerado</option>
+          </select>],
           ["Mês", <input key="m" type="month" value={mes} onChange={e => escolherMes(e.target.value)} style={inputData} />],
           ["De", <input key="d" type="date" value={de} max={ate || undefined} onChange={e => { setMes(""); setDe(e.target.value); }} style={inputData} />],
           ["Até", <input key="a" type="date" value={ate} min={de || undefined} onChange={e => { setMes(""); setAte(e.target.value); }} style={inputData} />],
@@ -337,16 +414,16 @@ export default function Ferias() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              {["Colaborador", "Período", "Dias", "Solicitante", "Status", "Malote", "Retorno doc.", "Criado"].map(h => (
+              {["Colaborador", "Período", "Dias", "Solicitante", "Status", "Senior", "Malote", "Documentação", "Criado"].map(h => (
                 <th key={h} style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".7px", padding: "11px 14px", borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</td></tr>
+              <tr><td colSpan={9} style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Carregando...</td></tr>
             ) : rowsFiltradas.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+              <tr><td colSpan={9} style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>Nenhuma solicitação de férias.
               </td></tr>
             ) : rowsFiltradas.map(r => (
@@ -371,8 +448,17 @@ export default function Ferias() {
                   {r.excecao && <span title="Solicitada com menos de 30 dias de antecedência" style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>FORA DO PRAZO</span>}
                   {r.refeita_em && <span title={`Refeita pelo encarregado em ${fmtDt(r.refeita_em)} — precisa de nova avaliação`} style={{ display: "inline-block", marginLeft: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#ede9fe", color: "#6d28d9", border: "1px solid #ddd6fe" }}>🔁 REFEITA</span>}
                 </td>
-                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569", whiteSpace: "nowrap" }}>{r.data_malote ? fmtDt(r.data_malote) : "—"}</td>
-                <td style={{ padding: "11px 14px", fontSize: 11.5, color: "#475569", maxWidth: 220 }}>{r.retorno_documentacao || "—"}</td>
+                <td style={{ padding: "11px 14px" }}><SeniorBadge status={r.status_senior} /></td>
+                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569", whiteSpace: "nowrap" }}>
+                  {r.data_malote ? fmtDt(r.data_malote) : "—"}
+                  {malotes.get(r.id) && <div style={{ fontSize: 10.5, color: malotes.get(r.id)!.ativo ? "#0f3171" : "#b91c1c", fontWeight: 700 }}>{malotes.get(r.id)!.numero}{malotes.get(r.id)!.ativo ? "" : " (fora)"}</div>}
+                </td>
+                <td style={{ padding: "11px 14px", fontSize: 11.5, color: "#475569", maxWidth: 240 }}>
+                  {!r.documentacao_enviada_em && !r.retorno_documentacao ? "—" : <>
+                    {r.documentacao_enviada_em && <div title="Enviado em">📤 {r.documentacao_enviada_em}</div>}
+                    {r.retorno_documentacao && <div title="Retorno da documentação">📥 {r.retorno_documentacao}</div>}
+                  </>}
+                </td>
                 <td style={{ padding: "11px 14px", fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.criado_em)}</td>
               </tr>
             ))}
@@ -381,7 +467,13 @@ export default function Ferias() {
       </div>
 
       {/* Drawer */}
-      {drawerId && sol && (
+      {/* Enviar ao Malote: o diálogo toma o lugar do drawer (o drawer é z-index
+          500 e cobriria o Dialog); ao fechar, o drawer volta já atualizado. */}
+      {drawerId && sol && enviandoMalote && (
+        <EnviarFeriasMalote aberto sol={sol} malote={malotes.get(sol.id) ?? null} podeEnviar={podeEnviarMalote}
+          onFechar={() => setEnviandoMalote(false)} onMudou={recarregarSol} />
+      )}
+      {drawerId && sol && !enviandoMalote && (
         <div onClick={e => { if (e.target === e.currentTarget) fecharDrawer(); }}
           style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(15,23,42,.42)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "flex-end" }}>
           <div style={{ width: "82%", maxWidth: 720, height: "100%", background: "#fff", display: "flex", flexDirection: "column", boxShadow: "-20px 0 60px rgba(15,23,42,.18)" }}>
@@ -416,7 +508,8 @@ export default function Ferias() {
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                     {hist.map((h, i) => {
-                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : h.evento === "Refeita" ? "#6d28d9" : "#0f3171";
+                      const cor = h.evento === "Aprovada" ? "#16a34a" : h.evento === "Reprovada" ? "#dc2626" : h.evento === "Cancelada" ? "#64748b" : h.evento === "Refeita" ? "#6d28d9"
+                        : /Recibo|Valor|Malote/.test(h.evento) ? "#0369a1" : "#0f3171";
                       return (
                         <div key={h.id} style={{ display: "grid", gridTemplateColumns: "18px 1fr", gap: 10 }}>
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -467,13 +560,62 @@ export default function Ferias() {
                   <div style={{ fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>Solicitada com menos de 30 dias de antecedência. O solicitante foi avisado de que pode ser recusada e confirmou mesmo assim.</div>
                 </div>
               )}
-              {/* Documentação (04/11/2026): malote e retorno, que antes só viviam na planilha. */}
+              {/* Senior e Malote (04/11/2026, mig 20261104007000): status Senior,
+                  recibo, valor e despesa. A data do malote só nasce pelo botão. */}
+              <div style={{ marginBottom: 12, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>💼 Senior e Malote</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12.5, color: "#334155" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>Status Senior</div>
+                    <div style={{ marginTop: 3 }}><SeniorBadge status={sol.status_senior} /></div>
+                    {sol.status_senior_por && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{sol.status_senior_por} · {fmtDtHora(sol.status_senior_em ?? undefined)}</div>}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>Enviado ao malote em</div>
+                    <div style={{ marginTop: 3, fontWeight: 700 }}>{sol.data_malote ? fmtDt(sol.data_malote) : "—"}</div>
+                    {malotes.get(sol.id) && <div style={{ fontSize: 11, color: malotes.get(sol.id)!.ativo ? "#0f3171" : "#b91c1c" }}>{malotes.get(sol.id)!.numero} · {malotes.get(sol.id)!.status}{malotes.get(sol.id)!.ativo ? "" : " — pode reenviar"}</div>}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>Recibo da Senior</div>
+                    {sol.recibo_path
+                      ? <button onClick={() => abrirReciboFerias(sol.recibo_path!)} style={{ marginTop: 3, background: "none", border: "none", padding: 0, color: "#0f3171", fontWeight: 700, cursor: "pointer", textDecoration: "underline", fontSize: 12.5, textAlign: "left" }}>📎 {sol.recibo_nome || "recibo"}</button>
+                      : <div style={{ marginTop: 3 }}>—</div>}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>Valor líquido</div>
+                    <div style={{ marginTop: 3, fontWeight: 700 }}>{sol.valor_confirmado_em ? fmtReais(sol.valor_liquido) : "—"}</div>
+                    {sol.valor_confirmado_por && <div style={{ fontSize: 11, color: "#94a3b8" }}>{sol.valor_origem === "leitura" ? "lido do recibo" : "digitado"} · confirmado por {sol.valor_confirmado_por}</div>}
+                  </div>
+                </div>
+                {podeDoc && sol.status === "Aprovada" && (
+                  <button onClick={() => setEnviandoMalote(true)}
+                    style={{ marginTop: 10, width: "100%", padding: "10px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    {malotes.get(sol.id)?.ativo ? "📦 Ver o envio ao Malote"
+                      : !sol.recibo_path ? "📎 Anexar recibo da Senior e enviar ao Malote"
+                      : !sol.valor_confirmado_em ? "🔎 Conferir o valor do recibo"
+                      : "📦 Enviar ao Malote"}
+                  </button>
+                )}
+                {podeDoc && sol.status !== "Aprovada" && !sol.recibo_path && (
+                  <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>O envio ao Malote libera quando a solicitação estiver aprovada.</div>
+                )}
+              </div>
+
+              {/* Documentação (04/11/2026): o histórico que antes só vivia na planilha — ENVIADO EM e RETORNO. */}
               <div style={{ marginBottom: 18, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>📦 Documentação</div>
-                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "end" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 1fr", gap: 10, alignItems: "end" }}>
                   <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
-                    Enviado ao malote em
-                    <input type="date" value={docMalote} onChange={e => setDocMalote(e.target.value)} disabled={!podeDoc}
+                    Status Senior
+                    <select value={docSenior} onChange={e => setDocSenior(e.target.value)} disabled={!podeDoc}
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                      <option value="Pendente">Pendente</option>
+                      <option value="Gerado">Gerado</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
+                    Enviado em
+                    <input type="text" value={docEnviado} onChange={e => setDocEnviado(e.target.value)} disabled={!podeDoc} placeholder="Ex.: ENVIADO ZAPSIGN - 04/11/2026"
                       style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13, fontFamily: "inherit" }} />
                   </label>
                   <label style={{ fontSize: 12, color: "#475569", fontWeight: 600 }}>
@@ -483,7 +625,7 @@ export default function Ferias() {
                   </label>
                 </div>
                 {!podeDoc && <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>Só quem tem "alterar" na Gestão de Férias (RH) edita estes campos.</div>}
-                {podeDoc && (docMalote !== (sol.data_malote ? String(sol.data_malote).slice(0, 10) : "") || docRetorno.trim() !== (sol.retorno_documentacao ?? "")) && (
+                {podeDoc && (docSenior !== (sol.status_senior || "Pendente") || docEnviado.trim() !== (sol.documentacao_enviada_em ?? "") || docRetorno.trim() !== (sol.retorno_documentacao ?? "")) && (
                   <button onClick={salvarDocumentacao} disabled={salvandoDoc}
                     style={{ marginTop: 8, padding: "6px 14px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: salvandoDoc ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {salvandoDoc ? "Salvando…" : "Salvar documentação"}

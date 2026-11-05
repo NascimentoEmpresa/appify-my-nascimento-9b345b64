@@ -830,6 +830,16 @@ const treinamentosModule: ModuleDef = {
       ],
     },
     {
+      // Treinamentos presenciais por empresa/contrato (mig 20261104006000):
+      // fotos, lista de presença, avaliações, satisfação e relatórios.
+      label: "Por contrato",
+      defaultOpen: true,
+      items: [
+        { label: "Treinamentos por Contrato", to: "/app/treinamentos/contratos", icon: Building2 },
+        { label: "Relatórios", to: "/app/treinamentos/contratos/relatorios", icon: BarChart3 },
+      ],
+    },
+    {
       label: "Alunos",
       defaultOpen: true,
       items: [
@@ -959,6 +969,8 @@ const sistemasModule: ModuleDef = {
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
         { label: "Controle de Pull Requests (PR)", to: "/app/sistemas/chamados/pull-requests", icon: GitPullRequest },
+        // Bonificação coletiva por nota da equipe (05/11/2026, mig 20261105004700).
+        { label: "Bonificação Coletiva", to: "/app/sistemas/bonificacao", icon: Trophy },
       ],
     },
     {
@@ -1446,6 +1458,8 @@ const organogramaModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Organograma", to: "/app/organograma", icon: Network },
+        // Movimentações e feedbacks por contrato/setor (mig 20261104009000).
+        { label: "Dashboard de Gestão", to: "/app/organograma/gestao", icon: ClipboardList },
         // Estrutura de Setores e Processos (mig 20261020000060): o organograma
         // das atividades — setores, equipe do gerente ao jovem, processos e as
         // ligações entre setores. O Geral lê a última publicação; o Cadastro edita.

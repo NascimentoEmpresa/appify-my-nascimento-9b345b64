@@ -20,6 +20,7 @@ import {
 import { BadgeExecucao, BadgeStatus, ListaAnexos } from "./HoraExtraUI";
 import { linhaSemChamado } from "./prHoraExtraUtils";
 import type { SolicitacaoHoraExtra } from "./types";
+import { useConfirmacaoLimite } from "./useConfirmacaoLimite";
 
 const CAMPOS_PONTO = [
   ["Entrada", "entrada"],
@@ -50,6 +51,7 @@ export default function DetalhesHoraExtraDialog({
   const { data: atual } = useDetalheHoraExtra(aberto ? solicitacao?.id : null);
   const { data: podeEditarConcluida = false } = useScreenAccess("sistemas_hora_extra", "editar_concluida");
   const corrigir = useEditarHorariosConcluida();
+  const { conferirLimite, dialogoLimite } = useConfirmacaoLimite();
   const [editando, setEditando] = useState(false);
   const [horarios, setHorarios] = useState<Horarios>({
     entrada: "",
@@ -104,6 +106,13 @@ export default function DetalhesHoraExtraDialog({
       );
       return;
     }
+    const seguir = await conferirLimite({
+      colaboradorId: dados.colaborador_id,
+      data: dados.data_he,
+      minutos: calculo.excedente,
+      ignorarId: dados.id,
+    });
+    if (!seguir) return;
     try {
       await corrigir.mutateAsync({ p_id: dados.id, p_horarios: horarios });
       toast.success("Horários da HE corrigidos.");
@@ -118,6 +127,7 @@ export default function DetalhesHoraExtraDialog({
     : (dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0);
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
+      {dialogoLimite}
       <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-3xl overflow-x-hidden overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between gap-3 pr-8">

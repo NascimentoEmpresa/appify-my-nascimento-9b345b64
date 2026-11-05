@@ -25,6 +25,20 @@ interface Body {
   empresa_id?: string | null;
   roles?: string[];
   telefone?: string | null;
+  // O que a pessoa faz na empresa (profiles.bio, a mesma de Meu Perfil).
+  bio?: string | null;
+  // Onde a pessoa fica no organograma (mig 20261104009000). A tela de Usuários
+  // sempre manda; fica opcional aqui porque scripts de carga criam conta sem
+  // saber a posição — quem entra assim aparece nas Pendências do organograma.
+  organograma?: {
+    empregado_id?: number | null;
+    parent_id?: string | null;
+    topo?: boolean;
+    do_grupo?: boolean;
+    funcao?: string | null;
+    posto?: string | null;
+    contratos?: { empresa: number; filial: number }[] | null;
+  } | null;
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -121,6 +135,12 @@ Deno.serve(async (req) => {
     const telefone = normalizeTelefone(body.telefone);
     const empresa_id = normalizeTextOrNull(body.empresa_id);
     const requestedRoles = uniqueStrings(body.roles);
+    const bio = normalizeTextOrNull(body.bio)?.slice(0, 500) ?? null;
+    const organograma = body.organograma ?? null;
+
+    if (organograma && !organograma.parent_id && !organograma.topo) {
+      return jsonResponse({ error: "Diga a quem o usuário se reporta no organograma (ou marque que fica no topo)." }, 400);
+    }
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return jsonResponse({ error: "E-mail inválido" }, 400);
@@ -236,6 +256,7 @@ Deno.serve(async (req) => {
         email,
         display_name,
         cargo,
+        ...(bio ? { bio } : {}),
         empresa_id,
         empresa_atual_id: empresa_id,
         telefone,
@@ -268,6 +289,36 @@ Deno.serve(async (req) => {
     if (rolesErr) {
       await rollbackCreatedUser();
       return jsonResponse({ error: `Erro ao vincular perfis: ${rolesErr.message}` }, 500);
+    }
+
+    // Por último: é a etapa que pode recusar por regra de negócio (colaborador
+    // já vinculado a outro login, superior que fecharia ciclo). Recusou, desfaz
+    // o usuário e o operador corrige sem ficar com conta pela metade.
+    if (organograma) {
+      const { error: orgErr } = await admin.rpc("organograma_salvar_interno", {
+        p_no: null,
+        p_empregado: organograma.empregado_id ?? null,
+        p_user: newUserId,
+        p_parent: organograma.topo ? null : organograma.parent_id ?? null,
+        p_topo: !!organograma.topo,
+        p_funcao: normalizeTextOrNull(organograma.funcao) ?? "",
+        p_posto: organograma.empregado_id ? organograma.posto ?? "" : null,
+        p_contratos: organograma.contratos ?? [],
+        p_autor: callerId,
+        p_do_grupo: !!organograma.do_grupo,
+      });
+
+      if (orgErr) {
+        // PGRST202 = a função ainda não existe: as Edge Functions sobem ANTES
+        // das migrations no merge (cluster_pos_merge.yml), e uma migration pode
+        // ficar pendente por lock. Criar usuário não para por isso; a pessoa
+        // aparece nas Pendências quando a migration entrar.
+        if (orgErr.code !== "PGRST202") {
+          await rollbackCreatedUser();
+          return jsonResponse({ error: orgErr.message }, 400);
+        }
+        console.error("organograma_salvar_interno ainda não existe; usuário criado sem posição", newUserId);
+      }
     }
 
     return jsonResponse({
