@@ -288,6 +288,9 @@ const controladoriaOrcModule: ModuleDef = {
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
+        // SIS-2026-0807: precisa existir AQUI e em app_menu (mig 20261105001000).
+        { label: "Justificativas de Valor", to: "/app/controladoria/justificativas", icon: MessagesSquare, badge: "Novo" },
+        { label: "Minhas Justificativas", to: "/app/controladoria/minhas-justificativas", icon: MessagesSquare, badge: "Novo" },
       ],
     },
   ],
