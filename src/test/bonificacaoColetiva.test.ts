@@ -4,6 +4,7 @@ import {
   PISO_VALOR,
   configDoPeriodo,
   distribuirPorPeso,
+  pesosPadrao,
   percentil,
   referenciaDoPeriodo,
   contribuicaoParaEquipe,
@@ -252,21 +253,35 @@ describe("régua do valor (05/11/2026)", () => {
 });
 
 describe("distribuição com peso no valor (05/11/2026)", () => {
-  const dev = (devId: string, nota: number | null) => ({ devId, devNome: devId, nota, entregas: [] });
-  it("pesos iguais: verba × 20% × nota (o desenho: 68,4 → R$ 684 de R$ 5.000)", () => {
-    const d = distribuirPorPeso(5000, [dev("eduardo", 68.4), dev("iury", 64.3), dev("joao", 70.7), dev("pablo", 79.5), dev("thamires", 70.5)]);
-    expect(d.linhas.map((l) => l.peso)).toEqual([20, 20, 20, 20, 20]);
-    expect(d.linhas.map((l) => l.valor)).toEqual([684, 643, 707, 795, 705]);
-    expect(d.distribuido).toBe(3534);
-    expect(d.saldo).toBe(1466);
-    expect(d.pesoTotal).toBe(100);
-    expect(d.pesosIguais).toBe(true);
+  const dev = (devId: string, nota: number | null, devNome = devId) => ({ devId, devNome, nota, entregas: [] });
+  it("peso padrão: Eduardo, Iury, João e Pablo iguais; os demais com metade", () => {
+    const p = pesosPadrao([
+      dev("e", 0, "Eduardo Jeiel Padilha Monteiro"), dev("i", 0, "IURY DE JESUS SILVA"),
+      dev("j", 0, "João Victor Peretti de Araujo"), dev("p", 0, "Pablo Flores Santarem"), dev("o", 0, "OTAVIO DA SILVA FERREIRA"),
+    ]);
+    expect(p).toEqual({ e: 22.22, i: 22.22, j: 22.22, p: 22.22, o: 11.11 });
   });
-  it("peso personalizado e dev sem nota", () => {
+  it("divide o LIBERADO inteiro por peso × nota (fecha no centavo)", () => {
+    const d = distribuirPorPeso(4411.5, [
+      dev("e", 100, "Eduardo"), dev("i", 96.3, "Iury"), dev("j", 91.4, "João"), dev("o", 82, "Otavio"), dev("p", 84.7, "Pablo"),
+    ]);
+    expect(d.distribuido).toBe(4411.5);
+    expect(d.saldo).toBe(0);
+    expect(d.pesosPadrao).toBe(true);
+    const v = Object.fromEntries(d.linhas.map((l) => [l.devId, l.valor]));
+    expect(v.e).toBeGreaterThan(v.p);
+    expect(v.o).toBeLessThan(v.p / 2 + 1);
+  });
+  it("peso personalizado e dev sem nota (leva 0, os outros levam tudo)", () => {
     const d = distribuirPorPeso(1000, [dev("a", 100), dev("b", null)], { a: 70, b: 30 });
-    expect(d.linhas.map((l) => l.valor)).toEqual([700, 0]);
-    expect(d.saldo).toBe(300);
-    expect(d.pesosIguais).toBe(false);
+    expect(d.linhas.map((l) => l.valor)).toEqual([1000, 0]);
+    expect(d.saldo).toBe(0);
+    expect(d.pesosPadrao).toBe(false);
+  });
+  it("ninguém com nota: nada distribuído", () => {
+    const d = distribuirPorPeso(1000, [dev("a", null)]);
+    expect(d.distribuido).toBe(0);
+    expect(d.saldo).toBe(1000);
   });
 });
 

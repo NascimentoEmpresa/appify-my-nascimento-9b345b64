@@ -593,7 +593,7 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPerio
       )}
 
       <div className="grid gap-4">
-        <CartaoPesoNoValor base={rateio.verba} devs={devsMes} visiveis={devs} />
+        <CartaoPesoNoValor base={rateio.liberado} devs={devsMes} visiveis={devs} />
         <Card className="p-5">
           <Titulo ajuda="Explica a fórmula: verba disponível × nota coletiva ÷ 100; depois divide-se igualmente entre os participantes.">Cálculo da bonificação coletiva</Titulo>
           <ol className="list-decimal space-y-1 rounded-md border-l-4 border-primary bg-muted/40 p-3 pl-8 text-sm text-muted-foreground">
@@ -655,8 +655,10 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, filtradas, totalPerio
 
 /**
  * "Desempenho por desenvolvedor — com peso no valor" (desenho do Pablo, 05/11/2026).
- * Valor previsto = verba disponível × peso ÷ 100 × nota ÷ 100. Pesos editáveis
- * só na tela (simulação, não gravam); "Pesos iguais" volta ao padrão.
+ * Valor previsto = valor LIBERADO à equipe × (peso × nota) ÷ Σ(peso × nota):
+ * o liberado é dividido inteiro (correção do Pablo, 05/11 — antes era a verba).
+ * Pesos editáveis só na tela (simulação, não gravam); "Pesos padrão" volta a
+ * Eduardo/Iury/João/Pablo iguais e os demais com metade (pesosPadrao).
  * A régua dos pesos é o MÊS inteiro: filtrar um dev não muda o peso dele.
  */
 function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: ResumoDev[]; visiveis: ResumoDev[] }) {
@@ -669,13 +671,13 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Titulo ajuda="Valor previsto = verba disponível para a equipe × peso do desenvolvedor × nota individual (a própria nota já aplica o desconto; não passa antes pela nota coletiva). O que as notas não alcançam fica como saldo não distribuído. Os pesos aqui são simulação e não são gravados.">
+          <Titulo ajuda="O valor liberado à equipe (verba × nota coletiva) é dividido inteiro: cada desenvolvedor leva a parte proporcional a peso × nota individual. Padrão: Eduardo, Iury, João e Pablo com o mesmo peso; os demais com metade. Os pesos aqui são simulação e não são gravados.">
             Desempenho por desenvolvedor — com peso no valor
           </Titulo>
-          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor pode ser ponderado por peso e calculado sobre a verba disponível para a equipe.</p>
+          <p className="text-sm text-muted-foreground">As barras mostram a nota e o número de entregas. O valor liberado à equipe é dividido por peso × nota.</p>
         </div>
         <div className="grid min-w-[16rem] gap-1 rounded-lg border bg-muted/30 px-4 py-2 text-sm">
-          <div className="flex justify-between gap-6"><span className="text-muted-foreground">Verba disponível para a equipe:</span><b className="tabular-nums">{moeda(d.base)}</b></div>
+          <div className="flex justify-between gap-6"><span className="text-muted-foreground">Valor liberado à equipe:</span><b className="tabular-nums">{moeda(d.base)}</b></div>
           <div className="flex justify-between gap-6"><span className="text-muted-foreground">Peso total considerado:</span><b className={`tabular-nums ${totalOk ? "" : "text-warning"}`}>{num(d.pesoTotal)}%</b></div>
         </div>
       </div>
@@ -709,11 +711,11 @@ function CartaoPesoNoValor({ base, devs, visiveis }: { base: number; devs: Resum
       {!totalOk && <p className="mt-3 text-xs text-warning">Os pesos somam {num(d.pesoTotal)}% — ajuste para 100% para distribuir o valor liberado inteiro.</p>}
 
       <div className="mt-5 grid gap-2 rounded-lg border bg-muted/30 px-4 py-3 text-sm md:grid-cols-3 md:divide-x">
-        <div><b>Distribuído pela nota:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
-        <div className="md:pl-4"><b>Saldo não distribuído:</b> <span className="tabular-nums">{moeda(d.saldo)}</span></div>
+        <div><b>Distribuído:</b> <span className="tabular-nums">{moeda(d.distribuido)}</span></div>
+        <div className="md:pl-4"><b>Sem destino:</b> <span className="tabular-nums">{moeda(d.saldo)}</span>{d.saldo > 0 && <span className="text-xs text-muted-foreground"> (ninguém com nota)</span>}</div>
         <div className="flex flex-wrap items-center gap-2 md:pl-4">
-          <span><b>Critério atual:</b> {d.pesosIguais ? `pesos iguais (${num(pesoIgual(devs.length))}% para cada)` : "pesos personalizados (simulação)"}</span>
-          {!d.pesosIguais && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos iguais</Button>}
+          <span><b>Critério atual:</b> {d.pesosPadrao ? "padrão (Eduardo, Iury, João e Pablo iguais; demais com metade)" : "pesos personalizados (simulação)"}</span>
+          {!d.pesosPadrao && <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPesos({})}>Pesos padrão</Button>}
         </div>
       </div>
     </Card>
