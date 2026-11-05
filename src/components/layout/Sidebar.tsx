@@ -100,6 +100,7 @@ import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
 import { selNovoVigente } from "@/lib/selNovo";
+import { agruparPorDepartamento } from "@/lib/departamentosMenu";
 
 interface NavItem {
   label: string;
@@ -1507,7 +1508,11 @@ const erpModules: ModuleDef[] = [
  * nova: o encarregado via oito itens no menu lateral e dois no Início. Catálogo
  * único é a única forma de isso não se repetir.
  */
-export const NAV_MODULOS: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false)];
+export const NAV_MODULOS_ORIGEM: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false)];
+// SIS-2026-0772: o menu agrupa os módulos pelos departamentos da empresa. Só
+// visual — quem vê cada tela continua sendo decidido pela rota (canSee). O
+// porquê de não mexer nos módulos do banco está em src/lib/departamentosMenu.ts.
+export const NAV_MODULOS: ModuleDef[] = agruparPorDepartamento(NAV_MODULOS_ORIGEM);
 export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
 
 interface SidebarProps {
@@ -2019,7 +2024,10 @@ function SidebarGroup({ group, enabled, base, rotasDoModulo }: { group: NavGroup
             `sb-chev` é a classe que anima a seta. Dispensei o
             `transition-transform` do Tailwind porque a .sb-chev já define a
             transição, com curva própria — as duas juntas se anulariam. */}
-        <span className="whitespace-nowrap">{group.label}</span>
+        {/* SIS-2026-0772: com os departamentos, o rótulo pode trazer o
+            módulo de origem na frente ("Sistemas · Chamados de Sistemas") e
+            passar da largura. Corta com reticências; o title mostra inteiro. */}
+        <span className="min-w-0 truncate whitespace-nowrap" title={group.label}>{group.label}</span>
         <ChevronDown className={cn("sb-chev h-3 w-3", !open && "-rotate-90")} />
       </button>
       {/* data-open leva o `enabled` junto de propósito: ao recolher o módulo,

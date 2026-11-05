@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calcularEnvioItens, type ItemParaEnvio } from "@/lib/suprimentos/envioItens";
+import { calcularEnvioItens, despachadoSemRegistroDeSaida, type ItemParaEnvio } from "@/lib/suprimentos/envioItens";
 
 const item = (id: string, quantidade: number, ordem = 0): ItemParaEnvio => ({
   id, nome_item: id.toUpperCase(), tamanho: "G", litros: null, quantidade, ordem,
@@ -39,5 +39,20 @@ describe("calcularEnvioItens", () => {
       [{ pedido_item_id: "a", quantidade: 1 }, { pedido_item_id: "removido", quantidade: 3 }],
     );
     expect(linhas.map((l) => [l.id, l.enviada, l.pendente])).toEqual([["a", 1, 0], ["b", 0, 1]]);
+  });
+});
+
+describe("despachadoSemRegistroDeSaida (SIS-2026-0799)", () => {
+  it("despachado sem nenhuma saída no estoque não afirma que tudo está pendente", () => {
+    expect(despachadoSemRegistroDeSaida("DESPACHADO", [])).toBe(true);
+  });
+
+  it("despachado com alguma saída é parcial de verdade — pendentes continuam aparecendo", () => {
+    expect(despachadoSemRegistroDeSaida("DESPACHADO", [{ pedido_item_id: "a", quantidade: 1 }])).toBe(false);
+  });
+
+  it("antes do despacho, nada saiu ainda é simplesmente pendente", () => {
+    expect(despachadoSemRegistroDeSaida("AGUARDANDO ENVIO", [])).toBe(false);
+    expect(despachadoSemRegistroDeSaida("RETIRADO PARA ENTREGA", [])).toBe(false);
   });
 });

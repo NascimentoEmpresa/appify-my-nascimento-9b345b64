@@ -294,6 +294,21 @@ export function useSalvarConciliacaoFluxoCaixa() {
   });
 }
 
+// Exclui a conciliação de uma competência (e as repetições do mesmo registro) para poder refazê-la. A RPC exige 'excluir' em Conciliação Bancária
+// e registra quem excluiu, quando e o motivo. Não desfaz o que a conciliação alterou no Fluxo de Caixa.
+export function useExcluirConciliacaoFluxoCaixa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { data, error } = await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> })
+        .rpc("conciliacao_fluxo_excluir", { _id: id, _motivo: motivo });
+      if (error) throw new Error(error.message);
+      return Number(data ?? 0);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
 // ── SIS-2026-0713: saldo inicial de janeiro informado à mão ──────────────────
 
 export interface SaldoInicialConciliacao {
