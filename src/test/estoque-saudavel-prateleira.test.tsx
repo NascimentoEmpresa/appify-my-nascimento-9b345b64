@@ -71,11 +71,11 @@ describe("prateleira saudável — pendências do Malote", () => {
     expect(screen.getByText("Aguardando compra: 0")).toBeInTheDocument();
   });
 
-  it("mostra o que está aguardando entrega mesmo sem saldo, consumo ou nova compra", () => {
+  it.each([18, 1.125])("mostra %s aguardando entrega mesmo sem saldo, consumo ou nova compra", (emTransito) => {
     render(<GraficoFaixaPorItem itens={[item({
-      disponivel: 0, demanda_janela: 0, comprar: 0, aguardando_compra: 0, em_transito: 18,
+      disponivel: 0, demanda_janela: 0, comprar: 0, aguardando_compra: 0, em_transito: emTransito,
     })]} />);
     expect(screen.getByText("CALÇA · M")).toBeInTheDocument();
-    expect(screen.getByText("Aguardando entrega: 18")).toBeInTheDocument();
+    expect(screen.getByText(`Aguardando entrega: ${emTransito.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}`)).toBeInTheDocument();
   });
 });
