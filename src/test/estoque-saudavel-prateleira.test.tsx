@@ -70,4 +70,12 @@ describe("prateleira saudável — pendências do Malote", () => {
     expect(screen.getByText("Aguardando compra: —")).toBeInTheDocument();
     expect(screen.getByText("Aguardando compra: 0")).toBeInTheDocument();
   });
+
+  it("mostra o que está aguardando entrega mesmo sem saldo, consumo ou nova compra", () => {
+    render(<GraficoFaixaPorItem itens={[item({
+      disponivel: 0, demanda_janela: 0, comprar: 0, aguardando_compra: 0, em_transito: 18,
+    })]} />);
+    expect(screen.getByText("CALÇA · M")).toBeInTheDocument();
+    expect(screen.getByText("Aguardando entrega: 18")).toBeInTheDocument();
+  });
 });
