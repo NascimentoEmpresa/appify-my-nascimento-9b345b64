@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dataBR, dataLiberacao, diaDeBrasilia, diasParaLiberar, podeLiberar, rankingMural,
+  dataBR, dataLiberacao, diaDeBrasilia, diasParaLiberar, itensDaPrevia, podeLiberar, rankingMural,
 } from "@/lib/formularios/muralReconhecimento";
 
 // Espelho da trava do banco (mig 20261103001300, cs_form_mural_libera_em):
@@ -61,5 +61,30 @@ describe("ranking por pessoa", () => {
   it("ignora linha sem nome e não quebra com nota que não é número", () => {
     const r = rankingMural([l("", 5), l("Eva", "ótima"), l("Eva", 5)]);
     expect(r).toEqual([expect.objectContaining({ posicao: 1, colaborador: "Eva", total: 2, media: 5 })]);
+  });
+});
+
+describe("itensDaPrevia (Ver prévia do Mural do Início)", () => {
+  const l = (id: string, colaborador: string, status: "pendente" | "liberado" | "recusado", enviado_em = "2026-10-01") =>
+    ({ id, colaborador, setor: null, nota: 5, escala: 5, comentario: "Ótima", enviado_em, status });
+  const ch = (x: { id: string }) => x.id;
+  const todos = [
+    l("a1", "ANA", "liberado"), l("b1", "BRUNO", "pendente", "2026-10-03"), l("b2", "BRUNO", "pendente", "2026-10-02"),
+    l("c1", "CARLA", "recusado"), l("a2", "ANA", "pendente"),
+  ];
+
+  it("junta o que já está no mural com o que vai ser liberado, sem recusado nem repetido", () => {
+    const pend = todos.filter((x) => x.status === "pendente");
+    const r = itensDaPrevia(todos, [...pend, todos[0]], ch);
+    // ANA e BRUNO empatam em 2 recados e na nota: o ranking desempata pelo nome.
+    expect(r.map((x) => x.id)).toEqual(["a1", "a2", "b2", "b1"]);
+  });
+
+  it("sem nada a liberar, mostra só o que já está no mural", () => {
+    expect(itensDaPrevia(todos, [], ch).map((x) => x.id)).toEqual(["a1"]);
+  });
+
+  it("recusado na lista a liberar não entra", () => {
+    expect(itensDaPrevia(todos, [todos[3]], ch).map((x) => x.id)).toEqual(["a1"]);
   });
 });
