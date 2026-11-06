@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
+import { LembreteTarefas } from "@/components/organograma/LembreteTarefas";
 import { Topbar } from "./Topbar";
 import { DemoBanner } from "./DemoBanner";
 import { ChamadoFab } from "@/components/chamados/ChamadoFab";
@@ -144,6 +145,8 @@ export function AppShell() {
       {/* Entra depois do VinculoGate de propósito: ele só aparece quando o
           vínculo Senior já está resolvido, para não empilhar dois modais. */}
       {!externo && <VinculoDiscordGate />}
+      {/* Tarefas da função: "A vencer no dia" e "Vencidas" ao entrar (SIS-2026-0771). */}
+      {!externo && <LembreteTarefas />}
     </div>
   );
 }
