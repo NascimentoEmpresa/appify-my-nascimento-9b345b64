@@ -2126,7 +2126,9 @@ function PainelSubmodulos({
         <div className="border-b border-sidebar-border px-4 pb-4 pt-5">
           <CabecalhoModulo mod={mod} ativo={ativo} />
         </div>
-        <div className="flex-1 overflow-y-auto scroll-elegant px-3 py-3">
+        {/* sb-scroll (06/11/2026): sem a barra de rolagem, igual à lista
+            principal — rola pela roda do mouse, toque e teclado. */}
+        <div className="sb-scroll flex-1 overflow-y-auto px-3 py-3">
           <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} desativado={fechando} />
         </div>
       </div>
