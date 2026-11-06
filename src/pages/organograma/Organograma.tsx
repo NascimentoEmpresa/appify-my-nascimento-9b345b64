@@ -27,6 +27,7 @@ import { BuscaPessoa } from "@/components/organograma/BuscaPessoa";
 import { PosicaoCampos } from "@/components/organograma/PosicaoCampos";
 import { PerfilPessoaDialog } from "@/components/organograma/PerfilPessoaDialog";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { EstruturaSetores } from "@/components/organograma/EstruturaSetores";
 
 // =====================================================================
 // ORGANOGRAMA (30/09/2026, mig 20260930000277)
@@ -123,6 +124,16 @@ export default function Organograma() {
   const todos = useMemo(() => nosQ.data?.nos ?? [], [nosQ.data]);
   const contratos = useMemo(() => nosQ.data?.contratos ?? [], [nosQ.data]);
 
+  // ESTRUTURA (06/11/2026, chamado reaberto pela Helena): Conselho ›
+  // Presidência › setores, abrindo por clique — é a visão padrão. A árvore de
+  // pessoas (canvas) continua em "Pessoas" e é onde se monta o organograma.
+  const [modo, setModo] = useState<"estrutura" | "pessoas">(() => {
+    try { return localStorage.getItem("organograma-modo") === "pessoas" ? "pessoas" : "estrutura"; } catch { return "estrutura"; }
+  });
+  const trocarModo = (m: "estrutura" | "pessoas") => {
+    setModo(m);
+    try { localStorage.setItem("organograma-modo", m); } catch { /* sem storage: só não lembra */ }
+  };
   const [edicao, setEdicao] = useState(false);
   const [busca, setBusca] = useState("");
   const [contrato, setContrato] = useState<string | null>(null);
@@ -441,7 +452,7 @@ export default function Organograma() {
             {podeVerGestao && <Button variant="outline" asChild className="gap-1.5"><Link to="/app/organograma/gestao"><LayoutDashboard className="h-4 w-4" /> Dashboard de Gestão</Link></Button>}
             <Button variant="outline" onClick={() => window.print()} className="gap-1.5"><Printer className="h-4 w-4" /> Imprimir</Button>
             {podeMontar && (
-              <Button variant={edicao ? "default" : "outline"} onClick={() => setEdicao((v) => !v)} className="gap-1.5">
+              <Button variant={edicao ? "default" : "outline"} onClick={() => { if (!edicao) trocarModo("pessoas"); setEdicao((v) => !v); }} className="gap-1.5">
                 <Pencil className="h-4 w-4" /> {edicao ? "Concluir edição" : "Montar organograma"}
               </Button>
             )}
@@ -460,16 +471,30 @@ export default function Organograma() {
         </div>
       )}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2 print:hidden">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-9 w-64 pl-8" placeholder="Buscar pessoa, função ou posto…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+      <div className="mb-4 flex flex-wrap items-center gap-3 print:hidden">
+        <div role="tablist" aria-label="Visão" className="inline-flex rounded-xl border bg-muted/60 p-1">
+          {([["estrutura", "Estrutura", Building2], ["pessoas", "Pessoas", Network]] as const).map(([m, rot, Ic]) => (
+            <button key={m} type="button" role="tab" aria-selected={modo === m}
+              onClick={() => { trocarModo(m); if (m === "estrutura") setEdicao(false); }}
+              className={cn("inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-semibold transition",
+                modo === m ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+              <Ic className="h-4 w-4" /> {rot}
+            </button>
+          ))}
         </div>
         <select aria-label="Contrato" className="h-9 w-72 max-w-full rounded-md border border-input bg-background px-2 text-sm"
           value={contrato ?? ""} onChange={(e) => setContrato(e.target.value || null)}>
           <option value="">Empresa toda</option>
           {contratos.map((c) => <option key={chaveContrato(c.empresa, c.filial)} value={chaveContrato(c.empresa, c.filial)}>{c.nome}</option>)}
         </select>
+      </div>
+
+      {modo === "pessoas" && (
+      <div className="mb-3 flex flex-wrap items-center gap-2 print:hidden">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="h-9 w-64 pl-8" placeholder="Buscar pessoa, função ou posto…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        </div>
         {termo.length >= 2 && <span className="text-xs text-muted-foreground">{achados.size} encontrado(s)</span>}
         <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
           <Users className="h-3.5 w-3.5" /> {(nos.length - visao.linhaDeComando.size).toLocaleString("pt-BR")} pessoa(s){visao.linhaDeComando.size ? ` + ${visao.linhaDeComando.size} na linha de comando` : ""}
@@ -483,6 +508,7 @@ export default function Organograma() {
         <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setRecolhidos(new Set())}>Expandir tudo</Button>
         <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setRecolhidos(new Set(arv.recolhiveis()))}>Recolher tudo</Button>
       </div>
+      )}
 
       {edicao && (
         <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 text-xs text-primary print:hidden">
@@ -512,6 +538,8 @@ export default function Organograma() {
           </p>
           {podeIncluir && !contrato && <Button onClick={() => { setEdicao(true); setAdicionar({ parentId: null }); }} className="gap-1.5"><UserPlus className="h-4 w-4" /> Posicionar a primeira pessoa</Button>}
         </Card>
+      ) : modo === "estrutura" ? (
+        <EstruturaSetores nos={nos} onPerfil={setPerfilDe} />
       ) : (
         <div ref={caixaRef} onMouseDown={inicioPan} onMouseMove={movePan} onMouseUp={fimPan} onMouseLeave={fimPan}
              className="org-caixa relative h-[calc(100vh-270px)] min-h-[420px] cursor-grab overflow-auto rounded-2xl border bg-[radial-gradient(circle,_hsl(var(--muted))_1px,_transparent_1px)] [background-size:18px_18px] active:cursor-grabbing">
