@@ -69,7 +69,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest, X as XIcon } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, rotaVisivelNoMenu } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -1806,9 +1806,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       onClick={handleNavClick}
       className={cn(
         // Mobile: drawer fixo off-canvas; desktop: fixo no viewport, independente do scroll da página.
-        "fixed inset-y-0 left-0 z-50 flex h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl transition-transform duration-300 ease-out",
-        "w-[268px]",
-        mobileOpen ? "translate-x-0" : "-translate-x-full",
+        // Sombra só aberta: fechada, a gaveta fora da tela vazava uma faixa
+        // escura na borda esquerda de todo celular.
+        "fixed inset-y-0 left-0 z-50 flex h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform duration-300 ease-out",
+        "w-[min(86vw,320px)]",
+        mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
         "lg:z-30 lg:translate-x-0 lg:shadow-none lg:transition-all",
         desktopCollapsed ? "lg:w-[172px]" : "lg:w-[268px]",
       )}
@@ -1829,6 +1831,14 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             <p className="text-[11px] uppercase tracking-wider text-sidebar-muted">ERP Corporativo</p>
           </div>
         )}
+        <button
+          type="button"
+          onClick={onMobileClose}
+          aria-label="Fechar menu"
+          className="ml-auto grid h-10 w-10 shrink-0 place-items-center rounded-lg text-white/80 hover:bg-white/10 lg:hidden"
+        >
+          <XIcon className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Início global */}
@@ -1998,7 +2008,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         </NavLink>
         )}
         {!collapsed && (
-          <div className="mt-2 flex items-center gap-2.5 rounded-lg border border-white/5 bg-gradient-to-r from-success/10 to-sidebar-accent/30 px-2.5 py-2">
+          <div className="mt-2 hidden items-center gap-2.5 rounded-lg border border-white/5 bg-gradient-to-r from-success/10 to-sidebar-accent/30 px-2.5 py-2 lg:flex">
             <span className="sb-live h-2 w-2 rounded-full bg-success shadow-[0_0_8px_hsl(var(--success)/0.8)]" />
             <span className="text-[11px] font-medium text-sidebar-foreground/75">Ambiente Produção</span>
           </div>

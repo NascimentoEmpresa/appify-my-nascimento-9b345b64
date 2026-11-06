@@ -12,9 +12,9 @@ interface Props {
 
 export function PageHeader({ title, subtitle, breadcrumb = [], module = "Licitações", actions, className }: Props) {
   return (
-    <div className={cn("mb-6", className)}>
+    <div className={cn("mb-4 lg:mb-6", className)}>
       {breadcrumb.length > 0 && (
-        <nav className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <nav className="mb-2 hidden items-center gap-1.5 text-xs text-muted-foreground md:flex">
           <span className="text-muted-foreground/70">ERP</span>
           <ChevronRight className="h-3 w-3" />
           <span className="font-medium">{module}</span>
@@ -28,7 +28,7 @@ export function PageHeader({ title, subtitle, breadcrumb = [], module = "Licita�
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-foreground lg:text-3xl">{title}</h1>
+          <h1 className="font-display text-xl font-bold tracking-tight text-foreground sm:text-2xl lg:text-3xl">{title}</h1>
           {subtitle && <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{subtitle}</p>}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
