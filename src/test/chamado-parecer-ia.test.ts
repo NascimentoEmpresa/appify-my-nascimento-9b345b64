@@ -20,10 +20,10 @@ describe("parecer da I.A do chamado", () => {
     const v = validarParecer(resposta());
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    // nível 3 = ×1,5: 10 × 200, 15 × 320, 8 × 165
+    // nível 3 = ×1,5: 10 × 300, 15 × 450, 8 × 165
     expect(v.parecer.precos.map((p) => p.fator_complexidade)).toEqual([1.5, 1.5, 1.5]);
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([3000, 7200, 1980]);
-    expect(v.parecer.valor_medio).toBe(4060);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([4500, 10125, 1980]);
+    expect(v.parecer.valor_medio).toBe(5535);
     expect(v.parecer.horas_estimadas).toBe(11);
     expect(v.parecer.complexidade_rotulo).toBe("Média");
     expect(v.parecer.precos.map((p) => p.perfil)).toEqual(PERFIS.map((p) => p.perfil));
@@ -63,8 +63,8 @@ describe("parecer da I.A do chamado", () => {
     expect(v.ok).toBe(true);
     if (!v.ok) return;
     expect(v.parecer.precos.map((p) => p.horas)).toEqual([8, 8, 8]);
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([3200, 5120, 2640]);
-    expect(v.parecer.valor_medio).toBe(3653.33);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([4800, 7200, 2640]);
+    expect(v.parecer.valor_medio).toBe(4880);
     expect(v.parecer.horas_estimadas).toBe(8);
   });
 
@@ -115,7 +115,7 @@ describe("chat sobre o parecer", () => {
     });
     expect(s).toContain("Férias no ERP");
     expect(s).toContain("5467");
-    expect(s).toContain("R$ 320/h fixo");
+    expect(s).toContain("R$ 450/h fixo");
     expect(s).toContain("FIXOS");
   });
 

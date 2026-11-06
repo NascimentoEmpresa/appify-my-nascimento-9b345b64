@@ -41,7 +41,7 @@ import { useEntregasBonificacao, useEquipeBonificacao, usePeriodosBonificacao, u
 import { completarComEquipe, type ModoDivisao } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   CRITERIOS, ROTULO_CRITERIO, ROTULO_DIFICULDADE, ROTULO_QUALIDADE,
-  configDoPeriodo, contribuicao, distribuirPorPeso, pesoIgual, redistribuirPesos, cltDoMes, aplicarPesosSalvos, pesosPadrao, pesosSalvosDoMes, type PesosSalvos, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
+  configDoPeriodo, contribuicao, textoEscalaDificuldade, distribuirPorPeso, pesoIgual, redistribuirPesos, cltDoMes, aplicarPesosSalvos, pesosPadrao, pesosSalvosDoMes, type PesosSalvos, contribuicaoParaEquipe, gerarCsv, htmlProposta, intervaloDaCompetencia, linhaDaConfig,
   mediasDosCriterios, noPrazo, notaDaEntrega, notaDoGrupo, notasDaEntrega, pendenciasDaEntrega, pontosPerdidos,
   ratearBonificacao, referenciaDoPeriodo, resolverPeriodo, resumoPorDev, rotuloCompetencia, somar, ultimasCompetencias, validarVerba,
   type ConfigBonificacao, type Criterio, type EntregaDetalhada, type NotasCriterios, type Rateio, type ResumoDev,
@@ -308,7 +308,7 @@ function AbaEquipe({ filtradas, validas, cfg, notaEquipe, notaFiltro, filtrando,
             <BarraCriterio key={k} rotulo={ROTULO_CRITERIO[k]} nota={medias[k]} peso={cfg.pesos[k]} pontos={contrib[k]} ajuda={AJUDA_CRITERIO[k]} />
           )) : <Vazio>Sem entregas concluídas para o filtro selecionado.</Vazio>}
           <p className="mt-3 rounded-md border-l-4 border-primary bg-muted/40 p-3 text-xs text-muted-foreground">
-            Nota de 0 a 100 obtida pela média dos critérios de todas as tarefas filtradas, multiplicada pelos pesos definidos. O valor financeiro não é considerado economia realizada.
+            Nota de 0 a 100 obtida pela média dos critérios de todas as tarefas filtradas, multiplicada pelos pesos definidos. O valor financeiro não é considerado economia realizada. {textoEscalaDificuldade(cfg.pontosDificuldade)}
           </p>
         </Card>
         <Card className="p-5">
@@ -365,7 +365,7 @@ function TabelaDevs({ devs, acao, extras = false, clt }: {
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className="tabular-nums">{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}
@@ -567,6 +567,7 @@ function AbaBonificacao({ mes, cfg, rateio, devs, devsMes, todos, filtradas, tot
           A <b>nota consolidada da equipe</b> define qual percentual da verba será liberado. Esse valor é <b>dividido igualmente</b> entre os desenvolvedores com entrega no período.
           Notas individuais servem só para acompanhamento gerencial, sem alterar a parcela de ninguém.
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">{textoEscalaDificuldade(cfg.pontosDificuldade)}</p>
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <label className="grid gap-1 text-xs text-muted-foreground">
             <span className="flex items-center">Valor total disponível (R$)<Ajuda texto="Orçamento máximo de bonificação do mês; a nota da equipe define quanto dele será liberado." /></span>

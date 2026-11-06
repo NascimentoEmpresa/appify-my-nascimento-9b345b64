@@ -124,13 +124,15 @@ export function resumirEntrega(eventos: EventoGithub[], c: Pick<ChamadoParaParec
 }
 
 /** VALOR/HORA FIXO DE DESENVOLVEDOR SÊNIOR (Brasil, 2026) — o ÚNICO lugar a
- *  mudar no código. Ponto médio das faixas de sênior: freelancer PJ R$ 180–220,
- *  software house R$ 280–350, equipe interna (custo empresa com encargos)
- *  R$ 150–180. Mudou aqui? O recálculo dos pareceres já gravados é SQL (ver a
- *  mig 20261029001600, que repete estes números — o banco não lê este arquivo). */
+ *  mudar no código. Pesquisa de 05/11/2026: freelancer = meio da faixa de full
+ *  stack sênior publicada (R$ 200–400/h, blog/agregador, não tabela oficial);
+ *  software house = 1,5× o freelancer (sem tabela pública); equipe interna
+ *  (custo empresa com encargos) R$ 150–180. Mudou aqui? O recálculo dos pareceres
+ *  já gravados é SQL (ver a mig 20261105050000, que repete estes números — o
+ *  banco não lê este arquivo). */
 export const VALOR_HORA_SENIOR = {
-  freelancer: 200,
-  software_house: 320,
+  freelancer: 300,
+  software_house: 450,
   interno: 165,
 } as const;
 
@@ -149,9 +151,9 @@ export const FATOR_COMPLEXIDADE: Record<number, number> = {
 /** Os três perfis de fornecedor, sempre nesta ordem. */
 export const PERFIS = [
   { perfil: "freelancer", rotulo: "Freelancer (PJ)", valor_hora: VALOR_HORA_SENIOR.freelancer,
-    embasamento: `Desenvolvedor sênior PJ: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.freelancer} (faixa de mercado de sênior: R$ 180 a R$ 220/h).` },
+    embasamento: `Desenvolvedor sênior PJ: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.freelancer} (meio da faixa de full stack sênior publicada: R$ 200 a R$ 400/h).` },
   { perfil: "software_house", rotulo: "Software house / consultoria", valor_hora: VALOR_HORA_SENIOR.software_house,
-    embasamento: `Software house com time sênior: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.software_house} (faixa de mercado: R$ 280 a R$ 350/h; inclui gestão de projeto, impostos, margem e garantia).` },
+    embasamento: `Software house com time sênior: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.software_house} (estimativa de 1,5× o freelancer, por gestão de projeto, impostos, margem e garantia; sem tabela pública).` },
   { perfil: "interno", rotulo: "Equipe interna (CLT, custo empresa)", valor_hora: VALOR_HORA_SENIOR.interno,
     embasamento: `Desenvolvedor sênior CLT, custo empresa com encargos e benefícios: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.interno} (faixa: R$ 150 a R$ 180/h).` },
 ] as const;
