@@ -5,7 +5,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
-import { NAV_MODULOS } from "@/components/layout/Sidebar";
+import { NAV_MODULOS, type NavItemDef, type NavModuleDef } from "@/components/layout/Sidebar";
+import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
 import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
 import { AvisosCard } from "@/components/notificacoes/AvisosCard";
@@ -95,10 +96,6 @@ const COR_MODULO: Record<string, string> = {
   whatsapp: "#22c55e",
   bi: "#0f3171",
   "plano-acoes": "#dc2626",
-  // SIS-2026-0772: departamentos cujo id é o do módulo principal e não tinham cor.
-  diretoria: "#0e7490",
-  treinamentos: "#be123c",
-  ti: "#6366f1",
   integracao: "#475569",
 };
 const COR_PADRAO = "#0f3171";
@@ -150,11 +147,15 @@ const ATALHOS_PESSOAIS: Atalho[] = [
   { to: "/app/novidades",  icon: Megaphone,       label: "Novidades",    desc: "Atualizações do ERP",  cor: "#7c3aed", grupo: GRUPO_MEU_ESPACO },
 ];
 
-/** Achata NAV_MODULOS em cartões, um por tela, sem repetir rota. */
-function montarCatalogo(): Atalho[] {
+/**
+ * Achata os módulos do menu em cartões, um por tela, sem repetir rota.
+ * SIS-2026-0772: recebe o menu já organizado (useMenuLateral) — a tela
+ * copiada para dois módulos aparece uma vez só, no primeiro deles.
+ */
+function montarCatalogo(modulos: typeof NAV_MODULOS): Atalho[] {
   const vistos = new Set<string>();
   const out: Atalho[] = [];
-  for (const mod of NAV_MODULOS) {
+  for (const mod of modulos) {
     for (const grupo of mod.groups ?? []) {
       for (const item of grupo.items) {
         if (vistos.has(item.to)) continue;
@@ -180,14 +181,15 @@ function montarCatalogo(): Atalho[] {
   return out.sort((a, b) => a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" }));
 }
 
-const CATALOGO: Atalho[] = montarCatalogo();
-
-/** Módulos em ordem alfabética, como na sidebar; "Meu espaço" fecha a lista. */
-const ORDEM_GRUPOS: string[] = (() => {
-  const nomes = [...new Set(CATALOGO.map((a) => a.grupo))].filter((g) => g !== GRUPO_MEU_ESPACO);
-  nomes.sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+/**
+ * Módulos na MESMA ordem do menu lateral (alfabética no padrão, ou a que foi
+ * salva em Organizar Menu Lateral); "Meu espaço" fecha a lista.
+ */
+function ordemDosGrupos(modulos: typeof NAV_MODULOS, catalogo: Atalho[]): string[] {
+  const comCartao = new Set(catalogo.map((a) => a.grupo));
+  const nomes = [...new Set(modulos.map((m) => m.label))].filter((g) => comCartao.has(g) && g !== GRUPO_MEU_ESPACO);
   return [...nomes, GRUPO_MEU_ESPACO];
-})();
+}
 
 
 /** Favoritos de quem nunca escolheu: os mesmos atalhos que a tela trazia antes. */
@@ -279,7 +281,10 @@ export default function Inicio() {
     return access.codes.has(code);
   }, [access, externo]);
 
-  const catalogoVisivel = useMemo(() => CATALOGO.filter((a) => podeVer(a.to)), [podeVer]);
+  const modulosDoMenu = useMenuLateral<NavItemDef, NavModuleDef>(NAV_MODULOS);
+  const CATALOGO = useMemo(() => montarCatalogo(modulosDoMenu), [modulosDoMenu]);
+  const ORDEM_GRUPOS = useMemo(() => ordemDosGrupos(modulosDoMenu, CATALOGO), [modulosDoMenu, CATALOGO]);
+  const catalogoVisivel = useMemo(() => CATALOGO.filter((a) => podeVer(a.to)), [CATALOGO, podeVer]);
 
   const meusFavoritos = useMemo(() => {
     const set = new Set(favoritos ?? FAVORITOS_PADRAO);
