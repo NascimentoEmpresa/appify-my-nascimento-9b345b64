@@ -58,6 +58,7 @@ function item(over: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel {
     reservado: 0,
     fisico: 20,
     em_transito: 0,
+    aguardando_compra: 0,
     demanda_janela: 150,
     demanda_mensal: 26.55,
     demanda_dia: 0.8721,
