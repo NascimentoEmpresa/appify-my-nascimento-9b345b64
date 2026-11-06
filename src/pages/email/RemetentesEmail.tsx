@@ -18,7 +18,8 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import {
   CAIXA_PESSOAL, useRemetentes, useSalvarRemetente, type RemetenteEmail,
 } from "@/hooks/useCaixaEmail";
-import { emailValido } from "@/lib/email/caixa";
+import { CAIXAS_EMAIL_LIBERADAS, emailValido } from "@/lib/email/caixa";
+import { EmailEmBreve } from "./MeuEmail";
 
 /**
  * Módulo E-mail › Remetentes e histórico geral (/app/email/remetentes).
@@ -60,8 +61,8 @@ export default function RemetentesEmail() {
   const podeVer = can("visualizar", "email", "email_admin");
   const podeAlterar = can("alterar", "email", "email_admin");
 
-  const perfis = usePerfis(podeVer);
-  const remetentes = useRemetentes(podeVer);
+  const perfis = usePerfis(podeVer && CAIXAS_EMAIL_LIBERADAS);
+  const remetentes = useRemetentes(podeVer && CAIXAS_EMAIL_LIBERADAS);
   const [busca, setBusca] = useState("");
   const [editando, setEditando] = useState<{ perfil: Perfil; atual: RemetenteEmail | null } | null>(null);
 
@@ -74,6 +75,8 @@ export default function RemetentesEmail() {
     return todas.filter(({ p, r }) =>
       [p.display_name, p.email, r?.email, r?.nome_exibicao].filter(Boolean).join(" ").toLowerCase().includes(t));
   }, [perfis.data, porUsuario, busca]);
+
+  if (!CAIXAS_EMAIL_LIBERADAS) return <EmailEmBreve />;
 
   if (!podeVer) {
     return (

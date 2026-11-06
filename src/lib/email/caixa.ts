@@ -12,6 +12,16 @@
  * 06/11/2026).
  */
 
+/**
+ * DESLIGADO PARA TODOS (06/11/2026, Pablo: "deixa esse negócio do Gmail
+ * desabilitado pra todos por enquanto"). Vale para as DUAS caixas: o botão
+ * E-mails e o envelope de Fornecedores e o módulo E-mail inteiro (menu,
+ * Início e as telas) somem, mesmo para quem tiver a permissão. O banco e as
+ * Edges ficam no ar, sem ninguém com acesso. Para ligar: `true` aqui e
+ * liberar fornecedores_email / email / email_admin em Acesso por Usuário.
+ */
+export const CAIXAS_EMAIL_LIBERADAS = false;
+
 export const MAX_DESTINATARIOS = 50;
 export const MAX_ANEXOS_BYTES = 20 * 1024 * 1024;
 

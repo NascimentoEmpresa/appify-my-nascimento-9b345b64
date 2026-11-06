@@ -8,7 +8,19 @@ import { CaixaEmail } from "@/components/email/CaixaEmail";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { CAIXA_PESSOAL, useContatosEmail } from "@/hooks/useCaixaEmail";
-import { sugestoesDosContatos } from "@/lib/email/caixa";
+import { CAIXAS_EMAIL_LIBERADAS, sugestoesDosContatos } from "@/lib/email/caixa";
+import { Mail } from "lucide-react";
+
+/** Enquanto CAIXAS_EMAIL_LIBERADAS = false, quem cair na rota vê só isto. */
+export function EmailEmBreve() {
+  return (
+    <div className="flex flex-col items-center gap-2 py-20 text-center">
+      <Mail className="h-10 w-10 text-muted-foreground/50" />
+      <p className="font-medium">E-mail pelo ERP — em breve</p>
+      <p className="max-w-md text-sm text-muted-foreground">Esta função ainda não foi liberada.</p>
+    </div>
+  );
+}
 
 /**
  * Módulo E-mail › Meu E-mail (/app/email) — cada um envia do PRÓPRIO
@@ -30,8 +42,10 @@ export default function MeuEmail() {
   const podeExcluir = can("excluir", "email", "email");
   const podeAdmin = can("visualizar", "email", "email_admin");
 
-  const contatos = useContatosEmail(podeEscrever);
+  const contatos = useContatosEmail(podeEscrever && CAIXAS_EMAIL_LIBERADAS);
   const sugestoes = useMemo(() => sugestoesDosContatos(contatos.data ?? []), [contatos.data]);
+
+  if (!CAIXAS_EMAIL_LIBERADAS) return <EmailEmBreve />;
 
   return (
     <div className="space-y-4">

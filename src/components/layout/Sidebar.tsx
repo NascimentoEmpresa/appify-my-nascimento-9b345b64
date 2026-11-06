@@ -102,6 +102,7 @@ import { selNovoVigente } from "@/lib/selNovo";
 import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { ChevronLeft, PanelLeft } from "lucide-react";
 import { Mail, AtSign } from "lucide-react";
+import { CAIXAS_EMAIL_LIBERADAS } from "@/lib/email/caixa";
 // Ícones da barra de módulos (06/11/2026) — ver ICONE_DO_MODULO.
 import { Mailbox, BookOpenCheck, ReceiptText, UserSearch, Tv, Server, MonitorCog, LineChart, Activity, FileChartColumn, UsersRound } from "lucide-react";
 
@@ -1526,7 +1527,8 @@ const erpModules: ModuleDef[] = [
   organogramaModule,
   treinamentosModule,
   whatsappModule,
-  emailModule,
+  // Desligado para todos por ora — ver CAIXAS_EMAIL_LIBERADAS (lib/email/caixa.ts).
+  ...(CAIXAS_EMAIL_LIBERADAS ? [emailModule] : []),
   biModule,
 ];
 
