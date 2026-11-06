@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,8 +27,8 @@ import { CHAVE_MENU_LATERAL, useMenuLateralSalvo } from "@/hooks/useMenuLateral"
 import { cn } from "@/lib/utils";
 import { criarColisaoMenu, destinoDoArrasto } from "@/lib/menuLateral/arrastar";
 import {
-  copiarItem, criarAtalho, criarCategoria, criarModulo, criarResolvedorDeRotulo, estruturaPadrao, incluirTelasNovas,
-  moverCategoria, moverItem, moverModulo, remover, renomear, restaurarOriginal, situacaoDoItem, telasDoCatalogo,
+  copiarItem, copiarItens, criarAtalho, criarCategoria, criarModulo, criarResolvedorDeRotulo, estruturaPadrao, incluirTelasNovas,
+  moverCategoria, moverItem, moverItens, moverModulo, remover, renomear, restaurarOriginal, situacaoDoItem, telasDoCatalogo,
   validarEstrutura, type EstruturaMenu, type SituacaoItem,
 } from "@/lib/menuLateral/estrutura";
 
@@ -100,11 +101,12 @@ export default function OrganizarMenuLateral() {
 
   // ── Diálogos ──────────────────────────────────────────────────────────
   const [pedeNome, setPedeNome] = useState<{ titulo: string; valor: string; ajuda?: string; ok: (v: string) => void } | null>(null);
-  const [soltou, setSoltou] = useState<{ itemId: string; destCatId: string; destIndex: number } | null>(null);
+  const [soltou, setSoltou] = useState<{ itemIds: string[]; destCatId: string; destIndex: number } | null>(null);
   const [destinoDe, setDestinoDe] = useState<string | null>(null);
   const [atalhoEm, setAtalhoEm] = useState<string | null>(null);
   const [alvoArrasto, setAlvoArrasto] = useState<ReturnType<typeof destinoDoArrasto>>(null);
-  const [itemArrastadoId, setItemArrastadoId] = useState<string | null>(null);
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [itensArrastadosIds, setItensArrastadosIds] = useState<string[]>([]);
   const sensores = useSensorsSeguros();
 
   if (!trabalho) {
@@ -130,6 +132,13 @@ export default function OrganizarMenuLateral() {
     return null;
   };
   const catDoItem = (itemId: string) => acharItem(itemId)?.c ?? null;
+  const selecao = trabalho.modulos.flatMap((m) => m.categorias.flatMap((c) => c.itens)).filter((it) => selecionados.has(it.id));
+  const selecionar = (id: string, marcado: boolean) => setSelecionados((atual) => {
+    const nova = new Set(atual);
+    if (marcado) nova.add(id);
+    else nova.delete(id);
+    return nova;
+  });
 
   // ── Ações ─────────────────────────────────────────────────────────────
   const mover = (itemId: string, destCatId: string, destIndex?: number) => {
@@ -148,6 +157,23 @@ export default function OrganizarMenuLateral() {
     aplicar(copiarItem(trabalho, itemId, destCatId, novoId("cp:"), destIndex), {
       tipo: "copiar", texto: `Copiou "${nomeDe(org.item)}" de ${onde(org.c.id)} para ${onde(destCatId)}`,
     });
+  };
+  const transferirLote = (itemIds: string[], destCatId: string, destIndex: number, ehCopia = false) => {
+    if (itemIds.length === 1) {
+      if (ehCopia) copiar(itemIds[0], destCatId, destIndex);
+      else mover(itemIds[0], destCatId, destIndex);
+    } else {
+      const origens = itemIds.map(acharItem);
+      if (origens.some((org) => !org)) return;
+      const nova = ehCopia
+        ? copiarItens(trabalho, itemIds, destCatId, () => novoId("cp:"), destIndex)
+        : moverItens(trabalho, itemIds, destCatId, destIndex);
+      aplicar(nova, {
+        tipo: ehCopia ? "copiar" : "mover",
+        texto: `${ehCopia ? "Copiou" : "Moveu"} ${itemIds.length} submódulos para ${onde(destCatId)}: ${origens.map((org) => `"${nomeDe(org!.item)}" de ${onde(org!.c.id)}`).join("; ")}`,
+      });
+    }
+    setSelecionados(new Set());
   };
 
   const salvar = async () => {
@@ -174,6 +200,7 @@ export default function OrganizarMenuLateral() {
 
   const descartar = () => {
     setAlteracoes([]);
+    setSelecionados(new Set());
     setTrabalho(salvo.data ? incluirTelasNovas(salvo.data.estrutura, NAV_MODULOS) : padrao);
   };
 
@@ -182,16 +209,18 @@ export default function OrganizarMenuLateral() {
   const colisao = criarColisaoMenu(trabalho);
   const iniciarArrasto = ({ active }: DragStartEvent) => {
     const id = String(active.id);
-    setItemArrastadoId(id.startsWith("item:") ? id.slice(5) : null);
+    const itemId = id.startsWith("item:") ? id.slice(5) : null;
+    setItensArrastadosIds(itemId ? (selecionados.has(itemId) ? selecao.map((it) => it.id) : [itemId]) : []);
+    if (itemId && !selecionados.has(itemId)) setSelecionados(new Set());
     setAlvoArrasto(null);
   };
   const limparArrasto = () => {
-    setItemArrastadoId(null);
+    setItensArrastadosIds([]);
     setAlvoArrasto(null);
   };
   const indicarDestino = ({ active, over }: DragOverEvent) => {
     setAlvoArrasto(
-      over && active.id !== over.id && String(active.id).startsWith("item:")
+      over && active.id !== over.id && String(active.id).startsWith("item:") && !itensArrastadosIds.some((id) => over.id === `item:${id}`)
         ? destinoDoArrasto(trabalho, String(over.id))
         : null,
     );
@@ -210,23 +239,26 @@ export default function OrganizarMenuLateral() {
     }
     if (!a.startsWith("item:")) return;
     const itemId = a.slice(5);
+    const itemIds = itensArrastadosIds.length ? itensArrastadosIds : [itemId];
+    if (itemIds.some((id) => o === `item:${id}`)) return;
     const org = acharItem(itemId);
     if (!org) return;
     const destino = destinoDoArrasto(trabalho, o);
     if (!destino) return;
     const destCatId = destino.categoria.id;
     const destIndex = destino.indice;
-    if (destCatId === org.c.id) {
-      if (destIndex !== org.i) mover(itemId, destCatId, destIndex);
+    if (itemIds.every((id) => catDoItem(id)?.id === destCatId)) {
+      if (itemIds.length > 1 || destIndex !== org.i) transferirLote(itemIds, destCatId, destIndex);
       return;
     }
     // Outro lugar: pergunta, como no protótipo — mover ou copiar.
-    setSoltou({ itemId, destCatId, destIndex });
+    setSoltou({ itemIds, destCatId, destIndex });
   };
 
   const termo = busca.trim().toLocaleLowerCase("pt-BR");
   const totalEntradas = trabalho.modulos.reduce((n, m) => n + m.categorias.reduce((k, c) => k + c.itens.length, 0), 0);
-  const itemArrastado = itemArrastadoId ? acharItem(itemArrastadoId)?.item : null;
+  const itensArrastados = itensArrastadosIds.flatMap((id) => acharItem(id)?.item ?? []);
+  const itemArrastado = itensArrastados[0];
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -297,6 +329,15 @@ export default function OrganizarMenuLateral() {
             <p className="text-sm text-muted-foreground">Você pode ver a organização, mas não alterar. Peça a permissão "alterar" de Organizar Menu Lateral.</p>
           )}
           {busca && podeAlterar && <p className="text-xs text-muted-foreground">Durante a busca o arrastar fica desligado — limpe a busca para reorganizar.</p>}
+          {podeAlterar && (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <p>Marque as caixas para arrastar vários submódulos juntos.</p>
+              {selecao.length > 0 && <>
+                <span role="status" className="font-semibold text-primary">{selecao.length} selecionado{selecao.length > 1 ? "s" : ""}</span>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelecionados(new Set())}>Limpar seleção</Button>
+              </>}
+            </div>
+          )}
 
           <DndContext sensors={sensores} collisionDetection={colisao}
             onDragStart={iniciarArrasto} onDragOver={indicarDestino} onDragEnd={soltar} onDragCancel={limparArrasto}>
@@ -355,6 +396,8 @@ export default function OrganizarMenuLateral() {
                               const sit = situacaoDoItem(it, m, c, padrao);
                               return (
                                 <Entrada key={it.id} id={it.id} nome={nomeDe(it)} rota={it.rota} situacao={sit} arrastavel={arrastando}
+                                  selecionado={selecionados.has(it.id)} emArrasto={itensArrastadosIds.includes(it.id)}
+                                  selecionar={podeAlterar ? (marcado) => selecionar(it.id, marcado) : undefined}
                                   acoes={podeAlterar && (
                                     <>
                                       <BotaoIcone titulo="Mover ou copiar para…" onClick={() => setDestinoDe(it.id)}><MoveRight className="h-3 w-3" /></BotaoIcone>
@@ -396,6 +439,7 @@ export default function OrganizarMenuLateral() {
                     <div aria-hidden="true" className="flex cursor-grabbing items-center gap-2 rounded-md border border-primary bg-background px-3 py-2 text-[13px] font-medium text-foreground shadow-2xl ring-2 ring-primary">
                       <GripVertical className="h-4 w-4 shrink-0 text-primary" />
                       <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{nomeDe(itemArrastado)}</span>
+                      {itensArrastados.length > 1 && <span className="shrink-0 rounded-full bg-primary px-2 py-1 text-xs text-primary-foreground">{itensArrastados.length} submódulos</span>}
                     </div>
                   )}
                 </DragOverlay>
@@ -424,18 +468,23 @@ export default function OrganizarMenuLateral() {
           <DialogHeader>
             <DialogTitle>O que deseja fazer?</DialogTitle>
             <DialogDescription>
-              {soltou && <>"{nomeDe(acharItem(soltou.itemId)!.item)}" → {onde(soltou.destCatId)}</>}
+              {soltou && <>{soltou.itemIds.length === 1 ? `"${nomeDe(acharItem(soltou.itemIds[0])!.item)}"` : `${soltou.itemIds.length} submódulos`} → {onde(soltou.destCatId)}</>}
             </DialogDescription>
           </DialogHeader>
+          {soltou && soltou.itemIds.length > 1 && (
+            <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-sm">
+              {soltou.itemIds.map((id) => <li key={id}>{nomeDe(acharItem(id)!.item)}</li>)}
+            </ul>
+          )}
           <p className="text-sm text-muted-foreground">
             <strong>Mover</strong> tira do lugar atual. <strong>Copiar</strong> mantém o original e cria outra entrada no destino, apontando para a mesma tela.
           </p>
           <DialogFooter className="gap-2">
             <Button variant="ghost" onClick={() => setSoltou(null)}>Cancelar</Button>
-            <Button variant="outline" onClick={() => { if (soltou) copiar(soltou.itemId, soltou.destCatId, soltou.destIndex); setSoltou(null); }}>
+            <Button variant="outline" onClick={() => { if (soltou) transferirLote(soltou.itemIds, soltou.destCatId, soltou.destIndex, true); setSoltou(null); }}>
               <Copy className="mr-1.5 h-4 w-4" />Copiar
             </Button>
-            <Button onClick={() => { if (soltou) mover(soltou.itemId, soltou.destCatId, soltou.destIndex); setSoltou(null); }}>
+            <Button onClick={() => { if (soltou) transferirLote(soltou.itemIds, soltou.destCatId, soltou.destIndex); setSoltou(null); }}>
               <MoveRight className="mr-1.5 h-4 w-4" />Mover
             </Button>
           </DialogFooter>
@@ -535,24 +584,29 @@ function Categoria({ id, titulo, acoes, destinoAtivo, children }: { id: string; 
   );
 }
 
-function Entrada({ id, nome, rota, situacao, arrastavel, acoes }: {
+function Entrada({ id, nome, rota, situacao, arrastavel, acoes, selecionado, emArrasto, selecionar }: {
   id: string; nome: string; rota: string; situacao: SituacaoItem; arrastavel: boolean; acoes: ReactNode;
+  selecionado: boolean; emArrasto: boolean; selecionar?: (marcado: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `item:${id}`, disabled: !arrastavel });
   const marca = situacao !== "original" ? ROTULO_SITUACAO[situacao] : null;
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: isDragging ? undefined : DndCSS.Translate.toString(transform), transition }}
+      style={{ transform: isDragging || emArrasto ? undefined : DndCSS.Translate.toString(transform), transition }}
       className={cn(
         "group flex items-center gap-1.5 rounded-md border bg-background px-2 py-1.5 text-[13px]",
         arrastavel && "cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-30 border-dashed",
+        selecionado && "border-primary bg-primary/5",
+        (isDragging || emArrasto) && "opacity-30 border-dashed",
       )}
       {...attributes}
       {...listeners}
       title={rota}
     >
+      {selecionar && <Checkbox checked={selecionado} aria-label={`Selecionar ${nome}`}
+        onCheckedChange={(marcado) => selecionar(marcado === true)}
+        onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} />}
       {arrastavel && <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />}
       <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{nome}</span>
       {marca && <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold", marca.classe)}>{marca.texto}</span>}

@@ -309,6 +309,42 @@ export function copiarItem(e: EstruturaMenu, itemId: string, destCatId: string, 
   return s;
 }
 
+/** O lote segue a ordem do menu, independentemente da ordem dos cliques. */
+function itensDoLote(e: EstruturaMenu, ids: readonly string[]) {
+  const selecionados = new Set(ids);
+  const itens = e.modulos.flatMap((m) => m.categorias.flatMap((c) => c.itens)).filter((it) => selecionados.has(it.id));
+  return itens.length === selecionados.size ? itens : [];
+}
+
+/** Move o lote inteiro; o índice é medido antes de retirar as origens. */
+export function moverItens(e: EstruturaMenu, ids: readonly string[], destCatId: string, destIndex?: number): EstruturaMenu {
+  if (!itensDoLote(e, ids).length || !categoria(e, destCatId)) return e;
+  const s = structuredClone(e);
+  const itens = itensDoLote(s, ids);
+  const selecionados = new Set(itens.map((it) => it.id));
+  const dst = categoria(s, destCatId)!.c;
+  const indice = clamp(destIndex, dst.itens.length);
+  const retiradosAntes = dst.itens.slice(0, indice).filter((it) => selecionados.has(it.id)).length;
+  for (const m of s.modulos) for (const c of m.categorias) c.itens = c.itens.filter((it) => !selecionados.has(it.id));
+  dst.itens.splice(indice - retiradosAntes, 0, ...itens);
+  const mudou = s.modulos.some((m, mi) => m.categorias.some((c, ci) => {
+    const antes = e.modulos[mi].categorias[ci].itens;
+    return c.itens.length !== antes.length || c.itens.some((it, i) => it.id !== antes[i].id);
+  }));
+  return mudou ? s : e;
+}
+
+/** Copia o lote sem retirar as origens, com um id novo para cada entrada. */
+export function copiarItens(e: EstruturaMenu, ids: readonly string[], destCatId: string, gerarId: () => string, destIndex?: number): EstruturaMenu {
+  const itens = itensDoLote(e, ids);
+  if (!itens.length || !categoria(e, destCatId)) return e;
+  const s = structuredClone(e);
+  const dst = categoria(s, destCatId)!.c;
+  const copias = itens.map((it) => ({ ...it, id: gerarId(), copiaDe: it.copiaDe ?? it.id }));
+  dst.itens.splice(clamp(destIndex, dst.itens.length), 0, ...copias);
+  return s;
+}
+
 export function moverModulo(e: EstruturaMenu, modId: string, destIndex: number): EstruturaMenu {
   const s = structuredClone(e);
   const i = s.modulos.findIndex((m) => m.id === modId);
