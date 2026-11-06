@@ -22,6 +22,17 @@
 //   · Campo que veio da Senior e não tem batida na nova data/pessoa volta para
 //     o horário da escala; senão ficaria a batida de outro dia na tela.
 //
+// NA CONCLUSÃO (Pablo, 06/11/2026): "quando eu concluir a H.E tem que puxar o
+// ponto da senior também, corrigindo automaticamente, claro se não tiver
+// ajustamos manualmente". Mesma regra, com três diferenças que só a conclusão
+// tem, porque ali o dia já aconteceu:
+//   · marcacoesDaJornada: a saída depois da meia-noite vem do dia seguinte, e a
+//     saída da madrugada de ontem não vira a entrada de hoje.
+//   · Dia marcado "sem intervalo": primeira batida é a Entrada e a última é a
+//     Saída. Os campos do intervalo nem são editáveis nesse caso.
+//   · Horário já salvo (HE devolvida para ajuste) conta como editado: alguém
+//     conferiu aquele valor, então só muda se a pessoa pedir pelo botão.
+//
 // Lógica pura, testada em src/test/hora-extra-ponto-senior.test.ts.
 // =====================================================================
 
@@ -60,8 +71,43 @@ export function marcacoesDoDia(batidas: Batida[] | null | undefined, data: strin
   return [...minutos].sort((a, b) => a - b).map(hhmm);
 }
 
+/** Até aqui, uma batida pode ser a saída da noite anterior. */
+const FIM_DA_MADRUGADA = "06:00";
+
+function diaVizinho(data: string, dias: number): string {
+  const d = new Date(`${data.slice(0, 10)}T12:00:00`);
+  d.setDate(d.getDate() + dias);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * As batidas da jornada que começou nesta data. Número ímpar de batidas quer
+ * dizer que a pessoa não saiu no mesmo dia: se a primeira do dia seguinte é de
+ * madrugada, é a saída dela. Fora da madrugada é esquecimento, e a batida é a
+ * entrada do outro dia. hora_extra_ponto_mes traz um dia a mais em cada ponta
+ * do mês, então isto funciona na virada do mês também.
+ */
+export function marcacoesDaJornada(batidas: Batida[] | null | undefined, data: string): string[] {
+  const deMadrugada = (hora: string | undefined) => hora != null && hora < FIM_DA_MADRUGADA;
+  let marcacoes = marcacoesDoDia(batidas, data);
+  if (marcacoesDoDia(batidas, diaVizinho(data, -1)).length % 2 === 1 && deMadrugada(marcacoes[0])) {
+    marcacoes = marcacoes.slice(1);
+  }
+  if (marcacoes.length % 2 === 1) {
+    const proxima = marcacoesDoDia(batidas, diaVizinho(data, 1))[0];
+    if (deMadrugada(proxima)) marcacoes = [...marcacoes, proxima];
+  }
+  return marcacoes;
+}
+
 /** Qual batida vai em qual campo. Só aparecem os campos que têm batida. */
-export function mapearMarcacoesNosCampos(marcacoes: string[]): Partial<ValoresPonto> {
+export function mapearMarcacoesNosCampos(marcacoes: string[], semIntervalo = false): Partial<ValoresPonto> {
+  if (semIntervalo) {
+    const r: Partial<ValoresPonto> = {};
+    if (marcacoes.length) r.ponto_entrada = marcacoes[0];
+    if (marcacoes.length > 1) r.ponto_saida = marcacoes[marcacoes.length - 1];
+    return r;
+  }
   const [entrada, saidaIntervalo, retorno] = marcacoes;
   const saida =
     marcacoes.length < 4
@@ -87,13 +133,15 @@ export interface AplicarMarcacoesEntrada {
   editados: ReadonlySet<CampoPonto>;
   /** Campos que estão com valor vindo da Senior. */
   daSenior: ReadonlySet<CampoPonto>;
+  /** Dia sem intervalo: só Entrada e Saída vêm das batidas. */
+  semIntervalo?: boolean;
 }
 
-export function aplicarMarcacoesSenior({ atual, padrao, marcacoes, editados, daSenior }: AplicarMarcacoesEntrada): {
+export function aplicarMarcacoesSenior({ atual, padrao, marcacoes, editados, daSenior, semIntervalo }: AplicarMarcacoesEntrada): {
   valores: ValoresPonto;
   daSenior: Set<CampoPonto>;
 } {
-  const mapa = mapearMarcacoesNosCampos(marcacoes);
+  const mapa = mapearMarcacoesNosCampos(marcacoes, semIntervalo);
   const valores = { ...atual };
   const novos = new Set<CampoPonto>();
   for (const campo of CAMPOS_PONTO) {
