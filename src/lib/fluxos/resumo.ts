@@ -73,7 +73,7 @@ const demissao: Fluxo = {
       status: "Pendente Diretoria",
     },
     {
-      quem: "RH", faz: "Confere o desligamento e libera para o SST agendar o ASO.",
+      quem: "RH", faz: "Confere o desligamento e libera para o SST agendar o ASO. Se houver erro, pede ajuste: quem solicitou corrige o próprio pedido e ele volta ao RH.",
       onde: "RH › Solicitações de Demissão",
       status: "Pendente RH",
     },

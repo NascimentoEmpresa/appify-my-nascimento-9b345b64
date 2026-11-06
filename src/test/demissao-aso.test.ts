@@ -6,6 +6,7 @@ import {
   aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga, podeCancelarDemissao,
   STATUS_CANCELAMENTO_SOLICITADO, temPedidoDeCancelamento,
   podeCancelarDemissaoRH, caminhoAnexoCancelamento, erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
+  STATUS_AJUSTE_SOLICITADO, podePedirAjuste, podeAjustarDemissao, erroDoAjuste, type FormAjuste,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -282,5 +283,41 @@ describe("última data trabalhada — janela de 60 dias à frente", () => {
   it("recusa vazio e além dos 60 dias, dizendo até quando pode", () => {
     expect(erroUltimaDataTrabalhada("", "2026-09-18")).toContain("Informe");
     expect(erroUltimaDataTrabalhada("2026-11-18", "2026-09-18")).toContain("17/11/2026");
+  });
+});
+
+// O RH pede ajuste e quem solicitou corrige o próprio pedido (SIS-2026-0805).
+describe("ajuste pedido pelo RH", () => {
+  const form: FormAjuste = {
+    data_solicitacao: "2026-11-05", colaborador_posto: "Posto A", motivo_solicitacao: "Pedido", motivo_pedido: "Outro",
+    relato: "Relato com mais de vinte caracteres.", termino_experiencia: "Não se aplica", data_aviso: "2026-11-06",
+    modelo_aviso: "Trabalhado", colaborador_telefone: "(51) 99999-0000", colaborador_email: "a@exemplo.com",
+  };
+  it("só o RH pede, e só em Pendente RH", () => {
+    expect(podePedirAjuste("rh", "Pendente RH")).toBe(true);
+    expect(podePedirAjuste("rh", "Pendente SST")).toBe(false);
+    expect(podePedirAjuste("sst", "Pendente RH")).toBe(false);
+    expect(podePedirAjuste("operacional", "Pendente RH")).toBe(false);
+  });
+  it("só dá para ajustar quando o RH pediu", () => {
+    expect(podeAjustarDemissao({ status: STATUS_AJUSTE_SOLICITADO })).toBe(true);
+    expect(podeAjustarDemissao({ status: "Pendente RH" })).toBe(false);
+  });
+  it("o status está no fluxo, com cor e explicação próprias", () => {
+    expect(STATUS_TODOS).toContain(STATUS_AJUSTE_SOLICITADO);
+    expect(corDoStatus(STATUS_AJUSTE_SOLICITADO)).toContain("orange");
+    expect(explicaStatus(STATUS_AJUSTE_SOLICITADO)).toContain("RH");
+  });
+  it("o encarregado pode desistir e o RH pode cancelar um pedido parado", () => {
+    expect(podeCancelarDemissao({ status: STATUS_AJUSTE_SOLICITADO }).ok).toBe(true);
+    expect(podeCancelarDemissaoRH({ status: STATUS_AJUSTE_SOLICITADO })).toEqual({ ok: true });
+  });
+  it("valida com a régua da abertura", () => {
+    expect(erroDoAjuste(form, 1)).toBeNull();
+    expect(erroDoAjuste({ ...form, data_aviso: "" }, 1)).toContain("data do aviso");
+    expect(erroDoAjuste({ ...form, relato: "curto" }, 1)).toContain("20 caracteres");
+    expect(erroDoAjuste({ ...form, colaborador_telefone: "123" }, 1)).toContain("telefone");
+    expect(erroDoAjuste({ ...form, colaborador_email: "x" }, 1)).toContain("e-mail");
+    expect(erroDoAjuste(form, 0)).toContain("documento");
   });
 });

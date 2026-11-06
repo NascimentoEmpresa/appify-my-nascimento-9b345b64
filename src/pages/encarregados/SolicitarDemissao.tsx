@@ -17,6 +17,7 @@ import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { BuscaColaborador, carregarEmpregadoEscolhido, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
 import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
 import { AvisoCancelada, AvisoPedidoCancelamento, BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
+import { AvisoAjusteDemissao, BotaoAjustarDemissao } from "@/components/demissao/AjustarDemissao";
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
@@ -846,6 +847,9 @@ export default function SolicitarDemissao() {
                   <span className="font-medium">#{s.id} · {s.colaborador_nome}</span>
                   <span className="text-xs text-muted-foreground">{fmtData(s.criado_em)}</span>
                   <span className="ml-auto flex items-center gap-2">
+                    {/* O RH pediu ajuste (SIS-2026-0805): corrige aqui, sem abrir outro pedido. */}
+                    <BotaoAjustarDemissao solicitacao={s} compacto onAjustada={() => { if (user?.email) carregarMinhas(user.email); }}
+                      avisar={(m, t) => (t === "err" ? toast.error(m) : t === "ok" ? toast.success(m) : toast.info(m))} />
                     {/* Reconsiderar: desde 25/09/2026 PEDE ao RH, que aprova ou recusa. */}
                     <BotaoCancelarDemissao solicitacao={s} compacto onCancelada={() => { if (user?.email) carregarMinhas(user.email); }}
                       avisar={(m, t) => (t === "err" ? toast.error(m) : t === "ok" ? toast.success(m) : toast.info(m))} />
@@ -857,6 +861,7 @@ export default function SolicitarDemissao() {
                   </p>
                   {s.status === "Cancelada" && <div className="w-full"><AvisoCancelada solicitacao={s} /></div>}
                   <div className="w-full empty:hidden"><AvisoPedidoCancelamento solicitacao={s} /></div>
+                  <div className="w-full empty:hidden"><AvisoAjusteDemissao solicitacao={s} /></div>
                   {s.vaga_id ? (
                     <p className="w-full text-xs text-muted-foreground">🔗 Vaga de Substituição #{s.vaga_id}</p>
                   ) : faltaVagaDeReposicao(s) ? (
