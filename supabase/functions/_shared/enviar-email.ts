@@ -27,9 +27,19 @@ export interface EmailParaEnviar {
   de: string;                 // remetente; precisa ser do domínio verificado
   para: string[];
   cc?: string[];
+  cco?: string[];             // cópia oculta (06/11/2026, e-mail de Fornecedores)
+  responderPara?: string;     // Reply-To: a resposta cai em quem escreveu
   assunto: string;
   html?: string;
   texto?: string;
+  anexos?: AnexoEmail[];      // opcional: quem não manda continua igual
+}
+
+/** Anexo já em base64. */
+export interface AnexoEmail {
+  nome: string;
+  tipo?: string;              // content-type
+  base64: string;
 }
 
 /** Credenciais do SMTP de fallback. Os nomes variam por function (COBRANCA_*). */
@@ -48,6 +58,11 @@ async function porApiDoResend(chave: string, e: EmailParaEnviar) {
       from: e.de,
       to: e.para,
       ...(e.cc?.length ? { cc: e.cc } : {}),
+      ...(e.cco?.length ? { bcc: e.cco } : {}),
+      ...(e.responderPara ? { reply_to: e.responderPara } : {}),
+      ...(e.anexos?.length
+        ? { attachments: e.anexos.map((a) => ({ filename: a.nome, content: a.base64 })) }
+        : {}),
       subject: e.assunto,
       ...(e.html ? { html: e.html } : {}),
       ...(e.texto ? { text: e.texto } : {}),
@@ -74,6 +89,16 @@ async function porSmtp(cfg: SmtpConfig, e: EmailParaEnviar) {
       from: e.de,
       to: e.para,
       cc: e.cc?.length ? e.cc : undefined,
+      bcc: e.cco?.length ? e.cco : undefined,
+      replyTo: e.responderPara || undefined,
+      attachments: e.anexos?.length
+        ? e.anexos.map((a) => ({
+            filename: a.nome,
+            content: a.base64,
+            encoding: "base64" as const,
+            contentType: a.tipo || "application/octet-stream",
+          }))
+        : undefined,
       subject: e.assunto,
       ...(e.html ? { html: e.html, content: "auto" as const } : { content: e.texto ?? "" }),
     });
