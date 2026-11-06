@@ -32,6 +32,22 @@ describe("conciliação: conta vinculada", () => {
   });
 });
 
+describe("conciliação da própria conta vinculada", () => {
+  const banco = "Banco do Brasil Conta Vinculada Embrapa";
+  it("no banco da conta vinculada o resgate (saída) entra: o extrato dessa conta o mostra", () => {
+    expect(ignoraNaConciliacao(l("saida", "RESGATE CONTA VINCULADA", { banco_nome: banco }))).toBe(false);
+    expect(ignoraNaConciliacao(l("entrada", "RESGATE CONTA VINCULADA", { banco_nome: banco }))).toBe(false);
+  });
+  it("o adaptador mantém o resgate do banco da conta vinculada e continua tirando o da conta corrente", () => {
+    const r = linhasFluxoParaPlanilhaRow([
+      l("saida", "RESGATE CONTA VINCULADA", { banco_nome: banco, valor: 43739.19 }),
+      l("saida", "RESGATE CONTA VINCULADA", { banco_nome: "Banco do Brasil", despesa_id: "x" }),
+    ]);
+    expect(r).toHaveLength(1);
+    expect(r[0].valor).toBe(43739.19);
+  });
+});
+
 describe("conciliação: rateio entra pelo total (SIS-2026-0637)", () => {
   const rateio = (valor: number, extra: Record<string, unknown> = {}) =>
     l("saida", "FGTS MENSAL HAGG", { valor, despesa_id: "rh-60", banco_nome: "Banrisul", ...extra });

@@ -25,11 +25,18 @@ function bancoDeContaVinculada(banco: string | null | undefined): boolean {
   return b === "BB" || b.includes("BANCO DO BRASIL") || b.includes("CAIXA");
 }
 
+// Conciliação da própria CONTA VINCULADA (a partir de nov/2026 o Financeiro concilia o extrato dessas contas): o banco é o da conta vinculada
+// (ex.: "Banco do Brasil Conta Vinculada Embrapa"), e o resgate, que sai dela, aparece no extrato dela. Nesses bancos nada é ignorado.
+function ehBancoDeContaVinculada(banco: string | null | undefined): boolean {
+  return semAcento((banco ?? "").trim()).includes("VINCULADA");
+}
+
 export function ignoraNaConciliacao(
   l: Pick<FluxoCaixaMaloteLinha, "tipo" | "descricao"> & { classificacao_nome?: string | null; banco_nome?: string | null },
 ): boolean {
   // O SALDO ANTERIOR (abertura) nunca é ignorado: tem tratamento próprio.
   if ((l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR") return false;
+  if (ehBancoDeContaVinculada(l.banco_nome)) return false;
   const desc = (l.descricao ?? "").toUpperCase();
   if (l.tipo === "saida" && desc.includes("CONTA VINCULADA")) return true;
   return desc.includes("RESGATE") && desc.includes("VINCULADA") && bancoDeContaVinculada(l.banco_nome);
