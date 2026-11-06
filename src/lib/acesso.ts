@@ -52,6 +52,9 @@ export const ROTAS_SEMPRE_LIBERADAS = [
   // Treinamentos — sem estar aqui, a maioria nem teria onde confirmar. A tela
   // só mostra os treinamentos DA PRÓPRIA pessoa (RPC treinamentos_sistemas_meus).
   "/app/central-servicos/treinamentos-sistemas",
+  // Minhas Tarefas (SIS-2026-0771): o lembrete abre para qualquer login com
+  // tarefa do cargo, e a RPC só devolve as tarefas da própria pessoa.
+  "/app/minhas-tarefas",
 ];
 
 /**

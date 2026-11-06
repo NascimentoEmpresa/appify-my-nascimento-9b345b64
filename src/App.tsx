@@ -25,6 +25,9 @@ import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
 import GestaoOrganograma from "./pages/organograma/GestaoOrganograma";
+// Tarefas por Função (SIS-2026-0771, mig 20261106001000): checklist por cargo e login.
+import TarefasPorFuncao from "./pages/organograma/TarefasPorFuncao";
+import MinhasTarefas from "./pages/MinhasTarefas";
 import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
 import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
@@ -292,6 +295,8 @@ import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
 // Afastamentos e Telemedicina (mig 20261029001750): atestados, lotação automática e impacto financeiro.
 import SstAfastamentos from "./pages/sst/Afastamentos";
+// Controle de Afastamentos (mig 20261105030000): acompanhamento até o retorno.
+import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -736,6 +741,8 @@ const App = () => (
             <Route path="presidencia" element={<Presidencia />} />
             <Route path="organograma" element={<Organograma />} />
             <Route path="organograma/gestao" element={<GestaoOrganograma />} />
+            <Route path="organograma/tarefas" element={<TarefasPorFuncao />} />
+            <Route path="minhas-tarefas" element={<MinhasTarefas />} />
             {/* Estrutura de Setores e Processos (mig 20261020000060) — organograma NOVO, o de cima fica como está. */}
             <Route path="organograma/processos" element={<EstruturaProcessos />} />
             <Route path="organograma/processos/cadastro" element={<CadastroEstruturaProcessos />} />
@@ -1124,6 +1131,7 @@ const App = () => (
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
             <Route path="sst/afastamentos" element={<SstAfastamentos />} />
+            <Route path="sst/controle-afastamentos" element={<SstControleAfastamentos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />

@@ -71,9 +71,8 @@ import {
   CalendarCheck2,
   AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
-import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
+import { useAccessibleMenus, rotaVisivelNoMenu } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
-import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
@@ -1378,6 +1377,7 @@ const sstModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
+        { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
       ],
     },
   ],
@@ -1466,6 +1466,7 @@ const organogramaModule: ModuleDef = {
         { label: "Organograma", to: "/app/organograma", icon: Network },
         // Movimentações e feedbacks por contrato/setor (mig 20261104009000).
         { label: "Dashboard de Gestão", to: "/app/organograma/gestao", icon: ClipboardList },
+        { label: "Tarefas por Função", to: "/app/organograma/tarefas", icon: ListChecks },
         // Estrutura de Setores e Processos (mig 20261020000060): o organograma
         // das atividades — setores, equipe do gerente ao jovem, processos e as
         // ligações entre setores. O Geral lê a última publicação; o Cadastro edita.
@@ -1562,16 +1563,10 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // configurado → visível" e enxergaria o ERP inteiro no menu. Este ramo
     // apenas restringe; quem decide de verdade é a RLS do banco.
     if (externo) return rotaPermitidaExterno(to);
-    if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
     // Mesma regra do RouteGuard: NEGA POR PADRÃO. A sidebar não pode listar o
     // que a rota vai barrar — item visível que dá "Acesso negado" ao clicar é
     // pior do que item ausente.
-    if (rotaSempreLiberada(to)) return true;
-    if (!access) return false;
-    const code = matchMenuCode(to, access.routes);
-    // Sem cadastro em app_menu, ou menu desativado no Catálogo: não aparece.
-    if (!code || access.inactiveCodes.has(code)) return false;
-    return access.codes.has(code);
+    return rotaVisivelNoMenu(to, access);
   }, [access, externo]);
 
   const visibleModules = useMemo(() => {

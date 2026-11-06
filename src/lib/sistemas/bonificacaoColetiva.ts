@@ -54,7 +54,9 @@ export interface ConfigBonificacao {
 
 export const CONFIG_PADRAO: ConfigBonificacao = {
   pesos: { qualidade: 30, satisfacao: 20, prazo: 20, dificuldade: 15, valor: 15 },
-  pontosDificuldade: { facil: 25, medio: 50, dificil: 75, muito_dificil: 100 },
+  // Escala da equipe (mig 20261105050000): antes 25/50/75/100. A IA classifica
+  // a complexidade; quanto cada nível vale é regra da empresa.
+  pontosDificuldade: { facil: 80, medio: 88, dificil: 95, muito_dificil: 100 },
   referenciaValor: 10000,
 };
 
@@ -461,6 +463,12 @@ export function distribuirPorPeso(
 }
 
 // ── Sugestões a partir dos dados reais ───────────────────────────────────
+
+/** A regra em uma frase: a tela mostra para quem lê a nota saber de onde ela vem. */
+export function textoEscalaDificuldade(p: Record<Dificuldade, number>): string {
+  const niveis = DIFICULDADES.map((d) => `${ROTULO_DIFICULDADE[d]} ${p[d]}`).join(" · ");
+  return `Dificuldade: a IA classifica a complexidade de cada chamado; os pontos de cada nível são definidos pela empresa (${niveis}), e não uma nota dada pela IA.`;
+}
 
 /** Complexidade 1–5 do parecer da IA → nível de dificuldade do bônus. */
 export function dificuldadeDaComplexidade(nivel: number | null | undefined): Dificuldade | null {
