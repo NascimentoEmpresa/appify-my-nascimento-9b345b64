@@ -13,7 +13,7 @@ import { AvisosCard } from "@/components/notificacoes/AvisosCard";
 import { ReconhecimentoCard } from "@/components/reconhecimento/ReconhecimentoCard";
 import fachadaImg from "@/assets/fachada.jpg";
 import {
-  CircleUserRound, Megaphone, Quote, Star, Search,
+  CircleUserRound, ListChecks, Megaphone, Quote, Star, Search,
   ArrowRight, ChevronUp, Settings2, Check, LayoutGrid,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -143,6 +143,7 @@ const GRUPO_MEU_ESPACO = "Meu espaço";
  * nenhum e por isso não têm entrada no menu lateral.
  */
 const ATALHOS_PESSOAIS: Atalho[] = [
+  { to: "/app/minhas-tarefas", icon: ListChecks, label: "Minhas Tarefas", desc: "O checklist da sua função", cor: "#b45309", grupo: GRUPO_MEU_ESPACO },
   { to: "/app/meu-perfil", icon: CircleUserRound, label: "Meu Perfil",   desc: "Seus dados e acessos", cor: "#475569", grupo: GRUPO_MEU_ESPACO },
   { to: "/app/novidades",  icon: Megaphone,       label: "Novidades",    desc: "Atualizações do ERP",  cor: "#7c3aed", grupo: GRUPO_MEU_ESPACO },
 ];

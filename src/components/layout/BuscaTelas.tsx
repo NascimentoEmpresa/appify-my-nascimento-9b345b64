@@ -48,6 +48,7 @@ function useTelasDaBusca(): TelaBusca[] {
       if (m.headerLink && m.headerLink !== "/app") incluir({ to: m.headerLink, label: m.label, modulo: "Módulo" });
     }
     incluir({ to: "/app/meu-perfil", label: "Meu Perfil", modulo: "Meu espaço" });
+    incluir({ to: "/app/minhas-tarefas", label: "Minhas Tarefas", modulo: "Meu espaço" });
     incluir({ to: "/app/novidades", label: "Novidades do Sistema", modulo: "Meu espaço" });
     return telas;
   }, [modulos, access]);

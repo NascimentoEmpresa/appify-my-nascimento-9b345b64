@@ -1,4 +1,4 @@
-import { Bell, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact, RefreshCw } from "lucide-react";
+import { Bell, ClipboardCheck, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { AgendaCorporativaSheet } from "./AgendaCorporativaSheet";
 import { BuscaTelas } from "./BuscaTelas";
+import { useContagemTarefas } from "@/hooks/useTarefasFuncao";
 import { resolverLinkNotificacao } from "@/lib/notificacaoLink";
 import { NovidadesSino } from "@/components/novidades/NovidadesSino";
 import { useModoExterno } from "@/hooks/useModoExterno";
@@ -61,6 +62,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   // agenda saem — nenhuma delas funciona sem perfil de acesso, e todas
   // levavam a "Acesso negado".
   const externo = useModoExterno();
+  const tarefasPendentes = useContagemTarefas(!externo);
   // O anônimo não tem linha em profiles (ver 20260821000003): o nome real
   // dele vem da sessão externa, gravada no login com o cadastro de EMPREGADOS.
   const sessaoExtQ = useSessaoExterna(externo);
@@ -276,6 +278,16 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         >
           <RefreshCw className={cn("h-4 w-4", atualizando && "animate-spin")} />
         </IconBtn>
+
+        {/* Minhas Tarefas: o número é o que vence hoje mais o que está vencido. */}
+        {tarefasPendentes > 0 && (
+          <IconBtn aria-label={`Minhas tarefas: ${tarefasPendentes} para hoje ou vencidas`} title="Minhas tarefas" onClick={() => navigate("/app/minhas-tarefas")}>
+            <ClipboardCheck className="h-4 w-4" />
+            <span className="absolute right-0.5 top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white">
+              {tarefasPendentes > 9 ? "9+" : tarefasPendentes}
+            </span>
+          </IconBtn>
+        )}
 
         {/* Notificações */}
         <div className="relative" data-topbar-menu>
