@@ -44,6 +44,9 @@ export interface AplicacaoFinanceiraLinha {
   status_exibicao: StatusAplicacaoExibicao;
   created_by: string | null;
   created_at: string;
+  // SIS-2026-0813: centro de custo (contrato). Ausentes enquanto a migration 20261106003000 não foi aplicada.
+  contrato_id?: string | null;
+  contrato_nome?: string | null;
 }
 
 export interface AplicacaoFinanceiraResgate {
@@ -78,6 +81,8 @@ export interface AplicacaoFinanceiraResgateCaixa {
   // SIS-2026-0778: banco em que o resgate entrou (catálogo malote_cartao_banco). Sem ele o resgate não entra na Conciliação Bancária do banco.
   // Nulo nos resgates anteriores à migration 20261104000700: informar editando o resgate.
   banco_id?: string | null;
+  // SIS-2026-0813: centro de custo (contrato) do resgate.
+  contrato_id?: string | null;
   created_by: string | null;
   created_at: string;
 }
@@ -232,6 +237,8 @@ export interface CriarAplicacaoInput {
   taxa?: string | null;
   data_vencimento?: string | null;
   liquidez?: string | null;
+  // SIS-2026-0813: centro de custo (contrato), o correto é MOVIMENTAÇÃO FINANCEIRA da empresa.
+  contrato_id?: string | null;
 }
 
 export function useCriarAplicacao() {
@@ -252,6 +259,7 @@ export function useCriarAplicacao() {
         _taxa: input.taxa ?? null,
         _data_vencimento: input.data_vencimento ?? null,
         _liquidez: input.liquidez ?? null,
+        _contrato_id: input.contrato_id ?? null,
       });
       if (error) throw error;
       return data as string;
@@ -273,6 +281,7 @@ export function useEditarAplicacao() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: [LISTA_KEY] });
       qc.invalidateQueries({ queryKey: [EVENTO_KEY, vars.id] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
     },
   });
 }
@@ -302,6 +311,7 @@ export interface ResgatarMontanteInput {
   valorRendimento: number;
   observacao?: string | null;
   bancoId?: string | null;
+  contratoId?: string | null;
 }
 
 export function useResgatarMontanteAplicacao() {
@@ -315,6 +325,7 @@ export function useResgatarMontanteAplicacao() {
         _valor_rendimento: input.valorRendimento,
         _observacao: input.observacao ?? null,
         _banco_id: input.bancoId ?? null,
+        _contrato_id: input.contratoId ?? null,
       });
       if (error) throw error;
       return data as string;
@@ -335,6 +346,8 @@ export interface EditarResgateInput {
   observacao?: string | null;
   // nulo preserva o banco já gravado
   bancoId?: string | null;
+  // nulo preserva o centro de custo já gravado
+  contratoId?: string | null;
 }
 
 // SIS-2026-0588: editar/excluir resgate direto nas Movimentações da tela.
@@ -349,6 +362,7 @@ export function useEditarResgate() {
         _valor_rendimento: input.valorRendimento,
         _observacao: input.observacao ?? null,
         _banco_id: input.bancoId ?? null,
+        _contrato_id: input.contratoId ?? null,
       });
       if (error) throw error;
     },
@@ -372,6 +386,26 @@ export function useDefinirBancoResgates() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+    },
+  });
+}
+
+// SIS-2026-0813: centro de custo em massa (RPC aplicacao_financeira_definir_centro_custo). contratoId nulo = o MOVIMENTAÇÃO FINANCEIRA da empresa de cada lançamento.
+export function useDefinirCentroCustoEmMassa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ tipo, ids, contratoId }: { tipo: "aplicacao" | "resgate"; ids: string[]; contratoId: string | null }) => {
+      // A função é nova e não está nos tipos gerados do Supabase: tipa só o que usa, sem any (a catraca do lint não deixa subir).
+      const cliente = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: Error | null }> };
+      const { data, error } = await cliente.rpc("aplicacao_financeira_definir_centro_custo", { _tipo: tipo, _ids: ids, _contrato_id: contratoId });
+      if (error) throw error;
+      return Number(data ?? 0);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });
+      qc.invalidateQueries({ queryKey: [LISTA_KEY] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
     },
