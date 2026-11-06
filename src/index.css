@@ -293,6 +293,11 @@
 }
 .sb-item:hover { transform: translateX(3px); }
 .sb-item:active { transform: translateX(1px) scale(0.985); }
+/* Ativo (ou com o painel aberto): fundo com um rastro laranja que some
+   para a direita — o laranja da marca sem pintar a linha inteira. */
+.sb-item.sb-on {
+  background-image: linear-gradient(90deg, hsl(var(--accent) / 0.16), hsl(var(--accent) / 0.04) 55%, transparent);
+}
 .sb-ic { transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.22s ease; }
 .sb-item:hover .sb-ic { transform: scale(1.16) rotate(-5deg); }
 /* Reflexo que atravessa o item uma única vez quando ele vira o ativo.
@@ -304,58 +309,104 @@
   animation: sb-sheen 0.95s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes sb-sheen { from { transform: translateX(-130%); } to { transform: translateX(130%); } }
-/* Trilho vertical do item ativo: cresce do centro. */
-.sb-bar { animation: sb-bar-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+/* Trilho vertical do item ativo: cresce do centro, com um brilho laranja. */
+.sb-bar {
+  box-shadow: 0 0 10px hsl(var(--accent) / 0.75);
+  animation: sb-bar-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
 @keyframes sb-bar-in {
   from { transform: scaleY(0); opacity: 0; }
   to   { transform: scaleY(1); opacity: 1; }
 }
 
-/* ---- submenu: abre por altura, sem medir nada em JS --------------- */
-/* grid-template-rows 0fr→1fr é o único jeito de animar "height:auto"
-   em CSS puro. O filho precisa de overflow:hidden + min-height:0. */
-.sb-sub {
-  display: grid; grid-template-rows: 0fr; opacity: 0;
-  transition: grid-template-rows 0.34s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.24s ease;
+/* ---- bloco do ícone (06/11/2026) ----------------------------------
+   Todo item de primeiro nível tem o ícone num quadradinho. data-on:
+   "ativo" = é o módulo da rota atual (laranja cheio); "aberto" = só o
+   painel está aberto nele (laranja de leve). Hover acende sem mexer
+   no layout (só cor e escala). */
+.sb-tile {
+  display: inline-grid; place-items: center; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: hsl(0 0% 100% / 0.05);
+  box-shadow: inset 0 0 0 1px hsl(0 0% 100% / 0.06);
+  color: hsl(var(--sidebar-foreground) / 0.78);
+  transition: background-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease,
+              transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.sb-sub[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
-.sb-sub > .sb-sub-in { overflow: hidden; min-height: 0; }
-/* Entrada escalonada dos links: a lista "desce" item a item toda vez que
-   o módulo abre. Quando o submenu fecha, data-open volta a false, a regra
-   deixa de casar e a animação é descartada — é isso que permite que ela
-   rode de novo na abertura seguinte.
+.sb-tile > svg { transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.sb-item:hover .sb-tile { background: hsl(0 0% 100% / 0.09); color: #fff; }
+.sb-item:hover .sb-tile > svg { transform: scale(1.1) rotate(-6deg); }
+.sb-tile[data-on="aberto"] {
+  background: hsl(var(--accent) / 0.16); color: hsl(var(--accent));
+  box-shadow: inset 0 0 0 1px hsl(var(--accent) / 0.35);
+}
+.sb-tile[data-on="ativo"] {
+  background: linear-gradient(135deg, hsl(var(--accent)), hsl(var(--accent) / 0.72));
+  color: hsl(var(--accent-foreground));
+  box-shadow: 0 6px 16px -6px hsl(var(--accent) / 0.8), inset 0 1px 0 hsl(0 0% 100% / 0.28);
+}
+.sb-tile-lg { width: 40px; height: 40px; border-radius: 11px; }
 
-   O ATRASO DE CADA ITEM NÃO ESTÁ AQUI: vem inline, de `atraso()` no
-   Sidebar.tsx. Antes era um calc() com a variável --i, e um --i inválido
-   zerava o atraso de todos silenciosamente (todos abriam juntos, sem erro
-   no console). Duração menor que antes (340ms contra 460ms) para a cascata
-   não se sobrepor a ponto de sumir. */
-.sb-sub[data-open="true"] .sb-link,
-.sb-sub[data-open="true"] .sb-grouphd {
-  animation: sb-link-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* Seta do módulo: anda um passo para a direita no hover e com o painel
+   aberto — aponta para onde o painel vai aparecer. */
+.sb-chev { transition: transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.22s ease, opacity 0.22s ease; opacity: 0.55; }
+.sb-item:hover .sb-chev { transform: translateX(2px); opacity: 1; }
+.sb-item[aria-expanded="true"] .sb-chev { transform: translateX(3px); opacity: 1; }
+
+/* ---- painel de submódulos à direita (SIS-2026-0772) ----------------
+   Desliza de trás da barra e se "desdobra" (clip-path), sem medir nada
+   em JS. data-estado="fechando" fica ~180 ms montado só para a saída
+   tocar — o React desmonta depois (ver moduloSaindo no Sidebar.tsx). */
+.sb-flyout {
+  background:
+    radial-gradient(120% 60% at 0% 0%, hsl(var(--accent) / 0.08), transparent 60%),
+    linear-gradient(180deg, hsl(var(--sidebar-background)), hsl(var(--sidebar-accent)) 160%);
+  box-shadow: 28px 0 56px -18px hsl(222 70% 3% / 0.7), inset 1px 0 0 hsl(0 0% 100% / 0.04);
 }
+/* 06/11/2026 (Pablo: "aparecendo muito rápido, queria uma animação suave"):
+   0,34 s → 0,52 s, deslize maior e curva que desacelera longa no fim. A
+   opacidade chega antes do desdobrar terminar (keyframe 45%), senão o
+   painel parece "aparecer" de uma vez no fim. */
+.sb-flyout[data-estado="aberto"] { animation: sb-fly-in 0.52s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.sb-flyout[data-estado="fechando"] { animation: sb-fly-out 0.18s cubic-bezier(0.4, 0, 1, 1) both; pointer-events: none; }
+@keyframes sb-fly-in {
+  from { opacity: 0;    transform: translateX(-28px); clip-path: inset(0 100% 0 0); }
+  45%  { opacity: 0.85; }
+  to   { opacity: 1;    transform: none;              clip-path: inset(0 -80px 0 0); }
+}
+@keyframes sb-fly-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(-10px); }
+}
+/* Cabeçalho e itens entram em cascata. O atraso de cada um vem inline
+   (atraso() no Sidebar.tsx) — nunca por calc() com variável: um valor
+   inválido zera o atraso de todos sem erro no console. Trocar de módulo
+   com o painel aberto remonta o conteúdo (key) e a cascata toca de novo. */
+.sb-cai { animation: sb-link-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
 @keyframes sb-link-in {
-  from { opacity: 0; transform: translate(-14px, -6px) scale(0.96); }
+  from { opacity: 0; transform: translate(-12px, -4px) scale(0.97); }
   60%  { opacity: 1; }
   to   { opacity: 1; transform: none; }
 }
-/* Guia lateral dos submódulos, desenhada de cima para baixo. */
-.sb-rail { position: relative; }
-.sb-rail::before {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 1px;
-  background: linear-gradient(to bottom, hsl(var(--accent) / 0.5), hsl(var(--sidebar-border)) 45%, transparent);
-  transform-origin: top;
-  animation: sb-rail-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* Marcador do submódulo: um ponto que vira traço laranja no hover/ativo. */
+.sb-pt {
+  width: 5px; height: 5px; border-radius: 9999px; flex-shrink: 0;
+  background: hsl(var(--sidebar-muted) / 0.55);
+  transition: width 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.22s ease, box-shadow 0.22s ease;
 }
-@keyframes sb-rail-in { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-
-.sb-chev { transition: transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.sb-item:hover .sb-pt { width: 10px; background: hsl(var(--accent) / 0.8); }
+.sb-item.sb-on .sb-pt { width: 12px; background: hsl(var(--accent)); box-shadow: 0 0 8px hsl(var(--accent) / 0.7); }
 
 /* ---- lista rolável: desbota nas pontas em vez de cortar seco ------ */
 .sb-scroll {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 16px), transparent 100%);
           mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 16px), transparent 100%);
+  /* 06/11/2026 (Pablo: "essa barra de descer e rolar pode tirar"): a
+     lista continua rolando pela roda do mouse, toque e teclado — some só
+     a barra. O esmaecer de cima/baixo já mostra que tem mais itens. */
+  scrollbar-width: none;
 }
+.sb-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* ---- selo de ambiente: ponto com onda -------------------------- */
 .sb-live { position: relative; display: inline-grid; place-items: center; }
@@ -375,13 +426,18 @@
      classes e ganharia desta por especificidade, deixando os orbes girando
      para quem pediu o sistema parado. */
   .sb-amb > .a, .sb-amb > .b, .sb-brand::after, .sb-live::before,
-  .sb-item.sb-on::after, .sb-bar, .sb-rail::before,
-  .sb-sub[data-open="true"] .sb-link,
-  .sb-sub[data-open="true"] .sb-grouphd { animation: none; }
-  .sb-item:hover { transform: none; }
+  .sb-item.sb-on::after, .sb-bar { animation: none; }
+  /* EXCEÇÃO DE PROPÓSITO: o painel de submódulos (.sb-flyout) e a cascata
+     dos itens (.sb-cai) NÃO entram aqui — deslizam sempre. 06/11/2026: a
+     máquina do Pablo tem os "Efeitos de animação" do Windows desligados
+     (MinAnimate = 0), o navegador caía neste bloco e o painel aparecia de
+     uma vez; ele pediu "sempre deslizar". É uma animação curta (0,52 s),
+     disparada por quem passa o mouse, não um movimento contínuo — os
+     enfeites em loop (orbes, brilho, ondas) continuam parados acima. */
+  .sb-item:hover, .sb-item[aria-expanded="true"] .sb-chev, .sb-item:hover .sb-chev { transform: none; }
   .sb-brand:hover .sb-logo { transform: none; }
-  .sb-item:hover .sb-ic { transform: none; }
-  .sb-sub { transition: none; }
+  .sb-item:hover .sb-ic, .sb-item:hover .sb-tile > svg { transform: none; }
+  .sb-tile, .sb-pt { transition: none; }
 }
 
 /* ---------------------------------------------------------------------
