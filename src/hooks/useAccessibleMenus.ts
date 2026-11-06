@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
-import { rotaMovida } from "@/lib/acesso";
+import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
 
 /**
  * Returns the set of menu codes the current user can VIEW.
@@ -126,6 +126,23 @@ export function useAccessibleMenus(acao: string = "visualizar") {
  * Regra: entre dois casamentos de mesmo comprimento, o ATIVO ganha. Comprimento
  * maior continua tendo prioridade sobre tudo (rota mais específica).
  */
+/**
+ * A rota aparece para esta pessoa? A mesma regra do RouteGuard: nega por padrão,
+ * e menu sem cadastro ou desativado não aparece. Usada pelo menu lateral e pela
+ * busca do topo, que não podem listar o que a rota vai barrar.
+ */
+export function rotaVisivelNoMenu(
+  to: string,
+  access: { codes: Set<string>; routes: MenuRoute[]; inactiveCodes: Set<string> } | undefined,
+): boolean {
+  if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
+  if (rotaSempreLiberada(to)) return true;
+  if (!access) return false;
+  const code = matchMenuCode(to, access.routes);
+  if (!code || access.inactiveCodes.has(code)) return false;
+  return access.codes.has(code);
+}
+
 export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | null {
   let best: { code: string; len: number; ativo: boolean } | null = null;
   for (const { codigo, rota, ativo } of routes) {
