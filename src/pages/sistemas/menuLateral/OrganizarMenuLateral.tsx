@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  DndContext, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useDroppable, useSensor, useSensors,
-  type CollisionDetection, type DragEndEvent,
+  DndContext, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors,
+  type DragEndEvent, type DragOverEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext, rectSortingStrategy, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
@@ -23,6 +23,7 @@ import { NAV_MODULOS } from "@/components/layout/Sidebar";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { CHAVE_MENU_LATERAL, useMenuLateralSalvo } from "@/hooks/useMenuLateral";
 import { cn } from "@/lib/utils";
+import { criarColisaoMenu, destinoDoArrasto } from "@/lib/menuLateral/arrastar";
 import {
   copiarItem, criarAtalho, criarCategoria, criarModulo, criarResolvedorDeRotulo, estruturaPadrao, incluirTelasNovas,
   moverCategoria, moverItem, moverModulo, remover, renomear, restaurarOriginal, situacaoDoItem, telasDoCatalogo,
@@ -101,6 +102,7 @@ export default function OrganizarMenuLateral() {
   const [soltou, setSoltou] = useState<{ itemId: string; destCatId: string; destIndex: number } | null>(null);
   const [destinoDe, setDestinoDe] = useState<string | null>(null);
   const [atalhoEm, setAtalhoEm] = useState<string | null>(null);
+  const [alvoArrasto, setAlvoArrasto] = useState<ReturnType<typeof destinoDoArrasto>>(null);
   const sensores = useSensorsSeguros();
 
   if (!trabalho) {
@@ -175,14 +177,16 @@ export default function OrganizarMenuLateral() {
 
   // ── Arrastar e soltar ─────────────────────────────────────────────────
   const arrastando = podeAlterar && !busca;
-  // Módulo só cai sobre módulo; entrada só cai sobre entrada ou categoria.
-  const colisao: CollisionDetection = (args) => {
-    const ehModulo = String(args.active.id).startsWith("mod:");
-    const alvos = args.droppableContainers.filter((c) => String(c.id).startsWith("mod:") === ehModulo);
-    const sob = pointerWithin({ ...args, droppableContainers: alvos });
-    return sob.length ? sob : closestCenter({ ...args, droppableContainers: alvos });
+  const colisao = criarColisaoMenu(trabalho);
+  const indicarDestino = ({ active, over }: DragOverEvent) => {
+    setAlvoArrasto(
+      over && active.id !== over.id && String(active.id).startsWith("item:")
+        ? destinoDoArrasto(trabalho, String(over.id))
+        : null,
+    );
   };
   const soltar = ({ active, over }: DragEndEvent) => {
+    setAlvoArrasto(null);
     if (!over) return;
     const a = String(active.id);
     const o = String(over.id);
@@ -197,17 +201,10 @@ export default function OrganizarMenuLateral() {
     const itemId = a.slice(5);
     const org = acharItem(itemId);
     if (!org) return;
-    let destCatId: string;
-    let destIndex: number;
-    if (o.startsWith("item:")) {
-      const alvo = acharItem(o.slice(5));
-      if (!alvo) return;
-      destCatId = alvo.c.id;
-      destIndex = alvo.i;
-    } else if (o.startsWith("cat:")) {
-      destCatId = o.slice(4);
-      destIndex = trabalho.modulos.flatMap((m) => m.categorias).find((c) => c.id === destCatId)?.itens.length ?? 0;
-    } else return;
+    const destino = destinoDoArrasto(trabalho, o);
+    if (!destino) return;
+    const destCatId = destino.categoria.id;
+    const destIndex = destino.indice;
     if (destCatId === org.c.id) {
       if (destIndex !== org.i) mover(itemId, destCatId, destIndex);
       return;
@@ -289,7 +286,8 @@ export default function OrganizarMenuLateral() {
           )}
           {busca && podeAlterar && <p className="text-xs text-muted-foreground">Durante a busca o arrastar fica desligado — limpe a busca para reorganizar.</p>}
 
-          <DndContext sensors={sensores} collisionDetection={colisao} onDragEnd={soltar}>
+          <DndContext sensors={sensores} collisionDetection={colisao}
+            onDragOver={indicarDestino} onDragEnd={soltar} onDragCancel={() => setAlvoArrasto(null)}>
             <SortableContext items={trabalho.modulos.map((m) => `mod:${m.id}`)} strategy={rectSortingStrategy} disabled={!arrastando}>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {trabalho.modulos.map((m) => {
@@ -300,6 +298,7 @@ export default function OrganizarMenuLateral() {
                   if (termo && !cats.some((x) => x.itens.length)) return null;
                   return (
                     <CartaoModulo key={m.id} id={m.id} titulo={m.rotulo} arrastavel={arrastando}
+                      categoriaDestino={alvoArrasto?.modulo.id === m.id ? alvoArrasto.categoria.rotulo : undefined}
                       acoes={podeAlterar && (
                         <>
                           <BotaoIcone titulo="Renomear módulo" onClick={() => setPedeNome({
@@ -321,6 +320,7 @@ export default function OrganizarMenuLateral() {
                       {m.categorias.length === 0 && <p className="px-1 py-3 text-xs text-muted-foreground">Módulo vazio. Crie uma categoria (+) para receber submódulos.</p>}
                       {cats.map(({ c, itens }, ci) => (
                         <Categoria key={c.id} id={c.id} titulo={c.rotulo}
+                          destinoAtivo={alvoArrasto?.categoria.id === c.id}
                           acoes={podeAlterar && (
                             <>
                               {ci > 0 && <BotaoIcone titulo="Subir categoria" onClick={() => aplicar(moverCategoria(trabalho, c.id, m.id, ci - 1), { tipo: "ordenar", texto: `Subiu a categoria "${c.rotulo}" em ${m.rotulo}` })}><ArrowUp className="h-3 w-3" /></BotaoIcone>}
@@ -392,7 +392,7 @@ export default function OrganizarMenuLateral() {
 
       {/* Soltou em outro lugar: mover ou copiar? */}
       <Dialog open={!!soltou} onOpenChange={(v) => !v && setSoltou(null)}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md [overflow-wrap:anywhere]">
           <DialogHeader>
             <DialogTitle>O que deseja fazer?</DialogTitle>
             <DialogDescription>
@@ -461,14 +461,25 @@ function BotaoIcone({ titulo, onClick, children }: { titulo: string; onClick: ()
   );
 }
 
-function CartaoModulo({ id, titulo, acoes, arrastavel, children }: { id: string; titulo: string; acoes: ReactNode; arrastavel: boolean; children: ReactNode }) {
+function CartaoModulo({ id, titulo, acoes, arrastavel, categoriaDestino, children }: {
+  id: string; titulo: string; acoes: ReactNode; arrastavel: boolean; categoriaDestino?: string; children: ReactNode;
+}) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: `mod:${id}`, disabled: !arrastavel });
   return (
     <section
       ref={setNodeRef}
       style={{ transform: DndCSS.Translate.toString(transform), transition }}
-      className={cn("flex flex-col rounded-xl border bg-card shadow-sm", isDragging && "z-20 opacity-80 ring-2 ring-primary")}
+      className={cn(
+        "relative flex flex-col rounded-xl border bg-card shadow-sm",
+        isDragging && "z-20 opacity-80 ring-2 ring-primary",
+        categoriaDestino && "z-10 border-primary ring-2 ring-primary shadow-lg shadow-primary/25",
+      )}
     >
+      {categoriaDestino && (
+        <span role="status" className="pointer-events-none absolute -top-3 right-3 max-w-[calc(100%-1.5rem)] truncate rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground shadow-sm">
+          Solte em {categoriaDestino}
+        </span>
+      )}
       <header className="flex items-center gap-1 border-b px-3 py-2">
         {arrastavel && (
           <button ref={setActivatorNodeRef} {...attributes} {...listeners} type="button" title="Arraste para mudar a posição do módulo" className="cursor-grab rounded p-0.5 text-muted-foreground hover:bg-muted active:cursor-grabbing">
@@ -483,10 +494,10 @@ function CartaoModulo({ id, titulo, acoes, arrastavel, children }: { id: string;
   );
 }
 
-function Categoria({ id, titulo, acoes, children }: { id: string; titulo: string; acoes: ReactNode; children: ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `cat:${id}` });
+function Categoria({ id, titulo, acoes, destinoAtivo, children }: { id: string; titulo: string; acoes: ReactNode; destinoAtivo: boolean; children: ReactNode }) {
+  const { setNodeRef } = useDroppable({ id: `cat:${id}` });
   return (
-    <div ref={setNodeRef} className={cn("rounded-lg border border-transparent p-1", isOver && "border-primary/60 bg-primary/5")}>
+    <div ref={setNodeRef} className={cn("rounded-lg border border-transparent p-1", destinoAtivo && "border-primary/60 bg-primary/5")}>
       <div className="mb-1 flex items-center gap-1 px-1">
         <p className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground" title={titulo}>{titulo}</p>
         {acoes}
