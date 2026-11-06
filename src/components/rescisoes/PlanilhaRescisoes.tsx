@@ -9,6 +9,7 @@ import {
 } from "@/lib/demissao/rescisao";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { paginasVisiveis } from "@/lib/paginacao";
 
 /**
  * RECURSOS HUMANOS › RESCISÕES — a PLANILHA DE RESCISÃO Geral 2026 do RH,
@@ -39,17 +40,8 @@ function tamanhoSalvo(): number {
   } catch { return 50; }
 }
 
-/** Páginas a mostrar: a primeira, a última e duas em volta da atual; null = "…". */
-export function paginasVisiveis(pagina: number, total: number): (number | null)[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const meio = [pagina - 1, pagina, pagina + 1].filter((p) => p > 1 && p < total);
-  const out: (number | null)[] = [1];
-  if (meio[0] > 2) out.push(null);
-  out.push(...meio);
-  if (meio[meio.length - 1] < total - 1) out.push(null);
-  out.push(total);
-  return out;
-}
+// A função das páginas numeradas mora em @/lib/paginacao (outras listas usam a mesma); reexportada aqui para não quebrar quem já importa daqui.
+export { paginasVisiveis };
 
 type Salvar = (l: LinhaRescisao, patch: Partial<RescisaoRH>) => Promise<void>;
 

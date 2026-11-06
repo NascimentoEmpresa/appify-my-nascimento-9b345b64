@@ -22,6 +22,9 @@ import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario"
 import { useCartaoBancos, urlLogoCartao, useFormasCartaoFaturaImportada } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { AnexosDebito } from "./AnexosDebito";
+import { useContratosERP } from "@/hooks/useContratosERP";
+import { CentroCustoSelect } from "../aplicacao-financeira/CentroCustoSelect";
+import { centroPadraoDaEmpresa } from "../aplicacao-financeira/centroCusto";
 import { ParcelaCalculada, gerarParcelasAutomaticas, somaParcelas, validarParcelas } from "./parcelas";
 
 // SIS-2026-0256: um modal só cobre os 3 tipos de lançamento (Débito
@@ -50,6 +53,8 @@ export function DebitoAutomaticoModal({
 
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
+  // SIS-2026-0815: contratos de todas as empresas, para sugerir o MOVIMENTAÇÃO FINANCEIRA de cada lado da movimentação.
+  const { data: contratosERP = [] } = useContratosERP({ todasEmpresas: true });
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
   const tiposFormaPagamentoAtivos = tiposFormaPagamento.filter((t) => t.ativo);
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
@@ -73,6 +78,8 @@ export function DebitoAutomaticoModal({
   const [empresaSaidaId, setEmpresaSaidaId] = useState("");
   const [empresaEntradaId, setEmpresaEntradaId] = useState("");
   const [contratoId, setContratoId] = useState("");
+  const [contratoSaidaId, setContratoSaidaId] = useState("");
+  const [contratoEntradaId, setContratoEntradaId] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [descricao, setDescricao] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
@@ -106,6 +113,8 @@ export function DebitoAutomaticoModal({
       setEmpresaSaidaId(registroEditar.tipo === "saida" ? registroEditar.empresa_id : registroParEditar?.empresa_id ?? "");
       setEmpresaEntradaId(registroEditar.tipo === "entrada" ? registroEditar.empresa_id : registroParEditar?.empresa_id ?? "");
       setContratoId(registroEditar.contrato_id ?? "");
+      setContratoSaidaId((registroEditar.tipo === "saida" ? registroEditar.contrato_id : registroParEditar?.contrato_id) ?? "");
+      setContratoEntradaId((registroEditar.tipo === "entrada" ? registroEditar.contrato_id : registroParEditar?.contrato_id) ?? "");
       setClassificacaoId(registroEditar.classificacao_id);
       setDescricao(registroEditar.descricao);
       setFormaPagamento(registroEditar.forma_pagamento);
@@ -123,6 +132,8 @@ export function DebitoAutomaticoModal({
       setEmpresaSaidaId("");
       setEmpresaEntradaId("");
       setContratoId("");
+      setContratoSaidaId("");
+      setContratoEntradaId("");
       setClassificacaoId(tipoOrigem === "nota_recebida" ? (classificacoes.find((c) => c.nome.toUpperCase() === "RECEBIMENTO DE NOTA")?.id ?? "") : "");
       setDescricao("");
       setFormaPagamento(tipoOrigem === "movimentacao_financeira" ? "Transferência Bancária" : "");
@@ -264,13 +275,16 @@ export function DebitoAutomaticoModal({
           await editar.mutateAsync({ id: registroEditar.id, campos });
         } else {
           campos.classificacao_id = classificacaoId;
+          // SIS-2026-0815: cada linha tem o centro de custo do próprio lado.
+          const contratoDoRegistro = registroEditar.tipo === "saida" ? contratoSaidaId : contratoEntradaId;
           // Cada linha (saída/entrada) tem seu próprio banco — não dá pra
           // aplicar o mesmo campos.banco_id nas 2, precisa por linha.
           const bancoDoRegistro = registroEditar.tipo === "saida" ? bancoSaidaId : bancoEntradaId;
-          await editar.mutateAsync({ id: registroEditar.id, campos: { ...campos, banco_id: bancoDoRegistro } });
+          await editar.mutateAsync({ id: registroEditar.id, campos: { ...campos, banco_id: bancoDoRegistro, contrato_id: contratoDoRegistro || null } });
           if (registroParEditar) {
             const bancoDoPar = registroParEditar.tipo === "saida" ? bancoSaidaId : bancoEntradaId;
-            await editar.mutateAsync({ id: registroParEditar.id, campos: { ...campos, banco_id: bancoDoPar } });
+            const contratoDoPar = registroParEditar.tipo === "saida" ? contratoSaidaId : contratoEntradaId;
+            await editar.mutateAsync({ id: registroParEditar.id, campos: { ...campos, banco_id: bancoDoPar, contrato_id: contratoDoPar || null } });
           }
         }
         toast.success("Lançamento atualizado.");
@@ -314,6 +328,8 @@ export function DebitoAutomaticoModal({
           status,
           banco_saida_id: bancoSaidaId,
           banco_entrada_id: bancoEntradaId,
+          contrato_saida_id: contratoSaidaId || null,
+          contrato_entrada_id: contratoEntradaId || null,
         });
         await anexarNovos([novoId]);
         toast.success("Movimentação Financeira incluída.");
@@ -407,7 +423,7 @@ export function DebitoAutomaticoModal({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Empresa de Saída *</Label>
-                  <Select value={empresaSaidaId} onValueChange={setEmpresaSaidaId} disabled={editando}>
+                  <Select value={empresaSaidaId} onValueChange={(v) => { setEmpresaSaidaId(v); setContratoSaidaId(centroPadraoDaEmpresa(contratosERP, v)); }} disabled={editando}>
                     <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
@@ -416,13 +432,17 @@ export function DebitoAutomaticoModal({
                 </div>
                 <div>
                   <Label className="text-xs">Empresa de Entrada *</Label>
-                  <Select value={empresaEntradaId} onValueChange={setEmpresaEntradaId} disabled={editando}>
+                  <Select value={empresaEntradaId} onValueChange={(v) => { setEmpresaEntradaId(v); setContratoEntradaId(centroPadraoDaEmpresa(contratosERP, v)); }} disabled={editando}>
                     <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <CentroCustoSelect rotulo="Centro de Custo de Saída" empresaId={empresaSaidaId} value={contratoSaidaId} onChange={setContratoSaidaId} atualId={registroEditar?.tipo === "saida" ? registroEditar.contrato_id : registroParEditar?.contrato_id} />
+                <CentroCustoSelect rotulo="Centro de Custo de Entrada" empresaId={empresaEntradaId} value={contratoEntradaId} onChange={setContratoEntradaId} atualId={registroEditar?.tipo === "entrada" ? registroEditar.contrato_id : registroParEditar?.contrato_id} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
