@@ -60,6 +60,7 @@ export const SINONIMOS: string[][] = [
   ["denuncia", "comite de etica", "assedio"],
   ["reuniao", "agenda", "calendario"],
   ["organograma", "hierarquia", "estrutura organizacional", "quem e o chefe"],
+  ["tarefa", "tarefas", "checklist", "pop", "rotina", "atividade"],
   ["whatsapp", "zap", "wpp", "mensagem"],
   ["juridico", "processo", "audiencia", "advogado", "parecer juridico"],
   ["patrimonio", "bem", "inventario"],
