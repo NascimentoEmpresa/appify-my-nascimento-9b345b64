@@ -101,6 +101,7 @@ import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
 import { selNovoVigente } from "@/lib/selNovo";
 import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { ChevronLeft, PanelLeft } from "lucide-react";
+import { Mail, AtSign } from "lucide-react";
 // Ícones da barra de módulos (06/11/2026) — ver ICONE_DO_MODULO.
 import { Mailbox, BookOpenCheck, ReceiptText, UserSearch, Tv, Server, MonitorCog, LineChart, Activity, FileChartColumn, UsersRound } from "lucide-react";
 
@@ -1165,6 +1166,27 @@ const whatsappModule: ModuleDef = {
   ],
 };
 
+// E-mail — cada um envia do próprio endereço (mig 20261106010000). As duas
+// telas nascem sem ninguém: liberar em Acesso por Usuário.
+const emailModule: ModuleDef = {
+  id: "email",
+  label: "E-mail",
+  description: "Envie e-mails do seu endereço pelo ERP",
+  icon: Mail,
+  basePath: "/app/email",
+  status: "active",
+  groups: [
+    {
+      label: "E-mail",
+      defaultOpen: true,
+      items: [
+        { label: "Meu E-mail", to: "/app/email", icon: Mail },
+        { label: "Remetentes e histórico geral", to: "/app/email/remetentes", icon: AtSign },
+      ],
+    },
+  ],
+};
+
 // Jurídico — Gestão Patrimonial e Obrigações
 const juridicoModule: ModuleDef = {
   id: "juridico",
@@ -1504,6 +1526,7 @@ const erpModules: ModuleDef[] = [
   organogramaModule,
   treinamentosModule,
   whatsappModule,
+  emailModule,
   biModule,
 ];
 

@@ -383,6 +383,8 @@ import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import MonitoramentoChamados from "./pages/chamados/MonitoramentoChamados";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
+import MeuEmail from "./pages/email/MeuEmail";
+import RemetentesEmail from "./pages/email/RemetentesEmail";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
 import WhatsAppDashboard from "./pages/whatsapp/WhatsAppDashboard";
@@ -666,6 +668,9 @@ const App = () => (
             {/* Monitoramento de Chamados (mig 20261022000180): qualidade das solicitações, por solicitante. */}
             <Route path="central-servicos/chamados/monitoramento" element={<MonitoramentoChamados />} />
             <Route path="central-servicos/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
+            {/* E-mail — cada um envia do próprio endereço (mig 20261106010000) */}
+            <Route path="email" element={<MeuEmail />} />
+            <Route path="email/remetentes" element={<RemetentesEmail />} />
             {/* WhatsApp — Chatbot */}
             <Route path="whatsapp" element={<WhatsAppInbox />} />
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
