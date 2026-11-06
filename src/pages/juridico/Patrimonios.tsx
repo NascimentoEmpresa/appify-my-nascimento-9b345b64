@@ -12,7 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { MapaPatrimonios } from "./patrimonio/MapaPatrimonios";
 import {
-  CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao,
+  CLASSIFICACOES, ESPECIES_ESCRITURA, SITUACOES_PAGAMENTO, corSituacao, opcoesSituacao,
   PATRIM_RESET, soCamposDoForm,
 } from "./patrimonio/carteira";
 import { coordenadaValida } from "./patrimonio/geo";
@@ -909,7 +909,7 @@ export default function Patrimonios() {
               <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>Situação</label>
               <select className="jp-fi" value={fSituacao} onChange={e => { setFSituacao(e.target.value); setPagina(1); }}>
                 <option value="">Selecione</option>
-                {SITUACOES_PAGAMENTO.map(s => <option key={s} value={s}>{s}</option>)}
+                {opcoesSituacao(...pats.map(p => p.situacao_pagamento)).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div style={{ minWidth: 150, flex: 1 }}>
@@ -1250,10 +1250,10 @@ export default function Patrimonios() {
                   {ESPECIES_ESCRITURA.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div className="jp-fg"><label>Situação de pagamento</label>
+              <div className="jp-fg"><label>Situação</label>
                 <select className="jp-fi" value={pat.situacao_pagamento} onChange={e => setPat(v => ({ ...v, situacao_pagamento: e.target.value }))}>
                   <option value="">Selecione</option>
-                  {SITUACOES_PAGAMENTO.map(c => <option key={c} value={c}>{c}</option>)}
+                  {opcoesSituacao(pat.situacao_pagamento).map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="jp-fg"><label>Valor do contrato (R$)</label><input className="jp-fi" type="number" step="0.01" value={pat.valor_contrato} onChange={e => setPat(v => ({ ...v, valor_contrato: e.target.value }))} placeholder="0,00" /></div>

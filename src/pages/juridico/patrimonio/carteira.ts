@@ -11,8 +11,27 @@ export const CLASSIFICACOES = [
   "APARTAMENTO", "GARAGEM", "COTAS", "OUTROS",
 ];
 
-/** Posição financeira — diferente do status do cadastro (Ativo/Inativo). */
-export const SITUACOES_PAGAMENTO = ["PAGO", "PAGANDO", "VENCIDO", "AGUARDANDO"];
+/**
+ * A coluna "Situação" da carteira (campo `situacao_pagamento`) — diferente do
+ * status do cadastro (Ativo/Inativo).
+ *
+ * Nasceu só com a posição financeira, mas a planilha ATIVO IMOBILIZADO já
+ * escrevia ALUGADO e VENDIDO no mesmo campo, e a importação trouxe assim. O
+ * formulário só oferecia as 4 financeiras: dava para ver "ALUGADO" na lista e
+ * não dava para marcar um imóvel como alugado (06/11/2026). É uma etiqueta
+ * de texto livre no banco (sem CHECK) — acrescentar aqui basta.
+ */
+export const SITUACOES_PAGAMENTO = ["PAGO", "PAGANDO", "VENCIDO", "AGUARDANDO", "ALUGADO", "VENDIDO"];
+
+/**
+ * As opções de um select de situação: as fixas + qualquer outra que já esteja
+ * gravada (valor antigo da planilha). Sem isso, abrir para editar um
+ * patrimônio com valor fora da lista mostraria "Selecione" e o salvar o apagaria.
+ */
+export function opcoesSituacao(...existentes: (string | null | undefined)[]): string[] {
+  const extras = existentes.map(s => String(s ?? "").trim()).filter(s => s && !SITUACOES_PAGAMENTO.includes(s));
+  return [...SITUACOES_PAGAMENTO, ...[...new Set(extras)].sort((a, b) => a.localeCompare(b, "pt-BR"))];
+}
 
 /** Espécie do documento que prova a posse. */
 export const ESPECIES_ESCRITURA = [
@@ -27,6 +46,7 @@ export function corSituacao(s?: string | null): { bg: string; fg: string } {
   if (v.startsWith("PAGANDO")) return { bg: "#dbeafe", fg: "#1d4ed8" };
   if (v.startsWith("VENC")) return { bg: "#fee2e2", fg: "#b91c1c" };
   if (v.startsWith("AGUARD")) return { bg: "#fef9c3", fg: "#a16207" };
+  if (v.startsWith("ALUGAD")) return { bg: "#ede9fe", fg: "#6d28d9" };
   return { bg: "#f1f5f9", fg: "#64748b" };
 }
 
