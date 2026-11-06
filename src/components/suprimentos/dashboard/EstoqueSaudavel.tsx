@@ -351,9 +351,14 @@ export function EstoqueSaudavel({
 
       <PainelGrafico
         titulo="Prateleira saudável por item e tamanho"
-        subtitulo="Azul é o disponível para novos pedidos (físico menos reservado); cinza é o mínimo para disparar a reposição; verde é o máximo saudável. Ex.: se saem 10, o alvo pode ser 15 para absorver uma saída surpresa."
+        subtitulo="Azul é o disponível para novos pedidos; cinza é o mínimo para repor; verde é o máximo saudável; roxo mostra as solicitações do Malote aguardando compra."
       >
         <GraficoFaixaPorItem itens={dados.itens} />
+        <p className="mt-2 text-[11px] text-slate-500">
+          Aguardando compra: aguardando cotação, cotação realizada ou aprovada, até o envio ao fornecedor.
+          Essas quantidades ainda não entram no disponível nem reduzem a compra sugerida.
+          {filtros.almoxarifadoId && " As pendências de compra abrangem todos os almoxarifados da empresa."}
+        </p>
       </PainelGrafico>
 
       <PainelGrafico
@@ -687,14 +692,15 @@ function GraficoSituacao({
  * Mostramos os itens com demanda, priorizando os que estão mais longe do alvo,
  * para o gráfico continuar legível sem esconder tamanhos diferentes.
  */
-function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
+export function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
   const dados = itens
-    .filter((item) => item.demanda_janela > 0 || item.disponivel > 0 || item.comprar > 0)
+    .filter((item) => item.demanda_janela > 0 || item.disponivel > 0 || item.comprar > 0 || item.aguardando_compra > 0)
     .map((item) => ({
       rotulo: `${item.item} · ${item.tamanho ?? "único"}`,
       fisico: item.fisico,
       disponivel: item.disponivel,
       reservado: item.reservado,
+      aguardando_compra: item.aguardando_compra,
       minimo: item.minimo,
       alvo: item.alvo,
       comprar: item.comprar,
@@ -708,7 +714,7 @@ function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
   }
 
   return (
-    <div className="h-[360px]">
+    <div style={{ height: Math.max(360, dados.length * 42 + 60) }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={dados} layout="vertical" margin={{ left: 12, right: 42, top: 4 }} barGap={2}>
           <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} horizontal={false} />
@@ -723,6 +729,7 @@ function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
                   <p className="text-slate-600">Físico na prateleira: {formatarNumero(payload[0].payload.fisico)}</p>
                   <p className="text-slate-600">Já reservado: {formatarNumero(payload[0].payload.reservado)}</p>
                   <p className="text-slate-600">Disponível para novo pedido: {formatarNumero(payload[0].payload.disponivel)}</p>
+                  <p className="font-semibold text-violet-700">Aguardando compra: {payload[0].payload.aguardando_compra == null ? "—" : Number(payload[0].payload.aguardando_compra).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</p>
                   <p className="text-slate-600">Mínimo para pedir: {formatarNumero(payload[0].payload.minimo)}</p>
                   <p className="text-slate-600">Máximo saudável: {formatarNumero(payload[0].payload.alvo)}</p>
                   <p className="text-slate-600">Demanda média: {formatarNumero(payload[0].payload.demanda_mensal, 1)} / mês</p>
@@ -736,6 +743,7 @@ function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
           <Legend wrapperStyle={{ fontSize: 11 }} />
           <Bar dataKey="disponivel" name="Disponível" fill={AZUL_MAGNITUDE} radius={[0, 4, 4, 0]} maxBarSize={14} />
           <Bar dataKey="minimo" name="Mínimo para pedir" fill="#94a3b8" radius={[0, 4, 4, 0]} maxBarSize={14} />
+          <Bar dataKey="aguardando_compra" name="Aguardando compra" fill="#8b5cf6" radius={[0, 4, 4, 0]} maxBarSize={14} />
           <Bar dataKey="alvo" name="Máximo saudável" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={14}>
             <LabelList dataKey="alvo" position="right" className="text-[10px]" fill="#475569" formatter={(v: number) => formatarNumero(v)} />
           </Bar>
@@ -909,6 +917,7 @@ function TabelaItens({
                   <CabecalhoTabela alinhar="right">Físico</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Reservado</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Vindo</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Aguardando compra</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Consumo/mês</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Cobertura</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Pedir em</CabecalhoTabela>
@@ -997,6 +1006,9 @@ function LinhaItem({
       <td className="px-3 py-1.5 text-right text-slate-500">{formatarNumero(item.reservado)}</td>
       <td className="px-3 py-1.5 text-right text-slate-500">
         {item.em_transito > 0 ? formatarNumero(item.em_transito) : "—"}
+      </td>
+      <td className="px-3 py-1.5 text-right text-violet-700">
+        {item.aguardando_compra == null ? "—" : item.aguardando_compra.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}
       </td>
       <td className="px-3 py-1.5 text-right">{formatarNumero(item.demanda_mensal, 1)}</td>
       <td className="px-3 py-1.5 text-right">

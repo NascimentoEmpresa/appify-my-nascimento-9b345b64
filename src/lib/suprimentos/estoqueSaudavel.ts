@@ -51,6 +51,8 @@ export interface ItemEstoqueSaudavel {
   /** Peças físicas na prateleira, antes de descontar o que já está separado. */
   fisico: number;
   em_transito: number;
+  /** Solicitações do Malote em cotação, ainda sem compra enviada ao fornecedor. */
+  aguardando_compra: number;
 
   demanda_janela: number;
   demanda_mensal: number;
