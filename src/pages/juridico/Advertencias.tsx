@@ -6,7 +6,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
-import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
+import { FiltroContratos } from "@/components/solicitacoes/FiltroContratos";
+import {
+  FILTROS_VAZIOS, filtrarAdvertencias, semCampo, temFiltro, chipsDosFiltros, removerChip, valorDoCampo, rotuloMes,
+  type FiltrosAdv, type CampoMulti, type BaseDoMes, type FiltroExcecao,
+} from "@/lib/juridico/filtroAdvertencias";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
@@ -31,6 +35,13 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieCha
 // A mesma tela tem a aba DASHBOARD (16/09/2026): status, grau, tipo,
 // contratos, meses e tempo de resposta — sempre no recorte do
 // "Filtros · Contratos", o mesmo do Recrutamento.
+//
+// 06/11/2026: além do contrato, filtros de mês (do Ocorrido ou da
+// Solicitada), tipo, grau, solicitante, função e exceção fora do prazo,
+// com chips removíveis e "Limpar filtros". O recorte vale pros números do
+// topo, pras contagens das abas, pra lista e pro Dashboard. Regra em
+// src/lib/juridico/filtroAdvertencias.ts — tudo no front, a tela já
+// carrega a tabela inteira.
 // =====================================================================
 
 interface Adv {
@@ -131,7 +142,9 @@ export default function Advertencias() {
   useEffect(() => { if (abaDoLink && STATUS.includes(abaDoLink)) setAba(abaDoLink); }, [abaDoLink]);
   const [busca, setBusca] = useState("");
   // Filtros · Contratos (14/09/2026): multi, com contagem — era um select de um só.
-  const [fContratos, setFContratos] = useState<string[]>([]);
+  // 06/11/2026: virou um dos vários filtros (FiltrosAdv).
+  const [filtros, setFiltros] = useState<FiltrosAdv>(FILTROS_VAZIOS);
+  const setCampo = (campo: CampoMulti) => (v: string[]) => setFiltros(f => ({ ...f, [campo]: v }));
   const [toasts, setToasts] = useState<{ id: number; msg: string; t: string }[]>([]);
 
   // modais de ação
@@ -165,8 +178,16 @@ export default function Advertencias() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // Recorte do "Filtros · Contratos": vale pros KPIs, pra lista e pro dashboard.
-  const noRecorte = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "contrato", fContratos)), [rows, fContratos]);
+  // Recorte dos filtros: vale pros KPIs, pras abas, pra lista e pro dashboard.
+  const noRecorte = useMemo(() => filtrarAdvertencias(rows, filtros), [rows, filtros]);
+  // Cada dropdown conta as opções no recorte dos OUTROS filtros.
+  const linhasPara = useMemo(() => {
+    const campos: CampoMulti[] = ["meses", "tipos", "graus", "contratos", "solicitantes", "cargos"];
+    const m = {} as Record<CampoMulti, Adv[]>;
+    for (const c of campos) m[c] = filtrarAdvertencias(rows, semCampo(filtros, c));
+    return m;
+  }, [rows, filtros]);
+  const chips = useMemo(() => chipsDosFiltros(filtros), [filtros]);
   const counts = useMemo(() => { const c: Record<string, number> = {}; for (const r of noRecorte) c[r.status] = (c[r.status] || 0) + 1; return c; }, [noRecorte]);
   const filtradas = useMemo(() => noRecorte.filter(r => {
     if (aba && r.status !== aba) return false;
@@ -264,11 +285,48 @@ export default function Advertencias() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
-        {/* Filtros · Contratos — o mesmo do Recrutamento; recorta KPIs, lista e dashboard. */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-          <FiltroContratos linhas={rows} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
-          {fContratos.length > 0 && <span style={{ fontSize: 12, color: "#64748b" }}>{noRecorte.length} de {rows.length} advertência(s) no recorte</span>}
+        {/* Filtros — recortam KPIs, abas, lista e dashboard. "Filtros · Contratos"
+            é o mesmo do Recrutamento; os outros usam o mesmo dropdown. */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: chips.length ? 8 : 12 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <select value={filtros.baseMes} onChange={e => setFiltros(f => ({ ...f, baseMes: e.target.value as BaseDoMes }))}
+                    title="De que data sai o mês do filtro" style={{ height: 40, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 8px", fontSize: 13, background: "#fff", color: "#334155" }}>
+              <option value="ocorrido">Mês do Ocorrido</option>
+              <option value="solicitada">Mês da Solicitada</option>
+            </select>
+            <FiltroContratos linhas={linhasPara.meses} campo={(a: Adv) => valorDoCampo(a, "meses", filtros.baseMes)} selecionados={filtros.meses} onChange={setCampo("meses")}
+                             rotulo="Mês" titulo={filtros.baseMes === "solicitada" ? "Mês da solicitação" : "Mês do ocorrido"} placeholderBusca="Buscar mês…" rotuloOpcao={rotuloMes} ordemDecrescente />
+          </div>
+          <FiltroContratos linhas={linhasPara.tipos} campo={(a: Adv) => valorDoCampo(a, "tipos", filtros.baseMes)} selecionados={filtros.tipos} onChange={setCampo("tipos")}
+                           rotulo="Tipo" titulo="Tipo de advertência" placeholderBusca="Buscar tipo…" />
+          <FiltroContratos linhas={linhasPara.graus} campo={(a: Adv) => valorDoCampo(a, "graus", filtros.baseMes)} selecionados={filtros.graus} onChange={setCampo("graus")}
+                           rotulo="Grau" titulo="Grau" placeholderBusca="Buscar grau…" />
+          <FiltroContratos linhas={linhasPara.contratos} campo="contrato" selecionados={filtros.contratos} onChange={setCampo("contratos")} />
+          <FiltroContratos linhas={linhasPara.solicitantes} campo={(a: Adv) => valorDoCampo(a, "solicitantes", filtros.baseMes)} selecionados={filtros.solicitantes} onChange={setCampo("solicitantes")}
+                           rotulo="Solicitante" titulo="Quem solicitou" placeholderBusca="Buscar solicitante…" />
+          <FiltroContratos linhas={linhasPara.cargos} campo={(a: Adv) => valorDoCampo(a, "cargos", filtros.baseMes)} selecionados={filtros.cargos} onChange={setCampo("cargos")}
+                           rotulo="Função" titulo="Função do colaborador" placeholderBusca="Buscar função…" />
+          <select value={filtros.excecao} onChange={e => setFiltros(f => ({ ...f, excecao: e.target.value as FiltroExcecao }))}
+                  title="Exceção: aplicada fora do prazo de 3 dias" style={{ height: 40, border: `1px solid ${filtros.excecao !== "todas" ? "#0f3171" : "#e2e8f0"}`, borderRadius: 8, padding: "0 8px", fontSize: 13, background: filtros.excecao !== "todas" ? "#eef4ff" : "#fff", color: "#334155" }}>
+            <option value="todas">Exceção de prazo: todas</option>
+            <option value="sim">Só exceções (fora do prazo)</option>
+            <option value="nao">Sem exceção</option>
+          </select>
+          {temFiltro(filtros) && <span style={{ fontSize: 12, color: "#64748b" }}>{noRecorte.length} de {rows.length} advertência(s) no recorte</span>}
         </div>
+        {chips.length > 0 && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            {chips.map(c => (
+              <span key={`${c.campo}:${c.valor}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 6px 4px 10px", borderRadius: 16, background: "#eef4ff", color: "#0f3171", border: "1px solid #c7d7f5", maxWidth: 360 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.rotulo}>{c.rotulo}</span>
+                <button type="button" onClick={() => setFiltros(f => removerChip(f, c))} aria-label={`Remover filtro ${c.rotulo}`}
+                        style={{ border: "none", background: "transparent", color: "#0f3171", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }}>✕</button>
+              </span>
+            ))}
+            <button type="button" onClick={() => setFiltros(f => ({ ...FILTROS_VAZIOS, baseMes: f.baseMes }))}
+                    style={{ border: "none", background: "transparent", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "4px 6px" }}>Limpar filtros</button>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
           {kpiBox(podeAprovar ? "Aguardando você" : "Aguardando aprovação", counts["Aguardando Aprovação"] || 0, "#d97706")}
           {kpiBox("Aguardando parecer", counts["Aguardando Jurídico"] || 0, "#7c3aed")}
@@ -382,7 +440,7 @@ export default function Advertencias() {
         </div>
 
         {loading ? <div style={{ padding: 50, textAlign: "center", color: "#94a3b8" }}>Carregando…</div>
-          : filtradas.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>{aba === "Registrada" ? "Nenhuma advertência verbal registrada." : "Nenhuma advertência neste status."}</div>
+          : filtradas.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>{aba === "Registrada" ? "Nenhuma advertência verbal registrada" : "Nenhuma advertência neste status"}{temFiltro(filtros) || busca ? " com esses filtros." : "."}</div>
             : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 14 }}>
                 {filtradas.map(a => { const sc = statusCor(a.status); const mostraAprovar = podeAprovar && a.status === "Aguardando Aprovação"; const mostraConcluir = podeConcluir && a.status === "Aguardando Jurídico"; return (
