@@ -15,7 +15,7 @@ export const CHAVE_MENU_LATERAL = ["menu-lateral"] as const;
 
 /**
  * SIS-2026-0772: a organização do menu lateral salva em
- * Sistemas › Organizar Menu Lateral (RPC menu_lateral_atual, mig 20261105030000).
+ * Sistemas › Organizar Menu Lateral (RPC menu_lateral_atual, mig 20261105040000).
  *
  * Devolve null — e o menu cai no padrão do código — quando não há versão
  * salva, quando a RPC ainda não existe (migration pendente) ou falha, e

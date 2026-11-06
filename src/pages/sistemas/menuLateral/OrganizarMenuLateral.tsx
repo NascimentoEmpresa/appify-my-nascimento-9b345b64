@@ -36,7 +36,7 @@ import {
  * exibido). A permissão de cada tela continua em Administração › Acesso por
  * Usuário — mover não dá acesso a ninguém e tirar do menu não bloqueia. A
  * regra mora em src/lib/menuLateral/estrutura.ts; a gravação, na RPC
- * menu_lateral_salvar (mig 20261105030000), que confere a permissão
+ * menu_lateral_salvar (mig 20261105040000), que confere a permissão
  * "alterar" de menu_lateral e recusa salvar em cima de versão velha.
  */
 

@@ -952,7 +952,7 @@ const sistemasModule: ModuleDef = {
         // encarregado) e de demitidos a excluir. A bolinha vem da
         // minhas_pendencias_aprovacao (mig 20261006000010).
         { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
-        // SIS-2026-0772 (mig 20261105030000): organizar o menu lateral — só o
+        // SIS-2026-0772 (mig 20261105040000): organizar o menu lateral — só o
         // lugar das telas, nunca a permissão. Menu "menu_lateral", módulo
         // próprio no banco para não vir de brinde com o perfil de outro módulo.
         { label: "Organizar Menu Lateral", to: "/app/sistemas/menu-lateral", icon: PanelLeft },

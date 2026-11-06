@@ -6,7 +6,7 @@ import { Circle, FolderClosed, type LucideIcon } from "lucide-react";
  *
  * O QUE ISTO É: só o LUGAR onde cada tela aparece no menu (módulo, categoria,
  * ordem, nome exibido). A organização salva mora em "MENU_LATERAL_VERSAO"
- * (mig 20261105030000), uma linha por gravação — o histórico é a tabela.
+ * (mig 20261105040000), uma linha por gravação — o histórico é a tabela.
  *
  * O QUE ISTO NÃO É: permissão. Quem vê cada tela continua sendo decidido pelo
  * ENDEREÇO dela (Sidebar.canSee / RouteGuard → matchMenuCode →

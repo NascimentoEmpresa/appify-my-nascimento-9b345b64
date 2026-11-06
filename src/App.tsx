@@ -354,7 +354,7 @@ import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
 import ChecklistModulos from "./pages/sistemas/checklist/ChecklistModulos";
 import LoginsSistemas from "./pages/sistemas/Logins";
-// SIS-2026-0772 (fase 2): organizar o menu lateral (menu_lateral, mig 20261105030000).
+// SIS-2026-0772 (fase 2): organizar o menu lateral (menu_lateral, mig 20261105040000).
 import OrganizarMenuLateral from "./pages/sistemas/menuLateral/OrganizarMenuLateral";
 import ChecklistModuloDetalhe from "./pages/sistemas/checklist/ModuloDetalhe";
 import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
