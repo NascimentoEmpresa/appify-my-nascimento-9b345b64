@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   aplicarMarcacoesSenior,
   mapearMarcacoesNosCampos,
+  marcacoesDaJornada,
   marcacoesDoDia,
   type CampoPonto,
   type ValoresPonto,
 } from "@/lib/horaExtraPontoSenior";
 import type { Batida } from "@/lib/gestaoPonto";
+import { calcularHoraExtra } from "@/pages/sistemas/hora-extra/horaExtraUtils";
 
 const escala: ValoresPonto = {
   ponto_entrada: "07:30",
@@ -39,6 +41,43 @@ describe("marcacoesDoDia", () => {
   });
 });
 
+describe("marcacoesDaJornada (conclusão da HE)", () => {
+  const h = (hora: number, minuto = 0) => hora * 60 + minuto;
+
+  it("dia normal: as quatro batidas do dia", () => {
+    const b: Batida[] = [["2026-11-05", h(7, 30)], ["2026-11-05", h(12, 7)], ["2026-11-05", h(12, 39)], ["2026-11-05", h(20, 50)]];
+    expect(marcacoesDaJornada(b, "2026-11-05")).toEqual(["07:30", "12:07", "12:39", "20:50"]);
+  });
+
+  it("saída depois da meia-noite vem do dia seguinte, e a conta da HE fecha", () => {
+    const b: Batida[] = [["2026-11-05", h(7, 30)], ["2026-11-05", h(12)], ["2026-11-05", h(13)], ["2026-11-06", h(0, 30)], ["2026-11-06", h(7, 30)]];
+    const m = marcacoesDaJornada(b, "2026-11-05");
+    expect(m).toEqual(["07:30", "12:00", "13:00", "00:30"]);
+    const c = calcularHoraExtra({ entrada: m[0], saida_intervalo: m[1], retorno_intervalo: m[2], saida: m[3] }, 528);
+    expect(c.trabalhado).toBe(16 * 60);
+    expect(c.excedente).toBe(16 * 60 - 528);
+  });
+
+  it("a saída da madrugada de ontem não vira a entrada de hoje", () => {
+    const b: Batida[] = [["2026-11-05", h(7, 30)], ["2026-11-05", h(12)], ["2026-11-05", h(13)], ["2026-11-06", h(0, 30)], ["2026-11-06", h(7, 30)], ["2026-11-06", h(12)]];
+    expect(marcacoesDaJornada(b, "2026-11-06")).toEqual(["07:30", "12:00"]);
+  });
+
+  it("esqueceu de bater a saída: a entrada do dia seguinte não entra como saída", () => {
+    const b: Batida[] = [["2026-11-05", h(7, 30)], ["2026-11-05", h(12)], ["2026-11-05", h(13)], ["2026-11-06", h(7, 30)]];
+    expect(marcacoesDaJornada(b, "2026-11-05")).toEqual(["07:30", "12:00", "13:00"]);
+  });
+
+  it("vale na virada do mês", () => {
+    const b: Batida[] = [["2026-11-30", h(7, 30)], ["2026-11-30", h(12)], ["2026-11-30", h(13)], ["2026-12-01", h(1)]];
+    expect(marcacoesDaJornada(b, "2026-11-30")).toEqual(["07:30", "12:00", "13:00", "01:00"]);
+  });
+
+  it("sem batidas devolve lista vazia", () => {
+    expect(marcacoesDaJornada(undefined, "2026-11-05")).toEqual([]);
+  });
+});
+
 describe("mapearMarcacoesNosCampos", () => {
   it("três batidas: entrada, saída e retorno do intervalo; saída fica de fora", () => {
     expect(mapearMarcacoesNosCampos(["07:32", "12:00", "13:05"])).toEqual({
@@ -62,6 +101,21 @@ describe("mapearMarcacoesNosCampos", () => {
 
   it("cinco batidas: a pessoa voltou para dentro, a saída é a 4ª", () => {
     expect(mapearMarcacoesNosCampos(["07:30", "12:00", "13:00", "17:18", "18:00"]).ponto_saida).toBe("17:18");
+  });
+});
+
+describe("dia sem intervalo", () => {
+  it("primeira é a entrada, última é a saída", () => {
+    expect(mapearMarcacoesNosCampos(["08:00", "14:00"], true)).toEqual({ ponto_entrada: "08:00", ponto_saida: "14:00" });
+    expect(mapearMarcacoesNosCampos(["08:00", "10:00", "10:15", "14:00"], true)).toEqual({ ponto_entrada: "08:00", ponto_saida: "14:00" });
+  });
+  it("uma batida só preenche a entrada", () => {
+    expect(mapearMarcacoesNosCampos(["08:00"], true)).toEqual({ ponto_entrada: "08:00" });
+  });
+  it("não mexe nos campos do intervalo", () => {
+    const r = aplicarMarcacoesSenior({ atual: escala, padrao: escala, marcacoes: ["08:00", "14:00"], editados: vazio, daSenior: vazio, semIntervalo: true });
+    expect(r.valores).toEqual({ ...escala, ponto_entrada: "08:00", ponto_saida: "14:00" });
+    expect([...r.daSenior].sort()).toEqual(["ponto_entrada", "ponto_saida"]);
   });
 });
 

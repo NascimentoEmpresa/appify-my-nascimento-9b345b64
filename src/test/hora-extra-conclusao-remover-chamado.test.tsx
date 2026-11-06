@@ -22,6 +22,7 @@ vi.mock("@/hooks/useHoraExtra", () => ({
   useConcluirHoraExtra: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useEnviarAnexosHoraExtra: () => vi.fn(async () => []),
   buscarInformacoesPrHoraExtra: vi.fn(),
+  usePontoMesHoraExtra: () => ({ refetch: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
 

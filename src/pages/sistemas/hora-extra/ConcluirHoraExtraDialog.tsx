@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, Clock3, ExternalLink, FileCheck2, FileText, Info, LoaderCircle, Pencil, Trash2, UsersRound } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, Clock3, ExternalLink, FileCheck2, FileText, Info, LoaderCircle, Pencil, RefreshCw, Trash2, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -20,7 +20,17 @@ import {
   buscarInformacoesPrHoraExtra,
   useConcluirHoraExtra,
   useEnviarAnexosHoraExtra,
+  usePontoMesHoraExtra,
 } from "@/hooks/useHoraExtra";
+import { mesDaData } from "@/lib/horaExtraLimite";
+import {
+  aplicarMarcacoesSenior,
+  CAMPOS_PONTO,
+  marcacoesDaJornada,
+  ROTULO_CAMPO_PONTO,
+  type CampoPonto,
+  type ValoresPonto,
+} from "@/lib/horaExtraPontoSenior";
 import {
   calcularHoraExtra,
   diaSemana,
@@ -110,8 +120,20 @@ export default function ConcluirHoraExtraDialog({
     ponto_retorno_intervalo_real: "13:00",
     ponto_saida_real: "17:18",
   });
+  // Ponto puxado da Senior (06/11/2026, regra em src/lib/horaExtraPontoSenior.ts).
+  // Ref e não estado: o efeito que aplica as batidas lê editados e, como
+  // dependência, se realimentaria.
+  const editadosRef = useRef(new Set<CampoPonto>());
+  const camposSeniorRef = useRef<ReadonlySet<CampoPonto>>(new Set());
+  const [camposSenior, setCamposSenior] = useState<ReadonlySet<CampoPonto>>(new Set());
+  const [puxadas, setPuxadas] = useState(0);
   useEffect(() => {
     if (!aberto || !solicitacao) return;
+    // Horário já salvo (HE devolvida para ajuste) foi conferido por alguém:
+    // não é trocado sozinho, só pelo botão "Puxar da Senior".
+    editadosRef.current = new Set(CAMPOS_PONTO.filter((c) => solicitacao[`${c}_real` as const]));
+    camposSeniorRef.current = new Set();
+    setCamposSenior(camposSeniorRef.current);
     setHorarios({
       ponto_entrada_real: (solicitacao.ponto_entrada_real || solicitacao.ponto_entrada).slice(0, 5),
       ponto_saida_intervalo_real: (solicitacao.ponto_saida_intervalo_real || solicitacao.ponto_saida_intervalo).slice(
@@ -170,7 +192,83 @@ export default function ConcluirHoraExtraDialog({
   );
   const minutos = calculo.excedente;
   const media = mediaConclusao([...linhas, ...adicionais].map((l) => l.concluido));
+  const pontoMes = usePontoMesHoraExtra(
+    aberto && solicitacao ? mesDaData(solicitacao.data_he) : null,
+    solicitacao?.colaborador_id,
+  );
+  // null enquanto carrega: não mexe nos campos. Sem vínculo/espelho = [].
+  const marcacoesSenior =
+    aberto && solicitacao && pontoMes.data
+      ? marcacoesDaJornada(pontoMes.data.colaborador?.batidas, solicitacao.data_he)
+      : null;
+  const chaveMarcacoes = marcacoesSenior?.join(",") ?? null;
+  useEffect(() => {
+    if (!aberto || !solicitacao || chaveMarcacoes === null) return;
+    const planejado: ValoresPonto = {
+      ponto_entrada: solicitacao.ponto_entrada.slice(0, 5),
+      ponto_saida_intervalo: solicitacao.ponto_saida_intervalo.slice(0, 5),
+      ponto_retorno_intervalo: solicitacao.ponto_retorno_intervalo.slice(0, 5),
+      ponto_saida: solicitacao.ponto_saida.slice(0, 5),
+    };
+    const regra = {
+      padrao: planejado,
+      marcacoes: chaveMarcacoes ? chaveMarcacoes.split(",") : [],
+      editados: new Set(editadosRef.current),
+      daSenior: camposSeniorRef.current,
+      semIntervalo: Boolean(solicitacao.sem_intervalo),
+    };
+    // Quais campos vieram da Senior não depende do valor atual. Fica fora do
+    // updater do setHorarios, que precisa ser puro (o StrictMode roda duas vezes).
+    const novos = aplicarMarcacoesSenior({ ...regra, atual: planejado }).daSenior;
+    camposSeniorRef.current = novos;
+    setCamposSenior(novos);
+    setHorarios((atual) => {
+      const r = aplicarMarcacoesSenior({
+        ...regra,
+        atual: {
+          ponto_entrada: atual.ponto_entrada_real,
+          ponto_saida_intervalo: atual.ponto_saida_intervalo_real,
+          ponto_retorno_intervalo: atual.ponto_retorno_intervalo_real,
+          ponto_saida: atual.ponto_saida_real,
+        },
+      });
+      return {
+        ponto_entrada_real: r.valores.ponto_entrada,
+        ponto_saida_intervalo_real: r.valores.ponto_saida_intervalo,
+        ponto_retorno_intervalo_real: r.valores.ponto_retorno_intervalo,
+        ponto_saida_real: r.valores.ponto_saida,
+      };
+    });
+  }, [aberto, solicitacao, chaveMarcacoes, puxadas]);
   if (!solicitacao) return null;
+  /** O botão: as batidas voltam a valer sobre o que foi digitado, e busca de novo (a batida pode ter acabado de chegar). */
+  const puxarDaSenior = () => {
+    editadosRef.current = new Set();
+    void pontoMes.refetch();
+    setPuxadas((n) => n + 1);
+  };
+  const camposDoDia = CAMPOS_PONTO.filter(
+    (c) => !semIntervalo || (c !== "ponto_saida_intervalo" && c !== "ponto_retorno_intervalo"),
+  );
+  const camposPuxados = camposDoDia.filter((c) => camposSenior.has(c));
+  const camposSemBatida = camposDoDia.filter((c) => !camposSenior.has(c) && !editadosRef.current.has(c));
+  const avisoSenior = pontoMes.isError
+    ? "Não foi possível consultar o ponto da Senior. Preencha os horários manualmente."
+    : !pontoMes.data
+      ? "Buscando o ponto na Senior…"
+      : !pontoMes.data.ponto_disponivel
+        ? "Ponto da Senior indisponível para este colaborador. Preencha os horários manualmente."
+        : [
+            camposPuxados.length
+              ? `Puxado da Senior: ${camposPuxados.map((c) => ROTULO_CAMPO_PONTO[c]).join(", ")}.`
+              : "",
+            camposSemBatida.length
+              ? `Sem batida na Senior: ${camposSemBatida.map((c) => ROTULO_CAMPO_PONTO[c]).join(", ")}. Preencha manualmente.`
+              : "",
+            camposPuxados.length && !camposSemBatida.length ? "Confira e ajuste se precisar." : "",
+          ]
+            .filter(Boolean)
+            .join(" ") || "Horários já informados mantidos. Use o botão para trocar pelas batidas da Senior.";
   const mudarHorario = (campo: keyof typeof horarios, valor: string) =>
     setHorarios((atual) =>
       semIntervalo && campo === "ponto_entrada_real"
@@ -439,11 +537,27 @@ export default function ConcluirHoraExtraDialog({
       toast.error(mensagemErro(e, "Não foi possível concluir a HE."));
     }
   };
-  const inputHora = (rotulo: string, campo: keyof typeof horarios, desabilitado = false) => (
-    <Campo rotulo={rotulo}>
-      <Input type="time" disabled={desabilitado} value={horarios[campo]} onChange={(e) => mudarHorario(campo, e.target.value)} />
-    </Campo>
-  );
+  const inputHora = (rotulo: string, campoPonto: CampoPonto, desabilitado = false) => {
+    const campo = `${campoPonto}_real` as keyof typeof horarios;
+    const daSenior = camposSenior.has(campoPonto);
+    return (
+      <Campo rotulo={rotulo}>
+        <Input
+          type="time"
+          disabled={desabilitado}
+          value={horarios[campo]}
+          title={daSenior ? "Puxado do ponto da Senior" : undefined}
+          className={cn(daSenior && "border-emerald-300 bg-emerald-50")}
+          onChange={(e) => {
+            editadosRef.current.add(campoPonto);
+            camposSeniorRef.current = new Set([...camposSeniorRef.current].filter((c) => c !== campoPonto));
+            setCamposSenior(camposSeniorRef.current);
+            mudarHorario(campo, e.target.value);
+          }}
+        />
+      </Campo>
+    );
+  };
   return (
     <>
       <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
@@ -491,22 +605,47 @@ export default function ConcluirHoraExtraDialog({
               <SecaoForm
                 titulo="2. Horário de ponto efetivo"
                 subtitulo={
-                  "Informe os horários que foram efetivamente registrados no seu ponto " +
-                  "no dia da realização da hora extra."
+                  "Os horários vêm do seu ponto na Senior no dia da hora extra. " +
+                  "O que não tiver batida fica para preencher manualmente."
                 }
                 icone={<Clock3 className="h-5 w-5" />}
               >
                 <div className="grid gap-3 lg:grid-cols-[1.4fr_.9fr_.55fr]">
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-4">
-                    {inputHora("Entrada", "ponto_entrada_real")}
-                    {inputHora("Saída (intervalo)", "ponto_saida_intervalo_real", semIntervalo)}
-                    {inputHora("Retorno (intervalo)", "ponto_retorno_intervalo_real", semIntervalo)}
-                    {inputHora("Saída", "ponto_saida_real")}
+                    {inputHora("Entrada", "ponto_entrada")}
+                    {inputHora("Saída (intervalo)", "ponto_saida_intervalo", semIntervalo)}
+                    {inputHora("Retorno (intervalo)", "ponto_retorno_intervalo", semIntervalo)}
+                    {inputHora("Saída", "ponto_saida")}
                     {semIntervalo && (
                       <p className="col-span-2 text-xs font-medium text-blue-700 md:col-span-4">
                         Sem intervalo neste dia.
                       </p>
                     )}
+                    <div className="col-span-2 flex items-start justify-between gap-2 md:col-span-4">
+                      <p
+                        className={cn(
+                          "text-[11px]",
+                          camposSemBatida.length || pontoMes.isError || pontoMes.data?.ponto_disponivel === false
+                            ? "text-amber-700"
+                            : camposPuxados.length
+                              ? "text-emerald-700"
+                              : "text-slate-500",
+                        )}
+                      >
+                        {avisoSenior}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-2 text-[11px]"
+                        disabled={pontoMes.isFetching}
+                        onClick={puxarDaSenior}
+                      >
+                        <RefreshCw className={cn("mr-1 h-3 w-3", pontoMes.isFetching && "animate-spin")} />
+                        Puxar da Senior
+                      </Button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-blue-50 p-3">
                     <div className="col-span-2 text-xs font-semibold text-blue-700">
@@ -612,7 +751,7 @@ export default function ConcluirHoraExtraDialog({
                   Importante
                 </h3>
                 <ul className="list-disc space-y-2 pl-5">
-                  <li>Informe os horários exatamente como registrados no seu ponto.</li>
+                  <li>Os horários vêm do seu ponto na Senior. Sem batida, informe exatamente como registrado no ponto.</li>
                   <li>
                     {jornadaCalculo ? (
                       <>A hora extra é <strong>calculada</strong>: conta só o tempo que passar da jornada da escala.</>
