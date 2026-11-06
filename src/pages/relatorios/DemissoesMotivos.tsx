@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { classificarLoteRelatos, useDemissoesLinhas, type FiltroRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import {
-  AGUARDANDO_IA, contarMotivos, contratoDe, cruzarContratoMotivo, dadosEmpilhados, DEMAIS, DIMENSOES, filtrarDetalhe,
+  AGUARDANDO_IA, contarMotivos, contratoDe, contratosPorMotivo, cruzarContratoMotivo, type ContratosDoMotivo, dadosEmpilhados, DEMAIS, DIMENSOES, filtrarDetalhe,
   NAO_INFORMADO, pendentesIA, tituloDetalhe, type DimensaoMotivo, type FiltroDetalhe, type LinhaDemissao,
 } from "@/lib/relatorios/demissoesMotivos";
 import { Vazio } from "./componentes";
@@ -48,6 +48,7 @@ export default function DemissoesMotivos({ filtro }: { filtro: FiltroRelatorio }
   const emp = useMemo(() => dadosEmpilhados(cz), [cz]);
   const visiveis = emp.series.filter((s) => s !== DEMAIS);
   const categorias = useMemo(() => contarMotivos(linhas, "categoria_ia"), [linhas]);
+  const contratosDaCategoria = useMemo(() => contratosPorMotivo(linhas, "categoria_ia", 10), [linhas]);
   const ia = useClassificacao(linhas, q.isFetching);
 
   const abrir = (f: Omit<FiltroDetalhe, "dim" | "visiveis"> & { dim?: DimensaoMotivo }) =>
@@ -125,7 +126,11 @@ export default function DemissoesMotivos({ filtro }: { filtro: FiltroRelatorio }
             <BarChart data={categorias.map((c) => ({ ...c, curto: curto(c.nome, 40) }))} layout="vertical" margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
               <XAxis type="number" hide allowDecimals={false} />
               <YAxis type="category" dataKey="curto" width={250} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v) => [v, "Solicitações"]} labelFormatter={(_, p) => p?.[0]?.payload?.nome ?? ""} />
+              <Tooltip content={({ active, payload }) => {
+                const c = payload?.[0]?.payload as { nome: string; n: number } | undefined;
+                if (!active || !c) return null;
+                return <TooltipCategoria nome={c.nome} n={c.n} contratos={contratosDaCategoria.get(c.nome)} />;
+              }} />
               <Bar dataKey="n" fill="#7c3aed" radius={[0, 3, 3, 0]} label={{ position: "right", fontSize: 11 }} cursor="pointer"
                 onClick={(d: { payload?: { nome?: string } }) => d?.payload?.nome && abrir({ dim: "categoria_ia", motivo: d.payload.nome, contrato: null })} />
             </BarChart>
@@ -136,6 +141,28 @@ export default function DemissoesMotivos({ filtro }: { filtro: FiltroRelatorio }
 
       <DetalheDialog linhas={linhas} filtro={detalhe} onClose={() => setDetalhe(null)} />
     </>
+  );
+}
+
+// ---- Tooltip de "Motivos do relato": de quais contratos vem cada motivo ------------
+
+function TooltipCategoria({ nome, n, contratos }: { nome: string; n: number; contratos?: ContratosDoMotivo }) {
+  return (
+    <div className="max-w-[360px] rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+      <p className="font-semibold">{nome}</p>
+      <p className="text-violet-700 dark:text-violet-300">Solicitações: {n}</p>
+      {contratos && contratos.itens.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 border-t border-border pt-1.5">
+          {contratos.itens.map((c) => (
+            <li key={c.contrato} className="flex justify-between gap-3">
+              <span className="truncate">{c.contrato}</span>
+              <span className="shrink-0 font-medium tabular-nums">{c.n}</span>
+            </li>
+          ))}
+          {contratos.outros > 0 && <li className="text-muted-foreground">+{contratos.outros} {contratos.outros === 1 ? "outro" : "outros"}</li>}
+        </ul>
+      )}
+    </div>
   );
 }
 

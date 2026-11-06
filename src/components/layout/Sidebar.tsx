@@ -101,6 +101,8 @@ import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
 import { selNovoVigente } from "@/lib/selNovo";
 import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { ChevronLeft, PanelLeft } from "lucide-react";
+// Ícones da barra de módulos (06/11/2026) — ver ICONE_DO_MODULO.
+import { Mailbox, BookOpenCheck, ReceiptText, UserSearch, Tv, Server, MonitorCog, LineChart, Activity, FileChartColumn, UsersRound } from "lucide-react";
 
 interface NavItem {
   label: string;
@@ -1522,6 +1524,57 @@ export const NAV_MODULOS_ORIGEM: ModuleDef[] = [...erpModules, buildPlanoAcoesMo
 export const NAV_MODULOS: ModuleDef[] = NAV_MODULOS_ORIGEM;
 export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
 
+/**
+ * Ícone de cada módulo NA BARRA LATERAL (06/11/2026, pedido do Pablo: "ícones
+ * empresariais bonitos em cada módulo"). O modelo 2 do Iury (SIS-2026-0772)
+ * tinha tirado o ícone da barra expandida; ele volta, num quadradinho.
+ *
+ * Mapa à parte, e não troca do `icon` dos ModuleDef, de propósito: o `icon`
+ * do catálogo também desenha o Início ("Todos os módulos") e outras telas, e
+ * aqui só se quer afinar a leitura da barra — vários módulos repetiam ícone
+ * (HardHat em SST e Encarregados, BarChart3 em BI e Relatórios). Módulo fora
+ * do mapa (novo, ou criado pela organização salva) cai no `icon` dele.
+ */
+const ICONE_DO_MODULO: Record<string, LucideIcon> = {
+  licitacoes: Gavel,
+  controladoria_orc: Calculator,
+  suprimentos: ShoppingCart,
+  financeiro: Wallet,
+  malote: Mailbox,
+  contabil: BookOpenCheck,
+  fiscal: ReceiptText,
+  rh: UsersRound,
+  recrutamento: UserSearch,
+  encarregados: ClipboardCheck,
+  treinamentos: GraduationCap,
+  tvs: Tv,
+  ti: Server,
+  sistemas: MonitorCog,
+  central_servicos: Headset,
+  comite_etica: ShieldAlert,
+  presidencia: Crown,
+  whatsapp: MessageCircle,
+  juridico: Scale,
+  bi: LineChart,
+  operacional: Activity,
+  sst: HardHat,
+  diretoria: Building2,
+  relatorios: FileChartColumn,
+  organograma: Network,
+  "plano-acoes": Target,
+};
+const iconeDoModulo = (mod: ModuleDef): LucideIcon => ICONE_DO_MODULO[mod.id] ?? mod.icon;
+
+/** Quadradinho do ícone de um item de primeiro nível. `on`: "ativo" (rota
+ *  atual, laranja cheio), "aberto" (só o painel aberto nele) ou nada. */
+function Tile({ icon: Icon, on, grande }: { icon: LucideIcon; on?: "ativo" | "aberto" | false | ""; grande?: boolean }) {
+  return (
+    <span className={cn("sb-tile", grande && "sb-tile-lg")} data-on={on || undefined} aria-hidden>
+      <Icon className={grande ? "h-5 w-5" : "h-[15px] w-[15px]"} strokeWidth={2} />
+    </span>
+  );
+}
+
 interface SidebarProps {
   collapsed: boolean;
   mobileOpen?: boolean;
@@ -1691,6 +1744,25 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     return () => document.removeEventListener("mousedown", fora);
   }, [painel, telaGrande]);
 
+  // Saída animada do painel (06/11/2026): ao fechar, o último módulo fica
+  // montado ~180 ms com data-estado="fechando" para a animação de saída
+  // tocar — desmontar na hora cortaria no primeiro frame. Depende do ID, e
+  // não do objeto: visibleModules é recriado a cada notificação que chega.
+  const [moduloSaindo, setModuloSaindo] = useState<ModuleDef | null>(null);
+  const ultimoAberto = useRef<ModuleDef | null>(null);
+  ultimoAberto.current = moduloAberto ?? ultimoAberto.current;
+  const idAberto = moduloAberto?.id ?? null;
+  useEffect(() => {
+    if (idAberto) { setModuloSaindo(null); return; }
+    const saindo = ultimoAberto.current;
+    if (!saindo) return;
+    ultimoAberto.current = null;
+    setModuloSaindo(saindo);
+    const t = window.setTimeout(() => setModuloSaindo(null), 180);
+    return () => window.clearTimeout(t);
+  }, [idAberto]);
+  const moduloNoPainel = moduloAberto ?? moduloSaindo;
+
   const focarPainel = () => window.setTimeout(() => primeiroLinkRef.current?.focus(), 0);
 
   // No mobile a sidebar nunca aparece colapsada (sempre full); colapso é só desktop.
@@ -1741,7 +1813,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           end
           className={({ isActive }) =>
             cn(
-              "sb-item flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
+              "sb-item flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
               isActive
                 ? "sb-on bg-sidebar-accent text-white"
                 : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
@@ -1751,8 +1823,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         >
           {({ isActive }) => (
             <>
-              {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-              <Home className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+              {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+              <Tile icon={Home} on={isActive && "ativo"} />
               {!collapsed && <span>Início</span>}
             </>
           )}
@@ -1765,7 +1837,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           to="/app/novidades"
           className={({ isActive }) =>
             cn(
-              "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
+              "sb-item mt-0.5 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
               isActive
                 ? "sb-on bg-sidebar-accent text-white"
                 : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
@@ -1776,8 +1848,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         >
           {({ isActive }) => (
             <>
-              {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-              <Megaphone className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+              {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+              <Tile icon={Megaphone} on={isActive && "ativo"} />
               {!collapsed && <span className="flex-1">Novidades do Sistema</span>}
               {novidadesNaoLidas > 0 && (
                 collapsed
@@ -1798,7 +1870,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             to="/app/aprovacoes/inbox"
             className={({ isActive }) =>
               cn(
-                "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
+                "sb-item mt-0.5 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
                 isActive
                   ? "sb-on bg-sidebar-accent text-white"
                   : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
@@ -1808,8 +1880,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           >
             {({ isActive }) => (
               <>
-                {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                <Inbox className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+                {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+                <Tile icon={Inbox} on={isActive && "ativo"} />
                 {!collapsed && (
                   <>
                     <span className="flex-1">Aguardando Aprovação</span>
@@ -1828,12 +1900,13 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
 
       {/* Section label */}
       {!collapsed && (
-        <p className="relative z-10 mt-4 px-5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted">
-          Módulos do ERP
+        <p className="relative z-10 mt-4 flex items-center gap-2 px-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted">
+          <span>Módulos do ERP</span>
+          <span aria-hidden className="h-px flex-1 bg-gradient-to-r from-sidebar-border to-transparent" />
         </p>
       )}
 
-      <nav className="sb-scroll relative z-10 mt-2 flex-1 overflow-y-auto scroll-elegant px-2 py-1">
+      <nav className="sb-scroll relative z-10 mt-2 flex-1 overflow-y-auto px-2 py-1">
         {!telaGrande && moduloAberto ? (
           <ListaSubmodulosMobile mod={moduloAberto} onVoltar={() => setPainel(null)} />
         ) : (
@@ -1853,14 +1926,16 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         )}
       </nav>
 
-      {telaGrande && moduloAberto && (
+      {telaGrande && moduloNoPainel && (
         <PainelSubmodulos
-          mod={moduloAberto}
+          mod={moduloNoPainel}
+          ativo={moduloNoPainel.id === activeModuleId}
+          fechando={!moduloAberto}
           primeiroLinkRef={primeiroLinkRef}
           onMouseEnter={cancelarTimer}
           onMouseLeave={fecharComAtraso}
           onFechar={() => {
-            const id = moduloAberto.id;
+            const id = moduloNoPainel.id;
             setPainel(null);
             window.setTimeout(() => asideRef.current?.querySelector<HTMLButtonElement>(`[data-modulo="${CSS.escape(id)}"]`)?.focus(), 0);
           }}
@@ -1880,7 +1955,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           to={!canSee("/app/administracao") && canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados" : "/app/administracao"}
           className={({ isActive }) =>
             cn(
-              "sb-item flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
+              "sb-item flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
               isActive
                 ? "sb-on bg-sidebar-accent text-white"
                 : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
@@ -1890,17 +1965,17 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         >
           {({ isActive }) => (
             <>
-              {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-              <Settings className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
+              {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+              <Tile icon={Settings} on={isActive && "ativo"} />
               {!collapsed && <span>Configurações do ERP</span>}
             </>
           )}
         </NavLink>
         )}
         {!collapsed && (
-          <div className="mt-2 flex items-center gap-2.5 rounded-md bg-sidebar-accent/40 px-2.5 py-2">
-            <span className="sb-live h-2 w-2 rounded-full bg-success" />
-            <span className="text-[11px] font-medium text-sidebar-muted">Ambiente Produção</span>
+          <div className="mt-2 flex items-center gap-2.5 rounded-lg border border-white/5 bg-gradient-to-r from-success/10 to-sidebar-accent/30 px-2.5 py-2">
+            <span className="sb-live h-2 w-2 rounded-full bg-success shadow-[0_0_8px_hsl(var(--success)/0.8)]" />
+            <span className="text-[11px] font-medium text-sidebar-foreground/75">Ambiente Produção</span>
           </div>
         )}
       </div>
@@ -1923,9 +1998,13 @@ function useTelaGrande() {
 }
 
 /**
- * Linha do módulo na barra. Expandida: só o nome, sem ícone (modelo 2 do
- * Iury); recolhida (172 px): só o ícone, com o nome no title. Passar o mouse
- * ou clicar abre o painel de submódulos à direita; Enter ou → abrem pelo teclado.
+ * Linha do módulo na barra. Passar o mouse ou clicar abre o painel de
+ * submódulos à direita; Enter ou → abrem pelo teclado.
+ *
+ * 06/11/2026: o ícone (ICONE_DO_MODULO) voltou também na barra EXPANDIDA,
+ * num quadradinho à esquerda do nome — o modelo 2 do Iury (SIS-2026-0772)
+ * tinha só o nome, e o Pablo pediu ícone em cada módulo. Recolhida (172 px)
+ * segue só o ícone, com o nome no title.
  */
 function ModuloLinha({
   mod, collapsed, active, aberto, onClick, onMouseEnter, onMouseLeave, onAbrirPeloTeclado,
@@ -1939,7 +2018,6 @@ function ModuloLinha({
   onMouseLeave: () => void;
   onAbrirPeloTeclado: () => void;
 }) {
-  const Icon = mod.icon;
   const disabled = mod.status === "soon";
   // Bolinha no módulo quando algum submódulo tem novidade: o painel fechado
   // não pode esconder que há algo esperando.
@@ -1960,22 +2038,23 @@ function ModuloLinha({
       }}
       title={collapsed ? mod.label : undefined}
       className={cn(
-        "sb-item group mb-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold",
+        "sb-item group mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm font-semibold",
         active || aberto
           ? "sb-on bg-sidebar-accent text-white"
           : disabled
             ? "cursor-not-allowed text-sidebar-muted/70"
-            : "text-white/90 hover:bg-sidebar-accent/60 hover:text-white",
+            : "text-white/85 hover:bg-white/[0.05] hover:text-white",
         collapsed && "justify-center px-2",
       )}
     >
-      {active && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-      {collapsed ? (
-        <span className="sb-ic relative shrink-0">
-          <Icon className={cn("h-4 w-4", active && "text-accent", disabled && "opacity-60")} />
-          {modDot && <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse-soft rounded-full bg-red-500 ring-2 ring-sidebar" />}
-        </span>
-      ) : (
+      {active && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+      <span className={cn("relative shrink-0", disabled && "opacity-60")}>
+        <Tile icon={iconeDoModulo(mod)} on={active ? "ativo" : aberto ? "aberto" : false} />
+        {modDot && collapsed && (
+          <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse-soft rounded-full bg-red-500 ring-2 ring-sidebar" />
+        )}
+      </span>
+      {!collapsed && (
         <>
           <span className="min-w-0 flex-1 truncate">{mod.label}</span>
           {modDot && <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />}
@@ -1985,7 +2064,7 @@ function ModuloLinha({
           {disabled ? (
             <span className="rounded bg-sidebar-border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-sidebar-muted">Em breve</span>
           ) : (
-            <ChevronRight className={cn("sb-chev h-3.5 w-3.5 text-sidebar-muted", aberto && "text-accent")} />
+            <ChevronRight className={cn("sb-chev h-3.5 w-3.5 shrink-0 text-sidebar-muted", aberto && "text-accent")} />
           )}
         </>
       )}
@@ -1993,11 +2072,38 @@ function ModuloLinha({
   );
 }
 
-/** Painel à direita da barra (desktop): título do módulo, categorias e submódulos, sem ícones. */
+/** Quantas telas o módulo mostra para ESTA pessoa (os grupos já chegam filtrados pelo acesso). */
+const totalDeTelas = (mod: ModuleDef) => (mod.groups ?? []).reduce((n, g) => n + g.items.length, 0);
+
+/** Cabeçalho do módulo no painel/lista: ícone grande, nome, descrição e contagem. */
+function CabecalhoModulo({ mod, ativo }: { mod: ModuleDef; ativo: boolean }) {
+  const total = totalDeTelas(mod);
+  return (
+    <div className="sb-cai flex items-center gap-3" style={atraso(0)}>
+      <Tile icon={iconeDoModulo(mod)} on={ativo ? "ativo" : "aberto"} grande />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-display text-base font-bold leading-tight text-white">{mod.label}</p>
+        <p className="mt-0.5 truncate text-[11px] text-sidebar-muted" title={mod.description}>
+          {total} {total === 1 ? "tela" : "telas"}
+          {mod.description ? ` · ${mod.description}` : ""}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Painel à direita da barra (desktop): cabeçalho do módulo, categorias e
+ * submódulos. Entra deslizando de trás da barra (.sb-flyout, CSS puro) e o
+ * conteúdo cai em cascata; trocar de módulo com ele aberto não refaz o
+ * deslize, só a cascata (key no conteúdo). `fechando` = saída tocando.
+ */
 function PainelSubmodulos({
-  mod, primeiroLinkRef, onMouseEnter, onMouseLeave, onFechar,
+  mod, ativo, fechando, primeiroLinkRef, onMouseEnter, onMouseLeave, onFechar,
 }: {
   mod: ModuleDef;
+  ativo: boolean;
+  fechando: boolean;
   primeiroLinkRef: React.RefObject<HTMLAnchorElement>;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -2007,18 +2113,22 @@ function PainelSubmodulos({
     <div
       role="region"
       aria-label={`Submódulos de ${mod.label}`}
+      aria-hidden={fechando || undefined}
+      data-estado={fechando ? "fechando" : "aberto"}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onKeyDown={(e) => {
         if (e.key === "Escape" || e.key === "ArrowLeft") { e.preventDefault(); onFechar(); }
       }}
-      className="sb-flyout absolute inset-y-0 left-full z-40 flex w-[264px] flex-col border-x border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl"
+      className="sb-flyout absolute inset-y-0 left-full z-40 flex w-[272px] flex-col border-r border-sidebar-border text-sidebar-foreground"
     >
-      <div className="border-b border-sidebar-border px-5 pb-3 pt-5">
-        <p className="font-display text-base font-bold leading-tight text-white">{mod.label}</p>
-      </div>
-      <div className="flex-1 overflow-y-auto scroll-elegant px-3 py-3">
-        <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} />
+      <div key={mod.id} className="flex min-h-0 flex-1 flex-col">
+        <div className="border-b border-sidebar-border px-4 pb-4 pt-5">
+          <CabecalhoModulo mod={mod} ativo={ativo} />
+        </div>
+        <div className="flex-1 overflow-y-auto scroll-elegant px-3 py-3">
+          <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} desativado={fechando} />
+        </div>
       </div>
     </div>
   );
@@ -2026,33 +2136,65 @@ function PainelSubmodulos({
 
 /** Celular (drawer): a lista de submódulos toma o lugar da lista de módulos. */
 function ListaSubmodulosMobile({ mod, onVoltar }: { mod: ModuleDef; onVoltar: () => void }) {
+  // A lista de módulos herdava a rolagem: abrir um módulo do fim da lista
+  // deixava o "‹ Voltar" e o cabeçalho escondidos lá em cima.
+  const voltarRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { voltarRef.current?.scrollIntoView({ block: "nearest" }); }, [mod.id]);
   return (
     <div>
       <button
+        ref={voltarRef}
         type="button"
         onClick={onVoltar}
-        className="sb-item mb-2 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-white/80 hover:bg-sidebar-accent/60 hover:text-white"
+        className="sb-item mb-3 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-white/80 hover:bg-white/[0.05] hover:text-white"
       >
         <ChevronLeft className="h-4 w-4" /> Voltar
       </button>
-      <p className="mb-2 px-3 font-display text-base font-bold leading-tight text-white">{mod.label}</p>
+      <div className="mb-3 px-2">
+        <CabecalhoModulo mod={mod} ativo={false} />
+      </div>
       <GruposDoModulo mod={mod} />
     </div>
   );
 }
 
-function GruposDoModulo({ mod, primeiroLinkRef }: { mod: ModuleDef; primeiroLinkRef?: React.RefObject<HTMLAnchorElement> }) {
+/** Passo da cascata, limitado: Licitações tem ~30 submódulos e não pode
+ *  levar um segundo e meio para terminar de aparecer. */
+const PASSO_MAX = 14;
+const passo = (n: number) => Math.min(n, PASSO_MAX);
+/**
+ * Atraso de entrada já como string de CSS. NÃO trocar por `--i` + calc():
+ * um `--i` inválido (ex.: "3px") invalida o calc inteiro e o navegador cai
+ * para 0 s sem erro no console — todos entram juntos e nada denuncia.
+ * Passo de 40 ms contra 340 ms de duração: dá para ver a cascata descer.
+ */
+const atraso = (n: number): React.CSSProperties => ({ animationDelay: `${30 + n * 40}ms` });
+
+function GruposDoModulo({ mod, primeiroLinkRef, desativado }: { mod: ModuleDef; primeiroLinkRef?: React.RefObject<HTMLAnchorElement>; desativado?: boolean }) {
   const location = useLocation();
   const rotasDoModulo = useMemo(() => (mod.groups ?? []).flatMap((g) => g.items.map((i) => i.to)), [mod.groups]);
   const rotaAcesa = rotaMaisProxima(location.pathname, rotasDoModulo);
   const primeiraRota = mod.groups?.[0]?.items[0]?.to;
+  // Posição de cada grupo numa contagem contínua do módulo inteiro (o
+  // cabeçalho conta 1, como uma linha): a cascata corre de cima para baixo
+  // de verdade, em vez de cada grupo recomeçar do zero. O 1 inicial é o
+  // cabeçalho do módulo (CabecalhoModulo, atraso 0).
+  const bases = useMemo(() => {
+    let cursor = 1;
+    return (mod.groups ?? []).map((g) => { const b = cursor; cursor += g.items.length + 1; return b; });
+  }, [mod.groups]);
 
   return (
     <>
       {(mod.groups ?? []).map((group, gi) => (
-        <div key={`${gi}-${group.label}`} className="mb-3">
-          <p className="truncate px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted" title={group.label}>
-            {group.label}
+        <div key={`${gi}-${group.label}`} className="mb-4 last:mb-1">
+          <p
+            className="sb-cai flex items-center gap-2 truncate px-2 pb-1.5 text-[11.5px] font-semibold uppercase tracking-[0.1em] text-sidebar-muted"
+            style={atraso(passo(bases[gi]))}
+            title={group.label}
+          >
+            <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent/80" />
+            <span className="truncate">{group.label}</span>
           </p>
           <ul className="space-y-0.5">
             {group.items.map((item, ii) => {
@@ -2066,19 +2208,31 @@ function GruposDoModulo({ mod, primeiroLinkRef }: { mod: ModuleDef; primeiroLink
                     ref={ref}
                     to={item.to}
                     end
+                    tabIndex={desativado ? -1 : undefined}
+                    style={atraso(passo(bases[gi] + 1 + ii))}
                     className={cn(
-                      "sb-item flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-semibold",
-                      acesa ? "sb-on bg-sidebar-accent text-white" : "text-white/80 hover:bg-sidebar-accent/50 hover:text-white",
+                      "sb-item sb-cai flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px]",
+                      acesa
+                        ? "sb-on bg-sidebar-accent font-semibold text-white"
+                        : "font-medium text-white/75 hover:bg-white/[0.05] hover:text-white",
                     )}
                   >
-                    {acesa && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+                    {acesa && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
+                    <span className="sb-pt" aria-hidden />
                     {/* Quebra em duas linhas em vez de cortar com reticências:
                         "Minhas Solicitações de Ma…" esconde justamente a
                         palavra que distingue um item do outro. */}
                     <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
                     {item.dot && <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />}
                     {item.badge && (
-                      <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">{item.badge}</span>
+                      <span
+                        className={cn(
+                          "rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                          item.badge === "Novo" ? "bg-accent/15 text-accent" : "bg-white/10 text-sidebar-foreground/70",
+                        )}
+                      >
+                        {item.badge}
+                      </span>
                     )}
                   </NavLink>
                 </li>
@@ -2090,7 +2244,6 @@ function GruposDoModulo({ mod, primeiroLinkRef }: { mod: ModuleDef; primeiroLink
     </>
   );
 }
-
 
 /**
  * Item aceso = a rota MAIS LONGA do módulo inteiro que casa com a URL.
