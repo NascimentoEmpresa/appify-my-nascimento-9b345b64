@@ -181,6 +181,9 @@ export interface CriarMovimentacaoInput {
   status?: StatusDebito;
   banco_saida_id: string;
   banco_entrada_id: string;
+  // SIS-2026-0815: centro de custo (contrato) de cada lado da movimentação.
+  contrato_saida_id?: string | null;
+  contrato_entrada_id?: string | null;
 }
 
 export function useCriarMovimentacao() {
@@ -198,6 +201,8 @@ export function useCriarMovimentacao() {
         _status: input.status ?? "pendente",
         _banco_saida_id: input.banco_saida_id,
         _banco_entrada_id: input.banco_entrada_id,
+        _contrato_saida_id: input.contrato_saida_id ?? null,
+        _contrato_entrada_id: input.contrato_entrada_id ?? null,
       });
       if (error) throw error;
       return data as string;
