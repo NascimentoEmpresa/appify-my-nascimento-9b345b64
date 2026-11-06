@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  diasDeAtraso, lerPlanilhaPops, periodicidadeDoTexto, resolvidaComAtraso, resumirPorPessoa, separarTarefas, situacaoDaTarefa, type TarefaItem,
+  diasDeAtraso, lerPlanilhaPops, normalizarTarefas, periodicidadeDoTexto, resolvidaComAtraso, resumirPorPessoa, separarTarefas, situacaoDaTarefa, type TarefaItem,
 } from "@/lib/organograma/tarefas";
 
 const HOJE = "2026-11-10";
 const tarefa = (x: Partial<TarefaItem> = {}): TarefaItem => ({ id: "1", titulo: "T", periodicidade: "diaria", vencimento: HOJE, status: "pendente", responsavel_nome: "Ana", user_id: "a", ...x });
+
+describe("resposta fora do formato não derruba o ERP (PR #1147)", () => {
+  it.each([[[]], [null], [undefined], ["x"], [{}], [{ itens: null }], [{ itens: {} }]])("%j vira lista vazia", (r) => {
+    const n = normalizarTarefas(r);
+    expect(n.itens).toEqual([]);
+    expect(n.hoje).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(() => separarTarefas(n.itens, n.hoje)).not.toThrow();
+  });
+  it("resposta certa passa inteira", () => {
+    const n = normalizarTarefas<{ ve_todos: boolean }>({ hoje: HOJE, itens: [tarefa()], ve_todos: true });
+    expect(n).toMatchObject({ hoje: HOJE, ve_todos: true });
+    expect(n.itens).toHaveLength(1);
+  });
+});
 
 describe("situação", () => {
   it("vencida, de hoje e próxima", () => {
