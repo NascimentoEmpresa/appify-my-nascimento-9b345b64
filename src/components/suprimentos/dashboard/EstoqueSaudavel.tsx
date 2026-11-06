@@ -733,7 +733,7 @@ export function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] })
                   <p className="text-slate-600">Físico na prateleira: {formatarNumero(payload[0].payload.fisico)}</p>
                   <p className="text-slate-600">Já reservado: {formatarNumero(payload[0].payload.reservado)}</p>
                   <p className="text-slate-600">Disponível para novo pedido: {formatarNumero(payload[0].payload.disponivel)}</p>
-                  <p className="font-semibold text-amber-800">Aguardando entrega: {formatarNumero(payload[0].payload.em_transito)}</p>
+                  <p className="font-semibold text-amber-800">Aguardando entrega: {payload[0].payload.em_transito == null ? "—" : Number(payload[0].payload.em_transito).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</p>
                   <p className="font-semibold text-violet-700">Aguardando compra: {payload[0].payload.aguardando_compra == null ? "—" : Number(payload[0].payload.aguardando_compra).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</p>
                   <p className="text-slate-600">Mínimo para pedir: {formatarNumero(payload[0].payload.minimo)}</p>
                   <p className="text-slate-600">Máximo saudável: {formatarNumero(payload[0].payload.alvo)}</p>
