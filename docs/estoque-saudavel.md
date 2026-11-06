@@ -84,6 +84,44 @@ reposição: receber um pedido em três caixas é um reabastecimento, não três
 
 ## A decisão mais importante: a I.A não calcula quantidade
 
+### Previsão de abastecimento por tamanho (Cássio, 06/11/2026)
+
+A aba abre com **Histórico usado: últimos 3 meses**, incluindo o mês atual
+até hoje; o seletor continua permitindo outras janelas. A janela é a base do
+giro, não o prazo que se quer cobrir: a reposição cobre o prazo de entrega +
+intervalo entre compras das premissas e o estoque de segurança. Alvo aprovado
+manualmente continua prevalecendo sobre a sugestão calculada.
+
+Abaixo da prateleira há a **Previsão de abastecimento por item e tamanho**,
+com tamanhos nas colunas e, para cada material:
+
+- giro médio mensal (demanda dos pedidos de contratos ativos, inclusive o
+  que o estoque não conseguiu atender);
+- disponível, já descontadas as reservas;
+- comprado **aguardando entrega**;
+- alvo saudável e **comprar para repor**, descontando disponível e trânsito;
+- solicitações do Malote **aguardando compra**, para comparar com a necessidade
+  antes de abrir outra solicitação. Não são entrega confirmada.
+
+A grade tem busca, páginas de 10 materiais e exportação CSV (ação `exportar`
+do menu `sup_estoque_saudavel`). Não fica limitada aos 12 itens do gráfico.
+Por padrão mostra reposição, entrega ou compra pendente; desmarcando o filtro
+também aparecem os demais itens com saldo ou demanda. Itens fora do plano ou
+marcados para liquidação não viram recomendação de reposição. `—` indica
+combinação ausente; zero é uma quantidade conhecida.
+
+O trânsito considera somente pedidos enviados, aguardando entrega ou com
+entrega parcial, abatendo as quantidades de recebimentos finalizados
+(`recebido`/`recebido_com_ocorrencia`). Não conta conferência em andamento ou
+cancelada, e recebimento a mais nunca produz trânsito negativo. Aplica empresa,
+categoria e contrato selecionados. Um filtro de almoxarifado limita o saldo;
+compras e solicitações não têm destino de almoxarifado e são identificadas
+na tela como abrangendo a empresa.
+
+Migration: `20261106013000_sup_estoque_saudavel_transito_recebimentos.sql`,
+aplicada pelo fluxo automático após merge na `main`. Não escreve em saldo,
+solicitações, pedidos de compra ou premissas gravadas.
+
 A quantidade sai de **fórmula de reposição, no banco de dados**, igual toda vez
 que rodar:
 
