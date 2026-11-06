@@ -97,10 +97,11 @@ import { CreditCard, ListTree } from "lucide-react";
 import { Network, Cpu } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
 import { selNovoVigente } from "@/lib/selNovo";
-import { agruparPorDepartamento } from "@/lib/departamentosMenu";
+import { useMenuLateral } from "@/hooks/useMenuLateral";
+import { ChevronLeft, PanelLeft } from "lucide-react";
 
 interface NavItem {
   label: string;
@@ -951,6 +952,10 @@ const sistemasModule: ModuleDef = {
         // encarregado) e de demitidos a excluir. A bolinha vem da
         // minhas_pendencias_aprovacao (mig 20261006000010).
         { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
+        // SIS-2026-0772 (mig 20261105040000): organizar o menu lateral — só o
+        // lugar das telas, nunca a permissão. Menu "menu_lateral", módulo
+        // próprio no banco para não vir de brinde com o perfil de outro módulo.
+        { label: "Organizar Menu Lateral", to: "/app/sistemas/menu-lateral", icon: PanelLeft },
       ],
     },
     {
@@ -1510,10 +1515,11 @@ const erpModules: ModuleDef[] = [
  * único é a única forma de isso não se repetir.
  */
 export const NAV_MODULOS_ORIGEM: ModuleDef[] = [...erpModules, buildPlanoAcoesModule(false)];
-// SIS-2026-0772: o menu agrupa os módulos pelos departamentos da empresa. Só
-// visual — quem vê cada tela continua sendo decidido pela rota (canSee). O
-// porquê de não mexer nos módulos do banco está em src/lib/departamentosMenu.ts.
-export const NAV_MODULOS: ModuleDef[] = agruparPorDepartamento(NAV_MODULOS_ORIGEM);
+// SIS-2026-0772 (fase 2): este é o CATÁLOGO das telas. Onde cada uma aparece
+// no menu vem da organização salva em Sistemas › Organizar Menu Lateral
+// (useMenuLateral); sem organização salva, valem estes módulos em ordem
+// alfabética. O agrupamento fixo por departamentos (fase 1) saiu a pedido.
+export const NAV_MODULOS: ModuleDef[] = NAV_MODULOS_ORIGEM;
 export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
 
 interface SidebarProps {
@@ -1542,7 +1548,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
-  const allModules = NAV_MODULOS;
+  // Organização salva (ou o padrão). Só decide ONDE cada tela aparece; quem
+  // vê cada uma continua sendo o canSee abaixo, pela rota.
+  const allModules = useMenuLateral<NavItem, ModuleDef>(NAV_MODULOS);
 
   // Sidebar filtra itens com base nos menus acessíveis do usuário (perfil de
   // acesso, ver list_accessible_menus). Cargo/role não concede bypass. Plano de
@@ -1597,29 +1605,21 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       : item.notif === "juridico" ? (juridicoNotif.porRota[item.to] ?? false)
       : item.notif === "reembolso" ? reembolsoNotif.temPendente
       : false;
-    // Ordem alfabética (pt-BR, ignorando acentos) em todos os níveis: módulos,
-    // grupos e itens (submódulos). Ajuste apenas visual.
-    const porNome = (a: { label: string }, b: { label: string }) =>
-      a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" });
-
-    return base
-      .map((mod) => ({
-        ...mod,
-        badge: resolvedBadge(mod.badge),
-        groups: mod.groups
-          ?.map((g) => ({
-            ...g,
-            items: g.items
-              .map((item) => ({
-                ...item,
-                badge: selNovoVigente(item.novoDesde) ? "Novo" : resolvedBadge(item.badge),
-                dot: resolvedDot(item),
-              }))
-              .sort(porNome),
-          }))
-          .sort(porNome),
-      }))
-      .sort(porNome);
+    // Ordem: a da organização salva. Sem organização salva, o padrão já vem
+    // em ordem alfabética (pt-BR, ignorando acentos) em todos os níveis —
+    // ver estruturaPadrao em src/lib/menuLateral/estrutura.ts.
+    return base.map((mod) => ({
+      ...mod,
+      badge: resolvedBadge(mod.badge),
+      groups: mod.groups?.map((g) => ({
+        ...g,
+        items: g.items.map((item) => ({
+          ...item,
+          badge: selNovoVigente(item.novoDesde) ? "Novo" : resolvedBadge(item.badge),
+          dot: resolvedDot(item),
+        })),
+      })),
+    }));
   }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
@@ -1656,11 +1656,48 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     return bestId;
   }, [visibleModules, location.pathname]);
 
-  const [expandedModule, setExpandedModule] = useState<string | null>(activeModuleId);
-  // Expande automaticamente o módulo da rota atual ao navegar.
+  // SIS-2026-0772 (modelo 2 do Iury): os submódulos abrem num PAINEL à
+  // direita da barra, não mais em acordeão para baixo. `painel` é o módulo
+  // aberto — no desktop, o painel ao lado; no celular (drawer), a lista de
+  // submódulos que toma o lugar da lista de módulos, com "‹ Voltar".
+  const telaGrande = useTelaGrande();
+  const [painel, setPainel] = useState<string | null>(null);
+  const asideRef = useRef<HTMLElement>(null);
+  const primeiroLinkRef = useRef<HTMLAnchorElement>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const moduloAberto = visibleModules.find((m) => m.id === painel) ?? null;
+
+  const cancelarTimer = () => { if (timer.current) window.clearTimeout(timer.current); timer.current = undefined; };
+  // Pequeno atraso nos dois sentidos: atravessar a barra com o mouse não
+  // abre painel de tudo que passa, e o vão até o painel não o fecha.
+  const abrirComAtraso = (id: string) => {
+    if (!telaGrande) return;
+    cancelarTimer();
+    timer.current = window.setTimeout(() => setPainel(id), painel ? 60 : 140);
+  };
+  const fecharComAtraso = () => {
+    if (!telaGrande) return;
+    cancelarTimer();
+    timer.current = window.setTimeout(() => setPainel(null), 220);
+  };
+  useEffect(() => () => cancelarTimer(), []);
+
+  // Navegou: fecha o painel do desktop. No celular o drawer fecha sozinho
+  // (handleNavClick) e a lista volta para os módulos na próxima abertura.
+  useEffect(() => { if (telaGrande) setPainel(null); }, [location.pathname, telaGrande]);
+  useEffect(() => { if (!mobileOpen && !telaGrande) setPainel(null); }, [mobileOpen, telaGrande]);
+
+  // Clique fora da barra (e do painel, que é filho dela) fecha.
   useEffect(() => {
-    if (activeModuleId) setExpandedModule(activeModuleId);
-  }, [activeModuleId]);
+    if (!painel || !telaGrande) return;
+    const fora = (e: MouseEvent) => {
+      if (asideRef.current && !asideRef.current.contains(e.target as Node)) setPainel(null);
+    };
+    document.addEventListener("mousedown", fora);
+    return () => document.removeEventListener("mousedown", fora);
+  }, [painel, telaGrande]);
+
+  const focarPainel = () => window.setTimeout(() => primeiroLinkRef.current?.focus(), 0);
 
   // No mobile a sidebar nunca aparece colapsada (sempre full); colapso é só desktop.
   const desktopCollapsed = collapsed;
@@ -1674,6 +1711,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
 
   return (
     <aside
+      ref={asideRef}
       onClick={handleNavClick}
       className={cn(
         // Mobile: drawer fixo off-canvas; desktop: fixo no viewport, independente do scroll da página.
@@ -1802,17 +1840,38 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       )}
 
       <nav className="sb-scroll relative z-10 mt-2 flex-1 overflow-y-auto scroll-elegant px-2 py-1">
-        {visibleModules.map((mod) => (
-          <ModuleEntry
-            key={mod.id}
-            mod={mod}
-            collapsed={collapsed}
-            active={mod.id === activeModuleId}
-            expanded={expandedModule === mod.id}
-            onToggle={() => setExpandedModule((cur) => (cur === mod.id ? null : mod.id))}
-          />
-        ))}
+        {!telaGrande && moduloAberto ? (
+          <ListaSubmodulosMobile mod={moduloAberto} onVoltar={() => setPainel(null)} />
+        ) : (
+          visibleModules.map((mod) => (
+            <ModuloLinha
+              key={mod.id}
+              mod={mod}
+              collapsed={collapsed && telaGrande}
+              active={mod.id === activeModuleId}
+              aberto={painel === mod.id}
+              onClick={() => { cancelarTimer(); setPainel((cur) => (cur === mod.id ? null : mod.id)); }}
+              onMouseEnter={() => abrirComAtraso(mod.id)}
+              onMouseLeave={fecharComAtraso}
+              onAbrirPeloTeclado={() => { cancelarTimer(); setPainel(mod.id); if (telaGrande) focarPainel(); }}
+            />
+          ))
+        )}
       </nav>
+
+      {telaGrande && moduloAberto && (
+        <PainelSubmodulos
+          mod={moduloAberto}
+          primeiroLinkRef={primeiroLinkRef}
+          onMouseEnter={cancelarTimer}
+          onMouseLeave={fecharComAtraso}
+          onFechar={() => {
+            const id = moduloAberto.id;
+            setPainel(null);
+            window.setTimeout(() => asideRef.current?.querySelector<HTMLButtonElement>(`[data-modulo="${CSS.escape(id)}"]`)?.focus(), 0);
+          }}
+        />
+      )}
 
       {/* Configurações + ambiente */}
       <div className="relative z-10 border-t border-sidebar-border p-2">
@@ -1855,133 +1914,189 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   );
 }
 
-function ModuleEntry({
-  mod,
-  collapsed,
-  active,
-  expanded,
-  onToggle,
+/** Desktop = a partir do `lg` (1024 px), o mesmo ponto em que o drawer vira barra fixa. */
+function useTelaGrande() {
+  const consulta = "(min-width: 1024px)";
+  const [grande, setGrande] = useState(() => typeof window !== "undefined" && window.matchMedia(consulta).matches);
+  useEffect(() => {
+    const m = window.matchMedia(consulta);
+    const mudou = () => setGrande(m.matches);
+    m.addEventListener("change", mudou);
+    mudou();
+    return () => m.removeEventListener("change", mudou);
+  }, []);
+  return grande;
+}
+
+/**
+ * Linha do módulo na barra. Expandida: só o nome, sem ícone (modelo 2 do
+ * Iury); recolhida (172 px): só o ícone, com o nome no title. Passar o mouse
+ * ou clicar abre o painel de submódulos à direita; Enter ou → abrem pelo teclado.
+ */
+function ModuloLinha({
+  mod, collapsed, active, aberto, onClick, onMouseEnter, onMouseLeave, onAbrirPeloTeclado,
 }: {
   mod: ModuleDef;
   collapsed: boolean;
   active: boolean;
-  expanded: boolean;
-  onToggle: () => void;
+  aberto: boolean;
+  onClick: () => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  onAbrirPeloTeclado: () => void;
 }) {
-  const isActiveModule = active;
   const Icon = mod.icon;
   const disabled = mod.status === "soon";
-  const navigate = useNavigate();
-  // Bolinha no cabeçalho quando algum item do módulo tem novidade (visível mesmo
-  // com a sidebar colapsada ou o submenu recolhido).
+  // Bolinha no módulo quando algum submódulo tem novidade: o painel fechado
+  // não pode esconder que há algo esperando.
   const modDot = !disabled && !!mod.groups?.some((g) => g.items.some((i) => i.dot));
 
-  // Para o submenu FECHAR animado ele precisa continuar no DOM depois de
-  // recolhido — desmontar corta a transição no primeiro frame. Montamos na
-  // primeira abertura e nunca mais tiramos: quem nunca abriu o módulo não
-  // paga nada, e quem abriu ganha a animação nos dois sentidos.
-  const podeAbrir = !collapsed && !disabled && !!mod.groups;
-  const [jaAbriu, setJaAbriu] = useState(expanded && podeAbrir);
-  useEffect(() => { if (expanded && podeAbrir) setJaAbriu(true); }, [expanded, podeAbrir]);
-  const aberto = expanded && podeAbrir;
-
-  // Posição de cada grupo numa contagem contínua do módulo inteiro, para a
-  // entrada escalonada correr de cima para baixo de verdade: sem isso cada
-  // grupo recomeça do zero e o primeiro item de um grupo aparece antes do
-  // título do grupo anterior.
-  const rotasDoModulo = useMemo(() => (mod.groups ?? []).flatMap((g) => g.items.map((i) => i.to)), [mod.groups]);
-  const basesDosGrupos = useMemo(() => {
-    let cursor = 0;
-    return (mod.groups ?? []).map((g) => {
-      const base = cursor;
-      cursor += g.items.length + 1; // +1 pela linha do cabeçalho do grupo
-      return base;
-    });
-  }, [mod.groups]);
-
   return (
-    <div className="mb-1">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => { if (mod.headerLink) navigate(mod.headerLink); onToggle(); }}
-        className={cn(
-          "sb-item group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold",
-          isActiveModule
-            ? "sb-on bg-sidebar-accent text-white"
-            : disabled
-              ? "text-sidebar-muted/70 cursor-not-allowed"
-              : "text-white/90 hover:bg-sidebar-accent/60 hover:text-white",
-          collapsed && "justify-center px-2",
-        )}
-        title={collapsed ? mod.label : undefined}
-      >
-        {isActiveModule && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-        <span className="sb-ic relative shrink-0">
-          <Icon className={cn("h-4 w-4", isActiveModule && "text-accent", disabled && "opacity-60")} />
-          {modDot && collapsed && (
-            <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse-soft rounded-full bg-red-500 ring-2 ring-sidebar" />
-          )}
-        </span>
-        {!collapsed && (
-          <>
-            <span className="flex-1 truncate">{mod.label}</span>
-            {modDot && (
-              <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />
-            )}
-            {mod.badge && !disabled && (
-              <span className="animate-pop rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
-                {mod.badge}
-              </span>
-            )}
-            {disabled && (
-              <span className="rounded bg-sidebar-border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-sidebar-muted">
-                Em breve
-              </span>
-            )}
-            {!disabled && mod.groups && (
-              <ChevronRight
-                className={cn("sb-chev h-3.5 w-3.5 text-sidebar-muted", aberto && "rotate-90 text-accent")}
-              />
-            )}
-          </>
-        )}
-      </button>
-
-      {/* Submódulos — a altura é animada pelo grid-template-rows do .sb-sub. */}
-      {jaAbriu && mod.groups && (
-        <div className="sb-sub" data-open={aberto} aria-hidden={!aberto}>
-          <div className="sb-sub-in">
-            <div className="sb-rail mt-1 ml-3 pl-2">
-              {mod.groups.map((group, gi) => (
-                <SidebarGroup key={group.label} group={group} enabled={aberto} base={basesDosGrupos[gi]} rotasDoModulo={rotasDoModulo} />
-              ))}
-            </div>
-          </div>
-        </div>
+    <button
+      type="button"
+      data-modulo={mod.id}
+      disabled={disabled}
+      aria-expanded={aberto}
+      aria-haspopup="true"
+      onClick={onClick}
+      onMouseEnter={disabled ? undefined : onMouseEnter}
+      onMouseLeave={disabled ? undefined : onMouseLeave}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight") { e.preventDefault(); onAbrirPeloTeclado(); }
+      }}
+      title={collapsed ? mod.label : undefined}
+      className={cn(
+        "sb-item group mb-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold",
+        active || aberto
+          ? "sb-on bg-sidebar-accent text-white"
+          : disabled
+            ? "cursor-not-allowed text-sidebar-muted/70"
+            : "text-white/90 hover:bg-sidebar-accent/60 hover:text-white",
+        collapsed && "justify-center px-2",
       )}
+    >
+      {active && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+      {collapsed ? (
+        <span className="sb-ic relative shrink-0">
+          <Icon className={cn("h-4 w-4", active && "text-accent", disabled && "opacity-60")} />
+          {modDot && <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse-soft rounded-full bg-red-500 ring-2 ring-sidebar" />}
+        </span>
+      ) : (
+        <>
+          <span className="min-w-0 flex-1 truncate">{mod.label}</span>
+          {modDot && <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />}
+          {mod.badge && !disabled && (
+            <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">{mod.badge}</span>
+          )}
+          {disabled ? (
+            <span className="rounded bg-sidebar-border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-sidebar-muted">Em breve</span>
+          ) : (
+            <ChevronRight className={cn("sb-chev h-3.5 w-3.5 text-sidebar-muted", aberto && "text-accent")} />
+          )}
+        </>
+      )}
+    </button>
+  );
+}
+
+/** Painel à direita da barra (desktop): título do módulo, categorias e submódulos, sem ícones. */
+function PainelSubmodulos({
+  mod, primeiroLinkRef, onMouseEnter, onMouseLeave, onFechar,
+}: {
+  mod: ModuleDef;
+  primeiroLinkRef: React.RefObject<HTMLAnchorElement>;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  onFechar: () => void;
+}) {
+  return (
+    <div
+      role="region"
+      aria-label={`Submódulos de ${mod.label}`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" || e.key === "ArrowLeft") { e.preventDefault(); onFechar(); }
+      }}
+      className="sb-flyout absolute inset-y-0 left-full z-40 flex w-[264px] flex-col border-x border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl"
+    >
+      <div className="border-b border-sidebar-border px-5 pb-3 pt-5">
+        <p className="font-display text-base font-bold leading-tight text-white">{mod.label}</p>
+      </div>
+      <div className="flex-1 overflow-y-auto scroll-elegant px-3 py-3">
+        <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} />
+      </div>
     </div>
   );
 }
 
-/** Passo da entrada escalonada, limitado para um módulo grande (Licitações
- *  tem ~30 submódulos) não levar um segundo e meio para terminar de abrir. */
-const PASSO_MAX = 14;
-const passo = (n: number) => Math.min(n, PASSO_MAX);
+/** Celular (drawer): a lista de submódulos toma o lugar da lista de módulos. */
+function ListaSubmodulosMobile({ mod, onVoltar }: { mod: ModuleDef; onVoltar: () => void }) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onVoltar}
+        className="sb-item mb-2 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-white/80 hover:bg-sidebar-accent/60 hover:text-white"
+      >
+        <ChevronLeft className="h-4 w-4" /> Voltar
+      </button>
+      <p className="mb-2 px-3 font-display text-base font-bold leading-tight text-white">{mod.label}</p>
+      <GruposDoModulo mod={mod} />
+    </div>
+  );
+}
 
-/**
- * Atraso de entrada do item, já como string de CSS.
- *
- * Antes isto era `--i` + `animation-delay: calc(60ms + var(--i) * 38ms)`.
- * O problema é que um `--i` inválido (ex.: "3px", que é o que acontece se o
- * valor chegar com unidade) torna o calc inteiro inválido e o navegador cai
- * para 0s — SEM erro no console. Resultado: todos os itens abrem juntos e
- * nada denuncia a causa. Escrevendo o tempo pronto, não há calc para falhar.
- *
- * Passo de 55ms contra duração de 340ms: antes eram 38ms contra 460ms, e a
- * sobreposição era tão grande que a cascata não se enxergava.
- */
-const atraso = (n: number): React.CSSProperties => ({ animationDelay: `${40 + n * 55}ms` });
+function GruposDoModulo({ mod, primeiroLinkRef }: { mod: ModuleDef; primeiroLinkRef?: React.RefObject<HTMLAnchorElement> }) {
+  const location = useLocation();
+  const rotasDoModulo = useMemo(() => (mod.groups ?? []).flatMap((g) => g.items.map((i) => i.to)), [mod.groups]);
+  const rotaAcesa = rotaMaisProxima(location.pathname, rotasDoModulo);
+  const primeiraRota = mod.groups?.[0]?.items[0]?.to;
+
+  return (
+    <>
+      {(mod.groups ?? []).map((group, gi) => (
+        <div key={`${gi}-${group.label}`} className="mb-3">
+          <p className="truncate px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted" title={group.label}>
+            {group.label}
+          </p>
+          <ul className="space-y-0.5">
+            {group.items.map((item, ii) => {
+              // Match exato quando outro item do menu está aninhado sob esta
+              // rota: sem isso o item-pai acenderia junto com o filho.
+              const acesa = item.to.split("?")[0] === rotaAcesa;
+              const ref = gi === 0 && ii === 0 && item.to === primeiraRota ? primeiroLinkRef : undefined;
+              return (
+                <li key={`${ii}-${item.to}`}>
+                  <NavLink
+                    ref={ref}
+                    to={item.to}
+                    end
+                    className={cn(
+                      "sb-item flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-semibold",
+                      acesa ? "sb-on bg-sidebar-accent text-white" : "text-white/80 hover:bg-sidebar-accent/50 hover:text-white",
+                    )}
+                  >
+                    {acesa && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+                    {/* Quebra em duas linhas em vez de cortar com reticências:
+                        "Minhas Solicitações de Ma…" esconde justamente a
+                        palavra que distingue um item do outro. */}
+                    <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
+                    {item.dot && <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />}
+                    {item.badge && (
+                      <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">{item.badge}</span>
+                    )}
+                  </NavLink>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </>
+  );
+}
+
 
 /**
  * Item aceso = a rota MAIS LONGA do módulo inteiro que casa com a URL.
@@ -2000,99 +2115,4 @@ function rotaMaisProxima(pathname: string, rotas: string[]): string | null {
     if (casa && (!melhor || p.length > melhor.length)) melhor = p;
   }
   return melhor;
-}
-
-function SidebarGroup({ group, enabled, base, rotasDoModulo }: { group: NavGroup; enabled: boolean; base: number; rotasDoModulo: string[] }) {
-  const location = useLocation();
-  const rotaAcesa = rotaMaisProxima(location.pathname, rotasDoModulo);
-  const hasActive = group.items.some((i) => i.to.split("?")[0] === rotaAcesa);
-  const [open, setOpen] = useState(group.defaultOpen ?? hasActive ?? false);
-
-  return (
-    <div className="mb-1.5">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        // tabIndex -1 com o módulo recolhido: o bloco continua no DOM só para
-        // poder animar, e não deve receber foco por Tab enquanto está fechado.
-        tabIndex={enabled ? undefined : -1}
-        // `--i` do cabeçalho entra ANTES dos links do grupo: a lista aparece
-        // de cima para baixo, título e itens no mesmo ritmo.
-        style={atraso(passo(base))}
-        className="sb-grouphd mb-0.5 flex w-full items-center justify-between px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted transition-colors hover:text-white"
-      >
-        {/* Conflito resolvido juntando os dois lados: `whitespace-nowrap` veio
-            da main (impede o rótulo do grupo de quebrar em duas linhas) e
-            `sb-chev` é a classe que anima a seta. Dispensei o
-            `transition-transform` do Tailwind porque a .sb-chev já define a
-            transição, com curva própria — as duas juntas se anulariam. */}
-        {/* SIS-2026-0772: com os departamentos, o rótulo pode trazer o
-            módulo de origem na frente ("Sistemas · Chamados de Sistemas") e
-            passar da largura. Corta com reticências; o title mostra inteiro. */}
-        <span className="min-w-0 truncate whitespace-nowrap" title={group.label}>{group.label}</span>
-        <ChevronDown className={cn("sb-chev h-3 w-3", !open && "-rotate-90")} />
-      </button>
-      {/* data-open leva o `enabled` junto de propósito: ao recolher o módulo,
-          este bloco também precisa marcar fechado. É o que faz a entrada
-          escalonada dos itens RODAR DE NOVO na próxima abertura — enquanto
-          algum .sb-sub ancestral continuasse aberto, a regra da animação
-          seguiria casando e o navegador não reiniciaria nada. */}
-      <div className="sb-sub" data-open={open && enabled}>
-        <div className="sb-sub-in">
-          <ul className="space-y-0.5 pb-0.5">
-            {group.items.map((item, i) => {
-              // Match exato quando outro item do menu está aninhado sob esta rota
-              // (ex.: "Processos" é prefixo de "/processos/dashboard" e "/processos/audiencias");
-              // sem isso o item-pai acenderia junto com o filho.
-              const acesa = item.to.split("?")[0] === rotaAcesa;
-              return (
-              // Escalona a entrada de cada link quando o grupo abre,
-              // continuando a contagem de onde o cabeçalho do grupo parou.
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  end
-                  tabIndex={enabled && open ? undefined : -1}
-                  // O atraso vai NO PRÓPRIO link, não no <li>: quem tem a
-                  // animação é o `.sb-link`, e `animation-delay` não herda
-                  // do pai (ao contrário da variável CSS que havia antes).
-                  style={atraso(passo(base + 1 + i))}
-                  className={() =>
-                    cn(
-                      // Submódulo fica branco e semibold: um degrau abaixo do
-                      // cabeçalho do módulo (bold). Achatar os dois no mesmo
-                      // peso apaga a hierarquia e a lista vira um paredão.
-                      "sb-item sb-link group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-semibold",
-                      acesa
-                        ? "sb-on bg-sidebar-accent text-white"
-                        : "text-white/80 hover:bg-sidebar-accent/50 hover:text-white",
-                    )
-                  }
-                >
-                  {() => (
-                    <>
-                      {acesa && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                      <item.icon className={cn("sb-ic mt-0.5 h-3.5 w-3.5 shrink-0 self-start", acesa ? "text-accent" : "")} />
-                      {/* Quebra em duas linhas em vez de cortar com reticências:
-                          "Minhas Solicitações de Ma…" esconde justamente a
-                          palavra que distingue um item do outro. */}
-                      <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{item.label}</span>
-                      {item.dot && (
-                        <span className="h-2 w-2 shrink-0 animate-pulse-soft rounded-full bg-red-500" title="Novidades" />
-                      )}
-                      {item.badge && (
-                        <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-sidebar-foreground/70">
-                          {item.badge}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              </li>
-              );
-            })}
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
 }

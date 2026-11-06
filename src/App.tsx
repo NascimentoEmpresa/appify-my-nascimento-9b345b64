@@ -356,6 +356,8 @@ import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
 import ChecklistModulos from "./pages/sistemas/checklist/ChecklistModulos";
 import LoginsSistemas from "./pages/sistemas/Logins";
+// SIS-2026-0772 (fase 2): organizar o menu lateral (menu_lateral, mig 20261105040000).
+import OrganizarMenuLateral from "./pages/sistemas/menuLateral/OrganizarMenuLateral";
 import ChecklistModuloDetalhe from "./pages/sistemas/checklist/ModuloDetalhe";
 import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
 import LiberacaoHoraExtra from "./pages/sistemas/hora-extra/LiberacaoHoraExtra";
@@ -608,6 +610,7 @@ const App = () => (
             {/* Checklist de Módulos (02/10/2026, mig 291): status, uso, bugs e chamados de cada módulo/tela. */}
             <Route path="sistemas/checklist-modulos" element={<ChecklistModulos />} />
             <Route path="sistemas/logins" element={<LoginsSistemas />} />
+            <Route path="sistemas/menu-lateral" element={<OrganizarMenuLateral />} />
             <Route path="sistemas/tvs" element={<TvsSistemas />} />
             {/* TVs gerenciais por diretoria (mig 20261012000001, SIS-2026-0635). */}
             <Route path="sistemas/tvs/indicadores" element={<TvsIndicadores />} />
