@@ -36,6 +36,19 @@ export interface TarefaItem {
   user_id?: string;
 }
 
+export const hojeLocal = (d = new Date()): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/**
+ * A resposta da RPC, sempre no mesmo formato. O contador e o lembrete rodam em
+ * TODA tela do ERP: resposta fora do esperado aqui derrubava o sistema inteiro
+ * (PR #1147: a API de teste responde [], e as 352 telas caíram em "a is not iterable").
+ */
+export function normalizarTarefas<T extends object = object>(resposta: unknown): T & { hoje: string; itens: TarefaItem[] } {
+  const r = (resposta && typeof resposta === "object" && !Array.isArray(resposta) ? resposta : {}) as T & { hoje?: unknown; itens?: unknown };
+  return { ...r, hoje: typeof r.hoje === "string" ? r.hoje : hojeLocal(), itens: Array.isArray(r.itens) ? (r.itens as TarefaItem[]) : [] };
+}
+
 export function situacaoDaTarefa(t: Pick<TarefaItem, "status" | "vencimento">, hoje: string): Situacao {
   if (t.status !== "pendente") return "resolvida";
   const v = t.vencimento.slice(0, 10);

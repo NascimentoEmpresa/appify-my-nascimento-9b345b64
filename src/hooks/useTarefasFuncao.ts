@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { separarTarefas, type LinhaPop, type Periodicidade, type StatusTarefa, type TarefaItem } from "@/lib/organograma/tarefas";
+import { normalizarTarefas, separarTarefas, type LinhaPop, type Periodicidade, type StatusTarefa, type TarefaItem } from "@/lib/organograma/tarefas";
 
 // =====================================================================
 // Organograma › Tarefas por Função (SIS-2026-0771, mig 20261106001000).
@@ -29,7 +29,7 @@ export const useMinhasTarefas = (ligado = true) => useQuery({
   queryFn: async (): Promise<MinhasTarefas> => {
     const { data, error } = await sb.rpc("tarefa_minhas");
     erro(error);
-    return data as MinhasTarefas;
+    return normalizarTarefas(data);
   },
 });
 
@@ -48,7 +48,7 @@ export const useAcompanhamentoTarefas = (ini: string, fim: string) => useQuery({
   queryFn: async (): Promise<Acompanhamento> => {
     const { data, error } = await sb.rpc("tarefa_acompanhamento", { p_ini: ini, p_fim: fim });
     erro(error);
-    return data as Acompanhamento;
+    return normalizarTarefas<{ ve_todos?: boolean }>(data) as Acompanhamento;
   },
 });
 
@@ -57,7 +57,7 @@ export const useModelosTarefa = (ligado: boolean) => useQuery({
   queryFn: async (): Promise<ModeloTarefa[]> => {
     const { data, error } = await sb.rpc("tarefa_modelos");
     erro(error);
-    return (data ?? []) as ModeloTarefa[];
+    return (Array.isArray(data) ? data : []) as ModeloTarefa[];
   },
 });
 
@@ -66,7 +66,7 @@ export const useCargosOrganograma = (ligado: boolean) => useQuery({
   queryFn: async (): Promise<CargoOrganograma[]> => {
     const { data, error } = await sb.rpc("tarefa_cargos");
     erro(error);
-    return (data ?? []) as CargoOrganograma[];
+    return (Array.isArray(data) ? data : []) as CargoOrganograma[];
   },
 });
 
