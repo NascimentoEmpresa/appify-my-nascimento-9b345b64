@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  DndContext, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors,
-  type DragEndEvent, type DragOverEvent,
+  DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors,
+  type DragEndEvent, type DragOverEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext, rectSortingStrategy, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
@@ -103,6 +104,7 @@ export default function OrganizarMenuLateral() {
   const [destinoDe, setDestinoDe] = useState<string | null>(null);
   const [atalhoEm, setAtalhoEm] = useState<string | null>(null);
   const [alvoArrasto, setAlvoArrasto] = useState<ReturnType<typeof destinoDoArrasto>>(null);
+  const [itemArrastadoId, setItemArrastadoId] = useState<string | null>(null);
   const sensores = useSensorsSeguros();
 
   if (!trabalho) {
@@ -178,6 +180,15 @@ export default function OrganizarMenuLateral() {
   // ── Arrastar e soltar ─────────────────────────────────────────────────
   const arrastando = podeAlterar && !busca;
   const colisao = criarColisaoMenu(trabalho);
+  const iniciarArrasto = ({ active }: DragStartEvent) => {
+    const id = String(active.id);
+    setItemArrastadoId(id.startsWith("item:") ? id.slice(5) : null);
+    setAlvoArrasto(null);
+  };
+  const limparArrasto = () => {
+    setItemArrastadoId(null);
+    setAlvoArrasto(null);
+  };
   const indicarDestino = ({ active, over }: DragOverEvent) => {
     setAlvoArrasto(
       over && active.id !== over.id && String(active.id).startsWith("item:")
@@ -186,7 +197,7 @@ export default function OrganizarMenuLateral() {
     );
   };
   const soltar = ({ active, over }: DragEndEvent) => {
-    setAlvoArrasto(null);
+    limparArrasto();
     if (!over) return;
     const a = String(active.id);
     const o = String(over.id);
@@ -215,6 +226,7 @@ export default function OrganizarMenuLateral() {
 
   const termo = busca.trim().toLocaleLowerCase("pt-BR");
   const totalEntradas = trabalho.modulos.reduce((n, m) => n + m.categorias.reduce((k, c) => k + c.itens.length, 0), 0);
+  const itemArrastado = itemArrastadoId ? acharItem(itemArrastadoId)?.item : null;
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -287,7 +299,7 @@ export default function OrganizarMenuLateral() {
           {busca && podeAlterar && <p className="text-xs text-muted-foreground">Durante a busca o arrastar fica desligado — limpe a busca para reorganizar.</p>}
 
           <DndContext sensors={sensores} collisionDetection={colisao}
-            onDragOver={indicarDestino} onDragEnd={soltar} onDragCancel={() => setAlvoArrasto(null)}>
+            onDragStart={iniciarArrasto} onDragOver={indicarDestino} onDragEnd={soltar} onDragCancel={limparArrasto}>
             <SortableContext items={trabalho.modulos.map((m) => `mod:${m.id}`)} strategy={rectSortingStrategy} disabled={!arrastando}>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {trabalho.modulos.map((m) => {
@@ -374,6 +386,22 @@ export default function OrganizarMenuLateral() {
                 })}
               </div>
             </SortableContext>
+            {/* O portal escapa do overflow do AppShell. A camada não captura
+                o mouse, preservando a detecção dos destinos e a rolagem. */}
+            {createPortal(
+              <>
+                {itemArrastado && <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-[60] bg-black/30" />}
+                <DragOverlay dropAnimation={null} zIndex={70} style={{ pointerEvents: "none" }}>
+                  {itemArrastado && (
+                    <div aria-hidden="true" className="flex cursor-grabbing items-center gap-2 rounded-md border border-primary bg-background px-3 py-2 text-[13px] font-medium text-foreground shadow-2xl ring-2 ring-primary">
+                      <GripVertical className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="min-w-0 flex-1 leading-snug [overflow-wrap:anywhere]">{nomeDe(itemArrastado)}</span>
+                    </div>
+                  )}
+                </DragOverlay>
+              </>,
+              document.body,
+            )}
           </DndContext>
 
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -515,11 +543,11 @@ function Entrada({ id, nome, rota, situacao, arrastavel, acoes }: {
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: DndCSS.Translate.toString(transform), transition }}
+      style={{ transform: isDragging ? undefined : DndCSS.Translate.toString(transform), transition }}
       className={cn(
         "group flex items-center gap-1.5 rounded-md border bg-background px-2 py-1.5 text-[13px]",
         arrastavel && "cursor-grab active:cursor-grabbing",
-        isDragging && "relative z-30 opacity-80 shadow-lg ring-2 ring-primary",
+        isDragging && "opacity-30 border-dashed",
       )}
       {...attributes}
       {...listeners}
