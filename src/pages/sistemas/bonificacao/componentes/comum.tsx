@@ -27,7 +27,7 @@ export const AJUDA = {
   qualidade: "Mede se o trabalho atendeu ao pedido e se exigiu correções. Quanto menos ajustes necessários, maior a nota. Sem avaliação do gestor, é sugerida pelas reaberturas do chamado.",
   satisfacao: "Converte a avaliação do solicitante (1 a 5) em nota de 0 a 100 para compor o resultado.",
   prazo: "Compara a data prometida e a data efetiva de conclusão; concluir depois do limite zera o critério.",
-  dificuldade: "Grau de dificuldade estimado pela IA (complexidade de 1 a 5 do parecer do chamado), ajustável pelo gestor. Classificação: fácil, médio, difícil ou muito difícil, convertida em pontos conforme as regras.",
+  dificuldade: "A IA classifica a complexidade (1 a 5 no parecer do chamado), ajustável pelo gestor: fácil, médio, difícil ou muito difícil. Os pontos de cada nível são definidos pela empresa em Pesos e regras, e não são uma nota dada pela IA.",
   valor: "Valor da tarefa estimado pela IA com base no escopo e em referências de mercado. Toda entrega vale no mínimo 50; o valor de mercado só diferencia de 50 a 100, comparado com a régua do mês (percentil 75 das entregas do período); não é pagamento nem economia comprovada.",
   composicao: "Mostra quantos pontos cada critério contribuiu para a nota consolidada da equipe.",
   resultadoCriterios: "Médias dos cinco critérios de todas as tarefas consideradas, antes de aplicar os pesos da nota final.",
