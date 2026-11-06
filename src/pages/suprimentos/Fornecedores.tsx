@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Plus, Pencil, Trash2, Package, Search, Building2, ShieldAlert, FileSpreadsheet, Mail } from "lucide-react";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { CaixaEmailFornecedores, type AberturaCaixa } from "@/components/suprimentos/email/CaixaEmailFornecedores";
+import { CAIXAS_EMAIL_LIBERADAS } from "@/lib/email/caixa";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { MateriaisFornecedorDialog } from "@/components/suprimentos/MateriaisFornecedorDialog";
@@ -177,10 +178,11 @@ export default function Fornecedores() {
   const [materiaisDe, setMateriaisDe] = useState<Fornecedor | null>(null);
   const [busca, setBusca] = useState("");
   const [exportando, setExportando] = useState(false);
-  // Caixa de e-mail (06/11/2026) — menu fantasma `fornecedores_email`.
+  // Caixa de e-mail (06/11/2026) — menu fantasma `fornecedores_email`. Desligada
+  // para todos por ora (CAIXAS_EMAIL_LIBERADAS em lib/email/caixa.ts).
   const { can } = usePermissoes();
-  const podeVerEmails = can("visualizar", "suprimentos", "fornecedores_email");
-  const podeEnviarEmail = can("incluir", "suprimentos", "fornecedores_email");
+  const podeVerEmails = CAIXAS_EMAIL_LIBERADAS && can("visualizar", "suprimentos", "fornecedores_email");
+  const podeEnviarEmail = CAIXAS_EMAIL_LIBERADAS && can("incluir", "suprimentos", "fornecedores_email");
   const [caixaEmail, setCaixaEmail] = useState<AberturaCaixa | null>(null);
 
   const { data: rows = [], isLoading, error } = useQuery({
