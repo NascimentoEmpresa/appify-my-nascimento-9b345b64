@@ -278,7 +278,7 @@ function ListaLigados({ s }: { s: SetorEstrutura }) {
   }, [r, s.cabecas, e]);
   const doResp = r ? e.contratosDe(r.id) : [];
   // Contratos sem dono aparecem no setor operacional, prontos para arrastar.
-  const ehOperacional = /OPERAC/.test(s.chave) && !/DIRETOR/.test(s.chave);
+  const ehOperacional = s.chave === e.setorOperacional;
   const soltos = ehOperacional ? e.semSupervisor.filter((c) => casaContrato(c, ctx.termo)) : [];
   if (!pessoas.length && !doResp.length && !soltos.length) return <p className="px-2 py-2 text-xs text-muted-foreground">Ninguém ligado a este setor.</p>;
   return (
@@ -307,7 +307,8 @@ function CardSetor({ s, d }: { s: SetorEstrutura; d: number }) {
   const cor = corDe(s.chave);
   const Icone = iconeDe(s.chave);
   const r = s.responsavel;
-  const nContratos = r ? ctx.e.contratosDe(r.id).length : 0;
+  // Contratos debaixo do setor inteiro (no Operacional = todos), não só os do responsável.
+  const nContratos = ctx.e.contratosDoSetor(s.chave).length;
   return (
     <div className={cn("est-no group/card relative overflow-hidden rounded-2xl bg-card text-left ring-1 ring-black/5 transition-[width,box-shadow,transform] duration-300 dark:ring-white/10",
       aberto ? "w-[360px] shadow-[0_18px_40px_-14px_rgba(15,23,42,.45)]" : "w-[248px] shadow-[0_6px_18px_-8px_rgba(15,23,42,.22)] hover:-translate-y-1 hover:shadow-[0_14px_30px_-10px_rgba(15,23,42,.35)]")}

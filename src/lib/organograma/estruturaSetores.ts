@@ -137,8 +137,12 @@ export interface Estrutura {
   contratos: ContratoEstrutura[];
   /** Contratos sem supervisor (nem definido, nem deduzido). */
   semSupervisor: ContratoEstrutura[];
-  /** Quem pode receber contrato (supervisores/coordenadores do escritório). */
+  /** Quem pode receber contrato: supervisores/coordenadores do setor Operacional (ou do escritório todo, se não houver). */
   supervisores: NoPessoa[];
+  /** O setor que cuida dos contratos (Operacional) — todos os contratos ficam dentro dele. */
+  setorOperacional: string | null;
+  /** Contratos debaixo de um setor: os dos supervisores dele e, no Operacional, também os sem supervisor (= todos). */
+  contratosDoSetor: (chave: string) => ContratoEstrutura[];
   /** Equipe direta de ESCRITÓRIO (o campo direto da pessoa está nos contratos). */
   equipeEscritorio: (id: string) => NoPessoa[];
   /** Contratos pendurados na pessoa. */
@@ -246,7 +250,16 @@ export function montarEstrutura(todos: NoPessoa[], definidos: Map<string, string
   });
 
   // ── Contratos (todo o campo) ────────────────────────────────────────
-  const supervisores = ordenarPessoas(nos.filter((n) => !noTopo.has(n.id) && ehSupervisor(n)));
+  // TODOS OS CONTRATOS NO OPERACIONAL (06/11/2026, Pablo: "tem que estar
+  // TODOS os 64 contratos ali dentro do operacional, porque é o operacional que
+  // cuida de todos os contratos"). Só supervisor do Operacional recebe
+  // contrato — antes o cadastro levava contrato para supervisor do RH, de
+  // Compras, da Controladoria. Contrato sem supervisor do Operacional fica em
+  // "sem supervisor", que também é mostrado dentro do Operacional.
+  const setorOperacional = setores.find((s) => /OPERAC/.test(s.chave) && !/DIRETOR/.test(s.chave))?.chave ?? null;
+  const todosSup = nos.filter((n) => !noTopo.has(n.id) && ehSupervisor(n));
+  const doOperacional = setorOperacional ? todosSup.filter((n) => chaveSetor(n.setor) === setorOperacional) : [];
+  const supervisores = ordenarPessoas(doOperacional.length ? doOperacional : todosSup);
   const ehSup = new Set(supervisores.map((s) => s.id));
   const porContrato = new Map<string, NoPessoa[]>();
   nos.forEach((n) => {
@@ -265,7 +278,7 @@ export function montarEstrutura(todos: NoPessoa[], definidos: Map<string, string
     let supervisor: NoPessoa | null = null;
     let origem: OrigemSupervisor = null;
     const def = definidos.get(k);
-    if (def && porId.has(def)) { supervisor = porId.get(def)!; origem = "definido"; }
+    if (def && porId.has(def) && !campo(porId.get(def)!)) { supervisor = porId.get(def)!; origem = "definido"; }
     if (!supervisor && k !== "sem") {
       // 1º o supervisor que está no próprio contrato (ex.: a supervisora do Triunfo Vigias).
       const doContrato = supervisores.find((s) => chaveContratoDe(s) === k);
@@ -298,6 +311,11 @@ export function montarEstrutura(todos: NoPessoa[], definidos: Map<string, string
     conselho, presidencia, raiz, setores, contratos,
     semSupervisor: contratos.filter((c) => !c.supervisor),
     supervisores,
+    setorOperacional,
+    contratosDoSetor: (chave) => {
+      const ids = new Set((porChave.get(chave)?.membros ?? []).map((m) => m.id));
+      return contratos.filter((c) => (c.supervisor ? ids.has(c.supervisor.id) : chave === setorOperacional));
+    },
     equipeEscritorio: (id) => equipeDe(id).filter((f) => !campo(f)),
     contratosDe: (id) => contratosPorSup.get(id) ?? [],
     equipeNoContrato: (id, k) => equipeDe(id).filter((f) => campo(f) && chaveContratoDe(f) === k),
