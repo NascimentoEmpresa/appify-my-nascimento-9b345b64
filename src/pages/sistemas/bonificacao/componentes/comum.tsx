@@ -24,7 +24,7 @@ export const AJUDA = {
   satisfacaoMedia: "Média das notas de 1 a 5 atribuídas pelos solicitantes na avaliação do chamado.",
   noPrazo: "Percentual de tarefas concluídas até a data limite registrada no chamado.",
   mercadoIa: "Soma dos valores estimados pela Inteligência Artificial (IA) a partir do escopo das tarefas e de referências de preços do mercado de desenvolvimento de software. É uma estimativa, não economia comprovada.",
-  qualidade: "Mede se o trabalho atendeu ao pedido e se exigiu correções. Quanto menos ajustes necessários, maior a nota. Sem avaliação do gestor, é sugerida pelas reaberturas do chamado.",
+  qualidade: "Mede se o trabalho atendeu ao pedido e se exigiu correções. Quanto menos ajustes necessários, maior a nota. Sem avaliação do gestor, a sugestão é “atendeu sem ajuste”: reabrir o chamado não conta como erro, porque o solicitante pode reabrir sem querer ou para pedir mais coisa.",
   satisfacao: "Converte a avaliação do solicitante (1 a 5) em nota de 0 a 100 para compor o resultado.",
   prazo: "Compara a data prometida e a data efetiva de conclusão; concluir depois do limite zera o critério.",
   dificuldade: "A IA classifica a complexidade (1 a 5 no parecer do chamado), ajustável pelo gestor: fácil, médio, difícil ou muito difícil. Os pontos de cada nível são definidos pela empresa em Pesos e regras, e não são uma nota dada pela IA.",
