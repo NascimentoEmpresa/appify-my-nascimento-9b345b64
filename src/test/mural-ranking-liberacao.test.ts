@@ -67,7 +67,8 @@ describe("ranking por pessoa", () => {
 describe("itensDaPrevia (Ver prévia do Mural do Início)", () => {
   const l = (id: string, colaborador: string, status: "pendente" | "liberado" | "recusado", enviado_em = "2026-10-01") =>
     ({ id, colaborador, setor: null, nota: 5, escala: 5, comentario: "Ótima", enviado_em, status });
-  const ch = (x: { id: string }) => x.id;
+  type Linha = ReturnType<typeof l>;
+  const ch = (x: Linha) => x.id;
   const todos = [
     l("a1", "ANA", "liberado"), l("b1", "BRUNO", "pendente", "2026-10-03"), l("b2", "BRUNO", "pendente", "2026-10-02"),
     l("c1", "CARLA", "recusado"), l("a2", "ANA", "pendente"),
@@ -75,16 +76,16 @@ describe("itensDaPrevia (Ver prévia do Mural do Início)", () => {
 
   it("junta o que já está no mural com o que vai ser liberado, sem recusado nem repetido", () => {
     const pend = todos.filter((x) => x.status === "pendente");
-    const r = itensDaPrevia(todos, [...pend, todos[0]], ch);
+    const r = itensDaPrevia<Linha>(todos, [...pend, todos[0]], ch);
     // ANA e BRUNO empatam em 2 recados e na nota: o ranking desempata pelo nome.
     expect(r.map((x) => x.id)).toEqual(["a1", "a2", "b2", "b1"]);
   });
 
   it("sem nada a liberar, mostra só o que já está no mural", () => {
-    expect(itensDaPrevia(todos, [], ch).map((x) => x.id)).toEqual(["a1"]);
+    expect(itensDaPrevia<Linha>(todos, [], ch).map((x) => x.id)).toEqual(["a1"]);
   });
 
   it("recusado na lista a liberar não entra", () => {
-    expect(itensDaPrevia(todos, [todos[3]], ch).map((x) => x.id)).toEqual(["a1"]);
+    expect(itensDaPrevia<Linha>(todos, [todos[3]], ch).map((x) => x.id)).toEqual(["a1"]);
   });
 });
