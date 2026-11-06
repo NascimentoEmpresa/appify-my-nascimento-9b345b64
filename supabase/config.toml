@@ -219,3 +219,9 @@ verify_jwt = true
 # do usuário (dir_rel_exige do relatório); a gravação, com service_role.
 [functions.demissao-relato-ia]
 verify_jwt = true
+
+# Suprimentos › Fornecedores › E-mails (06/11/2026): envia a mensagem escrita
+# na caixa estilo Gmail e grava em SUP_FORNECEDOR_EMAIL. JWT de usuário +
+# has_screen_access('fornecedores_email','incluir') dentro da function.
+[functions.fornecedor-email-enviar]
+verify_jwt = true
