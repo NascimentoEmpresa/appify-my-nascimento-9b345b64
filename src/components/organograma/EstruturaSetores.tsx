@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
-  BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, GraduationCap, HardHat, Landmark, Maximize, Megaphone, Minus,
-  Monitor, Package, Plus, Scale, Search, ShieldCheck, Users, X,
+  BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, GraduationCap, GripVertical, HardHat, Landmark, Maximize, Megaphone, Minus,
+  Monitor, Package, Plus, Scale, Search, ShieldCheck, UserCog, Users, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { funcaoDe, type NoPessoa } from "@/lib/organograma/pessoas";
-import { casaSetor, chaveSetor, montarEstrutura, pessoasNoRamo, type SetorEstrutura } from "@/lib/organograma/estruturaSetores";
+import {
+  casaContrato, casaSetor, montarEstrutura,
+  type ContratoEstrutura, type Estrutura, type SetorEstrutura,
+} from "@/lib/organograma/estruturaSetores";
 
 // =====================================================================
 // Organograma › visão ESTRUTURA (06/11/2026) — regra em
@@ -17,20 +24,30 @@ import { casaSetor, chaveSetor, montarEstrutura, pessoasNoRamo, type SetorEstrut
 // Desenho de organograma de verdade (linhas ligando pai e filhos): Conselho
 // no topo, Presidência, e a árvore de SETORES pela cadeia de comando. O
 // setor mostra o responsável; clicar abre, logo abaixo do card, quem está
-// ligado direto à cadeira dele, e cada pessoa abre a equipe dela (um nível
-// por clique: são ~2.500 pessoas). Clicar no nome abre o perfil.
+// ligado direto à cadeira dele. Cada pessoa abre a equipe de escritório dela
+// e os CONTRATOS que supervisiona; cada contrato abre o pessoal de campo dele
+// (encarregado → turma). Ninguém de campo aparece solto: está no contrato da
+// Senior. Clicar no nome abre o perfil.
 //
-// Pedido do Pablo ao ver a primeira versão: "o layout tá bem ruim de ver,
-// preciso que fique EXTREMAMENTE superior de visualizar" — por isso o
-// desenho cabe na tela sozinho (zoom de ajuste ao abrir), com cor e ícone
-// por setor e o responsável à vista sem precisar abrir nada.
+// Quem monta o organograma arrasta o contrato para cima do supervisor (ou usa
+// "Definir supervisor") — grava em ORGANOGRAMA_CONTRATO_SUPERVISOR (mig
+// 20261106021000). Sem isso o supervisor é deduzido pelo cadastro.
+//
+// "O layout tá bem ruim de ver, preciso que fique EXTREMAMENTE superior" e
+// depois "adiciona mais animação" (Pablo): o desenho entra camada por camada
+// com as linhas se desenhando, o card abre revelando para baixo, as listas
+// entram em cascata. As animações NÃO desligam com prefers-reduced-motion — no
+// Windows "efeitos de animação" desligado liga essa preferência sem a pessoa
+// saber (mesma decisão do menu lateral, ver index.css .sb-flyout).
 // =====================================================================
+
+const sb = supabase as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const iniciais = (nome: string) => nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
 const CORES = ["#0f3171", "#1d4ed8", "#0e7490", "#047857", "#7c3aed", "#be123c", "#b45309", "#334155", "#0891b2", "#9333ea"];
 const corDe = (s: string) => CORES[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % CORES.length];
-const primeiroNome = (n: string) => n.split(/\s+/).slice(0, 2).map((p) => p[0] + p.slice(1).toLowerCase()).join(" ");
 const tituloNome = (n: string) => n.toLowerCase().replace(/(^|\s)(\p{L})/gu, (_, e, l) => e + l.toUpperCase()).replace(/\s(De|Da|Do|Das|Dos|E)\s/g, (m) => m.toLowerCase());
+const curto = (n: string) => tituloNome(n.split(/\s+/).slice(0, 2).join(" "));
 
 const ICONES: [RegExp, LucideIcon][] = [
   [/\b(RH|RECURSOS HUMANOS|PESSOAL|RECRUT)/, Users], [/FINANC|TESOUR|CONTAB|FISCAL|CONTROLADOR/, BarChart3],
@@ -41,6 +58,7 @@ const ICONES: [RegExp, LucideIcon][] = [
 const iconeDe = (chave: string): LucideIcon => ICONES.find(([re]) => re.test(chave))?.[1] ?? Building2;
 
 const CSS = `
+.est-arvore{--est-linha:#cbd5e1;display:flex;flex-direction:column;align-items:center}
 .est-arvore ul.est-r{display:flex;justify-content:center;position:relative;padding-top:28px;margin:0;list-style:none}
 .est-arvore li.est-r{position:relative;display:flex;flex-direction:column;align-items:center;padding:28px 10px 0}
 .est-arvore li.est-r::before,.est-arvore li.est-r::after{content:"";position:absolute;top:0;right:50%;width:50%;height:28px;border-top:2px solid var(--est-linha)}
@@ -51,23 +69,55 @@ const CSS = `
 .est-arvore li.est-r:last-child::before{border-right:2px solid var(--est-linha);border-top-right-radius:10px}
 .est-arvore li.est-r:first-child::after{border-top-left-radius:10px}
 .est-arvore ul.est-r ul.est-r::before{content:"";position:absolute;top:0;left:50%;height:28px;border-left:2px solid var(--est-linha)}
-.est-arvore{display:flex;flex-direction:column;align-items:center}
 .est-arvore>ul.est-r{padding-top:0;width:max-content}
-.est-arvore{--est-linha:#cbd5e1}
 .est-arvore ul.est-v{display:flex;flex-direction:column;gap:12px;margin:0 0 0 22px;padding:14px 0 0;list-style:none;align-self:flex-start}
 .est-arvore li.est-v{position:relative;padding-left:22px}
 .est-arvore li.est-v::before{content:"";position:absolute;left:0;top:-14px;bottom:-12px;border-left:2px solid var(--est-linha)}
 .est-arvore li.est-v:not(:first-child)::before{top:-12px}
-.est-arvore li.est-v:last-child::before{bottom:auto;height:calc(36px + 14px);border-bottom-left-radius:10px}
-.est-arvore li.est-v:not(:first-child):last-child::before{height:calc(36px + 12px)}
+.est-arvore li.est-v:last-child::before{bottom:auto;height:50px;border-bottom:2px solid var(--est-linha);width:22px;border-bottom-left-radius:10px}
+.est-arvore li.est-v:not(:first-child):last-child::before{height:48px}
 .est-arvore li.est-v::after{content:"";position:absolute;left:0;top:36px;width:22px;border-top:2px solid var(--est-linha)}
 .est-arvore li.est-v:last-child::after{border-top:0}
-.est-arvore li.est-v:last-child::before{border-bottom:2px solid var(--est-linha);width:22px}
-.dark .est-arvore{--est-linha:#475569}
-@keyframes est-abre{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
-.est-abre{animation:est-abre .22s ease-out}
-@media (prefers-reduced-motion: reduce){.est-abre{animation:none}}
+
+/* Entrada: cada camada chega depois da de cima, e as linhas se desenham. */
+@keyframes est-chega{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes est-linha-x{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes est-linha-y{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.est-arvore .est-no{animation:est-chega .55s cubic-bezier(.22,1,.36,1) backwards;animation-delay:calc(var(--d,0) * 110ms)}
+.est-arvore li.est-r::before{transform-origin:right;animation:est-linha-x .45s ease-out backwards;animation-delay:calc(var(--d,0) * 110ms - 60ms)}
+.est-arvore li.est-r::after{transform-origin:left;animation:est-linha-x .45s ease-out backwards;animation-delay:calc(var(--d,0) * 110ms - 60ms)}
+.est-arvore ul.est-r ul.est-r::before,.est-arvore li.est-v::before{transform-origin:top;animation:est-linha-y .4s ease-out backwards;animation-delay:calc(var(--d,0) * 110ms - 100ms)}
+
+/* Abrir: o conteúdo é revelado de cima para baixo; a lista entra em cascata. */
+@keyframes est-revela{from{opacity:0;clip-path:inset(0 0 100% 0);transform:translateY(-4px)}to{opacity:1;clip-path:inset(0 0 0 0);transform:none}}
+.est-abre{animation:est-revela .38s cubic-bezier(.22,1,.36,1) backwards}
+@keyframes est-item{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+.est-item{animation:est-item .32s ease-out backwards;animation-delay:calc(min(var(--i,0), 14) * 28ms)}
+
+/* Brilho do anel das cadeiras do topo e alvo do arrastar. */
+@keyframes est-gira{to{transform:rotate(360deg)}}
+.est-anel{position:relative;isolation:isolate}
+.est-anel::before{content:"";position:absolute;inset:-3px;border-radius:9999px;background:conic-gradient(from 0deg,var(--c),transparent 40%,var(--c) 70%,transparent);z-index:-1;animation:est-gira 6s linear infinite;opacity:.85}
+@keyframes est-pulsa{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,.45)}50%{box-shadow:0 0 0 6px rgba(37,99,235,0)}}
+.est-alvo{animation:est-pulsa 1s ease-in-out infinite;background:rgba(37,99,235,.10)!important;outline:2px dashed rgba(37,99,235,.7);outline-offset:-2px}
+@keyframes est-pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+.est-pop{animation:est-pop .35s ease-out backwards}
 `;
+
+// ── Contexto (evita passar 10 props por 6 níveis) ──────────────────────
+interface Ctx {
+  e: Estrutura;
+  abertos: Set<string>; alternar: (k: string) => void; onPerfil: (id: string) => void;
+  destaque: (n: NoPessoa) => boolean; termo: string;
+  podeMontar: boolean; supIds: Set<string>;
+  arrastando: string | null; setArrastando: (k: string | null) => void;
+  alvo: string | null; setAlvo: (id: string | null) => void;
+  atribuir: (c: ContratoEstrutura, no: string | null) => void;
+  definirSupervisor: (c: ContratoEstrutura) => void;
+}
+const C = createContext<Ctx | null>(null);
+const useCtx = () => useContext(C)!;
+const MIME = "application/x-organograma-contrato";
 
 function Foto({ no, tamanho = 40, anel = true }: { no: NoPessoa; tamanho?: number; anel?: boolean }) {
   const [erro, setErro] = useState(false);
@@ -83,12 +133,11 @@ function Foto({ no, tamanho = 40, anel = true }: { no: NoPessoa; tamanho?: numbe
   );
 }
 
-/** Cadeira do topo: foto grande, nome e função. */
 function CadeiraTopo({ no, cor, onPerfil }: { no: NoPessoa; cor: string; onPerfil: (id: string) => void }) {
   return (
     <button type="button" onClick={() => onPerfil(no.id)}
-      className="group flex w-[230px] flex-col items-center rounded-2xl bg-card px-4 pb-4 pt-5 text-center shadow-[0_6px_20px_-8px_rgba(15,23,42,.25)] ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_rgba(15,23,42,.35)] dark:ring-white/10">
-      <span className="rounded-full p-[3px]" style={{ background: `linear-gradient(135deg, ${cor}, ${cor}55)` }}>
+      className="group flex w-[230px] flex-col items-center rounded-2xl bg-card px-4 pb-4 pt-5 text-center shadow-[0_6px_20px_-8px_rgba(15,23,42,.25)] ring-1 ring-black/5 transition duration-300 hover:-translate-y-1 hover:shadow-[0_16px_34px_-12px_rgba(15,23,42,.4)] dark:ring-white/10">
+      <span className="est-anel rounded-full p-[3px] transition-transform duration-300 group-hover:scale-105" style={{ "--c": cor, background: "hsl(var(--card))" } as CSSProperties}>
         <Foto no={no} tamanho={68} anel={false} />
       </span>
       <span className="mt-3 line-clamp-2 text-[15px] font-semibold leading-tight group-hover:underline">{tituloNome(no.nome)}</span>
@@ -97,9 +146,9 @@ function CadeiraTopo({ no, cor, onPerfil }: { no: NoPessoa; cor: string; onPerfi
   );
 }
 
-function BlocoTopo({ titulo, icone: Icone, cor, pessoas, onPerfil }: { titulo: string; icone: LucideIcon; cor: string; pessoas: NoPessoa[]; onPerfil: (id: string) => void }) {
+function BlocoTopo({ titulo, icone: Icone, cor, pessoas, onPerfil, d }: { titulo: string; icone: LucideIcon; cor: string; pessoas: NoPessoa[]; onPerfil: (id: string) => void; d: number }) {
   return (
-    <div className="relative rounded-[22px] border-2 border-dashed px-5 pb-5 pt-7" style={{ borderColor: `${cor}66`, background: `${cor}0a` }}>
+    <div className="est-no relative rounded-[22px] border-2 border-dashed px-5 pb-5 pt-7" style={{ borderColor: `${cor}66`, background: `${cor}0a`, "--d": d } as CSSProperties}>
       <span className="absolute -top-3.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white shadow-sm" style={{ background: cor }}>
         <Icone className="h-3.5 w-3.5" /> {titulo}
       </span>
@@ -110,78 +159,173 @@ function BlocoTopo({ titulo, icone: Icone, cor, pessoas, onPerfil }: { titulo: s
   );
 }
 
-/** Linha de uma pessoa na lista do setor aberto. */
-function Pessoa({ no, nivel, ctx }: { no: NoPessoa; nivel: number; ctx: Ctx }) {
-  const equipe = ctx.equipeDe(no.id);
-  const chave = `p:${no.id}`;
+/** Pessoa nas listas. `contrato` = está dentro de um contrato (abre a turma dela no contrato). */
+function Pessoa({ no, nivel, i, contrato }: { no: NoPessoa; nivel: number; i: number; contrato?: string }) {
+  const ctx = useCtx();
+  const { e } = ctx;
+  const escritorio = contrato ? [] : e.equipeEscritorio(no.id);
+  const seus = contrato ? [] : e.contratosDe(no.id);
+  const turma = contrato ? e.equipeNoContrato(no.id, contrato) : [];
+  const qtd = escritorio.length + seus.length + turma.length;
+  const chave = `p:${no.id}:${contrato ?? ""}`;
   const aberto = ctx.abertos.has(chave);
-  const achado = ctx.destaque(no);
+  const ehAlvo = ctx.alvo === no.id;
+  const recebe = !contrato && ctx.podeMontar && ctx.supIds.has(no.id) && !!ctx.arrastando;
+
+  const onDragOver = (ev: DragEvent) => {
+    if (!recebe || !ev.dataTransfer.types.includes(MIME)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+    if (ctx.alvo !== no.id) ctx.setAlvo(no.id);
+  };
+  const onDrop = (ev: DragEvent) => {
+    const k = ev.dataTransfer.getData(MIME);
+    ctx.setAlvo(null);
+    const c = e.contratos.find((x) => x.chave === k);
+    if (c && recebe) { ev.preventDefault(); ctx.atribuir(c, no.id); if (!aberto) ctx.alternar(chave); }
+  };
+
   return (
-    <li>
-      <div className={cn("group flex items-center gap-2 rounded-lg py-1.5 pr-1.5 transition hover:bg-muted/70", achado && "bg-amber-100 dark:bg-amber-900/40")}
+    <li className="est-item" style={{ "--i": i } as CSSProperties}>
+      <div onDragOver={onDragOver} onDragLeave={() => ehAlvo && ctx.setAlvo(null)} onDrop={onDrop}
+        className={cn("group flex items-center gap-2 rounded-lg py-1.5 pr-1.5 transition-colors hover:bg-muted/70",
+          ctx.destaque(no) && "bg-amber-100 dark:bg-amber-900/40", recebe && "ring-1 ring-dashed ring-primary/30", ehAlvo && "est-alvo")}
         style={{ paddingLeft: 4 + nivel * 16 }}>
-        {equipe.length ? (
-          <button type="button" onClick={() => ctx.alternar(chave)} aria-label={aberto ? "Recolher equipe" : "Abrir equipe"}
+        {qtd ? (
+          <button type="button" onClick={() => ctx.alternar(chave)} aria-label={aberto ? "Recolher" : "Abrir equipe"}
             className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground">
-            <ChevronRight className={cn("h-4 w-4 transition-transform", aberto && "rotate-90")} />
+            <ChevronRight className={cn("h-4 w-4 transition-transform duration-300", aberto && "rotate-90")} />
           </button>
         ) : <span className="w-6 shrink-0" />}
         <Foto no={no} tamanho={30} />
         <button type="button" onClick={() => ctx.onPerfil(no.id)} className="min-w-0 flex-1 text-left">
           <span className="block truncate text-[13px] font-medium leading-tight group-hover:underline">{tituloNome(no.nome)}</span>
-          <span className="block truncate text-[11px] text-muted-foreground">{funcaoDe(no) || "—"}</span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            {funcaoDe(no) || "—"}{seus.length ? <b className="ml-1 font-semibold text-amber-700 dark:text-amber-300">· {seus.length} contrato{seus.length > 1 ? "s" : ""}</b> : null}
+          </span>
         </button>
-        {equipe.length > 0 && (
-          <button type="button" onClick={() => ctx.alternar(chave)} title={`${equipe.length} direto(s) · ${ctx.totalAbaixo(no.id)} no total abaixo`}
+        {qtd > 0 && (
+          <button type="button" onClick={() => ctx.alternar(chave)} title={`${qtd} direto(s) · ${e.totalAbaixo(no.id)} no total abaixo`}
             className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-muted-foreground">
-            {equipe.length}
+            {qtd}
           </button>
         )}
       </div>
-      {aberto && equipe.length > 0 && (
+      {aberto && qtd > 0 && (
         <ul className="est-abre">
-          {equipe.map((f) => <Pessoa key={f.id} no={f} nivel={nivel + 1} ctx={ctx} />)}
+          {escritorio.map((f, j) => <Pessoa key={f.id} no={f} nivel={nivel + 1} i={j} />)}
+          {seus.map((c, j) => <LinhaContrato key={c.chave} c={c} nivel={nivel + 1} i={escritorio.length + j} />)}
+          {turma.map((f, j) => <Pessoa key={f.id} no={f} nivel={nivel + 1} i={j} contrato={contrato} />)}
         </ul>
       )}
     </li>
   );
 }
 
-interface Ctx {
-  abertos: Set<string>; alternar: (k: string) => void; onPerfil: (id: string) => void;
-  equipeDe: (id: string) => NoPessoa[]; totalAbaixo: (id: string) => number;
-  destaque: (n: NoPessoa) => boolean; termo: string;
+/** Contrato como "pasta" dentro do supervisor: arrastável, abre o pessoal de campo. */
+function LinhaContrato({ c, nivel, i }: { c: ContratoEstrutura; nivel: number; i: number }) {
+  const ctx = useCtx();
+  const k = `c:${c.chave}`;
+  const aberto = ctx.abertos.has(k) || (!!ctx.termo && c.membros.some(ctx.destaque));
+  const arrasta = ctx.podeMontar && c.chave !== "sem";
+  return (
+    <li className="est-item" style={{ "--i": i } as CSSProperties}>
+      <div draggable={arrasta}
+        onDragStart={(ev) => { ev.dataTransfer.setData(MIME, c.chave); ev.dataTransfer.effectAllowed = "move"; ctx.setArrastando(c.chave); }}
+        onDragEnd={() => { ctx.setArrastando(null); ctx.setAlvo(null); }}
+        className={cn("group flex items-center gap-1.5 rounded-lg py-1.5 pr-1.5 transition hover:bg-amber-50 dark:hover:bg-amber-950/30",
+          ctx.arrastando === c.chave && "opacity-50", arrasta && "cursor-grab active:cursor-grabbing")}
+        style={{ paddingLeft: 4 + nivel * 16 }}>
+        <button type="button" onClick={() => ctx.alternar(k)} aria-label={aberto ? "Recolher contrato" : "Abrir contrato"}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground">
+          <ChevronRight className={cn("h-4 w-4 transition-transform duration-300", aberto && "rotate-90")} />
+        </button>
+        <span className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-white shadow-sm transition-transform duration-300 group-hover:rotate-[-6deg] group-hover:scale-105">
+          <HardHat className="h-4 w-4" />
+        </span>
+        <button type="button" onClick={() => ctx.alternar(k)} className="min-w-0 flex-1 text-left">
+          <span className="block truncate text-[12.5px] font-semibold leading-tight">{c.nome}</span>
+          <span className="block truncate text-[10.5px] text-muted-foreground">
+            {c.membros.length.toLocaleString("pt-BR")} pessoa{c.membros.length === 1 ? "" : "s"} em campo
+            {c.origem === "cadastro" && " · supervisor pelo cadastro"}
+          </span>
+        </button>
+        {ctx.podeMontar && c.chave !== "sem" && (
+          <button type="button" title="Definir supervisor do contrato" onClick={() => ctx.definirSupervisor(c)}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground group-hover:opacity-100">
+            <UserCog className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {arrasta && <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/50 opacity-0 transition group-hover:opacity-100" />}
+      </div>
+      {aberto && (
+        <ul className="est-abre ml-4 border-l-2 border-amber-300/60 pl-1 dark:border-amber-700/50">
+          {c.cabecas.map((p, j) => <Pessoa key={p.id} no={p} nivel={nivel} i={j} contrato={c.chave} />)}
+        </ul>
+      )}
+    </li>
+  );
 }
 
-/** Card do setor; aberto, mostra quem está ligado à cadeira logo abaixo. */
-function CardSetor({ s, ctx }: { s: SetorEstrutura; ctx: Ctx }) {
-  const k = `s:${s.tipo}:${s.chave}`;
+/** O que abre no setor: a equipe de escritório ligada à cadeira e os contratos do responsável. */
+function ListaLigados({ s }: { s: SetorEstrutura }) {
+  const ctx = useCtx();
+  const { e } = ctx;
+  const r = s.responsavel;
+  const pessoas = useMemo(() => {
+    const vistos = new Set<string>(r ? [r.id] : []);
+    return [...(r ? e.equipeEscritorio(r.id) : []), ...s.cabecas.slice(1)].filter((n) => !vistos.has(n.id) && !!vistos.add(n.id));
+  }, [r, s.cabecas, e]);
+  const doResp = r ? e.contratosDe(r.id) : [];
+  // Contratos sem dono aparecem no setor operacional, prontos para arrastar.
+  const ehOperacional = /OPERAC/.test(s.chave) && !/DIRETOR/.test(s.chave);
+  const soltos = ehOperacional ? e.semSupervisor.filter((c) => casaContrato(c, ctx.termo)) : [];
+  if (!pessoas.length && !doResp.length && !soltos.length) return <p className="px-2 py-2 text-xs text-muted-foreground">Ninguém ligado a este setor.</p>;
+  return (
+    <div className="max-h-[460px] overflow-y-auto overscroll-contain">
+      <ul>
+        {pessoas.map((p, j) => <Pessoa key={p.id} no={p} nivel={0} i={j} />)}
+        {doResp.map((c, j) => <LinhaContrato key={c.chave} c={c} nivel={0} i={pessoas.length + j} />)}
+      </ul>
+      {soltos.length > 0 && (
+        <div className="mt-2 rounded-xl border border-dashed border-amber-400/70 bg-amber-50/60 p-1.5 dark:bg-amber-950/20">
+          <p className="px-1.5 pb-1 pt-0.5 text-[10.5px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+            Contratos sem supervisor · {soltos.length}
+            {ctx.podeMontar && <span className="ml-1 font-medium normal-case tracking-normal text-amber-700/80 dark:text-amber-300/80">— arraste para um supervisor</span>}
+          </p>
+          <ul>{soltos.map((c, j) => <LinhaContrato key={c.chave} c={c} nivel={0} i={j} />)}</ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardSetor({ s, d }: { s: SetorEstrutura; d: number }) {
+  const ctx = useCtx();
+  const k = `s:${s.chave}`;
   const aberto = ctx.abertos.has(k);
   const cor = corDe(s.chave);
-  const Icone = s.tipo === "contrato" ? HardHat : iconeDe(s.chave);
+  const Icone = iconeDe(s.chave);
   const r = s.responsavel;
-  const total = pessoasNoRamo(s);
-  // "Quem está diretamente ligado à cadeira": a equipe direta do responsável
-  // (ele já está no card) + as outras cabeças do setor, que respondem para fora.
-  const ligados = useMemo(() => {
-    const vistos = new Set<string>(r ? [r.id] : []);
-    return [...(r ? ctx.equipeDe(r.id) : []), ...s.cabecas.slice(1)].filter((n) => !vistos.has(n.id) && !!vistos.add(n.id));
-  }, [r, s.cabecas, ctx]);
+  const nContratos = r ? ctx.e.contratosDe(r.id).length : 0;
   return (
-    <div className={cn("relative overflow-hidden rounded-2xl bg-card text-left ring-1 ring-black/5 transition-[width,box-shadow] duration-200 dark:ring-white/10",
-      aberto ? "w-[340px]" : "w-[248px]",
-      aberto ? "shadow-[0_14px_34px_-12px_rgba(15,23,42,.4)]" : "shadow-[0_6px_18px_-8px_rgba(15,23,42,.22)] hover:shadow-[0_12px_28px_-10px_rgba(15,23,42,.32)]")}>
+    <div className={cn("est-no group/card relative overflow-hidden rounded-2xl bg-card text-left ring-1 ring-black/5 transition-[width,box-shadow,transform] duration-300 dark:ring-white/10",
+      aberto ? "w-[360px] shadow-[0_18px_40px_-14px_rgba(15,23,42,.45)]" : "w-[248px] shadow-[0_6px_18px_-8px_rgba(15,23,42,.22)] hover:-translate-y-1 hover:shadow-[0_14px_30px_-10px_rgba(15,23,42,.35)]")}
+      style={{ "--d": d } as CSSProperties}>
       <button type="button" onClick={() => ctx.alternar(k)} aria-expanded={aberto} className="block w-full text-left">
-        <div className="flex items-center gap-2.5 px-3.5 py-2.5 text-white" style={{ background: `linear-gradient(120deg, ${cor}, ${cor}d0)` }}>
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/20"><Icone className="h-[18px] w-[18px]" /></span>
+        <div className="relative flex items-center gap-2.5 overflow-hidden px-3.5 py-2.5 text-white" style={{ background: `linear-gradient(120deg, ${cor}, ${cor}d0)` }}>
+          {/* brilho que passa no hover */}
+          <span className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/3 -skew-x-12 bg-white/20 opacity-0 transition-all duration-700 group-hover/card:left-[120%] group-hover/card:opacity-100" />
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/20 transition-transform duration-300 group-hover/card:scale-110"><Icone className="h-[18px] w-[18px]" /></span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[14px] font-bold leading-tight">{s.nome}</span>
             <span className="block text-[11px] text-white/80">
               {s.membros.length.toLocaleString("pt-BR")} pessoa{s.membros.length === 1 ? "" : "s"}
               {s.filhos.length ? ` · ${s.filhos.length} setor${s.filhos.length === 1 ? "" : "es"} abaixo` : ""}
+              {nContratos ? ` · ${nContratos} contrato${nContratos === 1 ? "" : "s"}` : ""}
             </span>
           </span>
-          <ChevronDown className={cn("h-5 w-5 shrink-0 opacity-80 transition-transform", aberto && "rotate-180")} />
+          <ChevronDown className={cn("h-5 w-5 shrink-0 opacity-80 transition-transform duration-300", aberto && "rotate-180")} />
         </div>
         <div className="flex items-center gap-2.5 px-3.5 py-3">
           {r ? (
@@ -197,10 +341,8 @@ function CardSetor({ s, ctx }: { s: SetorEstrutura; ctx: Ctx }) {
       </button>
       {aberto && (
         <div className="est-abre border-t bg-muted/30 px-1.5 pb-1.5 pt-1">
-          <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">
-            Ligados à cadeira · {ligados.length}{r ? ` · ${(ctx.totalAbaixo(r.id) + s.cabecas.length - 1).toLocaleString("pt-BR")} no total` : ""}
-          </p>
-          {ligados.length ? <ListaLigados ligados={ligados} s={s} ctx={ctx} /> : <p className="px-2 py-2 text-xs text-muted-foreground">Ninguém ligado a este setor.</p>}
+          <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Ligados à cadeira</p>
+          <ListaLigados s={s} />
         </div>
       )}
     </div>
@@ -213,62 +355,23 @@ function CardSetor({ s, ctx }: { s: SetorEstrutura; ctx: Ctx }) {
  * coluna com trilho lateral. Sem isso as 6+ áreas debaixo das diretorias
  * ficavam lado a lado e o desenho passava de 2.000 px — abria a 45%, ilegível.
  */
-/**
- * O que abre no setor. Gente de escritório e de contrato se misturam debaixo
- * da mesma cadeira (ex.: 219 pessoas da limpeza respondem à gerência de RH
- * no cadastro) — numa lista corrida não se lê nada. Primeiro a equipe do
- * próprio setor (ou de outro setor do escritório); a operação vem agrupada
- * por contrato, cada grupo fechado com a contagem.
- */
-function ListaLigados({ ligados, s, ctx }: { ligados: NoPessoa[]; s: SetorEstrutura; ctx: Ctx }) {
-  const doEscritorio = ligados.filter((n) => !!chaveSetor(n.setor));
-  const porContrato = new Map<string, NoPessoa[]>();
-  ligados.filter((n) => !chaveSetor(n.setor)).forEach((n) => {
-    const c = n.contrato?.trim() || "Sem contrato";
-    porContrato.set(c, [...(porContrato.get(c) ?? []), n]);
-  });
-  const grupos = [...porContrato.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "pt-BR"));
-  return (
-    <div className="max-h-[420px] overflow-y-auto">
-      {doEscritorio.length > 0 && (
-        <ul>{doEscritorio.map((c) => <Pessoa key={c.id} no={c} nivel={0} ctx={ctx} />)}</ul>
-      )}
-      {grupos.map(([nome, pessoas]) => {
-        const k = `g:${s.chave}:${nome}`;
-        const aberto = ctx.abertos.has(k) || (!!ctx.termo && pessoas.some(ctx.destaque));
-        return (
-          <div key={k} className="mt-1">
-            <button type="button" onClick={() => ctx.alternar(k)}
-              className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition hover:bg-muted/70">
-              <ChevronRight className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", aberto && "rotate-90")} />
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300"><HardHat className="h-3.5 w-3.5" /></span>
-              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{nome}</span>
-              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-muted-foreground">{pessoas.length}</span>
-            </button>
-            {aberto && <ul className="est-abre ml-3 border-l pl-1">{pessoas.map((c) => <Pessoa key={c.id} no={c} nivel={0} ctx={ctx} />)}</ul>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RamoSetor({ s, ctx, nivel, vertical = false }: { s: SetorEstrutura; ctx: Ctx; nivel: number; vertical?: boolean }) {
+function RamoSetor({ s, nivel, d, vertical = false }: { s: SetorEstrutura; nivel: number; d: number; vertical?: boolean }) {
+  const ctx = useCtx();
   const filhos = s.filhos.filter((f) => casaSetor(f, ctx.termo));
   const pendurar = vertical || nivel >= 1;
   return (
-    <li className={vertical ? "est-v" : "est-r"}>
+    <li className={vertical ? "est-v" : "est-r"} style={{ "--d": d } as CSSProperties}>
       <div className="flex flex-col">
-        <CardSetor s={s} ctx={ctx} />
+        <CardSetor s={s} d={d} />
         {filhos.length > 0 && (pendurar
-          ? <ul className="est-v">{filhos.map((f) => <RamoSetor key={f.chave} s={f} ctx={ctx} nivel={nivel + 1} vertical />)}</ul>
-          : <ul className="est-r self-center">{filhos.map((f) => <RamoSetor key={f.chave} s={f} ctx={ctx} nivel={nivel + 1} />)}</ul>)}
+          ? <ul className="est-v" style={{ "--d": d + 1 } as CSSProperties}>{filhos.map((f, j) => <RamoSetor key={f.chave} s={f} nivel={nivel + 1} d={d + 1 + j * 0.5} vertical />)}</ul>
+          : <ul className="est-r self-center" style={{ "--d": d + 1 } as CSSProperties}>{filhos.map((f) => <RamoSetor key={f.chave} s={f} nivel={nivel + 1} d={d + 1} />)}</ul>)}
       </div>
     </li>
   );
 }
 
-/** Caixa rolável com zoom: abre cabendo na largura; +/− e "caber" à mão. */
+/** Caixa rolável com zoom: abre cabendo na largura; +/− e "caber" à mão; arrastar o fundo move. */
 function Tela({ children, dep }: { children: ReactNode; dep: unknown }) {
   const caixa = useRef<HTMLDivElement>(null);
   const conteudo = useRef<HTMLDivElement>(null);
@@ -281,8 +384,7 @@ function Tela({ children, dep }: { children: ReactNode; dep: unknown }) {
     // largura da tela e, dividida pelo zoom, só crescia — o ajuste travava no mínimo.
     const arvore = d.querySelector(".est-arvore > ul") as HTMLElement | null;
     const larg = (arvore?.getBoundingClientRect().width ?? d.scrollWidth) / (zoom || 1) + 48;
-    const z = Math.min(1, Math.max(0.5, (c.clientWidth - 16) / larg));
-    setZoom(+z.toFixed(2));
+    setZoom(+Math.min(1, Math.max(0.5, (c.clientWidth - 16) / larg)).toFixed(2));
   }, [zoom]);
   useLayoutEffect(() => { if (!manual) caber(); }, [dep]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -292,8 +394,6 @@ function Tela({ children, dep }: { children: ReactNode; dep: unknown }) {
     return () => ro.disconnect();
   }, [manual, caber]);
   const passo = (d: number) => { setManual(true); setZoom((z) => Math.min(1.5, Math.max(0.35, +(z + d).toFixed(2)))); };
-
-  // Arrastar o fundo para mover (como no organograma de pessoas).
   const arrasto = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
   return (
     <div className="relative">
@@ -304,18 +404,18 @@ function Tela({ children, dep }: { children: ReactNode; dep: unknown }) {
         <Button variant="ghost" size="icon" className="h-7 w-7" title="Caber na tela" onClick={() => { setManual(false); caber(); }}><Maximize className="h-3.5 w-3.5" /></Button>
       </div>
       <div ref={caixa}
-        onMouseDown={(e) => {
-          if ((e.target as HTMLElement).closest("button,a,input")) return;
-          arrasto.current = { x: e.clientX, y: e.clientY, l: caixa.current!.scrollLeft, t: caixa.current!.scrollTop };
+        onMouseDown={(ev) => {
+          if ((ev.target as HTMLElement).closest("button,a,input,[draggable=true]")) return;
+          arrasto.current = { x: ev.clientX, y: ev.clientY, l: caixa.current!.scrollLeft, t: caixa.current!.scrollTop };
         }}
-        onMouseMove={(e) => {
+        onMouseMove={(ev) => {
           const a = arrasto.current;
           if (!a || !caixa.current) return;
-          caixa.current.scrollLeft = a.l - (e.clientX - a.x);
-          caixa.current.scrollTop = a.t - (e.clientY - a.y);
+          caixa.current.scrollLeft = a.l - (ev.clientX - a.x);
+          caixa.current.scrollTop = a.t - (ev.clientY - a.y);
         }}
         onMouseUp={() => (arrasto.current = null)} onMouseLeave={() => (arrasto.current = null)}
-        className="max-h-[calc(100vh-250px)] min-h-[460px] cursor-grab overflow-auto rounded-3xl border bg-gradient-to-b from-slate-50 to-white active:cursor-grabbing dark:from-slate-900 dark:to-slate-950 print:max-h-none print:overflow-visible">
+        className="max-h-[calc(100vh-250px)] min-h-[460px] cursor-grab overflow-auto rounded-3xl border bg-[radial-gradient(circle,_hsl(var(--muted))_1px,_transparent_1px)] [background-size:20px_20px] active:cursor-grabbing print:max-h-none print:overflow-visible">
         <div ref={conteudo} className="mx-auto w-max min-w-full px-6 pb-12 pt-10" style={{ zoom }}>
           {children}
         </div>
@@ -324,106 +424,243 @@ function Tela({ children, dep }: { children: ReactNode; dep: unknown }) {
   );
 }
 
-export function EstruturaSetores({ nos, onPerfil }: { nos: NoPessoa[]; onPerfil: (id: string) => void }) {
-  const e = useMemo(() => montarEstrutura(nos), [nos]);
+/** Escolher o supervisor do contrato (alternativa ao arrastar). */
+function DialogSupervisor({ c, supervisores, onFechar, onEscolher }: {
+  c: ContratoEstrutura; supervisores: NoPessoa[]; onFechar: () => void; onEscolher: (no: string | null) => void;
+}) {
+  const [q, setQ] = useState("");
+  const sem = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const lista = supervisores.filter((s) => !q || sem(`${s.nome} ${funcaoDe(s)} ${s.setor ?? ""}`).includes(sem(q)));
+  return (
+    <Dialog open onOpenChange={(v) => !v && onFechar()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Supervisor do contrato</DialogTitle>
+          <DialogDescription>{c.nome} · {c.membros.length.toLocaleString("pt-BR")} pessoa(s). O contrato e o pessoal dele passam a ficar dentro de quem você escolher.</DialogDescription>
+        </DialogHeader>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input autoFocus className="pl-8" placeholder="Buscar supervisor…" value={q} onChange={(ev) => setQ(ev.target.value)} />
+        </div>
+        <div className="max-h-[50vh] space-y-1 overflow-y-auto">
+          {lista.map((s, j) => (
+            <button key={s.id} type="button" onClick={() => onEscolher(s.id)} style={{ "--i": j } as CSSProperties}
+              className={cn("est-item flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition hover:border-primary/40 hover:bg-primary/5",
+                c.supervisor?.id === s.id && "border-primary/60 bg-primary/5")}>
+              <Foto no={s} tamanho={34} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{tituloNome(s.nome)}</span>
+                <span className="block truncate text-xs text-muted-foreground">{funcaoDe(s)}{s.setor ? ` · ${s.setor}` : ""}</span>
+              </span>
+              {c.supervisor?.id === s.id && <span className="text-[11px] font-semibold text-primary">{c.origem === "definido" ? "atual" : "pelo cadastro"}</span>}
+            </button>
+          ))}
+          {!lista.length && <p className="py-6 text-center text-sm text-muted-foreground">Nenhum supervisor encontrado.</p>}
+        </div>
+        {c.origem === "definido" && (
+          <Button variant="ghost" className="text-muted-foreground" onClick={() => onEscolher(null)}>Tirar a escolha (volta ao que o cadastro diz)</Button>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CardContrato({ c, i }: { c: ContratoEstrutura; i: number }) {
+  const ctx = useCtx();
+  return (
+    <div className="est-item w-full rounded-2xl border bg-card p-1.5 shadow-sm transition hover:shadow-md" style={{ "--i": i } as CSSProperties}>
+      <ul><LinhaContrato c={c} nivel={0} i={0} /></ul>
+      <div className="flex items-center gap-2 border-t px-2.5 pb-1 pt-2 text-[11px]">
+        {c.supervisor ? (
+          <>
+            <Foto no={c.supervisor} tamanho={20} />
+            <span className="min-w-0 flex-1 truncate"><b className="font-semibold">{curto(c.supervisor.nome)}</b><span className="text-muted-foreground"> · {c.origem === "definido" ? "supervisor" : "pelo cadastro"}</span></span>
+          </>
+        ) : <span className="flex-1 font-semibold text-amber-700 dark:text-amber-300">Sem supervisor</span>}
+        {ctx.podeMontar && c.chave !== "sem" && (
+          <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.definirSupervisor(c)}>{c.supervisor ? "Trocar" : "Definir"}</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: NoPessoa[]; onPerfil: (id: string) => void; podeMontar?: boolean }) {
+  const qc = useQueryClient();
+  // Supervisor gravado por contrato. Tabela nova (mig 20261106021000): se ainda
+  // não existe no banco, a tela segue só com o que o cadastro diz.
+  const definidosQ = useQuery({
+    queryKey: ["organograma-contrato-supervisor"],
+    queryFn: async () => {
+      const { data, error } = await sb.from("ORGANOGRAMA_CONTRATO_SUPERVISOR").select("empresa, filial, no_id").range(0, 4999);
+      if (error) throw error;
+      return new Map<string, string>((data ?? []).map((r: { empresa: number; filial: number; no_id: string }) => [`${r.empresa}-${r.filial}`, r.no_id]));
+    },
+    retry: false, staleTime: 60_000,
+  });
+  const definidos = useMemo(() => definidosQ.data ?? new Map<string, string>(), [definidosQ.data]);
+  const bancoPronto = definidosQ.isSuccess;
+  const e = useMemo(() => montarEstrutura(nos, definidos), [nos, definidos]);
+
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const [busca, setBusca] = useState("");
   const [verOperacao, setVerOperacao] = useState(false);
+  const [filtroOp, setFiltroOp] = useState<"todos" | "sem">("todos");
+  const [arrastando, setArrastando] = useState<string | null>(null);
+  const [alvo, setAlvo] = useState<string | null>(null);
+  const [escolhendo, setEscolhendo] = useState<ContratoEstrutura | null>(null);
   const alternar = useCallback((k: string) => setAbertos((s) => { const x = new Set(s); if (x.has(k)) x.delete(k); else x.add(k); return x; }), []);
 
+  const salvar = useMutation({
+    mutationFn: async ({ c, no }: { c: ContratoEstrutura; no: string | null }) => {
+      const { error } = await sb.rpc("organograma_definir_supervisor_contrato", { p_empresa: c.empresa, p_filial: c.filial, p_no: no });
+      if (error) throw error;
+    },
+    onMutate: ({ c, no }) => {
+      const antes = qc.getQueryData<Map<string, string>>(["organograma-contrato-supervisor"]);
+      const novo = new Map(antes ?? []);
+      if (no) novo.set(c.chave, no); else novo.delete(c.chave);
+      qc.setQueryData(["organograma-contrato-supervisor"], novo);
+      return { antes };
+    },
+    onError: (err: Error, _v, ctx) => {
+      qc.setQueryData(["organograma-contrato-supervisor"], ctx?.antes);
+      toast.error(err.message || "Não deu para salvar o supervisor do contrato.");
+    },
+    onSuccess: (_d, { c, no }) => {
+      const p = no ? nos.find((n) => n.id === no) : null;
+      toast.success(p ? `${c.nome} agora fica com ${curto(p.nome)}.` : `${c.nome}: supervisor volta a ser o do cadastro.`);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["organograma-contrato-supervisor"] }),
+  });
+
+  const podeAtribuir = podeMontar && bancoPronto;
   const termo = busca.trim().length >= 2 ? busca.trim() : "";
   const sem = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-  const destaque = (n: NoPessoa) => !!termo && (sem(n.nome).includes(sem(termo)) || sem(funcaoDe(n)).includes(sem(termo)));
-  const ctx: Ctx = { abertos, alternar, onPerfil, equipeDe: e.equipeDe, totalAbaixo: e.totalAbaixo, destaque, termo };
+  const destaque = useCallback((n: NoPessoa) => !!termo && (sem(n.nome).includes(sem(termo)) || sem(funcaoDe(n)).includes(sem(termo))), [termo]);
+  const supIds = useMemo(() => new Set(e.supervisores.map((s) => s.id)), [e]);
+
+  const ctx: Ctx = {
+    e, abertos, alternar, onPerfil, destaque, termo, podeMontar: podeAtribuir, supIds,
+    arrastando, setArrastando, alvo, setAlvo,
+    atribuir: (c, no) => { if (c.supervisor?.id !== no || c.origem !== "definido") salvar.mutate({ c, no }); },
+    definirSupervisor: (c) => setEscolhendo(c),
+  };
 
   const idsConselho = new Set(e.conselho.map((c) => c.id));
   const raizFiltrada = e.raiz.filter((s) => casaSetor(s, termo));
-  // Setor que responde direto a um conselheiro sai do Conselho, ao lado da Presidência.
   const doConselho = raizFiltrada.filter((s) => s.ligadoA && idsConselho.has(s.ligadoA));
   const daPresidencia = raizFiltrada.filter((s) => !doConselho.includes(s));
-  const contratos = e.contratos.filter((s) => casaSetor(s, termo));
+  const contratosVisiveis = e.contratos.filter((c) => casaContrato(c, termo) && (filtroOp === "todos" || !c.supervisor));
 
   const abrirAchados = () => {
     if (!termo) return;
     const k = new Set(abertos);
-    const marcar = (s: SetorEstrutura) => {
-      if (s.membros.some(destaque)) k.add(`s:${s.tipo}:${s.chave}`);
-      s.filhos.forEach(marcar);
-    };
+    const marcar = (s: SetorEstrutura) => { if (s.membros.some(destaque)) k.add(`s:${s.chave}`); s.filhos.forEach(marcar); };
     e.setores.forEach(marcar);
-    contratos.forEach(marcar);
-    if (contratos.some((s) => s.membros.some(destaque))) setVerOperacao(true);
+    if (e.contratos.some((c) => c.membros.some(destaque))) setVerOperacao(true);
     setAbertos(k);
   };
 
+  const dPres = e.conselho.length ? 1 : 0;
   const presid = e.presidencia.length > 0 && (
-    <li className="est-r">
-      <BlocoTopo titulo="Presidência" icone={Crown} cor="#0f3171" pessoas={e.presidencia} onPerfil={onPerfil} />
-      {daPresidencia.length > 0 && <ul className="est-r">{daPresidencia.map((s) => <RamoSetor key={s.chave} s={s} ctx={ctx} nivel={0} />)}</ul>}
+    <li className="est-r" style={{ "--d": dPres } as CSSProperties}>
+      <BlocoTopo titulo="Presidência" icone={Crown} cor="#0f3171" pessoas={e.presidencia} onPerfil={onPerfil} d={dPres} />
+      {daPresidencia.length > 0 && (
+        <ul className="est-r" style={{ "--d": dPres + 1 } as CSSProperties}>
+          {daPresidencia.map((s) => <RamoSetor key={s.chave} s={s} nivel={0} d={dPres + 1} />)}
+        </ul>
+      )}
     </li>
   );
 
+  const semSup = e.semSupervisor.length;
+
   return (
-    <div className="space-y-4">
-      <style>{CSS}</style>
-      <div className="flex flex-wrap items-center gap-2 print:hidden">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-9 w-80 max-w-full pl-8 pr-8" placeholder="Buscar setor, pessoa ou função… (Enter abre)" value={busca}
-            onChange={(ev) => setBusca(ev.target.value)} onKeyDown={(ev) => ev.key === "Enter" && abrirAchados()} />
-          {busca && (
-            <button type="button" aria-label="Limpar busca" onClick={() => setBusca("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X className="h-4 w-4" />
-            </button>
-          )}
+    <C.Provider value={ctx}>
+      <div className="space-y-4">
+        <style>{CSS}</style>
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="h-9 w-80 max-w-full pl-8 pr-8" placeholder="Buscar setor, pessoa, função ou contrato… (Enter abre)" value={busca}
+              onChange={(ev) => setBusca(ev.target.value)} onKeyDown={(ev) => ev.key === "Enter" && abrirAchados()} />
+            {busca && (
+              <button type="button" aria-label="Limpar busca" onClick={() => setBusca("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {termo && <Button variant="outline" size="sm" className="h-8 text-xs" onClick={abrirAchados}>Abrir onde aparece</Button>}
+          <span className="ml-auto text-xs text-muted-foreground">
+            {e.setores.length} setores · {e.contratos.length} contratos{semSup ? <b className="font-semibold text-amber-700 dark:text-amber-300"> · {semSup} sem supervisor</b> : null}
+          </span>
+          {abertos.size > 0 && <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setAbertos(new Set())}>Recolher tudo</Button>}
         </div>
-        {termo && <Button variant="outline" size="sm" className="h-8 text-xs" onClick={abrirAchados}>Abrir onde aparece</Button>}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {e.setores.length} setores · {e.contratos.length} contratos · clique num setor para ver quem está ligado a ele
-        </span>
-        {abertos.size > 0 && <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setAbertos(new Set())}>Recolher tudo</Button>}
-      </div>
+        {podeMontar && !bancoPronto && definidosQ.isError && (
+          <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+            Definir o supervisor de cada contrato fica disponível quando a atualização do banco for aplicada. Por enquanto, os contratos seguem o que o cadastro diz.
+          </p>
+        )}
 
-      <Tela dep={`${nos.length}|${termo}`}>
-        <div className="est-arvore">
-          {e.conselho.length > 0 ? (
-            <ul className="est-r">
-              <li className="est-r">
-                <BlocoTopo titulo="Conselho" icone={Landmark} cor="#7c3aed" pessoas={e.conselho} onPerfil={onPerfil} />
-                {(presid || doConselho.length > 0) && (
-                  <ul className="est-r">
-                    {presid}
-                    {doConselho.map((s) => <RamoSetor key={s.chave} s={s} ctx={ctx} nivel={0} />)}
-                  </ul>
-                )}
-              </li>
-            </ul>
-          ) : presid ? <ul className="est-r">{presid}</ul> : (
-            <ul className="est-r">{raizFiltrada.map((s) => <RamoSetor key={s.chave} s={s} ctx={ctx} nivel={0} />)}</ul>
-          )}
-          {termo && raizFiltrada.length === 0 && <p className="pt-8 text-center text-sm text-muted-foreground">Nenhum setor com “{busca.trim()}”.</p>}
-        </div>
-      </Tela>
+        <Tela dep={`${nos.length}|${termo}`}>
+          <div className="est-arvore">
+            {e.conselho.length > 0 ? (
+              <ul className="est-r">
+                <li className="est-r" style={{ "--d": 0 } as CSSProperties}>
+                  <BlocoTopo titulo="Conselho" icone={Landmark} cor="#7c3aed" pessoas={e.conselho} onPerfil={onPerfil} d={0} />
+                  {(presid || doConselho.length > 0) && (
+                    <ul className="est-r" style={{ "--d": 1 } as CSSProperties}>
+                      {presid}
+                      {doConselho.map((s) => <RamoSetor key={s.chave} s={s} nivel={0} d={1} />)}
+                    </ul>
+                  )}
+                </li>
+              </ul>
+            ) : presid ? <ul className="est-r">{presid}</ul> : (
+              <ul className="est-r">{raizFiltrada.map((s) => <RamoSetor key={s.chave} s={s} nivel={0} d={0} />)}</ul>
+            )}
+            {termo && raizFiltrada.length === 0 && <p className="pt-8 text-center text-sm text-muted-foreground">Nenhum setor com “{busca.trim()}”.</p>}
+          </div>
+        </Tela>
 
-      {e.contratos.length > 0 && (
-        <div className="overflow-hidden rounded-3xl border bg-card">
-          <button type="button" onClick={() => setVerOperacao((v) => !v)} className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-muted/40">
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-sm"><HardHat className="h-5 w-5" /></span>
-            <span className="flex-1">
-              <span className="block text-[15px] font-semibold">Operação — por contrato</span>
-              <span className="block text-xs text-muted-foreground">
-                {e.contratos.length} contratos · {e.contratos.reduce((a, c) => a + c.membros.length, 0).toLocaleString("pt-BR")} pessoas em campo, cada contrato com a sua linha de comando
+        {e.contratos.length > 0 && (
+          <div className="overflow-hidden rounded-3xl border bg-card">
+            <button type="button" onClick={() => setVerOperacao((v) => !v)} className="group flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-muted/40">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-600 text-white shadow-sm transition-transform duration-300 group-hover:rotate-[-8deg] group-hover:scale-110"><HardHat className="h-5 w-5" /></span>
+              <span className="flex-1">
+                <span className="block text-[15px] font-semibold">Operação — todos os contratos</span>
+                <span className="block text-xs text-muted-foreground">
+                  {e.contratos.length} contratos · {e.contratos.reduce((a, c) => a + c.membros.length, 0).toLocaleString("pt-BR")} pessoas em campo, cada uma no contrato da Senior
+                </span>
               </span>
-            </span>
-            <ChevronDown className={cn("h-5 w-5 text-muted-foreground transition-transform", verOperacao && "rotate-180")} />
-          </button>
-          {verOperacao && (
-            <div className="est-abre grid grid-cols-[repeat(auto-fill,minmax(264px,1fr))] items-start justify-items-center gap-4 border-t bg-muted/20 p-5">
-              {contratos.map((s) => <CardSetor key={s.chave} s={s} ctx={ctx} />)}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+              {semSup > 0 && <span className="est-pop rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">{semSup} sem supervisor</span>}
+              <ChevronDown className={cn("h-5 w-5 text-muted-foreground transition-transform duration-300", verOperacao && "rotate-180")} />
+            </button>
+            {verOperacao && (
+              <div className="est-abre border-t bg-muted/20 p-5">
+                <div className="mb-3 inline-flex rounded-xl border bg-background p-1 text-xs font-semibold">
+                  {([["todos", "Todos"], ["sem", `Sem supervisor (${semSup})`]] as const).map(([v, r]) => (
+                    <button key={v} type="button" onClick={() => setFiltroOp(v)}
+                      className={cn("rounded-lg px-3 py-1.5 transition", filtroOp === v ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{r}</button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-3">
+                  {contratosVisiveis.map((c, i) => <CardContrato key={c.chave} c={c} i={i} />)}
+                </div>
+                {!contratosVisiveis.length && <p className="py-6 text-center text-sm text-muted-foreground">Nenhum contrato aqui.</p>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {escolhendo && (
+          <DialogSupervisor c={escolhendo} supervisores={e.supervisores}
+            onFechar={() => setEscolhendo(null)}
+            onEscolher={(no) => { ctx.atribuir(escolhendo, no); setEscolhendo(null); }} />
+        )}
+      </div>
+    </C.Provider>
   );
 }
+

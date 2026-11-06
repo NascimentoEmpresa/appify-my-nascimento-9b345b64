@@ -539,7 +539,10 @@ export default function Organograma() {
           {podeIncluir && !contrato && <Button onClick={() => { setEdicao(true); setAdicionar({ parentId: null }); }} className="gap-1.5"><UserPlus className="h-4 w-4" /> Posicionar a primeira pessoa</Button>}
         </Card>
       ) : modo === "estrutura" ? (
-        <EstruturaSetores nos={nos} onPerfil={setPerfilDe} />
+        // Na Estrutura entra também quem está sem superior: no campo o lugar da
+        // pessoa é o CONTRATO da Senior, não o chefe — quem é contratado hoje já
+        // aparece no contrato dele, antes de alguém definir o superior.
+        <EstruturaSetores nos={contrato ? [...nos, ...visao.semSuperior] : todos} onPerfil={setPerfilDe} podeMontar={podeAlterar || podeIncluir} />
       ) : (
         <div ref={caixaRef} onMouseDown={inicioPan} onMouseMove={movePan} onMouseUp={fimPan} onMouseLeave={fimPan}
              className="org-caixa relative h-[calc(100vh-270px)] min-h-[420px] cursor-grab overflow-auto rounded-2xl border bg-[radial-gradient(circle,_hsl(var(--muted))_1px,_transparent_1px)] [background-size:18px_18px] active:cursor-grabbing">
