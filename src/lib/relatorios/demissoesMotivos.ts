@@ -64,6 +64,36 @@ export function contarMotivos(linhas: LinhaDemissao[], dim: DimensaoMotivo): { n
   return [...m].map(([nome, n]) => ({ nome, n })).sort((a, b) => b.n - a.n || a.nome.localeCompare(b.nome, "pt-BR"));
 }
 
+export interface ContratosDoMotivo {
+  /** Os `max` contratos com mais solicitações do motivo, do maior para o menor (empate: nome). */
+  itens: { contrato: string; n: number }[];
+  /** Quantos contratos ficaram de fora da lista (o "+N outros"). */
+  outros: number;
+}
+
+/**
+ * Para o tooltip de "Motivos do relato": de quais contratos vêm as
+ * solicitações de cada motivo. Contrato pelo mesmo `contratoDe` do gráfico
+ * "Motivo por contrato", para o nome bater com o de cima.
+ */
+export function contratosPorMotivo(linhas: LinhaDemissao[], dim: DimensaoMotivo, max = 10): Map<string, ContratosDoMotivo> {
+  const porMotivo = new Map<string, Map<string, number>>();
+  for (const l of linhas) {
+    const k = valorDimensao(l, dim);
+    let m = porMotivo.get(k);
+    if (!m) porMotivo.set(k, (m = new Map()));
+    const c = contratoDe(l);
+    m.set(c, (m.get(c) ?? 0) + 1);
+  }
+  const out = new Map<string, ContratosDoMotivo>();
+  for (const [motivo, m] of porMotivo) {
+    const todos = [...m].map(([contrato, n]) => ({ contrato, n }))
+      .sort((a, b) => b.n - a.n || a.contrato.localeCompare(b.contrato, "pt-BR"));
+    out.set(motivo, { itens: todos.slice(0, max), outros: Math.max(0, todos.length - max) });
+  }
+  return out;
+}
+
 export interface LinhaCruzada {
   contrato: string;
   total: number;
