@@ -1,99 +1,103 @@
 import { describe, expect, it } from "vitest";
 import {
-  avaliarPontoFaltante, conflitosPorSolicitacao, datasSemPonto, estadoDoDia, horariosDoPonto, resumoPontoDiaria,
-  type PontoDiariaMalote, type PontoFaltante,
+  avaliarCobertura, avaliarPontoFaltante, conflitosPorSolicitacao, coberturaValida,
+  detalheEstado, fmtIntervalo, horariosDoPonto, resumoPontoDiaria,
+  type EvidenciaPonto, type JornadaPonto, type PontoDiariaMalote,
 } from "@/lib/diariaPonto";
 
-const vinc = [{ id: 1, nome: "JOÃO", cadastro: "6983", empresa: "1", situacao: "Trabalhando" }];
+const data = "2026-10-26";
+const cobertura = { data, inicioCobertura: "13:00", fimCobertura: "17:00" };
+const evidencia = (minutos: number[]): EvidenciaPonto => ({ disponivel: true, jornadas: [{ data, minutos, vinculo: "1/123" }] });
+const avaliar = (minutos: number[]) => avaliarCobertura(cobertura, evidencia(minutos), "2026-10-28", true);
 
-describe("diárias × ponto do faltante", () => {
-  it("minuto do dia vira hora, inclusive turno que vira a noite", () => {
-    expect(horariosDoPonto([780, 420, 1560])).toEqual(["07:00", "13:00", "02:00 (+1d)"]);
-    expect(horariosDoPonto(null)).toEqual([]);
+describe("SIS-2026-0800: cobertura × intervalos trabalhados", () => {
+  it("Romaine 07:30–11:45 não conflita com cobertura à tarde", () => {
+    expect(avaliar([450, 705]).estado).toBe("sem_conflito");
   });
-
-  it("estado de cada dia", () => {
-    expect(estadoDoDia("2026-10-01", [420], "2026-10-06", true)).toBe("trabalhou");
-    expect(estadoDoDia("2026-10-01", [420], "2026-10-06", false)).toBe("trabalhou");
-    expect(estadoDoDia("2026-10-01", [], "2026-10-06", true)).toBe("sem_marcacao");
-    expect(estadoDoDia("2026-10-06", null, "2026-10-06", true)).toBe("parcial");
-    expect(estadoDoDia("2026-10-07", null, "2026-10-06", true)).toBe("nao_sincronizado");
-    expect(estadoDoDia("2026-10-01", null, "2026-10-06", false)).toBe("sem_vinculo");
-    expect(estadoDoDia("2026-10-01", null, null, true)).toBe("nao_sincronizado");
+  it.each([
+    [[450, 1020], [{ inicio: 450, fim: 1020 }]], // contém cobertura sem batida dentro dela
+    [[810, 900], [{ inicio: 810, fim: 900 }]], // trabalho contido
+    [[450, 810], [{ inicio: 450, fim: 810 }]], // saída dentro
+    [[990, 1140], [{ inicio: 990, fim: 1140 }]], // entrada dentro
+    [[780, 1020], [{ inicio: 780, fim: 1020 }]], // igualdade
+  ])("detecta sobreposição total/parcial: %j", (minutos, intervalos) => {
+    const r = avaliar(minutos as number[]);
+    expect(r.estado).toBe("conflito");
+    expect(r.sobreposicoes).toEqual(intervalos);
+    expect(detalheEstado(r)).toContain("Diária: 13:00–17:00");
+    expect(detalheEstado(r)).toContain("Sobreposição com trabalho");
   });
-
-  it("avalia as datas digitadas com o retorno da RPC", () => {
-    const p: PontoFaltante = {
-      disponivel: true, sincronizado_ate: "2026-10-06", vinculos: vinc,
-      dias: [{ data: "2026-09-25", minutos: [420, 720, 780, 1020] }, { data: "2026-09-26", minutos: null }],
-    };
-    const r = avaliarPontoFaltante(p, ["2026-09-25", "2026-09-26", "", "2026-10-08", "2026-09-25"]);
-    expect([...r.keys()]).toEqual(["2026-09-25", "2026-09-26", "2026-10-08"]);
-    expect(r.get("2026-09-25")).toMatchObject({ estado: "trabalhou", horarios: ["07:00", "12:00", "13:00", "17:00"] });
-    expect(r.get("2026-09-26")!.estado).toBe("sem_marcacao");
-    expect(r.get("2026-10-08")!.estado).toBe("nao_sincronizado");
+  it.each([[450, 780], [1020, 1140]])("extremos adjacentes não conflitam: %j", (...minutos) => {
+    expect(avaliar(minutos).estado).toBe("sem_conflito");
   });
-
-  it("espelho fora do ar não bloqueia", () => {
-    const r = avaliarPontoFaltante({ disponivel: false, motivo: "x" }, ["2026-09-25"]);
-    expect(r.get("2026-09-25")!.estado).toBe("indisponivel");
+  it("não preenche intervalo de almoço como trabalhado", () => {
+    expect(avaliarCobertura({ data, inicioCobertura: "12:00", fimCobertura: "13:00" }, evidencia([450, 720, 780, 1020]), "2026-10-28", true).estado).toBe("sem_conflito");
   });
-
-  it("agrupa os conflitos da lista por solicitação", () => {
-    const m = conflitosPorSolicitacao({
-      sincronizado_ate: "2026-10-06",
-      conflitos: [
-        { solicitacao_id: "a", data: "2026-08-28", minutos: [431] },
-        { solicitacao_id: "a", data: "2026-08-26", minutos: [1030, 431] },
-        { solicitacao_id: "b", data: "2026-09-01", minutos: [420] },
-      ],
-    });
-    expect(m.get("a")!.map((x) => x.data)).toEqual(["2026-08-26", "2026-08-28"]);
-    expect(m.get("a")![0].horarios).toEqual(["07:11", "17:10"]);
-    expect(m.get("b")).toHaveLength(1);
+  it.each([[450], [450, 705, 800], [450, 450], [-1, 800], [450, 3000]])("dados incompletos ou inválidos exigem conferência: %j", (...minutos) => {
+    expect(avaliar(minutos).estado).toBe("conferir");
   });
-
-  it("datas que o relógio ainda não cobre", () => {
-    expect(datasSemPonto(["2026-10-07", "2026-10-01", "2026-10-06", "2026-10-07"], "2026-10-06")).toEqual(["2026-10-06", "2026-10-07"]);
-    expect(datasSemPonto(["2026-10-01"], null)).toEqual(["2026-10-01"]);
+  it("não presume qual entrada ou saída está faltando numa jornada ímpar", () => {
+    const r = avaliar([450, 900, 1100]);
+    expect(r.estado).toBe("conferir");
+    expect(r.sobreposicoes).toEqual([]);
+    expect(r.pendencias.join()).toContain("incompletas");
   });
-});
-
-describe("horas trabalhadas pelas batidas", () => {
-  it("soma os pares entrada→saída e avisa batida ímpar", async () => {
-    const { horasTrabalhadas, fmtDuracao, batidasPorSolicitacao } = await import("@/lib/diariaPonto");
-    expect(horasTrabalhadas([780, 420, 1020, 720])).toEqual({ minutos: 540, incompleto: false });
-    expect(fmtDuracao(540)).toBe("9h00");
-    expect(horasTrabalhadas([1140])).toEqual({ minutos: 0, incompleto: true });
-    expect(horasTrabalhadas([1320, 1800])).toEqual({ minutos: 480, incompleto: false });   // 22:00 → 06:00 do dia seguinte
-    const b = batidasPorSolicitacao({ sincronizado_ate: null, conflitos: [{ solicitacao_id: "a", data: "2026-09-01", minutos: [420, 720] }] });
-    expect(b.get("a")!.get("2026-09-01")).toEqual([420, 720]);
+  it("legado sem horário exige conferência mesmo sem batidas", () => {
+    expect(avaliarCobertura({ data }, evidencia([]), "2026-10-28", true).estado).toBe("conferir");
+    expect(avaliarCobertura({ data }, evidencia([450, 705]), "2026-10-28", true).estado).toBe("conferir");
   });
-});
-
-// Malote › Aprovações (mig 20261014000001, SIS-2026-0626): o ponto do faltante na despesa de diária.
-
-describe("ponto do faltante na despesa de diária do Malote", () => {
-  const item = (dias: PontoDiariaMalote["dias"], tem_vinculo = true): PontoDiariaMalote => ({
-    despesa_id: "d1", solicitacao_id: "s1", numero: "SD-2026-000006", faltante_nome: "X", contrato_nome: null, posto_nome: null, tem_vinculo, dias,
+  it.each([["", "17:00"], ["13:00", ""], ["13:00", "13:00"], ["24:00", "17:00"], ["13:70", "17:00"]])("recusa cobertura inválida %s–%s", (inicioCobertura, fimCobertura) => {
+    expect(coberturaValida({ data, inicioCobertura, fimCobertura })).toBe(false);
   });
-  it("conta os dias em que bateu ponto, os confirmados sem batida e os ainda a conferir", () => {
-    const r = resumoPontoDiaria(item([
-      { data: "2026-08-25", turno: "dia_inteiro", minutos: [478, 722, 778, 1022] },
-      { data: "2026-08-26", turno: "dia_inteiro", minutos: null },
-      { data: "2026-10-12", turno: "manha", minutos: null },
-      { data: "2026-10-13", turno: "manha", minutos: null },
-    ]), "2026-10-12");
-    expect(r.trabalhou).toBe(1);
-    expect(r.semMarcacao).toBe(1);
-    expect(r.aConferir).toBe(2);
-    expect(r.dias[0].horarios).toEqual(["07:58", "12:02", "12:58", "17:02"]);
-    expect(r.dias.map((d) => d.estado)).toEqual(["trabalhou", "sem_marcacao", "parcial", "nao_sincronizado"]);
+  it("não afirma ausência de conflito sem vínculo, sincronização ou consulta", () => {
+    expect(avaliarCobertura(cobertura, evidencia([]), "2026-10-28", false).estado).toBe("sem_vinculo");
+    expect(avaliarCobertura(cobertura, undefined, "2026-10-28", true).estado).toBe("indisponivel");
+    expect(avaliarCobertura(cobertura, evidencia([]), null, true).estado).toBe("nao_sincronizado");
+    expect(avaliarCobertura(cobertura, evidencia([450, 705]), data, true).estado).toBe("parcial");
+    expect(avaliar([]).estado).toBe("sem_marcacao");
   });
-  it("faltante sem matrícula no relógio: não afirma nada", () => {
-    const r = resumoPontoDiaria(item([{ data: "2026-08-26", turno: "tarde", minutos: null }], false), "2026-10-12");
-    expect(r.semVinculo).toBe(true);
-    expect(r.trabalhou).toBe(0);
-    expect(r.dias[0].estado).toBe("sem_vinculo");
+  it("não pareia uma entrada de uma matrícula com a saída de outra", () => {
+    const ponto = { disponivel: true, jornadas: [{ data, minutos: [450], vinculo: "1/123" }, { data, minutos: [705], vinculo: "2/123" }] };
+    expect(avaliarCobertura(cobertura, ponto, "2026-10-28", true).estado).toBe("conferir");
+  });
+  it("cobertura noturna compara a saída >1440 e a jornada seguinte", () => {
+    const c = { data, inicioCobertura: "22:00", fimCobertura: "06:00" };
+    expect(avaliarCobertura(c, evidencia([1380, 1500]), "2026-10-28", true).estado).toBe("conflito");
+    const jornadas: JornadaPonto[] = [{ data: "2026-10-27", minutos: [120, 240], vinculo: "1/123" }];
+    expect(avaliarCobertura(c, { disponivel: true, jornadas }, "2026-10-28", true).sobreposicoes).toEqual([{ inicio: 1560, fim: 1680 }]);
+    expect(avaliarCobertura(c, evidencia([]), "2026-10-27", true).estado).toBe("parcial");
+  });
+  it("cobertura matinal considera o fim da jornada anterior", () => {
+    const ponto = { disponivel: true, jornadas: [{ data: "2026-10-25", minutos: [1320, 1860], vinculo: "1/123" }] };
+    const r = avaliarCobertura({ data, inicioCobertura: "06:00", fimCobertura: "08:00" }, ponto, "2026-10-28", true);
+    expect(r.estado).toBe("conflito");
+    expect(fmtIntervalo(r.sobreposicoes[0])).toBe("22:00 (-1d)–07:00");
+  });
+  it("o mesmo dia pode ter uma cobertura em conflito e outra válida", () => {
+    const linhas = [{ id: "manha", data, inicioCobertura: "08:00", fimCobertura: "10:00" }, { id: "tarde", ...cobertura }];
+    const p = { disponivel: true, sincronizado_ate: "2026-10-28", vinculos: [{ id: 1, nome: "Romaine", cadastro: "123", empresa: "1", situacao: null }], dias: [{ data, minutos: [450, 705], ponto: evidencia([450, 705]) }] };
+    const resultados = avaliarPontoFaltante(p, linhas);
+    expect(resultados.get("manha")?.estado).toBe("conflito");
+    expect(resultados.get("tarde")?.estado).toBe("sem_conflito");
+    const lista = conflitosPorSolicitacao({ sincronizado_ate: p.sincronizado_ate, conflitos: linhas.map((l) => ({ solicitacao_id: "s1", linha_id: l.id, data, minutos: [450, 705], inicio_cobertura: l.inicioCobertura, fim_cobertura: l.fimCobertura, tem_vinculo: true, ponto: evidencia([450, 705]) })) });
+    expect(lista.get("s1")?.map((r) => r.linhaId)).toEqual(["manha"]);
+  });
+  it("Malote distingue conflito, não sobreposição e necessidade de conferência", () => {
+    const item: PontoDiariaMalote = { despesa_id: "d1", solicitacao_id: "s1", numero: "SD", faltante_nome: "Romaine", contrato_nome: null, posto_nome: null, tem_vinculo: true, dias: [
+      { data, turno: "tarde", minutos: [450, 705], inicio_cobertura: "13:00", fim_cobertura: "17:00", ponto: evidencia([450, 705]) },
+      { data, turno: "manha", minutos: [450, 705], inicio_cobertura: "08:00", fim_cobertura: "10:00", ponto: evidencia([450, 705]) },
+      { data, turno: "noite", minutos: [450, 705], ponto: evidencia([450, 705]) },
+    ] };
+    const r = resumoPontoDiaria(item, "2026-10-28");
+    expect(r.dias.map((d) => d.estado)).toEqual(["sem_conflito", "conflito", "conferir"]);
+    expect(r.conflitos).toBe(1);
+    expect(r.aConferir).toBe(1);
+  });
+  it("retorno antigo sem jornadas não pode dar sinal verde", () => {
+    const r = avaliarPontoFaltante({ disponivel: true, dias: [{ data, minutos: [450, 705] }] }, [{ id: "a", ...cobertura }]);
+    expect(r.get("a")?.estado).toBe("indisponivel");
+  });
+  it("formata minutos inclusive jornadas de outros dias", () => {
+    expect(horariosDoPonto([780, 420, 1560, -120])).toEqual(["22:00 (-1d)", "07:00", "13:00", "02:00 (+1d)"]);
   });
 });
