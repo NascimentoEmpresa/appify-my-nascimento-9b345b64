@@ -96,6 +96,7 @@ import {
   type SituacaoEstoque,
 } from "@/lib/suprimentos/estoqueSaudavel";
 import { cn } from "@/lib/utils";
+import { GradeReposicao } from "./GradeReposicao";
 
 /**
  * Aba "Estoque Saudável" do dashboard de Suprimentos.
@@ -152,7 +153,7 @@ export function EstoqueSaudavel({
   contratoId: string | null;
 }) {
   const [filtros, setFiltros] = useState<Omit<FiltroEstoqueSaudavel, "contratoId">>({
-    janelaMeses: null,
+    janelaMeses: 3,
     categoria: "uniforme",
     almoxarifadoId: null,
   });
@@ -351,7 +352,7 @@ export function EstoqueSaudavel({
 
       <PainelGrafico
         titulo="Prateleira saudável por item e tamanho"
-        subtitulo="Azul é o disponível para novos pedidos; cinza é o mínimo para repor; verde é o máximo saudável; roxo mostra as solicitações do Malote aguardando compra."
+        subtitulo="Azul é o disponível; laranja é o comprado aguardando entrega; cinza é o mínimo para repor; verde é o máximo saudável; roxo é o Malote aguardando compra."
       >
         <GraficoFaixaPorItem itens={dados.itens} />
         <p className="mt-2 text-[11px] text-slate-500">
@@ -360,6 +361,8 @@ export function EstoqueSaudavel({
           {filtros.almoxarifadoId && " As pendências de compra abrangem todos os almoxarifados da empresa."}
         </p>
       </PainelGrafico>
+
+      <GradeReposicao itens={dados.itens} premissas={p} almoxarifadoSelecionado={!!filtros.almoxarifadoId} />
 
       <PainelGrafico
         titulo="Compra sugerida por família — o volume que dá poder de negociação"
@@ -694,13 +697,14 @@ function GraficoSituacao({
  */
 export function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] }) {
   const dados = itens
-    .filter((item) => item.demanda_janela > 0 || item.disponivel > 0 || item.comprar > 0 || item.aguardando_compra > 0)
+    .filter((item) => item.demanda_janela > 0 || item.disponivel > 0 || item.comprar > 0 || item.aguardando_compra > 0 || item.em_transito > 0)
     .map((item) => ({
       rotulo: `${item.item} · ${item.tamanho ?? "único"}`,
       fisico: item.fisico,
       disponivel: item.disponivel,
       reservado: item.reservado,
       aguardando_compra: item.aguardando_compra,
+      em_transito: item.em_transito,
       minimo: item.minimo,
       alvo: item.alvo,
       comprar: item.comprar,
@@ -714,7 +718,7 @@ export function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] })
   }
 
   return (
-    <div style={{ height: Math.max(360, dados.length * 42 + 60) }}>
+    <div style={{ height: Math.max(360, dados.length * 54 + 60) }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={dados} layout="vertical" margin={{ left: 12, right: 42, top: 4 }} barGap={2}>
           <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} horizontal={false} />
@@ -729,6 +733,7 @@ export function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] })
                   <p className="text-slate-600">Físico na prateleira: {formatarNumero(payload[0].payload.fisico)}</p>
                   <p className="text-slate-600">Já reservado: {formatarNumero(payload[0].payload.reservado)}</p>
                   <p className="text-slate-600">Disponível para novo pedido: {formatarNumero(payload[0].payload.disponivel)}</p>
+                  <p className="font-semibold text-amber-800">Aguardando entrega: {formatarNumero(payload[0].payload.em_transito)}</p>
                   <p className="font-semibold text-violet-700">Aguardando compra: {payload[0].payload.aguardando_compra == null ? "—" : Number(payload[0].payload.aguardando_compra).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</p>
                   <p className="text-slate-600">Mínimo para pedir: {formatarNumero(payload[0].payload.minimo)}</p>
                   <p className="text-slate-600">Máximo saudável: {formatarNumero(payload[0].payload.alvo)}</p>
@@ -742,6 +747,7 @@ export function GraficoFaixaPorItem({ itens }: { itens: ItemEstoqueSaudavel[] })
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           <Bar dataKey="disponivel" name="Disponível" fill={AZUL_MAGNITUDE} radius={[0, 4, 4, 0]} maxBarSize={14} />
+          <Bar dataKey="em_transito" name="Aguardando entrega" fill="#f59e0b" radius={[0, 4, 4, 0]} maxBarSize={14} />
           <Bar dataKey="minimo" name="Mínimo para pedir" fill="#94a3b8" radius={[0, 4, 4, 0]} maxBarSize={14} />
           <Bar dataKey="aguardando_compra" name="Aguardando compra" fill="#8b5cf6" radius={[0, 4, 4, 0]} maxBarSize={14} />
           <Bar dataKey="alvo" name="Máximo saudável" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={14}>
