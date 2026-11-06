@@ -197,3 +197,29 @@ export function rankingMural<T extends Pick<LinhaMural, "colaborador" | "setor" 
     return { ...p, posicao };
   });
 }
+
+/**
+ * PRÉVIA do cartão do Início (06/11/2026, Pablo: "tem que ter uma prévia pra
+ * ver como fica antes de ser publicado"): o que JÁ está no mural mais o que
+ * está para ser liberado, nunca o recusado. Um recado entra uma vez só,
+ * mesmo que já esteja liberado e também na lista a liberar. Ordem do
+ * ranking: quem tem mais recados primeiro, cada um com os seus em sequência,
+ * do mais antigo ao mais novo.
+ */
+export function itensDaPrevia<T extends LinhaMural>(
+  todos: T[],
+  aLiberar: T[],
+  chave: (l: T) => string,
+): T[] {
+  const vistos = new Set<string>();
+  const juntos: T[] = [];
+  for (const l of [...todos.filter((x) => x.status === "liberado"), ...aLiberar]) {
+    if (l.status === "recusado") continue;
+    const k = chave(l);
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    juntos.push(l);
+  }
+  return rankingMural(juntos).flatMap((p) =>
+    [...p.itens].sort((a, b) => String(a.enviado_em).localeCompare(String(b.enviado_em))));
+}

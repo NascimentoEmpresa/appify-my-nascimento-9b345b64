@@ -94,6 +94,7 @@ const COR_MODULO: Record<string, string> = {
   comite_etica: "#b91c1c",
   presidencia: "#0b2a63",
   whatsapp: "#22c55e",
+  email: "#2563eb",
   bi: "#0f3171",
   "plano-acoes": "#dc2626",
   integracao: "#475569",

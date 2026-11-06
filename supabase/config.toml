@@ -225,3 +225,9 @@ verify_jwt = true
 # has_screen_access('fornecedores_email','incluir') dentro da function.
 [functions.fornecedor-email-enviar]
 verify_jwt = true
+
+# Módulo E-mail (06/11/2026): cada um envia do próprio endereço (EMAIL_REMETENTE
+# ou login @haggltda.com.br; EMAIL_DOMINIOS troca) e grava em EMAIL_MENSAGEM. JWT de
+# usuário + has_screen_access('email','incluir') dentro da function.
+[functions.email-enviar]
+verify_jwt = true

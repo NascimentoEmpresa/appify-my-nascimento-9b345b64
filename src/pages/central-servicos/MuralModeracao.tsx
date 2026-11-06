@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useDecidirMural, useMuralModeracao, type ItemModeracao } from "@/hooks/useMuralReconhecimento";
 import {
-  dataBR, dataLiberacao, diasParaLiberar, mesAnterior, podeLiberar, rankingMural, rotuloMes, somarMes,
+  dataBR, dataLiberacao, diasParaLiberar, itensDaPrevia, mesAnterior, podeLiberar, rankingMural, rotuloMes, somarMes,
   type StatusMural,
 } from "@/lib/formularios/muralReconhecimento";
+import { CartaoReconhecimento, type ItemCartao } from "@/components/reconhecimento/ReconhecimentoCard";
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - Mural do Início (moderação)
@@ -29,6 +30,12 @@ import {
 // de quantos dias faltam, e o banco recusa do mesmo jeito (trigger
 // cs_form_mural_trava_liberacao, mig 20261103001300). Toda liberação pede
 // confirmação dizendo quantos comentários e de qual mês.
+//
+// 06/11/2026 (Pablo: "tem que ter uma prévia pra ver como fica antes de ser
+// publicado"): botão "Ver prévia" — no rodapé (o mês inteiro, já liberados +
+// pendentes), em cada pessoa (só os dela) e na confirmação de liberar. A
+// prévia é o MESMO cartão do Início (CartaoReconhecimento), só sem a foto do
+// cadastro, que a moderação não carrega. Não grava nada.
 // =====================================================================
 
 const MESES_CAP = (ym: string) => rotuloMes(ym).replace(/^./, (c) => c.toUpperCase());
@@ -53,6 +60,10 @@ const MEDALHA: Record<number, { bg: string; c: string }> = {
 type Filtro = "todos" | StatusMural;
 
 const chaveItem = (i: ItemModeracao) => `${i.resposta_id}:${i.pergunta_id}:${i.linha}`;
+const paraCartao = (i: ItemModeracao): ItemCartao => ({
+  chave: chaveItem(i), colaborador: i.colaborador, setor: i.setor, cargo: null, avatar_url: null,
+  nota: i.nota, escala: i.escala, comentario: i.comentario,
+});
 const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
 
 export default function MuralModeracao({ formId, onFechar }: { formId: string; onFechar: () => void }) {
@@ -62,6 +73,8 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const [confirmar, setConfirmar] = useState<{ lista: ItemModeracao[]; quem?: string } | null>(null);
+  // Prévia: o que vai ser liberado (somado ao que já está no mural).
+  const [previa, setPrevia] = useState<{ aLiberar: ItemModeracao[]; quem?: string } | null>(null);
   const { data: itens = [], isLoading, error } = useMuralModeracao(formId, mes, true);
   const decidir = useDecidirMural();
 
@@ -200,6 +213,11 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                     )}
                     <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{aberto ? "▾ fechar" : "▸ ver comentários"}</span>
                   </button>
+                  {p.itens.some((i) => i.status !== "recusado") && (
+                    <button onClick={() => setPrevia({ aLiberar: pend, quem: p.colaborador })}
+                      title="Ver como os recados desta pessoa aparecem no Início"
+                      style={btn("#fff", "#0f3171", "1px solid #c7d2fe")}>👁 Prévia</button>
+                  )}
                   {pend.length > 0 && (
                     <button disabled={ocupado || !liberavel} title={liberavel ? undefined : avisoTrava}
                       onClick={() => pedirLiberacao(pend, p.colaborador)}
@@ -253,6 +271,11 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
           <span style={{ fontSize: 11.5, color: "#64748b", flex: 1 }}>
             {plural(ranking.length, "pessoa", "pessoas")} · {contagem.liberado} no mural · {contagem.pendente} pendente(s) · {contagem.recusado} recusado(s)
           </span>
+          <button disabled={!pendentes.length && !contagem.liberado} onClick={() => setPrevia({ aLiberar: pendentes })}
+            title="Ver como o cartão do Início fica com o que já está no mural e os pendentes"
+            style={pendentes.length || contagem.liberado ? btn("#fff", "#0f3171", "1px solid #c7d2fe") : btnTravado}>
+            👁 Ver prévia
+          </button>
           <button disabled={!pendentes.length || ocupado || !liberavel} title={liberavel ? undefined : avisoTrava}
             onClick={() => pedirLiberacao(pendentes)}
             style={pendentes.length && liberavel ? btn("#16a34a") : btnTravado}>
@@ -271,7 +294,9 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                 {confirmar.quem ? <> para <b>{confirmar.quem}</b></> : <> de <b>{plural(new Set(confirmar.lista.map((i) => i.colaborador.trim().toUpperCase())).size, "pessoa", "pessoas")}</b></>}.
                 Todos que entram no ERP vão ler, sem o nome de quem votou.
               </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+                <button onClick={() => setPrevia({ aLiberar: confirmar.lista, quem: confirmar.quem })}
+                  style={{ ...btn("#fff", "#0f3171", "1px solid #c7d2fe"), marginRight: "auto" }}>👁 Ver prévia</button>
                 <button onClick={() => setConfirmar(null)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Cancelar</button>
                 <button autoFocus disabled={ocupado}
                   onClick={() => { aplicar(confirmar.lista, "liberado"); setConfirmar(null); }}
@@ -280,6 +305,56 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             </div>
           </div>
         )}
+
+        {previa && (
+          <PreviaMural
+            mes={mes}
+            // Prévia de uma pessoa: só os recados dela (já no mural + a liberar).
+            itens={itensDaPrevia(
+              previa.quem ? itens.filter((i) => i.colaborador.trim().toUpperCase() === previa.quem!.trim().toUpperCase()) : itens,
+              previa.aLiberar,
+              chaveItem,
+            )}
+            novos={previa.aLiberar.filter((i) => i.status === "pendente").length}
+            quem={previa.quem}
+            onFechar={() => setPrevia(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PreviaMural({ mes, itens, novos, quem, onFechar }: {
+  mes: string; itens: ItemModeracao[]; novos: number; quem?: string; onFechar: () => void;
+}) {
+  // A prévia fica por cima da confirmação (zIndex maior): dá para olhar e
+  // voltar para o "Sim, liberar" sem perder nada.
+  return (
+    <div onClick={onFechar} style={{ position: "absolute", inset: 0, zIndex: 5, background: "rgba(15,23,42,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div role="dialog" aria-modal="true" aria-label="Prévia do Mural do Início" onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(760px, 100%)", maxHeight: "100%", overflowY: "auto", background: "#f1f5f9", borderRadius: 16, boxShadow: "0 24px 60px rgba(15,23,42,.4)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "14px 18px", background: "#fff", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 900, color: "#0f172a" }}>👁 Prévia — assim aparece no Início{quem ? ` (${quem})` : ""}</div>
+            <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
+              {novos > 0
+                ? <>Inclui <b>{plural(novos, "recado pendente", "recados pendentes")}</b> como se já estivessem liberados, junto com o que já está no mural. </>
+                : <>Só o que já está no mural. </>}
+              Nada é publicado por aqui. No Início entra a foto do cadastro de cada pessoa.
+            </div>
+          </div>
+          <button onClick={onFechar} aria-label="Fechar prévia" style={{ ...btn("#fff", "#475569", "1px solid #e2e8f0"), fontSize: 14, padding: "4px 10px" }}>✕</button>
+        </div>
+        <div className="rec-previa" style={{ padding: 18 }}>
+          {itens.length ? (
+            <CartaoReconhecimento mes={mes} itens={itens.map(paraCartao)} rodape="Prévia — ainda não publicado." />
+          ) : (
+            <div style={{ padding: 30, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+              Nada para mostrar: sem recados liberados ou pendentes. Recusados não entram no mural.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

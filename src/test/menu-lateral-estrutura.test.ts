@@ -136,12 +136,29 @@ describe("telas criadas depois de uma organização salva", () => {
     expect(rotas(montarMenu(CAT, e))).not.toContain("/app/cs/avisos");
   });
 
-  it("sem o módulo de origem, a tela nova vai para 'Novas telas'", () => {
+  it("sem o módulo de origem (removido no editor), a tela nova vai para 'Novas telas'", () => {
     const p = estruturaPadrao(CAT);
     const e = remover(remover(p, achar(p, "/app/enc/equipe").i.id), "m:encarregados");
     expect(e.modulos.some((m) => m.origem === "encarregados")).toBe(false);
-    const semEnc = { ...e, rotasConhecidas: e.rotasConhecidas.filter((r) => r !== "/app/enc/equipe") };
-    expect(montarMenu(CAT, semEnc).find((m) => m.label === "Novas telas")).toBeDefined();
+    // O módulo removido ganha uma tela nova; a antiga continua conhecida.
+    const cat2 = [CAT[0], { ...CAT[1], groups: [{ label: "Acompanhamento", items: [
+      { label: "Minha equipe", to: "/app/enc/equipe", icon: Circle },
+      { label: "Alertas", to: "/app/enc/alertas", icon: Circle },
+    ] }] }];
+    const novas = montarMenu(cat2, e).find((m) => m.label === "Novas telas");
+    expect(novas?.groups?.[0].items.map((i) => i.to)).toEqual(["/app/enc/alertas"]);
+  });
+
+  it("módulo inteiro novo entra como módulo próprio, não em 'Novas telas'", () => {
+    const salvo = estruturaPadrao(CAT);
+    const cat2 = [...CAT, mod("email", "E-mail", { "E-mail": [["Meu E-mail", "/app/email"], ["Remetentes", "/app/email/remetentes"]] })];
+    const menu = montarMenu(cat2, salvo);
+    expect(menu.find((m) => m.label === "Novas telas")).toBeUndefined();
+    const email = menu.find((m) => m.id === "email")!;
+    expect(email.label).toBe("E-mail");
+    expect(email.groups![0].items.map((i) => i.to)).toEqual(["/app/email", "/app/email/remetentes"]);
+    // Ordem alfabética entre os módulos da organização salva.
+    expect(menu.map((m) => m.label)).toEqual(["Central de Serviços", "E-mail", "Encarregados"]);
   });
 });
 

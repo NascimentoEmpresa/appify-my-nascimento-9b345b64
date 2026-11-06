@@ -10,13 +10,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { CampoDestinatarios } from "./CampoDestinatarios";
 import { EditorTexto, type EditorTextoRef } from "./EditorTexto";
 import {
-  BUCKET_EMAIL, subirAnexo, useEnviarEmail, useExcluirEmail, useSalvarRascunho,
-  type AnexoEmail, type ConfigEnvio,
-} from "@/hooks/useFornecedorEmail";
+  subirAnexo, useEnviarEmail, useExcluirEmail, useSalvarRascunho,
+  type AnexoEmail, type CaixaEmailCfg, type ConfigEnvio,
+} from "@/hooks/useCaixaEmail";
 import {
-  conferirAntesDeEnviar, esqueceuAnexo, formatarTamanho, fornecedoresDosEnderecos,
+  conferirAntesDeEnviar, esqueceuAnexo, formatarTamanho,
   MAX_ANEXOS_BYTES, nomeArquivoSeguro, type SugestaoEndereco,
-} from "@/lib/suprimentos/fornecedorEmail";
+} from "@/lib/email/caixa";
 
 /**
  * Janela "Nova mensagem" no canto, como no Gmail: minimiza, maximiza, salva
@@ -29,7 +29,8 @@ export interface MensagemInicial {
   assunto?: string;
   html?: string;
   anexos?: AnexoEmail[];
-  fornecedor_ids?: string[];
+  /** Donos já ligados à mensagem (ex.: o fornecedor da linha clicada). */
+  donoIds?: string[];
 }
 
 export function chaveAssinatura(uid: string | undefined) {
@@ -40,8 +41,11 @@ export function lerAssinatura(uid: string | undefined): string {
 }
 
 export function EscreverEmail({
-  inicial, uid, config, sugestoes, onFechar,
+  caixa, inicial, uid, config, sugestoes, extras, onFechar,
 }: {
+  caixa: CaixaEmailCfg;
+  /** Colunas a mais que a caixa grava (Fornecedores: fornecedor_ids). */
+  extras?: (enderecos: string[], donoIds: string[]) => Record<string, unknown>;
   inicial: MensagemInicial;
   uid: string;
   config: ConfigEnvio | undefined;
@@ -68,9 +72,9 @@ export function EscreverEmail({
   const salvandoRef = useRef(false);
   const arquivoRef = useRef<HTMLInputElement>(null);
 
-  const enviar = useEnviarEmail();
-  const salvar = useSalvarRascunho();
-  const excluir = useExcluirEmail();
+  const enviar = useEnviarEmail(caixa);
+  const salvar = useSalvarRascunho(caixa);
+  const excluir = useExcluirEmail(caixa);
 
   const corpoInicial = useRef(
     inicial.html ?? (() => {
@@ -89,7 +93,7 @@ export function EscreverEmail({
       for (const a of inicial.anexos ?? []) {
         if (a.path.startsWith(`${uid}/`)) { proprios.push(a); continue; }
         const destino = `${uid}/${crypto.randomUUID()}/${nomeArquivoSeguro(a.nome)}`;
-        const { error } = await supabase.storage.from(BUCKET_EMAIL).copy(a.path, destino);
+        const { error } = await supabase.storage.from(caixa.bucket).copy(a.path, destino);
         if (error) toast.error(`Não foi possível trazer o anexo "${a.nome}".`);
         else proprios.push({ ...a, path: destino });
       }
@@ -106,10 +110,10 @@ export function EscreverEmail({
       para, cc, cco, assunto,
       html: editor.current?.html() ?? "",
       anexos,
-      fornecedor_ids: Array.from(new Set([...(inicial.fornecedor_ids ?? []), ...fornecedoresDosEnderecos(sugestoes, todos)])),
+      extras: extras?.(todos, inicial.donoIds ?? []),
       responder_para: responderParaMim,
     };
-  }, [para, cc, cco, assunto, anexos, rascunhoId, responderParaMim, sugestoes, inicial.fornecedor_ids]);
+  }, [para, cc, cco, assunto, anexos, rascunhoId, responderParaMim, extras, inicial.donoIds]);
 
   const temConteudo = () =>
     para.length + cc.length + cco.length > 0 || assunto.trim() !== "" || anexos.length > 0
@@ -152,7 +156,7 @@ export function EscreverEmail({
       soma += f.size;
       setSubindo((n) => n + 1);
       try {
-        const a = await subirAnexo(uid, f);
+        const a = await subirAnexo(caixa, uid, f);
         setAnexos((xs) => [...xs, a]);
       } catch (e: any) {
         toast.error(`Falha ao anexar "${f.name}": ${e?.message ?? "erro"}`);
@@ -164,7 +168,7 @@ export function EscreverEmail({
 
   const removerAnexo = (a: AnexoEmail) => {
     setAnexos((xs) => xs.filter((x) => x.path !== a.path));
-    supabase.storage.from(BUCKET_EMAIL).remove([a.path]).catch(() => undefined);
+    supabase.storage.from(caixa.bucket).remove([a.path]).catch(() => undefined);
   };
 
   const fazerEnvio = async () => {
@@ -204,7 +208,7 @@ export function EscreverEmail({
     if (rascunhoId) {
       await excluir.mutateAsync({ id: rascunhoId, status: "rascunho", anexos }).catch(() => undefined);
     } else if (anexos.length) {
-      await supabase.storage.from(BUCKET_EMAIL).remove(anexos.map((a) => a.path)).catch(() => undefined);
+      await supabase.storage.from(caixa.bucket).remove(anexos.map((a) => a.path)).catch(() => undefined);
     }
     onFechar();
   };
@@ -259,7 +263,7 @@ export function EscreverEmail({
         )}
         {config && !config.configurado && (
           <div className="flex items-center gap-2 border-b bg-amber-50 px-4 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-            <AlertTriangle className="h-3.5 w-3.5" /> O envio ainda não está configurado no servidor — a mensagem vai falhar.
+            <AlertTriangle className="h-3.5 w-3.5" /> {config.motivo || "O envio ainda não está configurado no servidor — a mensagem vai falhar."}
           </div>
         )}
 

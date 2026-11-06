@@ -206,6 +206,25 @@ export function incluirTelasNovas<I extends ItemCatalogo>(e: EstruturaMenu, cata
 
   const saida: EstruturaMenu = structuredClone(e);
   const jaPostas = new Set<string>();
+  // MÓDULO INTEIRO NOVO (06/11/2026, módulo E-mail): nenhuma tela dele estava
+  // nas rotasConhecidas, então ninguém o retirou de propósito — ele nasceu
+  // depois da organização salva. Entra como módulo próprio, no lugar
+  // alfabético, em vez de as telas caírem soltas em "Novas telas". Módulo
+  // com alguma tela conhecida e sem lugar na estrutura foi removido pelo
+  // editor: esse continua indo para "Novas telas", como antes.
+  const modulosNovos = new Set(
+    catalogo
+      .filter((m) => (m.groups ?? []).some((g) => g.items.length > 0))
+      .filter((m) => !saida.modulos.some((s) => s.origem === m.id))
+      .filter((m) => (m.groups ?? []).every((g) => g.items.every((i) => !conhecidas.has(i.to))))
+      .map((m) => m.id),
+  );
+  for (const m of catalogo) {
+    if (!modulosNovos.has(m.id)) continue;
+    const novo: ModuloEstrutura = { id: `m:${m.id}`, rotulo: m.label, origem: m.id, categorias: [] };
+    const pos = saida.modulos.findIndex((x) => x.id !== "m:novas-telas" && porNome(x.rotulo, m.label) > 0);
+    saida.modulos.splice(pos === -1 ? saida.modulos.length : pos, 0, novo);
+  }
   for (const [ref, ent] of novas) {
     if (jaPostas.has(ent.item.to)) continue;
     jaPostas.add(ent.item.to);
