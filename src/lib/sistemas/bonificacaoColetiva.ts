@@ -481,12 +481,19 @@ export function dificuldadeDaComplexidade(nivel: number | null | undefined): Dif
   return "muito_dificil";
 }
 
-/** Reaberturas do chamado → qualidade sugerida (o gestor confirma ou troca). */
-export function qualidadeSugerida(reaberturas: number | null | undefined): Qualidade {
-  const n = finito(reaberturas) ? reaberturas : 0;
-  if (n <= 0) return "sem_ajuste";
-  if (n === 1) return "ajuste_pequeno";
-  return "retrabalho";
+/**
+ * Qualidade sugerida (o gestor confirma ou troca).
+ *
+ * REABERTURA NÃO É ERRO (06/11/2026, pedido do Pablo): "às vezes o
+ * solicitante vai concluir e reabre sem querer, e às vezes só reabre pedindo
+ * mais coisa, mesmo o desenvolvimento estando perfeito — não é culpa nem erro
+ * nosso". Antes 1 reabertura sugeria "ajuste pequeno" (50) e 2+ "retrabalho"
+ * (0). Agora a sugestão é sempre "atendeu sem ajuste"; ajuste/retrabalho só
+ * quando o gestor marca, ao avaliar a entrega. O número de reaberturas segue
+ * à vista, só como informação.
+ */
+export function qualidadeSugerida(_reaberturas?: number | null): Qualidade {
+  return "sem_ajuste";
 }
 
 // ── Linha da RPC → entrega ───────────────────────────────────────────────

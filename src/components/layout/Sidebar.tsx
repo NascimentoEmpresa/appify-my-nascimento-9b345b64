@@ -440,7 +440,6 @@ const financeiroModule: ModuleDef = {
         { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight },
         { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard },
         { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree },
-        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet },
         // SIS-2026-0473: registra aplicações (CDB/Fundo DI/etc.) e resgates,
         // alimenta o Fluxo de Caixa igual ao Débito Automático.
         { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark },
@@ -618,6 +617,9 @@ const rhModule: ModuleDef = {
         // Gestão de Ponto (branch local gestaoponto, mig 20261007000001): o mês
         // de cada colaborador pelas marcações da Senior.
         { label: "Gestão de Ponto", to: "/app/rh/gestao-ponto", icon: Fingerprint },
+        // Extrator de Benefícios (VA/VT): veio do Financeiro em 06/11/2026
+        // (mig 20261106020000) — mesmo menu, mesmas pessoas liberadas.
+        { label: "Extrator de Benefícios (VA/VT)", to: "/app/rh/extrator-beneficios", icon: FileSpreadsheet },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota

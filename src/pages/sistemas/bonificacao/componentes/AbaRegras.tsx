@@ -199,7 +199,7 @@ export function AbaRegras({ periodo, referencia: refMes, podeAlterar, podeAprova
         <Table>
           <TableHeader><TableRow><TableHead>Critério</TableHead><TableHead>Regra de conversão para nota (0–100)</TableHead></TableRow></TableHeader>
           <TableBody>
-            <TableRow><TableCell>Qualidade</TableCell><TableCell>Atendeu sem ajuste = 100; ajuste pequeno = 50; retrabalho = 0 (sugestão: nenhuma reabertura / 1 / 2 ou mais)</TableCell></TableRow>
+            <TableRow><TableCell>Qualidade</TableCell><TableCell>Atendeu sem ajuste = 100; ajuste pequeno = 50; retrabalho = 0. Sugestão: atendeu sem ajuste — reabertura do chamado não conta como erro (o solicitante pode reabrir sem querer ou para pedir mais); ajuste e retrabalho só quando o gestor marca</TableCell></TableRow>
             <TableRow><TableCell>Satisfação</TableCell><TableCell>Nota do solicitante na avaliação do chamado (1 a 5) ÷ 5 × 100</TableCell></TableRow>
             <TableRow><TableCell>Prazo</TableCell><TableCell>Dentro do prazo = 100; fora do prazo = 0 (situação gravada na conclusão do chamado)</TableCell></TableRow>
             <TableRow><TableCell>Dificuldade</TableCell><TableCell>Fácil, médio, difícil ou muito difícil = pontos configuráveis (IA: complexidade 1 = fácil, 2–3 = médio, 4 = difícil, 5 = muito difícil)</TableCell></TableRow>

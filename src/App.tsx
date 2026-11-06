@@ -166,7 +166,7 @@ import ClassificarLancamentos from "./pages/financeiro/cartao-credito/Classifica
 import DebitoAutomatico from "./pages/financeiro/DebitoAutomatico";
 import AplicacoesFinanceiras from "./pages/financeiro/AplicacoesFinanceiras";
 import ControleJuros from "./pages/financeiro/ControleJuros";
-import ExtratorBeneficios from "./pages/financeiro/ExtratorBeneficios";
+import ExtratorBeneficios from "./pages/rh/ExtratorBeneficios";
 import ChecklistFaturamento from "./pages/financeiro/ChecklistFaturamento";
 import SolicitacoesAjuste from "./pages/financeiro/SolicitacoesAjuste";
 import DocCanaa from "./pages/financeiro/DocCanaa";
@@ -966,7 +966,8 @@ const App = () => (
             <Route path="financeiro/gestao-financeira/debito-automatico" element={<DebitoAutomatico />} />
             <Route path="financeiro/gestao-financeira/aplicacoes-financeiras" element={<AplicacoesFinanceiras />} />
             <Route path="financeiro/controle-juros" element={<ControleJuros />} />
-            <Route path="financeiro/gestao-financeira/extrator-beneficios" element={<ExtratorBeneficios />} />
+            {/* Extrator de Benefícios foi para o RH (06/11/2026, mig 20261106020000) — o endereço antigo redireciona. */}
+            <Route path="financeiro/gestao-financeira/extrator-beneficios" element={<Navigate to="/app/rh/extrator-beneficios" replace />} />
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
@@ -1013,6 +1014,7 @@ const App = () => (
             <Route path="rh/rateio-despesas" element={<RateioDespesas />} />
             {/* Gestão de Ponto (branch local gestaoponto, mig 20261007000001): marcações da Senior por colaborador. */}
             <Route path="rh/gestao-ponto" element={<GestaoPonto />} />
+            <Route path="rh/extrator-beneficios" element={<ExtratorBeneficios />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}
