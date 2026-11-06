@@ -1378,6 +1378,7 @@ const sstModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
+        { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
       ],
     },
   ],
