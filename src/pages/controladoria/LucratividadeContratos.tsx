@@ -83,8 +83,13 @@ export default function LucratividadeContratos() {
   const { data: podeVerRubricas } = useScreenAccess("lucratividade-rubricas", "visualizar");
   const { data: podeAlterarRubricas } = useScreenAccess("lucratividade-rubricas", "alterar");
   // SIS-2026-0807: coluna "Justificativa de valor": a Controladoria cobra de um gerente a explicação de um valor da linha.
-  const { data: podeVerJustificativas = false } = useScreenAccess("justificativas-valor", "visualizar");
-  const { data: podeCobrarJustificativa = false } = useScreenAccess("justificativas-valor", "incluir");
+  // Acesso próprio da Lucratividade ('lucratividade-justificativas'); quem já tinha o menu Justificativas de Valor continua valendo.
+  const { data: verPropria = false } = useScreenAccess("lucratividade-justificativas", "visualizar");
+  const { data: verGestao = false } = useScreenAccess("justificativas-valor", "visualizar");
+  const { data: cobrarPropria = false } = useScreenAccess("lucratividade-justificativas", "incluir");
+  const { data: cobrarGestao = false } = useScreenAccess("justificativas-valor", "incluir");
+  const podeVerJustificativas = verPropria || verGestao;
+  const podeCobrarJustificativa = cobrarPropria || cobrarGestao;
   const { data: justificativas = [] } = useJustificativas(podeVerJustificativas);
   const resumoJustificativas = useMemo(() => resumoPorContrato(justificativas, mes), [justificativas, mes]);
   const [alvoJustificativa, setAlvoJustificativa] = useState<AlvoJustificativa | null>(null);

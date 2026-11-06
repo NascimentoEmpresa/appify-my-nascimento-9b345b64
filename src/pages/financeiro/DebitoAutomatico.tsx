@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { BarraPaginacao } from "@/components/BarraPaginacao";
+import { usePaginacaoNumerada } from "@/hooks/usePaginacaoNumerada";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,6 +100,10 @@ export default function DebitoAutomatico() {
       return true;
     });
   }, [linhas, tipoOrigemFiltro, tipoFiltro, dataDe, dataAte, competencia, statusFiltro, empresaFiltro, bancoFiltro]);
+
+  // Só a tabela é paginada; os KPIs e os filtros trabalham com todos os lançamentos.
+  const pag = usePaginacaoNumerada(filtradas.length, "debito-automatico");
+  const daPagina = useMemo(() => filtradas.slice(pag.ini, pag.fim), [filtradas, pag.ini, pag.fim]);
 
   const kpis = useMemo(() => {
     const h = hoje();
@@ -334,7 +340,7 @@ export default function DebitoAutomatico() {
                   {!isLoading && filtradas.length === 0 && (
                     <TableRow><TableCell colSpan={14} className="text-center text-muted-foreground py-10">Nenhum registro encontrado com os filtros atuais.</TableCell></TableRow>
                   )}
-                  {filtradas.map((l) => (
+                  {daPagina.map((l) => (
                     <TableRow key={l.id} className="[&>td]:px-2 [&>td]:py-2">
                       <TableCell className="font-mono text-xs whitespace-nowrap">{l.numero}</TableCell>
                       <TableCell className="text-xs whitespace-nowrap">{new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR")}</TableCell>
@@ -396,9 +402,7 @@ export default function DebitoAutomatico() {
                 </TableBody>
               </Table>
             </div>
-            {filtradas.length > 0 && (
-              <p className="text-xs text-muted-foreground pt-1">Mostrando {filtradas.length} registro{filtradas.length === 1 ? "" : "s"}</p>
-            )}
+            <BarraPaginacao totalItens={filtradas.length} {...pag} rotulo="registro" />
           </CardContent>
         </Card>
           </TabsContent>
