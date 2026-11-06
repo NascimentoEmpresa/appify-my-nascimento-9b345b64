@@ -135,7 +135,7 @@ export function AbaRegras({ periodo, referencia: refMes, podeAlterar, podeAprova
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-5">
           <Titulo ajuda={AJUDA.dificuldade}>Grau de dificuldade: pontos base</Titulo>
-          <p className="mb-3 text-sm text-muted-foreground">Pontos (0 a 100) que cada nível vale no critério Dificuldade.</p>
+          <p className="mb-3 text-sm text-muted-foreground">Pontos (0 a 100) que cada nível vale no critério Dificuldade. Regra da empresa: a IA só classifica o nível.</p>
           <div className="grid grid-cols-2 gap-3">
             {DIFICULDADES.map((d) => (
               <label key={d} className="text-xs text-muted-foreground">{ROTULO_DIFICULDADE[d]} (0 a 100)

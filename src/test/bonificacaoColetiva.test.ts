@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFIG_PADRAO,
+  textoEscalaDificuldade,
   PISO_VALOR,
   configDoPeriodo,
   distribuirPorPeso,
@@ -37,6 +38,8 @@ import {
   type LinhaPeriodo,
 } from "@/lib/sistemas/bonificacaoColetiva";
 
+const CFG = { ...CONFIG_PADRAO, pontosDificuldade: { facil: 25, medio: 50, dificil: 75, muito_dificil: 100 } };
+
 const entrega = (p: Partial<EntregaBonificacao>): EntregaBonificacao => ({
   chamadoId: "c1", numero: "SIS-2026-0001", assunto: "Tarefa", devId: "d1", devNome: "Ana",
   concluidoDia: "2026-10-04", prazoLimite: "2026-10-05", concluidoNoPrazo: null,
@@ -56,14 +59,14 @@ const PROTOTIPO: EntregaBonificacao[] = [
 
 describe("notas por critério", () => {
   it("converte cada critério para 0–100 como no protótipo", () => {
-    const n = notasDaEntrega(PROTOTIPO[0], CONFIG_PADRAO);
+    const n = notasDaEntrega(PROTOTIPO[0], CFG);
     expect(n).toEqual({ qualidade: 100, satisfacao: 100, prazo: 100, dificuldade: 50, valor: 82 }); // piso 50 + 50 × 6400/10000
-    const n2 = notasDaEntrega(PROTOTIPO[1], CONFIG_PADRAO);
+    const n2 = notasDaEntrega(PROTOTIPO[1], CFG);
     expect(n2).toEqual({ qualidade: 50, satisfacao: 80, prazo: 0, dificuldade: 25, valor: 61.5 }); // piso 50 + 50 × 2300/10000
   });
 
   it("valor tem teto de 100", () => {
-    expect(notasDaEntrega(PROTOTIPO[2], CONFIG_PADRAO).valor).toBe(100);
+    expect(notasDaEntrega(PROTOTIPO[2], CFG).valor).toBe(100);
   });
 
   it("concluido_no_prazo do banco vence a comparação de datas", () => {
@@ -74,36 +77,36 @@ describe("notas por critério", () => {
 
   it("nota da entrega = Σ nota × peso ÷ 100", () => {
     // 100×.3 + 100×.2 + 100×.2 + 50×.15 + 82×.15 = 89,8
-    expect(notaDaEntrega(PROTOTIPO[0], CONFIG_PADRAO)).toBeCloseTo(89.8, 6);
+    expect(notaDaEntrega(PROTOTIPO[0], CFG)).toBeCloseTo(89.8, 6);
   });
 
   it("pontos perdidos somam 100 − nota", () => {
-    const n = notasDaEntrega(PROTOTIPO[0], CONFIG_PADRAO);
-    const perdidos = Object.values(pontosPerdidos(n, CONFIG_PADRAO.pesos)).reduce((a, b) => a + b, 0);
+    const n = notasDaEntrega(PROTOTIPO[0], CFG);
+    const perdidos = Object.values(pontosPerdidos(n, CFG.pesos)).reduce((a, b) => a + b, 0);
     expect(perdidos).toBeCloseTo(100 - 89.8, 6);
   });
 });
 
 describe("nota do grupo", () => {
   it("é a média de cada critério, depois os pesos (não a média das notas)", () => {
-    const m = mediasDosCriterios(PROTOTIPO, CONFIG_PADRAO);
+    const m = mediasDosCriterios(PROTOTIPO, CFG);
     expect(m.qualidade).toBeCloseTo((100 + 50 + 100 + 0 + 100 + 100) / 6, 6);
-    const esperado = CONFIG_PADRAO.pesos.qualidade * m.qualidade! / 100
-      + CONFIG_PADRAO.pesos.satisfacao * m.satisfacao! / 100
-      + CONFIG_PADRAO.pesos.prazo * m.prazo! / 100
-      + CONFIG_PADRAO.pesos.dificuldade * m.dificuldade! / 100
-      + CONFIG_PADRAO.pesos.valor * m.valor! / 100;
-    expect(notaDoGrupo(PROTOTIPO, CONFIG_PADRAO)).toBeCloseTo(esperado, 6);
+    const esperado = CFG.pesos.qualidade * m.qualidade! / 100
+      + CFG.pesos.satisfacao * m.satisfacao! / 100
+      + CFG.pesos.prazo * m.prazo! / 100
+      + CFG.pesos.dificuldade * m.dificuldade! / 100
+      + CFG.pesos.valor * m.valor! / 100;
+    expect(notaDoGrupo(PROTOTIPO, CFG)).toBeCloseTo(esperado, 6);
   });
 
   it("critério sem dado sai da média e os pesos são renormalizados", () => {
     const e = entrega({ satisfacao: null }); // falta satisfação (peso 20)
     // (100×30 + 100×20 + 50×15 + 82×15) / 80
-    expect(notaDaEntrega(e, CONFIG_PADRAO)).toBeCloseTo((3000 + 2000 + 750 + 1230) / 80, 6);
+    expect(notaDaEntrega(e, CFG)).toBeCloseTo((3000 + 2000 + 750 + 1230) / 80, 6);
   });
 
   it("sem nenhuma entrega a nota é null", () => {
-    expect(notaDoGrupo([], CONFIG_PADRAO)).toBeNull();
+    expect(notaDoGrupo([], CFG)).toBeNull();
   });
 
   it("contribuição de uma tarefa para a equipe = nota ÷ total de entregas", () => {
@@ -112,7 +115,7 @@ describe("nota do grupo", () => {
   });
 
   it("agrupa por desenvolvedor em ordem alfabética", () => {
-    const r = resumoPorDev(PROTOTIPO, CONFIG_PADRAO);
+    const r = resumoPorDev(PROTOTIPO, CFG);
     expect(r.map((d) => d.devNome)).toEqual(["Iury Silva", "João Araújo", "Pablo Santarém"]);
     expect(r[0].mercado).toBe(25500);
   });
@@ -146,9 +149,9 @@ describe("rateio igualitário", () => {
 
 describe("validações", () => {
   it("pesos inteiros que somam 100", () => {
-    expect(validarPesos(CONFIG_PADRAO.pesos)).toBeNull();
-    expect(validarPesos({ ...CONFIG_PADRAO.pesos, valor: 20 })).toMatch(/105%/);
-    expect(validarPesos({ ...CONFIG_PADRAO.pesos, valor: 15.5, prazo: 19.5 })).toMatch(/inteiro/);
+    expect(validarPesos(CFG.pesos)).toBeNull();
+    expect(validarPesos({ ...CFG.pesos, valor: 20 })).toMatch(/105%/);
+    expect(validarPesos({ ...CFG.pesos, valor: 15.5, prazo: 19.5 })).toMatch(/inteiro/);
   });
 });
 
@@ -234,8 +237,8 @@ describe("período", () => {
 
 describe("régua do valor (05/11/2026)", () => {
   it("piso: entrega de valor baixo nunca zera o critério", () => {
-    expect(notasDaEntrega(entrega({ valorMercado: 1 }), CONFIG_PADRAO).valor).toBeCloseTo(50, 1);
-    expect(notasDaEntrega(entrega({ valorMercado: 99999 }), CONFIG_PADRAO).valor).toBe(100);
+    expect(notasDaEntrega(entrega({ valorMercado: 1 }), CFG).valor).toBeCloseTo(50, 1);
+    expect(notasDaEntrega(entrega({ valorMercado: 99999 }), CFG).valor).toBe(100);
     expect(PISO_VALOR).toBe(50);
   });
 
@@ -251,7 +254,7 @@ describe("régua do valor (05/11/2026)", () => {
     const poucas = [entrega({ valorMercado: 800 }), entrega({ valorMercado: null })];
     expect(referenciaDoPeriodo(poucas, 10000)).toEqual({ valor: 10000, automatica: false, base: 1 });
     // Chamado de R$ 1.000 num mês cuja régua é R$ 2.000: 50 + 50 × 0,5 = 75.
-    const cfg = configDoPeriodo(CONFIG_PADRAO, vals);
+    const cfg = configDoPeriodo(CFG, vals);
     expect(cfg.referenciaValor).toBe(2000);
     expect(notasDaEntrega(entrega({ valorMercado: 1000 }), cfg).valor).toBe(75);
   });
@@ -355,8 +358,8 @@ describe("distribuição com peso no valor (05/11/2026)", () => {
 
 describe("exportações", () => {
   it("CSV com BOM, ponto e vírgula e a cota de cada dev", () => {
-    const rateio = ratearBonificacao(5000, notaDoGrupo(PROTOTIPO, CONFIG_PADRAO), PROTOTIPO);
-    const csv = gerarCsv(PROTOTIPO.slice(0, 1), CONFIG_PADRAO, rateio);
+    const rateio = ratearBonificacao(5000, notaDoGrupo(PROTOTIPO, CFG), PROTOTIPO);
+    const csv = gerarCsv(PROTOTIPO.slice(0, 1), CFG, rateio);
     expect(csv.startsWith("﻿")).toBe(true);
     const [cab, l1] = csv.slice(1).split("\r\n");
     expect(cab.split(";")).toHaveLength(19);
@@ -365,12 +368,23 @@ describe("exportações", () => {
   });
 
   it("proposta escapa HTML", () => {
-    const devs = resumoPorDev([entrega({ devNome: "<script>x</script>" })], CONFIG_PADRAO);
+    const devs = resumoPorDev([entrega({ devNome: "<script>x</script>" })], CFG);
     const html = htmlProposta({
-      mes: "2026-10", cfg: CONFIG_PADRAO, rateio: ratearBonificacao(1000, 80, devs), medias: devs[0].medias,
+      mes: "2026-10", cfg: CFG, rateio: ratearBonificacao(1000, 80, devs), medias: devs[0].medias,
       devs, totalEntregas: 1, geradoEm: "05/11/2026", fechado: false,
     });
     expect(html).not.toContain("<script>x");
     expect(html).toContain("Outubro/2026");
+  });
+});
+
+describe("escala de dificuldade da equipe (mig 20261105050000)", () => {
+  it("fica perto de 90, com 100 só no muito difícil", () => {
+    expect(CONFIG_PADRAO.pontosDificuldade).toEqual({ facil: 80, medio: 88, dificil: 95, muito_dificil: 100 });
+  });
+  it("a tela diz que os pontos são regra da empresa, não nota da IA", () => {
+    const txt = textoEscalaDificuldade(CONFIG_PADRAO.pontosDificuldade);
+    expect(txt).toContain("Médio 88");
+    expect(txt).toContain("definidos pela empresa");
   });
 });
