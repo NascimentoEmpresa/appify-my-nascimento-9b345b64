@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  AGUARDANDO_IA, contarMotivos, cruzarContratoMotivo, dadosEmpilhados, DEMAIS, filtrarDetalhe, NAO_INFORMADO,
+  AGUARDANDO_IA, contarMotivos, contratosPorMotivo, cruzarContratoMotivo, dadosEmpilhados, DEMAIS, filtrarDetalhe, NAO_INFORMADO,
   pendentesIA, SEM_CONTRATO, tituloDetalhe, type LinhaDemissao,
 } from "@/lib/relatorios/demissoesMotivos";
 import {
@@ -93,5 +93,17 @@ describe("demissões › relato agrupado pela I.A (parte pura da Edge)", () => {
     for (const c of CATEGORIAS_RELATO) expect(SYSTEM_PROMPT).toContain(`- ${c}`);
     const p = montarPrompt([{ id: 7, relato: "precisava\n sair", motivo_solicitacao: "Pedido de demissão pelo colaborador", motivo_pedido: null }]);
     expect(p).toContain('{"id":7,"motivo_lista":"Pedido de demissão pelo colaborador","relato":"precisava sair"}');
+  });
+});
+
+describe("demissões › contratos por motivo (tooltip da I.A)", () => {
+  it("lista contratos do motivo do maior para o menor, corta em max e conta o resto", () => {
+    const ls = [
+      linha({ contrato: "B" }), linha({ contrato: "A" }), linha({ contrato: "A" }), linha({ contrato: "C" }),
+      linha({ contrato: " ", categoria_ia: null }),
+    ];
+    const r = contratosPorMotivo(ls, "categoria_ia", 2);
+    expect(r.get("Pediu para sair (sem detalhar)")).toEqual({ itens: [{ contrato: "A", n: 2 }, { contrato: "B", n: 1 }], outros: 1 });
+    expect(r.get(AGUARDANDO_IA)).toEqual({ itens: [{ contrato: SEM_CONTRATO, n: 1 }], outros: 0 });
   });
 });

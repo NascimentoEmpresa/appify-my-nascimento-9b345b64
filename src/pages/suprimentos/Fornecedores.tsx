@@ -11,7 +11,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Package, Search, Building2, ShieldAlert, FileSpreadsheet } from "lucide-react";
+import { Plus, Pencil, Trash2, Package, Search, Building2, ShieldAlert, FileSpreadsheet, Mail } from "lucide-react";
+import { usePermissoes } from "@/context/PermissoesContext";
+import { CaixaEmailFornecedores, type AberturaCaixa } from "@/components/suprimentos/email/CaixaEmailFornecedores";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { MateriaisFornecedorDialog } from "@/components/suprimentos/MateriaisFornecedorDialog";
@@ -175,6 +177,11 @@ export default function Fornecedores() {
   const [materiaisDe, setMateriaisDe] = useState<Fornecedor | null>(null);
   const [busca, setBusca] = useState("");
   const [exportando, setExportando] = useState(false);
+  // Caixa de e-mail (06/11/2026) — menu fantasma `fornecedores_email`.
+  const { can } = usePermissoes();
+  const podeVerEmails = can("visualizar", "suprimentos", "fornecedores_email");
+  const podeEnviarEmail = can("incluir", "suprimentos", "fornecedores_email");
+  const [caixaEmail, setCaixaEmail] = useState<AberturaCaixa | null>(null);
 
   const { data: rows = [], isLoading, error } = useQuery({
     queryKey: ["fornecedor", "list"],
@@ -292,6 +299,11 @@ export default function Fornecedores() {
         breadcrumb={["Fornecedores"]}
         actions={
           <>
+            {(podeVerEmails || podeEnviarEmail) && (
+              <Button variant="outline" onClick={() => setCaixaEmail({})}>
+                <Mail className="mr-2 h-4 w-4" /> E-mails
+              </Button>
+            )}
             <Button variant="outline" onClick={exportarExcel} disabled={rows.length === 0 || exportando}>
               <FileSpreadsheet className="mr-2 h-4 w-4" />
               {exportando ? "Exportando…" : "Exportar Excel"}
@@ -338,7 +350,7 @@ export default function Fornecedores() {
                   <TableHead>Contato</TableHead>
                   <TableHead>Cidade</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-32 text-right">Ações</TableHead>
+                  <TableHead className="w-44 text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -365,7 +377,14 @@ export default function Fornecedores() {
                         ? <Badge variant="outline" className="border-emerald-400/50 text-emerald-700 dark:text-emerald-300">Ativo</Badge>
                         : <Badge variant="secondary">Inativo</Badge>}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="whitespace-nowrap text-right">
+                      {podeEnviarEmail && (
+                        <Button size="icon" variant="ghost"
+                                title={r.email ? `Enviar e-mail para ${r.email}` : "Enviar e-mail (sem e-mail cadastrado)"}
+                                onClick={() => setCaixaEmail({ fornecedor: r, escrever: true })}>
+                          <Mail className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button size="icon" variant="ghost" title="Materiais que fornece"
                               onClick={() => setMateriaisDe(r)}>
                         <Package className="h-4 w-4" />
@@ -585,6 +604,15 @@ export default function Fornecedores() {
       </Dialog>
 
       <MateriaisFornecedorDialog fornecedor={materiaisDe} onFechar={() => setMateriaisDe(null)} />
+
+      {(podeVerEmails || podeEnviarEmail) && (
+        <CaixaEmailFornecedores
+          aberta={!!caixaEmail}
+          onOpenChange={(v) => !v && setCaixaEmail(null)}
+          fornecedores={rows}
+          abertura={caixaEmail}
+        />
+      )}
     </div>
   );
 }
