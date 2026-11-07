@@ -73,7 +73,7 @@ const devolvida: SolicitacaoDiaria = {
   pix: "111.444.777-35",
   pixTipo: "cpf",
   diarias: [
-    { id: "l1", data: "2026-09-18", turno: "tarde", qtVt: 2, valorUnitVt: 5.5, valorDiaria: 120 },
+    { id: "l1", data: "2026-09-18", turno: "tarde", inicioCobertura: "13:00", fimCobertura: "17:00", qtVt: 2, valorUnitVt: 5.5, valorDiaria: 120 },
   ],
   comprovantePonto: [],
   documentos: [],
@@ -117,6 +117,8 @@ describe("modo ajustar", () => {
     expect(screen.getAllByDisplayValue("111.444.777-35")).toHaveLength(2);
     // A grade de diárias volta com a linha lançada, não com uma linha vazia.
     expect(screen.getByDisplayValue("2026-09-18")).toBeInTheDocument();
+    expect(screen.getByLabelText("Início da cobertura 1")).toHaveValue("13:00");
+    expect(screen.getByLabelText("Fim da cobertura 1")).toHaveValue("17:00");
     expect(screen.getByDisplayValue("120")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Cobertura do posto da portaria.")).toBeInTheDocument();
   });
@@ -133,22 +135,25 @@ describe("modo ajustar", () => {
     expect(screen.getByRole("button", { name: /Reenviar para aprovação/i })).toBeInTheDocument();
   });
 
-  it("ponto batido fica como aviso e não bloqueia o reenvio", () => {
+  it("trabalho de manhã não gera conflito na cobertura da tarde; alterar horário recalcula", () => {
     pontoMock.data = {
       disponivel: true,
-      sincronizado_ate: "2026-09-18",
+      sincronizado_ate: "2026-09-20",
       vinculos: [{ id: 1, nome: "MARIA DA SILVA", cadastro: "123", empresa: "1", situacao: "Trabalhando" }],
-      dias: [{ data: "2026-09-18", minutos: [420, 690] }],
+      dias: [{ data: "2026-09-18", minutos: [450, 705], ponto: { disponivel: true, jornadas: [{ data: "2026-09-18", minutos: [450, 705], vinculo: "1/123" }] } }],
     };
 
     abrir("ajustar");
 
-    expect(screen.getByText(/MARIA DA SILVA bateu ponto em/i)).toBeInTheDocument();
+    expect(screen.queryByText(/MARIA DA SILVA: conflito de horários/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/intervalos trabalhados não coincidem/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Início da cobertura 1"), { target: { value: "08:00" } });
+    expect(screen.getByText(/MARIA DA SILVA: conflito de horários/i)).toBeInTheDocument();
     expect(screen.getByText(/o lançamento e a aprovação continuam liberados/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Reenviar para aprovação/i })).not.toBeDisabled();
   });
 
-  it("ponto batido fica como aviso e não bloqueia uma nova solicitação", () => {
+  it("nova solicitação sem cobertura pede conferência e sem bloquear o botão de salvar", () => {
     pontoMock.data = {
       disponivel: true,
       sincronizado_ate: "2026-09-18",
@@ -161,7 +166,7 @@ describe("modo ajustar", () => {
     expect(campoData).not.toBeNull();
     fireEvent.change(campoData!, { target: { value: "2026-09-18" } });
 
-    expect(screen.getByText(/bateu ponto em 18\/09\/2026/i)).toBeInTheDocument();
+    expect(screen.getByText(/não foi possível consultar os intervalos/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Salvar solicitação/i })).not.toBeDisabled();
   });
 

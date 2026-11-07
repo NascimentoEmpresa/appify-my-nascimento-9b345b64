@@ -6,7 +6,7 @@ import type { PontoDiariaMalote, RespostaPontoMalote } from "@/lib/diariaPonto";
 // de diária (mig 20261014000001, SIS-2026-0626). RPC nova, fora dos tipos gerados.
 const sb = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> };
 
-/** despesa_id → diárias ligadas a ela (normalmente uma). Falhou (sem acesso/sem a migration) = vazio: a tela segue igual. */
+/** despesa_id → diárias ligadas a ela. Falha exige aviso de conferência. */
 export function useDiariaPontoMalote(despesaIds: string[]) {
   const ids = [...new Set(despesaIds.filter(Boolean))].sort();
   return useQuery({
@@ -16,7 +16,7 @@ export function useDiariaPontoMalote(despesaIds: string[]) {
     queryFn: async (): Promise<{ sincronizadoAte: string | null; porDespesa: Map<string, PontoDiariaMalote[]> }> => {
       const { data, error } = await sb.rpc("diaria_ponto_malote", { p_despesas: ids });
       const porDespesa = new Map<string, PontoDiariaMalote[]>();
-      if (error || !data) return { sincronizadoAte: null, porDespesa };
+      if (error || !data) throw new Error(error?.message ?? "Não foi possível consultar o ponto das diárias.");
       const r = data as RespostaPontoMalote;
       for (const it of r.itens ?? []) porDespesa.set(it.despesa_id, [...(porDespesa.get(it.despesa_id) ?? []), it]);
       return { sincronizadoAte: r.sincronizado_ate, porDespesa };

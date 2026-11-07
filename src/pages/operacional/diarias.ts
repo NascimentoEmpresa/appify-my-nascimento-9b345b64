@@ -90,6 +90,8 @@ export interface LinhaDiaria {
   id: string;
   data: string; // yyyy-mm-dd
   turno: TurnoDiaria;
+  inicioCobertura?: string | null;
+  fimCobertura?: string | null;
   qtVt: number;
   valorUnitVt: number;
   valorDiaria: number;

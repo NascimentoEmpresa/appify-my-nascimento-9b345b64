@@ -52,7 +52,7 @@ import {
   usePostosDiaria,
   usePontoFaltanteDiaria,
 } from "@/hooks/useDiarias";
-import { avaliarPontoFaltante, detalheEstado, fmtDataCurta, ROTULO_ESTADO, type ResultadoPontoDia } from "@/lib/diariaPonto";
+import { avaliarPontoFaltante, coberturaValida, exigeConferencia, detalheEstado, fmtDataCurta, ROTULO_ESTADO, type ResultadoPontoDia } from "@/lib/diariaPonto";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   FORM_ID_PAINEL_DESPESA_DIARIA,
@@ -137,6 +137,8 @@ const linhaVazia = (): LinhaDiaria => ({
   id: crypto.randomUUID(),
   data: "",
   turno: "manha",
+  inicioCobertura: "",
+  fimCobertura: "",
   qtVt: 0,
   valorUnitVt: 0,
   valorDiaria: 0,
@@ -677,24 +679,20 @@ export function SolicitacaoDiariaModal({
 
   const temConflito = conflitos.some(Boolean);
 
-  // Ponto do faltante (mig 20261007000021): na criação/ajuste confere as
-  // linhas digitadas; na aprovação/visualização, as gravadas (o ponto de
-  // "hoje" chega depois). Desde 28/10/2026, a batida é somente um aviso:
-  // ela pode ser de outro turno e quem lança/aprova é quem conhece o caso.
+  // SIS-2026-0800: cada linha compara sua cobertura, inclusive quando há
+  // mais de um turno na mesma data. Nunca reaproveitar o ponto de outro CPF.
   const cpfPonto = editavel ? faltanteCpf : (solicitacao?.faltanteCpf ?? "");
-  const datasPonto = useMemo(
-    () => (editavel ? linhas.map((l) => l.data) : (solicitacao?.diarias ?? []).map((l) => l.data)).filter(Boolean),
-    [editavel, linhas, solicitacao],
-  );
+  const linhasPonto = useMemo(() => editavel ? linhas : (solicitacao?.diarias ?? []), [editavel, linhas, solicitacao]);
+  const datasPonto = useMemo(() => linhasPonto.map((l) => l.data).filter(Boolean), [linhasPonto]);
   const qPonto = usePontoFaltanteDiaria(cpfPonto, datasPonto);
-  const pontoPorData = useMemo(
-    () => (qPonto.data ? avaliarPontoFaltante(qPonto.data, datasPonto) : null),
-    [qPonto.data, datasPonto],
+  const pontoPorLinha = useMemo(
+    () => avaliarPontoFaltante(qPonto.data, linhasPonto),
+    [qPonto.data, linhasPonto],
   );
-  const diasBatidos = pontoPorData ? [...pontoPorData.values()].filter((r) => r.estado === "trabalhou") : [];
+  const diasBatidos = [...pontoPorLinha.values()].filter((r) => r.estado === "conflito");
   const temPontoBatido = diasBatidos.length > 0;
 
-  const linhasPreenchidas = linhas.every((l) => l.data);
+  const linhasPreenchidas = linhas.every((l) => l.data && coberturaValida(l));
   const cpfsOk = cpfValido(faltanteCpf) && cpfValido(diaristaCpf);
   const pessoasDiferentes =
     soDigitos(faltanteCpf) !== "" && soDigitos(faltanteCpf) !== soDigitos(diaristaCpf);
@@ -764,6 +762,8 @@ export function SolicitacaoDiariaModal({
       linhas: linhas.map((l) => ({
         data: l.data,
         turno: l.turno,
+        inicioCobertura: l.inicioCobertura ?? "",
+        fimCobertura: l.fimCobertura ?? "",
         qtVt: l.qtVt,
         valorUnitVt: l.valorUnitVt,
         valorDiaria: l.valorDiaria,
@@ -1306,6 +1306,21 @@ export function SolicitacaoDiariaModal({
                               </SelectContent>
                             </Select>
                           )}
+                          <div className="mt-1.5 space-y-1">
+                            {somenteLeitura ? (
+                              <p className="text-xs tabular-nums">{l.inicioCobertura && l.fimCobertura ? `${l.inicioCobertura}–${l.fimCobertura}` : "Horário não informado"}</p>
+                            ) : (["inicioCobertura", "fimCobertura"] as const).map((campo) => (
+                              <label key={campo} className="block text-[10px] text-muted-foreground">
+                                {campo === "inicioCobertura" ? "Início" : "Fim"}
+                                <Input type="time" step={60} aria-label={`${campo === "inicioCobertura" ? "Início" : "Fim"} da cobertura ${i + 1}`}
+                                  value={l[campo] ?? ""} required
+                                  onChange={(e) => setLinhas((p) => p.map((x, j) => j === i ? { ...x, [campo]: e.target.value } : x))}
+                                  className="h-8 w-full min-w-0 px-1 text-xs" />
+                              </label>
+                            ))}
+                            {l.inicioCobertura && l.fimCobertura && l.fimCobertura < l.inicioCobertura && <p className="text-[10px] text-muted-foreground">Fim no dia seguinte</p>}
+                            {!somenteLeitura && tentouSalvar && !coberturaValida(l) && <p className="text-[10px] text-destructive">Informe início e fim diferentes.</p>}
+                          </div>
                         </td>
                         <td className="py-1 pr-2">
                           {somenteLeitura ? (
@@ -1393,8 +1408,8 @@ export function SolicitacaoDiariaModal({
                               </div>
                             ) : (
                               <StatusPontoLinha
-                                ponto={l.data ? (pontoPorData?.get(l.data) ?? null) : null}
-                                carregando={qPonto.isFetching && !pontoPorData}
+                                ponto={l.data ? (pontoPorLinha.get(l.id) ?? null) : null}
+                                carregando={qPonto.isFetching}
                                 sincronizadoAte={qPonto.data?.sincronizado_ate}
                               />
                             )}
@@ -1426,7 +1441,7 @@ export function SolicitacaoDiariaModal({
               <p className="text-xs text-muted-foreground">
                 O status verifica se já existe pagamento de diária para o mesmo Faltante e/ou
                 Diarista, no mesmo turno e data — e confere no relógio de ponto se o faltante
-                bateu ponto no dia. A batida gera um aviso para conferência, mas não bloqueia o lançamento.
+                trabalhou durante a cobertura informada. Sobreposição e dados incompletos geram aviso para conferência, sem bloquear o lançamento. Se o fim for anterior ao início, a cobertura termina no dia seguinte.
               </p>
             </div>
             {temPontoBatido && (
@@ -1434,8 +1449,8 @@ export function SolicitacaoDiariaModal({
                 <UserX className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                 <div className="text-xs">
                   <p className="font-semibold text-destructive">
-                    {(editavel ? faltanteNome : solicitacao?.faltanteNome) || "O faltante"} bateu ponto em{" "}
-                    {diasBatidos.map((d) => `${fmtDataCurta(d.data)} (${d.horarios.join(", ")})`).join("; ")}.
+                    {(editavel ? faltanteNome : solicitacao?.faltanteNome) || "O faltante"}: conflito de horários em{" "}
+                    {diasBatidos.map((d) => `${fmtDataCurta(d.data)} — ${detalheEstado(d)}`).join("; ")}.
                   </p>
                   <p className="text-destructive/80">
                     Confira os horários e o turno da diária — o lançamento e a aprovação continuam liberados.
@@ -1667,7 +1682,7 @@ export function SolicitacaoDiariaModal({
             )}
             {temPontoBatido && (
               <p className="mt-2 text-right text-[11px] font-medium text-destructive">
-                Atenção: o faltante bateu ponto em dia da diária — confira os horários antes de salvar.
+                Atenção: há sobreposição de horários com o colaborador substituído — confira antes de salvar.
               </p>
             )}
           </div>
@@ -1694,7 +1709,7 @@ export function SolicitacaoDiariaModal({
             )}
             {temPontoBatido && (
               <p className="mt-1 text-right text-[11px] font-medium text-destructive">
-                Atenção: o faltante bateu ponto em dia da diária — confira os horários antes de reenviar.
+                Atenção: há sobreposição de horários com o colaborador substituído — confira antes de reenviar.
               </p>
             )}
           </div>
@@ -1865,7 +1880,7 @@ export function SolicitacaoDiariaModal({
                     // Ponto batido não trava mais a aprovação (mig 20261013000001):
                     // o aviso fica na tela e quem aprova decide.
                     disabled={salvando || !empresaContratoId || !classificacaoDiaria}
-                    title={temPontoBatido ? "Atenção: o faltante bateu ponto num dia da diária — confira antes de aprovar." : undefined}
+                    title={temPontoBatido ? "Atenção: há sobreposição de horários — confira antes de aprovar." : undefined}
                   >
                     <Send className="mr-2 h-4 w-4" /> Aprovar e enviar para malote
                   </Button>
@@ -1908,8 +1923,8 @@ export function SolicitacaoDiariaModal({
 
 /**
  * Status da linha quando não há duplicidade: o que o relógio de ponto diz do
- * faltante naquele dia (mig 20261007000021). Bateu ponto = aviso vermelho,
- * sem trava; dia ainda não sincronizado = âmbar (a aprovação confere).
+ * faltante na cobertura. Conflito confirmado = vermelho; dados insuficientes
+ * = âmbar. A conferência continua sem travar lançamento e aprovação.
  */
 function StatusPontoLinha({
   ponto,
@@ -1920,18 +1935,18 @@ function StatusPontoLinha({
   carregando: boolean;
   sincronizadoAte?: string | null;
 }) {
-  if (ponto?.estado === "trabalhou") {
+  if (ponto?.estado === "conflito") {
     return (
       <div className="flex items-start gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5">
         <UserX className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
         <div className="min-w-0">
-          <p className="break-words text-[11px] font-semibold leading-tight text-destructive">{ROTULO_ESTADO.trabalhou}</p>
-          <p className="text-[11px] leading-tight text-destructive/80">{ponto.horarios.join(", ")}</p>
+          <p className="break-words text-[11px] font-semibold leading-tight text-destructive">{ROTULO_ESTADO.conflito}</p>
+          <p className="text-[11px] leading-tight text-destructive/80">{detalheEstado(ponto)}</p>
         </div>
       </div>
     );
   }
-  const aviso = ponto && ponto.estado !== "sem_marcacao";
+  const aviso = carregando || !ponto || exigeConferencia(ponto);
   return (
     <div
       className={cn(
@@ -1946,11 +1961,11 @@ function StatusPontoLinha({
         <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
       )}
       <div className="min-w-0">
-        <p className={cn("text-xs font-semibold leading-tight", aviso ? "text-warning" : "text-success")}>Válida</p>
+        <p className={cn("text-xs font-semibold leading-tight", aviso ? "text-warning" : "text-success")}>{aviso ? "Conferir" : "Válida"}</p>
         {carregando ? (
           <p className="text-[10px] leading-tight text-muted-foreground">Conferindo o ponto…</p>
         ) : ponto ? (
-          <p className="text-[10px] leading-tight text-muted-foreground">{ROTULO_ESTADO[ponto.estado]}</p>
+          <p className="text-[10px] leading-tight text-muted-foreground">{detalheEstado(ponto)}</p>
         ) : null}
       </div>
     </div>

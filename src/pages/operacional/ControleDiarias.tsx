@@ -65,7 +65,7 @@ import {
   useVisualizacoesDiaria,
 } from "@/hooks/useDiarias";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
-import { batidasPorSolicitacao, conflitosPorSolicitacao } from "@/lib/diariaPonto";
+import { conflitosPorSolicitacao, detalheEstado } from "@/lib/diariaPonto";
 import { DiariasPontoDialog } from "./DiariasPontoDialog";
 import {
   LinhaDiaria,
@@ -186,9 +186,9 @@ export default function ControleDiarias({
   } = useSolicitacoesDiaria(apenasMinhas);
   const { data: contratos = [] } = useContratosDiaria();
   // Faltante que bateu ponto no dia da diária (mig 20261007000021).
-  const { data: pontoConflitos } = useConflitosPontoDiarias();
+  const { data: pontoConflitos, isError: erroPontoDiarias } = useConflitosPontoDiarias();
   const pontoPorSolicitacao = useMemo(() => conflitosPorSolicitacao(pontoConflitos), [pontoConflitos]);
-  const batidasPonto = useMemo(() => batidasPorSolicitacao(pontoConflitos), [pontoConflitos]);
+  const alertasPonto = useMemo(() => new Map([...pontoPorSolicitacao].map(([id, alertas]) => [id, new Map(alertas.map((a) => [a.linhaId, a]))])), [pontoPorSolicitacao]);
   // "Ver marcações" (detalhe) e "Mostrar só essas" (filtro da tabela) — 08/10/2026.
   const [verPonto, setVerPonto] = useState(false);
   const [soPonto, setSoPonto] = useState(false);
@@ -348,7 +348,7 @@ export default function ControleDiarias({
       if (posto !== "todos" && s.posto !== posto) continue;
       if (status !== "todos" && statusExibicaoDiaria(s).chave !== status) continue;
       for (const l of s.diarias) {
-        if (soPonto && !batidasPonto.get(s.uuid)?.has(l.data)) continue;
+        if (soPonto && !alertasPonto.get(s.uuid)?.has(l.id)) continue;
         if (de && l.data < de) continue;
         if (ate && l.data > ate) continue;
         out.push({
@@ -365,7 +365,7 @@ export default function ControleDiarias({
       }
     }
     return out;
-  }, [solicitacoes, busca, contrato, posto, status, de, ate, soPonto, batidasPonto]);
+  }, [solicitacoes, busca, contrato, posto, status, de, ate, soPonto, alertasPonto]);
 
   /**
    * O que "Exportar filtrado" leva: exatamente as linhas que a tabela mostra.
@@ -592,7 +592,8 @@ export default function ControleDiarias({
           <StatCard icon={Wallet} label="Valor total aprovado" value={`R$ ${fmtBRL(resumo.valorAprovado)}`} tone="muted" />
         </div>
 
-        {/* Faltante que bateu ponto (mig 20261007000021): aviso — desde a mig 20261013000001 a aprovação é liberada e quem aprova decide. */}
+        {erroPontoDiarias && <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">Ponto das diárias indisponível. Confira os horários manualmente antes de aprovar.</p>}
+        {/* SIS-2026-0800: conflito confirmado é distinto de dados insuficientes. */}
         {(() => {
           const pend = solicitacoes.filter((x) => (x.status === "solicitada" || x.status === "em_ajuste") && pontoPorSolicitacao.has(x.uuid));
           const pagas = solicitacoes.filter((x) => x.status !== "solicitada" && x.status !== "em_ajuste" && pontoPorSolicitacao.has(x.uuid));
@@ -601,7 +602,7 @@ export default function ControleDiarias({
             <Card className="flex flex-wrap items-start gap-3 border-destructive/40 bg-destructive/5 p-4">
               <UserX className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
               <div className="min-w-0 flex-1 text-sm">
-                <p className="font-semibold text-destructive">Faltante bateu ponto no dia da diária</p>
+                <p className="font-semibold text-destructive">Conflitos de horários e pontos a conferir</p>
                 {pend.length > 0 && (
                   <p className="text-xs text-muted-foreground">
                     <b className="text-foreground">{pend.length}</b> pendente(s) — {pend.map((x) => x.id).join(", ")} — confira antes de aprovar.
@@ -609,7 +610,7 @@ export default function ControleDiarias({
                 )}
                 {pagas.length > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    <b className="text-foreground">{pagas.length}</b> já decidida(s) antes da conferência com o ponto — {pagas.map((x) => x.id).join(", ")}. Linhas marcadas com “Bateu ponto”.
+                    <b className="text-foreground">{pagas.length}</b> já decidida(s) antes da conferência com o ponto — {pagas.map((x) => x.id).join(", ")}. Confira os períodos nas linhas sinalizadas.
                   </p>
                 )}
               </div>
@@ -629,7 +630,7 @@ export default function ControleDiarias({
           aberto={verPonto}
           onFechar={() => setVerPonto(false)}
           solicitacoes={solicitacoes}
-          batidas={batidasPonto}
+          alertas={alertasPonto}
           sincronizadoAte={pontoConflitos?.sincronizado_ate}
           onAbrir={(s) => { setVerPonto(false); abrir(s); }}
         />
@@ -857,10 +858,10 @@ export default function ControleDiarias({
                             {st.label}
                           </Badge>
                           {(() => {
-                            const batida = pontoPorSolicitacao.get(l.solicitacao.uuid)?.find((x) => x.data === String(l.data).slice(0, 10));
+                            const batida = alertasPonto.get(l.solicitacao.uuid)?.get(l.linha.id);
                             return batida ? (
-                              <Badge variant="outline" className="border-destructive/50 bg-destructive/10 text-[10px] font-semibold text-destructive" title={`Faltante bateu ponto neste dia: ${batida.horarios.join(", ")}`}>
-                                Bateu ponto
+                              <Badge variant="outline" className={cn("text-[10px] font-semibold", batida.estado === "conflito" ? "border-destructive/50 bg-destructive/10 text-destructive" : "border-warning/50 bg-warning/10 text-warning")} title={detalheEstado(batida)}>
+                                {batida.estado === "conflito" ? "Conflito de horários" : "Ponto a conferir"}
                               </Badge>
                             ) : null;
                           })()}
