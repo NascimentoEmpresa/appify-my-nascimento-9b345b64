@@ -71,17 +71,17 @@ ALTER TABLE public."OPE_KAIZEN_INICIATIVA" ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS ope_kaizen_ver ON public."OPE_KAIZEN_INICIATIVA";
 CREATE POLICY ope_kaizen_ver ON public."OPE_KAIZEN_INICIATIVA" FOR SELECT TO authenticated
-  USING (public.has_screen_access(auth.uid(), 'ope_indicadores_kaizen', 'visualizar'::public.app_acao));
+  USING ((SELECT public.has_screen_access((SELECT auth.uid()), 'ope_indicadores_kaizen', 'visualizar'::public.app_acao)));
 DROP POLICY IF EXISTS ope_kaizen_incluir ON public."OPE_KAIZEN_INICIATIVA";
 CREATE POLICY ope_kaizen_incluir ON public."OPE_KAIZEN_INICIATIVA" FOR INSERT TO authenticated
-  WITH CHECK (public.has_screen_access(auth.uid(), 'ope_indicadores_kaizen', 'incluir'::public.app_acao));
+  WITH CHECK ((SELECT public.has_screen_access((SELECT auth.uid()), 'ope_indicadores_kaizen', 'incluir'::public.app_acao)));
 DROP POLICY IF EXISTS ope_kaizen_alterar ON public."OPE_KAIZEN_INICIATIVA";
 CREATE POLICY ope_kaizen_alterar ON public."OPE_KAIZEN_INICIATIVA" FOR UPDATE TO authenticated
-  USING (public.has_screen_access(auth.uid(), 'ope_indicadores_kaizen', 'alterar'::public.app_acao))
-  WITH CHECK (public.has_screen_access(auth.uid(), 'ope_indicadores_kaizen', 'alterar'::public.app_acao));
+  USING ((SELECT public.has_screen_access((SELECT auth.uid()), 'ope_indicadores_kaizen', 'alterar'::public.app_acao)))
+  WITH CHECK ((SELECT public.has_screen_access((SELECT auth.uid()), 'ope_indicadores_kaizen', 'alterar'::public.app_acao)));
 DROP POLICY IF EXISTS ope_kaizen_excluir ON public."OPE_KAIZEN_INICIATIVA";
 CREATE POLICY ope_kaizen_excluir ON public."OPE_KAIZEN_INICIATIVA" FOR DELETE TO authenticated
-  USING (public.has_screen_access(auth.uid(), 'ope_indicadores_kaizen', 'excluir'::public.app_acao));
+  USING ((SELECT public.has_screen_access((SELECT auth.uid()), 'ope_indicadores_kaizen', 'excluir'::public.app_acao)));
 
 REVOKE ALL ON public."OPE_KAIZEN_INICIATIVA" FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public."OPE_KAIZEN_INICIATIVA" TO authenticated;
