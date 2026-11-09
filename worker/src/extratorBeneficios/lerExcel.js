@@ -9,8 +9,22 @@ const { limparTexto } = require("./extratores");
 
 async function carregarPrimeiraAba(buffer) {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
-  const aba = workbook.worksheets[0];
+  try {
+    await workbook.xlsx.load(buffer);
+  } catch (e) {
+    throw new Error(`Não foi possível abrir a Base de Funcionários como .xlsx (${e.message}). Envie de novo pela tela do ERP, que regrava a planilha antes de subir.`);
+  }
+  // 06/11/2026: alguns .xlsx gerados por outros sistemas carregam sem erro e
+  // sem nenhuma aba visível para o ExcelJS — `worksheets[0]` vinha undefined e
+  // o job morria com "Cannot read properties of undefined (reading 'eachRow')"
+  // (PREF POA SMS, 21/09). A tela agora regrava a base como .xlsx limpo antes
+  // de subir (src/lib/extratorBeneficios/normalizarBase.ts); isto aqui é a
+  // mensagem legível para o que ainda escapar (job antigo, upload direto).
+  let aba = workbook.worksheets[0];
+  if (!aba) workbook.eachSheet((s) => { if (!aba) aba = s; });
+  if (!aba) {
+    throw new Error("A Base de Funcionários não tem nenhuma aba legível. Envie de novo pela tela do ERP (ela regrava a planilha) ou salve o arquivo como .xlsx no Excel antes de enviar.");
+  }
   const linhas = [];
   aba.eachRow({ includeEmpty: true }, (row) => {
     const valores = [];

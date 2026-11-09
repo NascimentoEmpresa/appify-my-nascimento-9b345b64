@@ -25,6 +25,8 @@ import {
 // (leitura de PDF/Excel, decodificação da fonte da TRI sem OCR) e grava o
 // resultado no job — esta tela só sobe arquivo e baixa o resultado.
 
+// O código continua "financeiro-..." mesmo com a tela no RH (06/11/2026): é a
+// chave das concessões e das policies — ver mig 20261106020000.
 const MENU_CODIGO = "financeiro-extrator-beneficios";
 
 const TOMADOR_LABEL: Record<TomadorBeneficio, string> = {
@@ -125,8 +127,8 @@ export default function ExtratorBeneficios() {
       <PageHeader
         title="Extrator de Benefícios (VA/VT)"
         subtitle="Gera a planilha de Vale-Alimentação/Transporte a partir da base de funcionários e do PDF da operadora, por tomador."
-        module="Financeiro"
-        breadcrumb={["Gestão Financeira", "Extrator de Benefícios"]}
+        module="Recursos Humanos"
+        breadcrumb={["Pessoas", "Extrator de Benefícios"]}
       />
 
       <AcessoGate menu={MENU_CODIGO} acao="incluir">

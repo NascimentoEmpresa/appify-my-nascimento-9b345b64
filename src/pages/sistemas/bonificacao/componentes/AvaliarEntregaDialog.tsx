@@ -1,6 +1,6 @@
 // Avaliação do gestor sobre uma entrega (BONIFICACAO_DEV_ENTREGA):
 // qualidade, dificuldade e valores. Vem preenchido com o que vale hoje
-// (sugestão pelas reaberturas / parecer da IA) — salvar grava como avaliado.
+// (sugestão "sem ajuste" — reabertura não é erro, 06/11/2026 — / parecer da IA) — salvar grava como avaliado.
 import { useEffect, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -116,7 +116,7 @@ export function AvaliarEntregaDialog({ entrega, aberto, aoFechar, fechado }: {
               <SelectContent>{QUALIDADES.map((q) => <SelectItem key={q} value={q}>{ROTULO_QUALIDADE[q]}</SelectItem>)}</SelectContent>
             </Select>
             <p className="text-[11px] text-muted-foreground">
-              Sugestão pelas reaberturas ({entrega.reaberturas}): {ROTULO_QUALIDADE[qualidadeSugerida(entrega.reaberturas)]}.
+              Sugestão: {ROTULO_QUALIDADE[qualidadeSugerida(entrega.reaberturas)]}. Reaberturas ({entrega.reaberturas}) não contam como erro — marque ajuste ou retrabalho só se houve correção de fato.
             </p>
           </div>
 

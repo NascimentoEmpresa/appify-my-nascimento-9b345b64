@@ -161,8 +161,8 @@ describe("sugestões e linha da RPC", () => {
     expect(dificuldadeDaComplexidade(null)).toBeNull();
   });
 
-  it("reaberturas sugerem a qualidade", () => {
-    expect([0, 1, 2, 5].map(qualidadeSugerida)).toEqual(["sem_ajuste", "ajuste_pequeno", "retrabalho", "retrabalho"]);
+  it("reabertura não é erro: a sugestão é sempre 'atendeu sem ajuste'", () => {
+    expect([0, 1, 2, 5, null].map(qualidadeSugerida)).toEqual(["sem_ajuste", "sem_ajuste", "sem_ajuste", "sem_ajuste", "sem_ajuste"]);
   });
 
   it("dia da conclusão no fuso de Brasília", () => {
@@ -182,7 +182,7 @@ describe("sugestões e linha da RPC", () => {
 
   it("sem avaliação do gestor usa as sugestões", () => {
     const e = entregaDaLinha(linha);
-    expect(e.qualidade).toBe("ajuste_pequeno");
+    expect(e.qualidade).toBe("sem_ajuste"); // 1 reabertura não é erro (06/11/2026)
     expect(e.dificuldade).toBe("dificil");
     expect(e.valorMercado).toBe(8000);
     expect(e.horasGastas).toBe(6.5);

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { baseNormalizada } from "@/lib/extratorBeneficios/normalizarBase";
 import { novoUuid } from "@/lib/utils";
 
 // SIS-2026-0427: migração do Extrator/Gerador de Planilha VA e VT (app
@@ -73,7 +74,11 @@ export function useUploadJobExtrator() {
 
       const paths: Record<string, string> = {};
       for (const [chave, arquivo] of Object.entries(arquivos)) {
-        paths[chave] = await subirArquivo(tomador, jobId, chave, arquivo);
+        // A base (Excel) sobe regravada como .xlsx limpo — o worker não lia
+        // alguns arquivos e falhava com "reading 'eachRow'" (ver normalizarBase.ts).
+        // Arquivo que nem o SheetJS abre para aqui, com a mensagem, antes do job.
+        const final = chave === "base" ? await baseNormalizada(arquivo) : arquivo;
+        paths[chave] = await subirArquivo(tomador, jobId, chave, final);
       }
 
       const { error } = await (supabase as any).from("extrator_beneficios_job").insert({
