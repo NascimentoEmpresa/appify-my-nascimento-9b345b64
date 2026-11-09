@@ -22,6 +22,18 @@
 //     invisível de longe e já tira a imagem do "parado". Esses timers são só
 //     locais, NÃO fazem requisição (não contrariam a decisão de 03/11).
 //
+// 09/11/2026 — "a TV do compras fica desligando nesse painel". O player já
+// tinha tudo acima, mas com dois buracos:
+//   · o vídeo só tocava quando o wake lock FALHAVA. Navegador de TV que diz
+//     "lock concedido" e não segura (o sistema da TV não respeita) ficava sem
+//     reserva, e a gestão mostrava "wl" como se estivesse tudo bem. Agora o
+//     vídeo toca SEMPRE, junto com o lock (wv = os dois);
+//   · o vídeo saía de canvas.captureStream, que navegador de TV antigo não
+//     tem (justamente quem mais precisa da reserva) — ali caía em "x". Agora é
+//     um arquivo de verdade embutido no código (MP4 H.264 e WebM, ~1 KB cada,
+//     16×16, 2 s, data: URI): NENHUMA requisição, nem ao banco nem ao Storage.
+//     Foram gravados com MediaRecorder num canvas de quadros quase pretos.
+//
 // O que NÃO dá para resolver por aqui (configuração do aparelho): o
 // "desligamento automático" por falta de uso do CONTROLE (Samsung: Geral ›
 // Gerenciamento de energia › Desligamento automático / Eco; LG: Geral ›
@@ -29,15 +41,15 @@
 // desligamento e proteção de tela do sistema. Essas desligam a TV mesmo com
 // vídeo tocando — precisa desligar no menu da TV.
 //
-// O resultado (wl = wake lock, vd = vídeo, x = nada) vai no `tela` que a TV
+// O resultado (wl = wake lock, vd = vídeo, wv = os dois, x = nada) vai no `tela` que a TV
 // manda ao ERP (aparece na gestão), no console e em data-tela-acordada.
 // =====================================================================
 
-export type ModoTelaAcordada = "pendente" | "wakelock" | "video" | "nenhum";
+export type ModoTelaAcordada = "pendente" | "wakelock" | "video" | "ambos" | "nenhum";
 
 /** Rótulo curto para o campo `tela` (o banco guarda 30 letras). */
 export function rotuloTelaAcordada(modo: ModoTelaAcordada): string {
-  return modo === "wakelock" ? "wl" : modo === "video" ? "vd" : modo === "nenhum" ? "x" : "";
+  return modo === "ambos" ? "wv" : modo === "wakelock" ? "wl" : modo === "video" ? "vd" : modo === "nenhum" ? "x" : "";
 }
 
 /**
@@ -68,18 +80,24 @@ export interface DepsTelaAcordada {
 
 /**
  * Mantém a tela acordada enquanto a função devolvida não for chamada.
- * Ordem: wake lock → vídeo-reserva → nada (só avisa).
+ * Wake lock E vídeo-reserva ao mesmo tempo (um não substitui o outro, ver
+ * 09/11/2026 no topo); sem nenhum dos dois, só avisa.
  */
 export function manterTelaAcordada(deps: DepsTelaAcordada): () => void {
   const agendar = deps.setInterval ?? ((f, ms) => window.setInterval(f, ms));
   const cancelar = deps.clearInterval ?? ((id) => window.clearInterval(id));
   let ativo = true;
+  let iniciando = true;
   let modo: ModoTelaAcordada = "pendente";
   let lock: Lock | null = null;
   let pedindo = false;
   let video: Video | null = null;
+  let videoTocando = false;
 
-  const mudar = (m: ModoTelaAcordada) => {
+  const avaliar = () => {
+    if (!ativo || iniciando) return;
+    const temLock = !!lock && !lock.released;
+    const m: ModoTelaAcordada = temLock && videoTocando ? "ambos" : temLock ? "wakelock" : videoTocando ? "video" : "nenhum";
     if (m === modo) return;
     modo = m;
     deps.aoMudar?.(m);
@@ -89,16 +107,17 @@ export function manterTelaAcordada(deps: DepsTelaAcordada): () => void {
   const tocarVideo = async () => {
     if (!ativo) return;
     if (!video) video = deps.criarVideo();
-    if (!video) { mudar("nenhum"); return; }
-    try { await video.play(); if (ativo) mudar("video"); }
-    catch { if (ativo) mudar("nenhum"); }   // autoplay barrado: tenta de novo no próximo toque do controle
+    if (!video) { videoTocando = false; avaliar(); return; }
+    try { await video.play(); videoTocando = true; }
+    catch { videoTocando = false; }   // autoplay barrado: tenta de novo no próximo toque do controle
+    avaliar();
   };
-  const pararVideo = () => { if (video) { video.pause(); video.remove(); video = null; } };
+  const garantirVideo = () => { if (!video || video.paused || !videoTocando) void tocarVideo(); };
+  const pararVideo = () => { if (video) { video.pause(); video.remove(); video = null; } videoTocando = false; };
 
   const pedirLock = async () => {
-    if (!ativo || pedindo || !visivel()) return;
+    if (!ativo || pedindo || !visivel() || !deps.wakeLock) return;
     if (lock && !lock.released) return;
-    if (!deps.wakeLock) { await tocarVideo(); return; }
     pedindo = true;
     try {
       const l = await deps.wakeLock.request("screen");
@@ -106,29 +125,29 @@ export function manterTelaAcordada(deps: DepsTelaAcordada): () => void {
       lock = l;
       l.addEventListener?.("release", () => {
         if (lock === l) lock = null;
+        avaliar();
         // Soltou com a página na tela: pede de novo já (não espera o minuto).
         if (ativo && visivel()) void pedirLock();
       });
-      pararVideo();
-      mudar("wakelock");
     } catch {
-      // NotAllowedError (política, energia baixa, sem HTTPS): reserva.
+      // NotAllowedError (política, energia baixa, sem HTTPS): fica o vídeo.
       lock = null;
-      await tocarVideo();
     } finally {
       pedindo = false;
+      avaliar();
     }
   };
 
-  const aoVisibilidade = () => { if (visivel()) { void pedirLock(); if (video?.paused) void tocarVideo(); } };
+  const aoVisibilidade = () => { if (visivel()) { void pedirLock(); garantirVideo(); } };
   // Gesto do controle/teclado libera autoplay barrado e reconfirma o lock.
-  const aoGesto = () => { if (modo === "nenhum" || modo === "video") void tocarVideo(); void pedirLock(); };
+  const aoGesto = () => { garantirVideo(); void pedirLock(); };
 
   deps.documento.addEventListener("visibilitychange", aoVisibilidade);
   deps.documento.addEventListener("keydown", aoGesto);
   deps.documento.addEventListener("pointerdown", aoGesto);
-  const conferir = agendar(() => { void pedirLock(); if (video?.paused) void tocarVideo(); }, CONFERE_LOCK_MS);
-  void pedirLock();
+  const conferir = agendar(() => { if (visivel()) { void pedirLock(); garantirVideo(); } }, CONFERE_LOCK_MS);
+  // Um aviso só com o resultado dos dois (sem "wakelock" e logo depois "ambos").
+  void Promise.all([tocarVideo(), pedirLock()]).finally(() => { iniciando = false; avaliar(); });
 
   return () => {
     ativo = false;
@@ -142,39 +161,34 @@ export function manterTelaAcordada(deps: DepsTelaAcordada): () => void {
   };
 }
 
+// Vídeos de 16×16, 2 s, quadros quase pretos (ver 09/11/2026 no topo). MP4
+// primeiro: H.264 é o que todo decodificador de TV entende.
+const VIDEO_RESERVA_MP4 = "data:video/mp4;base64,AAAAJGZ0eXBpc29tAAACAGlzb21pc282aXNvMmF2YzFtcDQxAAACyW1vb3YAAAB4bXZoZAEAAAAAAAAA5xdyyAAAAADnF3LIAAAD6AAAAAAAAAf5AAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAIhdHJhawAAAGh0a2hkAQAAAwAAAADnF3LIAAAAAOcXcsgAAAABAAAAAAAAAAAAAAf5AAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAQAAAAEAAAAAABsW1kaWEAAAAsbWRoZAEAAAAAAAAA5xdyyAAAAADnF3LIAAB1MAAAAAAAAAf5VcQAAAAAAC1oZGxyAAAAAAAAAAB2aWRlAAAAAAAAAAAAAAAAVmlkZW9IYW5kbGVyAAAAAVBtaW5mAAAAFHZtaGQAAAABAAAAAAAAAAAAAAAlZGluZgAAAB1kcmVmAAAAAAAAAAEAAAANdXJsIAAAAAEAAAABD3N0YmwAAAAQc3RzYwAAAAAAAAAAAAAAEHN0dHMAAAAAAAAAAAAAABRzdHN6AAAAAAAAAAAAAAAAAAAAEHN0Y28AAAAAAAAAAAAAAMNzdHNkAAAAAAAAAAEAAACzYXZjMQAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAQABAASAAAAEgAAAAAAAAAAQtBVkMxIENvZGluZwAAAAAAAAAAAAAAAAAAAAAAAAAAABj//wAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAAAAAAAAAAAAACZhdmNDAULACv/hAA9nQsAKjGnJqDAwMDwiEagBAARozjyAAAAAE2NvbHJuY2x4AAYABgAGAAAAAChtdmV4AAAAIHRyZXgAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAACobW9vZgAAABBtZmhkAAAAAAAAAAEAAACQdHJhZgAAABR0ZmhkAAIAIAAAAAEBAQAAAAAAFHRmZHQBAAAAAAAAAAAAAAAAAABgdHJ1bgEAAwUAAAAJAAAAsAIAAAAAAB5VAAAAEQAAHVwAAAAKAAAdfAAAAAsAABwLAAAAFAAAHZ8AAAAUAAAdZQAAABQAAB24AAAAFAAAHWAAAAAUAAAD5wAAABQAAACmbWRhdAAAAA1luAAEf//+HooAAgR/AAAABmHgAH5HqAAAAAdh4AC+QfqAAAAAEGHgAP5A3+Mu7u7u7u7u7vAAAAAQYeABPkDf4yqqqqqqqqqqsAAAABBh4AF+QN/jLu7u7u7u7u7wAAAAEGHgAb5Av+MqqqqqqqqqqrAAAAAQYeAB/kH/jLu7u7u7u7u7wAAAABBh4AI+Qf+MqqqqqqqqqqrAAAAATG1mcmEAAAA0dGZyYQEAAAAAAAABAAAAPwAAAAEAAAAAAAAAAAAAAAAAAALtAAAAAQAAAAEAAAABAAAAEG1mcm8AAAAAAAAATA==";
+const VIDEO_RESERVA_WEBM = "data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwEAAAAAAAMOEU2bdLlNu4tTq4QVSalmU6yBbk27i1OrhBZUrmtTrIGTTbuLU6uEH0O2dVOsgcFNu4xTq4QcU7trU6yCAvzsrgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmoCrXsYMPQkBEiYRE+9hiTYCGQ2hyb21lV0GGQ2hyb21lFlSua6mup9eBAXPFh91mAybWW3WDgQFV7oEBhoVWX1ZQOOCKsIEQuoEQU8CBAR9DtnUBAAAAAAACL+eBAKDNoaOBAAAAEAIAnQEqEAAQAAEHCIWFiJmEiAYCAAwNYAD+/m0QAHWhpaaj7oEBpZ4QAgCdASoQABAABIcIhYWImYSIGAIADA1gAP72pQCguaGZgQD6ALEBAAQQTAAYADA/9AwAAAD+/TZoAHWhmKaW7oEBpZGxAQASEPAAGAAYWC/0AAgAAPuBAKC5oZmBAgEAsQEABBBEABgAMD/0DAAAAP79XQgAdaGYppbugQGlkbEBABIRDAAYABhYL/QACAAA+4H6oLqhmYEC9QCxAQAEECwAGAAwP/QMAAAA/v6lNgB1oZimlu6BAaWRsQEAEhEoABgAGFgv9AAIAAD7ggIBoLqhmYED6QCxAQAEECQAGAAwP/QMAAAA/v7oWAB1oZimlu6BAaWRsQEAEhFMABgAGFgv9AAIAAD7ggL1oLqhmYEE5wCxAQAEECAAGAAwP/QMAAAA/v8NZAB1oZimlu6BAaWRsQEAEhFoABgAGFgv9AAIAAD7ggPpoLqhmYEF5wCxAQAEEBwAGAAwP/QMAAAA/v9VIAB1oZimlu6BAaWRsQEAEhGMABgAGFgv9AAIAAD7ggTnoLmhmIEG4wCRAQAEEEQUYADA/9AwAAD+/W5IAHWhmKaW7oEBpZGxAQASEEAUYABhYL/QACAAAPuCBeeguqGZgQfeALEBAAQQFAAYADA/9AwAAAD+/4hiAHWhmKaW7oEBpZGxAQASEcAAGAAYWC/0AAgAAPuCBuMcU7trjbuLs4EAt4b3gQHxgcE=";
+
 /**
- * Vídeo-reserva (NoSleep) a partir de um canvas 2×2 que troca de cor a cada
- * segundo (stream sem quadro novo pode ser tratado como parado). Fica no
+ * Vídeo-reserva (técnica do NoSleep): arquivo real embutido, em loop. Fica no
  * canto, quase transparente — NÃO display:none nem fora da tela: o Chrome
  * pausa vídeo mudo que não está na área visível.
  */
 export function criarVideoReserva(doc: Document = document): Video | null {
   try {
-    const canvas = doc.createElement("canvas");
-    canvas.width = 2; canvas.height = 2;
-    const ctx = canvas.getContext("2d");
-    const captura = (canvas as HTMLCanvasElement & { captureStream?: (fps?: number) => MediaStream }).captureStream;
-    if (!ctx || typeof captura !== "function") return null;
-    let n = 0;
-    const pintar = () => { ctx.fillStyle = n++ % 2 ? "#000" : "#010101"; ctx.fillRect(0, 0, 2, 2); };
-    pintar();
-    const pintor = window.setInterval(pintar, 1000);
     const v = doc.createElement("video");
     v.muted = true; v.defaultMuted = true; v.autoplay = true; v.loop = true;
     v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", "");
     v.setAttribute("aria-hidden", "true");
     v.style.cssText = "position:fixed;right:0;bottom:0;width:2px;height:2px;max-width:none;max-height:none;opacity:0.01;pointer-events:none;z-index:2147483647";
-    v.srcObject = captura.call(canvas, 1);
+    for (const [src, type] of [[VIDEO_RESERVA_MP4, "video/mp4"], [VIDEO_RESERVA_WEBM, "video/webm"]]) {
+      const fonte = doc.createElement("source");
+      fonte.src = src; fonte.type = type;
+      v.appendChild(fonte);
+    }
     doc.body.appendChild(v);
     return {
       play: () => v.play(),
       pause: () => v.pause(),
       get paused() { return v.paused; },
-      remove: () => {
-        window.clearInterval(pintor);
-        (v.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
-        v.srcObject = null; v.remove();
-      },
+      remove: () => { v.pause(); v.remove(); },
     };
   } catch {
     return null;

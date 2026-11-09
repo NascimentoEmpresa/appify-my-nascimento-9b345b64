@@ -35,6 +35,7 @@ const relogio = () => {
 
 describe("rotuloTelaAcordada", () => {
   it("rótulos curtos para o campo tela (30 letras no banco)", () => {
+    expect(rotuloTelaAcordada("ambos")).toBe("wv");
     expect(rotuloTelaAcordada("wakelock")).toBe("wl");
     expect(rotuloTelaAcordada("video")).toBe("vd");
     expect(rotuloTelaAcordada("nenhum")).toBe("x");
@@ -60,15 +61,51 @@ describe("deslocamentoAntiEstatica", () => {
 });
 
 describe("manterTelaAcordada", () => {
-  it("com a API: pega o wake lock e avisa wakelock", async () => {
+  it("com a API e o vídeo: mantém os DOIS e avisa uma vez só (TV Compras, 09/11)", async () => {
     const doc = documentoFalso(); const r = relogio();
     const lock = lockFalso();
     const modos: ModoTelaAcordada[] = [];
-    const criarVideo = vi.fn(() => videoFalso());
-    manterTelaAcordada({ wakeLock: { request: vi.fn(async () => lock) }, documento: doc as any, criarVideo, aoMudar: (m) => modos.push(m), ...r });
+    const v = videoFalso();
+    manterTelaAcordada({ wakeLock: { request: vi.fn(async () => lock) }, documento: doc as any, criarVideo: () => v, aoMudar: (m) => modos.push(m), ...r });
+    await esperar();
+    expect(modos).toEqual(["ambos"]);
+    expect(v.play).toHaveBeenCalled();
+    expect(v.remove).not.toHaveBeenCalled();
+  });
+
+  it("com a API e sem vídeo: wakelock", async () => {
+    const doc = documentoFalso(); const r = relogio();
+    const modos: ModoTelaAcordada[] = [];
+    manterTelaAcordada({ wakeLock: { request: vi.fn(async () => lockFalso()) }, documento: doc as any, criarVideo: () => null, aoMudar: (m) => modos.push(m), ...r });
     await esperar();
     expect(modos).toEqual(["wakelock"]);
-    expect(criarVideo).not.toHaveBeenCalled();
+  });
+
+  it("lock caiu e não voltou: o vídeo segue e a gestão vê 'video'", async () => {
+    const doc = documentoFalso(); const r = relogio();
+    const lock = lockFalso();
+    const request = vi.fn()
+      .mockResolvedValueOnce(lock)
+      .mockRejectedValue(new Error("NotAllowedError"));
+    const v = videoFalso();
+    const modos: ModoTelaAcordada[] = [];
+    manterTelaAcordada({ wakeLock: { request }, documento: doc as any, criarVideo: () => v, aoMudar: (m) => modos.push(m), ...r });
+    await esperar();
+    lock.soltar();
+    await esperar();
+    expect(modos).toEqual(["ambos", "video"]);
+    expect(v.remove).not.toHaveBeenCalled();
+  });
+
+  it("vídeo pausado pelo navegador volta na conferência do minuto", async () => {
+    const doc = documentoFalso(); const r = relogio();
+    const v = videoFalso();
+    manterTelaAcordada({ wakeLock: { request: vi.fn(async () => lockFalso()) }, documento: doc as any, criarVideo: () => v, ...r });
+    await esperar();
+    expect(v.play).toHaveBeenCalledTimes(1);
+    v.paused = true; r.tique();
+    await esperar();
+    expect(v.play).toHaveBeenCalledTimes(2);
   });
 
   it("lock solto com a página visível: pede de novo na hora (o bug de 04/11)", async () => {
