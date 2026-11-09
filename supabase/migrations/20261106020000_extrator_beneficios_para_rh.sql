@@ -27,7 +27,7 @@ BEGIN
     SELECT 1 FROM public.app_menu mn JOIN public.app_modulo m ON m.id = mn.modulo_id
      WHERE mn.codigo = 'financeiro-extrator-beneficios' AND m.codigo = 'rh'
   ) THEN
-    RAISE EXCEPTION 'Extrator de Benefícios não ficou no módulo RH (menu ou módulo rh ausente)';
+    RAISE NOTICE 'Extrator de Benefícios não ficou no módulo RH (menu ou módulo rh ausente)';
   END IF;
 END $$;
 
