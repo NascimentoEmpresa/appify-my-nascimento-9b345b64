@@ -1,10 +1,10 @@
 import { useMemo } from "react";
-import { AlertTriangle, CalendarDays, Clock, ExternalLink, UserX } from "lucide-react";
+import { AlertTriangle, ExternalLink, UserX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { fmtDuracao, horariosDoPonto, horasTrabalhadas } from "@/lib/diariaPonto";
+import { detalheEstado, type AlertaPontoLinha } from "@/lib/diariaPonto";
 import { fmtBRL, labelTurno, statusExibicaoDiaria, valorTotalLinha, type SolicitacaoDiaria } from "./diarias";
 
 // =====================================================================
@@ -24,36 +24,36 @@ const dataLonga = (iso: string) => {
 };
 const pendente = (s: SolicitacaoDiaria) => s.status === "solicitada" || s.status === "em_ajuste";
 
-export function DiariasPontoDialog({ aberto, onFechar, solicitacoes, batidas, sincronizadoAte, onAbrir }: {
+export function DiariasPontoDialog({ aberto, onFechar, solicitacoes, alertas, sincronizadoAte, onAbrir }: {
   aberto: boolean;
   onFechar: () => void;
   solicitacoes: SolicitacaoDiaria[];
-  /** uuid da solicitação → data → minutos batidos */
-  batidas: Map<string, Map<string, number[]>>;
+  /** uuid da solicitação → id da linha → resultado da comparação */
+  alertas: Map<string, Map<string, AlertaPontoLinha>>;
   sincronizadoAte: string | null | undefined;
   onAbrir: (s: SolicitacaoDiaria) => void;
 }) {
   const lista = useMemo(() => solicitacoes
-    .filter((s) => batidas.has(s.uuid))
-    .sort((a, b) => Number(pendente(b)) - Number(pendente(a)) || b.id.localeCompare(a.id)), [solicitacoes, batidas]);
-  const totalDias = lista.reduce((n, s) => n + (batidas.get(s.uuid)?.size ?? 0), 0);
-  const valorEmRisco = lista.reduce((v, s) => v + s.diarias.filter((l) => batidas.get(s.uuid)?.has(l.data)).reduce((a, l) => a + valorTotalLinha(l), 0), 0);
+    .filter((s) => alertas.has(s.uuid))
+    .sort((a, b) => Number(pendente(b)) - Number(pendente(a)) || b.id.localeCompare(a.id)), [solicitacoes, alertas]);
+  const totalDias = lista.reduce((n, s) => n + (alertas.get(s.uuid)?.size ?? 0), 0);
+  const valorEmRisco = lista.reduce((v, s) => v + s.diarias.filter((l) => alertas.get(s.uuid)?.has(l.id)).reduce((a, l) => a + valorTotalLinha(l), 0), 0);
 
   return (
     <Dialog open={aberto} onOpenChange={(o) => !o && onFechar()}>
       <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><UserX className="h-5 w-5 text-destructive" /> Faltante bateu ponto no dia da diária</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><UserX className="h-5 w-5 text-destructive" /> Conflitos de horários e pontos a conferir</DialogTitle>
           <DialogDescription>
-            {lista.length} solicitação(ões), {totalDias} dia(s) em que o faltante trabalhou e mesmo assim foi pedida diária no lugar dele ·
-            {" "}R$ {fmtBRL(valorEmRisco)} nesses dias · relógio sincronizado até {sincronizadoAte ? new Date(`${sincronizadoAte}T12:00:00`).toLocaleDateString("pt-BR") : "—"}.
+            {lista.length} solicitação(ões), {totalDias} linha(s) com sobreposição ou dados insuficientes ·
+            {" "}R$ {fmtBRL(valorEmRisco)} nessas linhas · relógio sincronizado até {sincronizadoAte ? new Date(`${sincronizadoAte}T12:00:00`).toLocaleDateString("pt-BR") : "—"}.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           {lista.map((s) => {
             const st = statusExibicaoDiaria(s);
-            const dias = batidas.get(s.uuid)!;
+            const dias = alertas.get(s.uuid)!;
             return (
               <div key={s.uuid} className={cn("rounded-lg border p-4", pendente(s) ? "border-destructive/50 bg-destructive/5" : "border-border")}>
                 <div className="flex flex-wrap items-center gap-2">
@@ -75,37 +75,19 @@ export function DiariasPontoDialog({ aberto, onFechar, solicitacoes, batidas, si
 
                 <table className="mt-3 w-full text-xs">
                   <thead><tr className="border-b text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                    <th className="py-1.5 pr-2">Dia da diária</th><th className="py-1.5 pr-2">Turno pago</th><th className="py-1.5 pr-2 text-right">Valor</th>
-                    <th className="py-1.5 pr-2">Batidas do faltante no relógio</th><th className="py-1.5 text-right">Trabalhou</th>
+                    <th className="py-1.5 pr-2">Dia da diária</th><th className="py-1.5 pr-2">Turno e cobertura</th><th className="py-1.5 pr-2 text-right">Valor</th>
+                    <th className="py-1.5 pr-2">Conferência dos intervalos</th><th className="py-1.5 text-right">Resultado</th>
                   </tr></thead>
                   <tbody>
                     {[...s.diarias].sort((a, b) => a.data.localeCompare(b.data)).map((l) => {
-                      const mins = dias.get(l.data);
-                      const h = mins ? horasTrabalhadas(mins) : null;
+                      const alerta = dias.get(l.id);
                       return (
-                        <tr key={l.id} className={cn("border-b border-border/50 align-top", mins && "bg-destructive/5")}>
-                          <td className="py-1.5 pr-2 font-medium"><CalendarDays className="mr-1 inline h-3 w-3 text-muted-foreground" />{dataLonga(l.data)}</td>
-                          <td className="py-1.5 pr-2">{labelTurno(l.turno)}</td>
+                        <tr key={l.id} className={cn("border-b border-border/50 align-top", alerta?.estado === "conflito" && "bg-destructive/5")}>
+                          <td className="py-1.5 pr-2 font-medium">{dataLonga(l.data)}</td>
+                          <td className="py-1.5 pr-2">{labelTurno(l.turno)}<br />{l.inicioCobertura ?? "—"}–{l.fimCobertura ?? "—"}</td>
                           <td className="py-1.5 pr-2 text-right tabular-nums">R$ {fmtBRL(valorTotalLinha(l))}</td>
-                          <td className="py-1.5 pr-2">
-                            {mins ? (
-                              <div className="flex flex-wrap gap-1">
-                                {horariosDoPonto(mins).map((t, i) => (
-                                  <span key={i} className={cn("rounded border px-1.5 py-0.5 font-mono text-[11px]", i % 2 === 0 ? "border-success/40 bg-success/10 text-success" : "border-destructive/40 bg-destructive/10 text-destructive")}
-                                    title={i % 2 === 0 ? "entrada" : "saída"}>
-                                    {i % 2 === 0 ? "▶" : "■"} {t}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : <span className="text-muted-foreground">sem batida neste dia</span>}
-                          </td>
-                          <td className="py-1.5 text-right tabular-nums">
-                            {h ? (
-                              <span className="inline-flex items-center gap-1 font-semibold text-destructive">
-                                <Clock className="h-3 w-3" /> {fmtDuracao(h.minutos)}{h.incompleto && <span className="font-normal text-warning" title="número ímpar de batidas: faltou bater uma entrada ou saída">*</span>}
-                              </span>
-                            ) : "—"}
-                          </td>
+                          <td className="py-1.5 pr-2">{alerta ? detalheEstado(alerta) : "Sem alerta nesta cobertura"}</td>
+                          <td className="py-1.5 text-right">{alerta ? (alerta.estado === "conflito" ? "Conflito" : "Conferir") : "—"}</td>
                         </tr>
                       );
                     })}
@@ -114,11 +96,10 @@ export function DiariasPontoDialog({ aberto, onFechar, solicitacoes, batidas, si
               </div>
             );
           })}
-          {!lista.length && <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma solicitação com batida do faltante no dia da diária.</p>}
+          {!lista.length && <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma solicitação com conflito ou necessidade de conferência.</p>}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          ▶ entrada · ■ saída (alternadas na ordem em que o relógio registrou). "(+1d)" = batida depois da meia-noite, da mesma jornada.
-          * = número ímpar de batidas (faltou uma entrada ou saída), as horas contam só os pares completos.
+          A comparação usa pares de entrada e saída por matrícula e jornada. Dados incompletos exigem conferência. "+1d" indica término no dia seguinte.
         </p>
       </DialogContent>
     </Dialog>

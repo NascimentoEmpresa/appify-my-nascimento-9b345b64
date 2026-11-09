@@ -81,6 +81,8 @@ export interface EmpregadoDiaria {
 }
 
 export interface NovaLinhaDiaria {
+  inicioCobertura: string;
+  fimCobertura: string;
   data: string;
   turno: TurnoDiaria;
   qtVt: number;
@@ -138,6 +140,8 @@ interface EmpregadoDiariaRpc {
 }
 
 interface LinhaDiariaBanco {
+  inicio_cobertura: string | null;
+  fim_cobertura: string | null;
   id: string;
   data: string;
   turno: TurnoDiaria;
@@ -329,7 +333,7 @@ export function useSolicitacoesDiaria(apenasMinhas = false) {
            malote_motivo, malote_data_pagamento, created_at, diaria_malote_status,
            ajuste_motivo, ajuste_pedido_por_nome, ajuste_pedido_em,
            exclusao_motivo, excluida_por_nome, excluida_em, diaria_comprovantes_pagamento,
-           linhas:DIARIA_LINHA ( id, data, turno, qt_vt, valor_unit_vt_centavos, valor_diaria_centavos ),
+           linhas:DIARIA_LINHA ( id, data, turno, inicio_cobertura, fim_cobertura, qt_vt, valor_unit_vt_centavos, valor_diaria_centavos ),
            anexos:DIARIA_ANEXO ( id, categoria, storage_path, nome_arquivo, mime_type, tamanho_bytes, created_at )`,
         )
         .order("created_at", { ascending: false })
@@ -443,6 +447,8 @@ export function useCriarSolicitacaoDiaria() {
             diarias: input.linhas.map((l) => ({
               data: l.data,
               turno: l.turno,
+              inicio_cobertura: l.inicioCobertura,
+              fim_cobertura: l.fimCobertura,
               qt_vt: l.qtVt,
               valor_unit_vt_centavos: paraCentavos(l.valorUnitVt),
               valor_diaria_centavos: paraCentavos(l.valorDiaria),
@@ -461,7 +467,11 @@ export function useCriarSolicitacaoDiaria() {
         throw erro;
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_conflitos"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_malote"] });
+    },
   });
 }
 
@@ -508,6 +518,8 @@ export function useAjustarSolicitacaoDiaria() {
             diarias: input.linhas.map((l) => ({
               data: l.data,
               turno: l.turno,
+              inicio_cobertura: l.inicioCobertura,
+              fim_cobertura: l.fimCobertura,
               qt_vt: l.qtVt,
               valor_unit_vt_centavos: paraCentavos(l.valorUnitVt),
               valor_diaria_centavos: paraCentavos(l.valorDiaria),
@@ -526,7 +538,11 @@ export function useAjustarSolicitacaoDiaria() {
         throw erro;
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_conflitos"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_malote"] });
+    },
   });
 }
 
@@ -545,7 +561,11 @@ export function useSolicitarAjusteDiaria() {
       });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_conflitos"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_malote"] });
+    },
   });
 }
 
@@ -564,7 +584,11 @@ export function useExcluirSolicitacaoDiaria() {
       });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_conflitos"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_malote"] });
+    },
   });
 }
 
@@ -666,7 +690,11 @@ export function useDecidirSolicitacaoDiaria() {
         .single();
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_solicitacoes"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_conflitos"] });
+      qc.invalidateQueries({ queryKey: ["diaria_ponto_malote"] });
+    },
   });
 }
 
@@ -819,6 +847,8 @@ const mapearAnexo = (a: AnexoDiariaBanco): AnexoDiaria => ({
 
 const mapearLinha = (l: LinhaDiariaBanco): LinhaDiaria => ({
   id: l.id,
+  inicioCobertura: l.inicio_cobertura?.slice(0, 5) ?? null,
+  fimCobertura: l.fim_cobertura?.slice(0, 5) ?? null,
   data: l.data,
   turno: l.turno,
   qtVt: Number(l.qt_vt) || 0,
@@ -878,10 +908,8 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
 }
 
 /**
- * Ponto do faltante nas datas digitadas (mig 20261007000021): o modal mostra,
- * linha a linha, se ele bateu ponto no dia. Desde a mig 20261028000920 isso é
- * somente um aviso para conferência; não impede criar nem ajustar a diária.
- * Sem a migration a RPC não existe: devolve null e a tela segue sem o aviso.
+ * Jornadas do faltante nas datas digitadas. SIS-2026-0800: a comparação com
+ * a cobertura é feita na regra compartilhada; falha vira aviso de conferência.
  */
 export function usePontoFaltanteDiaria(cpf: string, datas: string[]) {
   const digitos = cpf.replace(/\D/g, "");
@@ -890,7 +918,6 @@ export function usePontoFaltanteDiaria(cpf: string, datas: string[]) {
     queryKey: ["diaria_ponto_faltante", digitos, chave.join(",")],
     enabled: digitos.length === 11 && chave.length > 0,
     staleTime: 60_000,
-    placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<PontoFaltante | null> => {
       const { data, error } = await sb.rpc("diaria_ponto_faltante", { p_cpf: digitos, p_datas: chave });
       if (error) return null;
@@ -899,14 +926,14 @@ export function usePontoFaltanteDiaria(cpf: string, datas: string[]) {
   });
 }
 
-/** Lista: solicitações em que o faltante bateu ponto em algum dia da diária. */
+/** Linhas visíveis com cobertura e jornadas; a regra separa conflito de conferência. */
 export function useConflitosPontoDiarias() {
   return useQuery({
     queryKey: ["diaria_ponto_conflitos"],
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<ConflitosPonto | null> => {
       const { data, error } = await sb.rpc("diaria_ponto_conflitos");
-      if (error) return null;
+      if (error || !data) throw new Error(error?.message ?? "Não foi possível consultar o ponto das diárias.");
       return data as ConflitosPonto;
     },
   });

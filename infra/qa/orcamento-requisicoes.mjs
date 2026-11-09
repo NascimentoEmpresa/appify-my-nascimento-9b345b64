@@ -3,7 +3,7 @@
 //
 //  Uso (CI ou local, com a build servida em --base):
 //    PLAYWRIGHT=<node_modules/playwright> node infra/qa/orcamento-requisicoes.mjs \
-//      --base http://localhost:4173 [--so /app/malote] [--abertura 60] [--paralelo 6]
+//      --base http://localhost:4173 [--so /app/malote] [--abertura 60] [--paralelo 6] [--fatia 1/3]
 //
 //  O QUE PROVA, SEM TOCAR NA PRODUÇÃO
 //  A API é FALSA: o Playwright intercepta toda chamada ao Supabase e responde
@@ -54,6 +54,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { violacaoDeContrato } from "./contrato-de-rede.mjs";
+import { descobrirRotas, selecionarFatia } from "./fatias.mjs";
 
 const arg = (n, p) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : p; };
 const BASE = arg("base", "http://localhost:4173");
@@ -62,6 +63,7 @@ const ABERTURA = Number(arg("abertura", 60));
 const PARALELO = Number(arg("paralelo", 6));
 const SAIDA = arg("saida", "orcamento-requisicoes.json");
 const BASELINE = arg("baseline", null);
+const FATIA = arg("fatia", "1/1");
 // Folga da catraca: a tela só reprova se passar dos DOIS (número absoluto e
 // percentual). Tela de 4 requisições oscila 1-2 por timing de render; tela de
 // 40 não pula para 50 por acidente.
@@ -71,11 +73,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright");
 
 const app = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../src/App.tsx"), "utf8");
-const blocoApp = app.slice(app.indexOf('<Route path="/app"'));
-const rotas = [...new Set([...blocoApp.matchAll(/<Route path="([^"]+)"/g)].map((m) => m[1])
-  .filter((p) => !p.includes(":") && !p.includes("*"))
-  .map((p) => (p.startsWith("/") ? p : `/app/${p}`))
-  .filter((p) => p.startsWith("/app/") && (!SO || p.startsWith(SO))))].sort();
+const { indice, total, rotas } = selecionarFatia(descobrirRotas(app, SO), FATIA);
 
 // sessão falsa: o JWT não é verificado por ninguém (a API é falsa)
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
@@ -206,7 +204,7 @@ async function testar(rota) {
   });
 }
 
-console.log(`${rotas.length} telas · orçamento de abertura ${ABERTURA} · ${PARALELO} em paralelo · ${BASE}`);
+console.log(`${rotas.length} telas · fatia ${indice}/${total} · orçamento de abertura ${ABERTURA} · ${PARALELO} em paralelo · ${BASE}`);
 const fila = [...rotas];
 await Promise.all(Array.from({ length: PARALELO }, async () => { while (fila.length) await testar(fila.shift()); }));
 await navegador.close();
@@ -233,5 +231,5 @@ const resumo = [`## QA de requisições por tela`, ruins.length ? `❌ **${ruins
   "", ...ruins.map((r) => `- \`${r.rota}\` — ${r.problemas.join("; ")}${detalhe(r)}`)].join("\n");
 console.log(resumo);
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, resumo + "\n");
-fs.writeFileSync(SAIDA, JSON.stringify({ quando: new Date().toISOString(), base: BASE, resultados }, null, 1));
+fs.writeFileSync(SAIDA, JSON.stringify({ quando: new Date().toISOString(), base: BASE, fatia: { indice, total }, resultados }, null, 1));
 process.exit(ruins.length ? 1 : 0);
