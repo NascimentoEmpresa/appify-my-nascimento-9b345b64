@@ -274,7 +274,8 @@ function ListaLigados({ s }: { s: SetorEstrutura }) {
   const r = s.responsavel;
   const pessoas = useMemo(() => {
     const vistos = new Set<string>(r ? [r.id] : []);
-    return [...(r ? e.equipeEscritorio(r.id) : []), ...s.cabecas.slice(1)].filter((n) => !vistos.has(n.id) && !!vistos.add(n.id));
+    const deFora = s.chave === e.setorOperacional ? e.supervisoresDeFora : [];
+    return [...(r ? e.equipeEscritorio(r.id) : []), ...s.cabecas.slice(1), ...deFora].filter((n) => !vistos.has(n.id) && !!vistos.add(n.id));
   }, [r, s.cabecas, e]);
   const doResp = r ? e.contratosDe(r.id) : [];
   // Contratos sem dono aparecem no setor operacional, prontos para arrastar.

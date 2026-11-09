@@ -112,6 +112,19 @@ describe("Organograma › Estrutura — campo dentro do contrato, contrato dentr
     expect(def.semSupervisor).toEqual([]);
   });
 
+  it("o Joel é escolhível como supervisor sem ser do Operacional, e o contrato dele segue no Operacional", () => {
+    const joel = p("joel", "ger", "COMPRAS", "Analista", { nome: "JOEL DOS SANTOS" });
+    const comJoel = [...base, joel];
+    const semDefinir = montarEstrutura(comJoel);
+    expect(semDefinir.supervisores.map((s) => s.id)).toContain("joel");
+    expect(semDefinir.supervisoresDeFora.map((s) => s.id)).toEqual(["joel"]);
+    expect(semDefinir.contratosDe("joel")).toEqual([]);
+    const def = montarEstrutura(comJoel, new Map([[ct(1090).chave, "joel"]]));
+    expect(def.contratosDe("joel").map((c) => c.filial)).toEqual([1090]);
+    expect(def.contratosDoSetor("OPERACIONAL").map((c) => c.filial)).toContain(1090);
+    expect(def.contratosDoSetor("COMPRAS")).toEqual([]);
+  });
+
   it("a equipe de escritório do supervisor não traz gente de campo", () => {
     expect(e.equipeEscritorio("ger").map((n) => n.id).sort()).toEqual(["ana", "dai", "sup2"]);
   });
