@@ -28,7 +28,8 @@ function bancoDeContaVinculada(banco: string | null | undefined): boolean {
 // Conciliação da própria CONTA VINCULADA (a partir de nov/2026 o Financeiro concilia o extrato dessas contas): o banco é o da conta vinculada
 // (ex.: "Banco do Brasil Conta Vinculada Embrapa"), e o resgate, que sai dela, aparece no extrato dela. Nesses bancos nada é ignorado.
 function ehBancoDeContaVinculada(banco: string | null | undefined): boolean {
-  return semAcento((banco ?? "").trim()).includes("VINCULADA");
+  // "VINCUL" (e não "VINCULADA"): o cadastro "Banco do Brasil Conta Vinculda Embrapa Canoinha" (sem o A) escondeu um resgate da conciliação de jan/2026.
+  return semAcento((banco ?? "").trim()).includes("VINCUL");
 }
 
 export function ignoraNaConciliacao(
