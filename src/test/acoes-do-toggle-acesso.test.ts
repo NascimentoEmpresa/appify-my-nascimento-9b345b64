@@ -74,8 +74,9 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa e Controle de Faturamento são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
+      "controle-faturamento",
       "duvidas",
       "encarregados_diarias",
       "financeiro-fluxo-caixa-gestao",
@@ -130,5 +131,15 @@ describe("catálogo de exceções", () => {
   it("Parecer Jurídico: embasamento (fundamentar) também tem switch próprio e sai ao desligar a tela", () => {
     expect(acoesGravadasPeloToggle("duvidas", true)).not.toContain("fundamentar");
     expect(acoesGravadasPeloToggle("duvidas", false)).toEqual(expect.arrayContaining(["responder", "fundamentar"]));
+  });
+});
+
+describe("Controle de Faturamento — 'visao_completa' (abas Visão Geral e Anual)", () => {
+  it("ligar a tela NÃO concede a visão completa: quem só tem a tela vê só as NFs Não Emitidas", () => {
+    expect(acoesGravadasPeloToggle("controle-faturamento", true)).not.toContain("visao_completa");
+    expect(acoesGravadasPeloToggle("controle-faturamento", true)).toContain("visualizar");
+  });
+  it("desligar a tela revoga a visão completa junto", () => {
+    expect(acoesGravadasPeloToggle("controle-faturamento", false)).toContain("visao_completa");
   });
 });

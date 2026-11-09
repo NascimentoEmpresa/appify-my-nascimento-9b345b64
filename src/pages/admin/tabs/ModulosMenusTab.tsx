@@ -360,7 +360,7 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // O enum app_acao do banco. Tipado aqui porque o insert em
 // screen_permission_user exige a união exata, não `string`.
-type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "fundamentar" | "editar_concluida";
+type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "fundamentar" | "editar_concluida" | "visao_completa";
 
 // LIBERAR A TELA É LIBERAR A TELA.
 //
@@ -396,11 +396,11 @@ const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
 // Suprimentos. Pior, 'executar_ia' e 'alterar_dre' não são checadas em canto
 // nenhum do sistema — aqueles dois switches nunca controlaram nada.
 const ORDEM_ACOES: readonly AppAcao[] = [
-  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "fundamentar", "editar_concluida", "exportar", "executar_ia", "alterar_dre",
+  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "fundamentar", "editar_concluida", "visao_completa", "exportar", "executar_ia", "alterar_dre",
 ];
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
-  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", fundamentar: "Fundamentar", editar_concluida: "Editar concluída", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
+  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", fundamentar: "Fundamentar", editar_concluida: "Editar concluída", visao_completa: "Visão completa", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
 };
 
 const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, string>>>> = {
@@ -413,6 +413,7 @@ const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, strin
   duvidas: { responder: "Responder (resposta simples)", fundamentar: "Responder embasamento jurídico" },
   // SIS-2026-0712: o Fluxo separa o que cada botão da linha faz.
   "financeiro-fluxo-caixa-gestao": { incluir: "Ratear", alterar: "Editar", excluir: "Excluir" },
+  "controle-faturamento": { visao_completa: "Ver Visão Geral e Visão Anual" },
 };
 
 // O que cada switch libera, em uma frase, mostrado ao lado do rótulo. Só nos menus em que o rótulo sozinho não diz o suficiente.
@@ -421,6 +422,9 @@ const ACAO_DESCRICAO_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, s
     incluir: "Botão Ratear: divide a linha entre contratos (a soma das cotas fecha o valor da linha).",
     alterar: "Botão Editar: muda data, banco, classificação, valor etc. só no Fluxo; o lançamento de origem não muda.",
     excluir: "Botão Excluir: manda a linha para a lixeira e permite restaurá-la.",
+  },
+  "controle-faturamento": {
+    visao_completa: "Sem este switch, a pessoa vê só a aba NFs Não Emitidas (ex.: supervisores). Com ele, vê também Visão Geral e Visão Anual.",
   },
 };
 
