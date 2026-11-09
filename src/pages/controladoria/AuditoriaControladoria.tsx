@@ -364,7 +364,7 @@ function CardValidacao(props: {
         ) : t.painel?.kind === "malote_fluxo" ? (
           <CorpoMaloteFluxo p={t.painel} t={t} situacao={situacao} linkMalote={link("Malote")} linkFluxo={link("Fluxo de Caixa")} />
         ) : t.painel?.kind === "fluxo_extrato" ? (
-          <CorpoFluxoExtrato p={t.painel} situacao={situacao} semDados={!!indisponivel} links={{ malote: link("Malote"), fluxo: link("Fluxo de Caixa"), banco: link("Conciliação Bancária") }} />
+          <CorpoFluxoExtrato p={t.painel} situacao={situacao} semDados={!!indisponivel} mes={props.mes} empresaId={props.empresaId} links={{ malote: link("Malote"), fluxo: link("Fluxo de Caixa"), banco: link("Conciliação Bancária") }} />
         ) : t.painel?.kind === "centros_fluxo" ? (
           <CorpoCentrosFluxo p={t.painel} mes={props.mes} empresaId={props.empresaId} />
         ) : t.painel?.kind === "orcado_realizado" ? (

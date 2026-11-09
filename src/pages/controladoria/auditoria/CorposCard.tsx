@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-import { ArrowRight, Pencil, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
+import { ArrowRight, Info, Pencil, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
@@ -13,6 +13,7 @@ import {
   LancamentoSemCentro, LinhaComposta, LinkCard, linkReclassificarFluxo, PainelCentrosFluxo, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
 } from "./regras";
 import { AjusteRegistrado, useAjustesDasDespesas } from "./useAuditoriaDados";
+import { DialogEntenderDiferenca } from "./DialogEntenderDiferenca";
 
 // SIS-2026-0657: corpos dos cards 1, 2 e 4 do painel de auditoria, no formato dos mockups da
 // Controladoria. Só desenham; os números já vêm calculados (regras.ts / useTotaisAuditoria.ts).
@@ -248,7 +249,9 @@ function ColunaEntradasSaidas({ v }: { v: EntradasSaidas }) {
   );
 }
 
-export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelFluxoExtrato; situacao: SituacaoComparacao | null; semDados: boolean; links: { malote: LinkCard; fluxo: LinkCard; banco: LinkCard } }) {
+export function CorpoFluxoExtrato({ p, situacao, semDados, links, mes, empresaId }: { p: PainelFluxoExtrato; situacao: SituacaoComparacao | null; semDados: boolean; links: { malote: LinkCard; fluxo: LinkCard; banco: LinkCard }; mes: string; empresaId: string | null }) {
+  // SIS-2026-0833: o card só mostra o essencial; o porquê das diferenças (saldo anterior, bancos sem conciliação, transferências, duplicadas...) fica no modal.
+  const [verDiferenca, setVerDiferenca] = useState(false);
   const pct = p.cobertura === null ? null : fmtPercentual(p.cobertura);
   return (
     <div className="space-y-3">
@@ -271,20 +274,17 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
         <Aviso tom={situacao === "confere" ? "ok" : "erro"}>
           {situacao === "confere"
             ? "Entradas e saídas do Fluxo de Caixa conferem com o extrato nos bancos conciliados."
-            : "Há diferença entre o Fluxo e o extrato nos bancos conciliados. Confira lançamentos do Fluxo fora do extrato ou o contrário na Conciliação Bancária."}
+            : `Há diferença entre o Fluxo e o extrato nos bancos conciliados${pct !== null ? ` (${pct} das saídas do Fluxo estão conciliadas)` : ""}.`}
         </Aviso>
       )}
       {!semDados && (
-        <div className="space-y-1 rounded-md bg-muted/40 p-2.5 text-[11px] text-muted-foreground">
-          <p>
-            <span className="font-semibold text-foreground">Cobertura:</span> {p.conciliacoes} conta(s)/empresa(s) conciliada(s){p.bancos.length > 0 ? ` (${p.bancos.join(", ")})` : ""}
-            {pct !== null ? ` — ${pct} das saídas do Fluxo do mês` : ""}.
-          </p>
-          <p>Fluxo do mês inteiro (todos os bancos): entradas {fmtMoney(p.fluxoMes.entradas)} · saídas {fmtMoney(p.fluxoMes.saidas)}. Bancos sem conciliação salva ficam fora da comparação.</p>
-          {p.semTotais > 0 && <p className="text-amber-700 dark:text-amber-400">{p.semTotais} conciliação(ões) sem o total do extrato registrado — aplique a migration 20261014000006.</p>}
-        </div>
+        <Button type="button" size="sm" variant={situacao === "confere" ? "outline" : "default"} className="w-full gap-1.5" onClick={() => setVerDiferenca(true)}>
+          <Info className="h-3.5 w-3.5" />Entender a diferença
+        </Button>
       )}
-      {!semDados && p.ponte && <PonteFluxo ponte={p.ponte} recorte={p.fluxo} linkFluxo={links.fluxo} />}
+      {!semDados && (
+        <DialogEntenderDiferenca aberto={verDiferenca} onFechar={() => setVerDiferenca(false)} p={p} mes={mes} empresaId={empresaId} situacao={situacao} linkFluxo={links.fluxo} linkBanco={links.banco} />
+      )}
       <p className="text-[11px] text-muted-foreground">
         Origem dos valores:{" "}
         <Link to={links.malote.to} className="text-primary hover:underline">{links.malote.rotulo}</Link>
@@ -293,46 +293,6 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
         {" · "}
         <Link to={links.banco.to} className="text-primary hover:underline">{links.banco.rotulo}</Link>
       </p>
-    </div>
-  );
-}
-
-
-// SIS-2026-0701: do total que a tela do Fluxo de Caixa mostra até o recorte que se compara com o extrato, parte a parte.
-function PonteFluxo({ ponte, recorte, linkFluxo }: { ponte: PontePainelFluxo; recorte: EntradasSaidas; linkFluxo: LinkCard }) {
-  const linhas: { rotulo: string; v: EntradasSaidas; sinal: -1 | 1; dica?: string }[] = [
-    { rotulo: "Fluxo de Caixa (igual à tela do Fluxo)", v: ponte.total, sinal: 1 },
-    { rotulo: "Saldo anterior (abertura do mês)", v: ponte.saldoAnterior, sinal: -1, dica: "Passagem de saldo: o extrato não traz isto como movimento." },
-    { rotulo: "Bancos sem conciliação salva", v: ponte.semConciliacao, sinal: -1, dica: "Contas cujo extrato ainda não foi conciliado no mês." },
-    { rotulo: "Ignorados na conciliação", v: ponte.ignorados, sinal: -1, dica: "Conta vinculada e resgates de conta vinculada (BB e Caixa): não aparecem no extrato." },
-  ];
-  return (
-    <div className="rounded-md border p-2.5 text-[11px]">
-      <p className="mb-1.5 font-semibold text-foreground">De onde vem o valor comparado (ponte com o Fluxo de Caixa)</p>
-      <table className="w-full">
-        <thead>
-          <tr className="text-left text-muted-foreground">
-            <th className="pb-1 font-normal">Parte</th>
-            <th className="pb-1 text-right font-normal">Entradas</th>
-            <th className="pb-1 text-right font-normal">Saídas</th>
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((l) => (
-            <tr key={l.rotulo} className="border-t" title={l.dica}>
-              <td className="py-1">{l.sinal === -1 ? "(−) " : ""}{l.rotulo}</td>
-              <td className="py-1 text-right tabular-nums">{fmtMoney(l.v.entradas)}</td>
-              <td className="py-1 text-right tabular-nums">{fmtMoney(l.v.saidas)}</td>
-            </tr>
-          ))}
-          <tr className="border-t font-semibold">
-            <td className="py-1">(=) Fluxo dos bancos conciliados (o que vai contra o extrato)</td>
-            <td className="py-1 text-right tabular-nums">{fmtMoney(recorte.entradas)}</td>
-            <td className="py-1 text-right tabular-nums">{fmtMoney(recorte.saidas)}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p className="mt-1.5 text-muted-foreground">Confira o total na tela do <Link to={linkFluxo.to} className="text-primary hover:underline">Fluxo de Caixa</Link> com o mesmo período.</p>
     </div>
   );
 }
