@@ -236,7 +236,22 @@ export function incluirTelasNovas<I extends ItemCatalogo>(e: EstruturaMenu, cata
         saida.modulos.push(mod);
       }
     }
-    let cat = mod.categorias.find((c) => porNome(c.rotulo, ent.grupo) === 0) ?? mod.categorias[0];
+    let cat = mod.categorias.find((c) => porNome(c.rotulo, ent.grupo) === 0);
+    // GRUPO INTEIRO NOVO (09/11/2026, Operacional › Indicadores): nenhuma tela
+    // dele estava nas rotasConhecidas, então ele nasceu depois da organização
+    // salva. Caía na primeira categoria do módulo e o "Painel Executivo" foi
+    // parar dentro de Efetivo. Entra como categoria própria, no lugar
+    // alfabético. Grupo com tela conhecida e sem categoria de mesmo nome foi
+    // renomeado no editor: esse continua indo para a primeira categoria.
+    const grupoNovo = mod.origem === ent.modId && catalogo
+      .find((m) => m.id === ent.modId)?.groups
+      ?.find((g) => g.label === ent.grupo)?.items.every((i) => !conhecidas.has(i.to));
+    if (!cat && grupoNovo) {
+      cat = { id: `c:${mod.id}:nova:${ent.grupo}`, rotulo: ent.grupo, itens: [] };
+      const posCat = mod.categorias.findIndex((c) => porNome(c.rotulo, ent.grupo) > 0);
+      mod.categorias.splice(posCat === -1 ? mod.categorias.length : posCat, 0, cat);
+    }
+    cat ??= mod.categorias[0];
     if (!cat) {
       cat = { id: `c:${mod.id}:novas`, rotulo: ent.grupo, itens: [] };
       mod.categorias.push(cat);
