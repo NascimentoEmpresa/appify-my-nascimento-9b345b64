@@ -87,7 +87,9 @@ function Card({ i, largo, onClick }: { i: IndicadorGerencial; largo: boolean; on
         <div className="flex min-w-0 flex-col justify-between" style={{ width: largo ? "34%" : "47%", gap: 8 }}>
           <div>
             <p className="font-black leading-none tabular-nums" style={{ fontSize: semNumero ? 36 : i.medida === "parcial" ? 52 : 66, color: semNumero ? COR.suave : tom }}>{resultadoDoCard(i)}</p>
-            {i.medida === "parcial" && i.medida_nota &&<p className="mt-2 font-semibold leading-snug" style={{ fontSize: 21, color: COR.suave }}>{i.medida_nota}</p>}
+            {/* O DRE é carga e termina em 05/2026: quem olha a margem precisa ver de quando ela é. */}
+            {i.medida !== "parcial" && !semFonte && /compet[êe]ncia/i.test(r.base ?? "") && <p className="mt-2 font-semibold leading-snug" style={{ fontSize: 21, color: COR.suave }}>{r.base}</p>}
+            {i.medida === "parcial" && i.medida_nota && <pclassName="mt-2 font-semibold leading-snug" style={{ fontSize: 21, color: COR.suave }}>{i.medida_nota}</p>}
           </div>
           <div className="flex flex-col" style={{ gap: 5 }}>
             <Fato Icone={Target} rotulo="Meta" texto={textoMeta(i)} />
