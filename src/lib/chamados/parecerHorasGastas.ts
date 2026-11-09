@@ -32,11 +32,13 @@ export function precificarPorHorasGastas<P extends PrecoPorHoras>(
   }
   // Mesmo arredondamento/limite do servidor: 1 casa, mínimo 0,5 h.
   const horas = arred(Math.min(6000, Math.max(0.5, gastas)), 1);
-  const novos = lista.map((p) => ({
-    ...p,
-    horas,
-    valor: arred(horas * Number(p.valor_hora) * Number(p.fator_complexidade ?? 1), 2),
-  }));
+  // 09/11/2026 (escopo entregue, ver _shared/chamado-parecer-ia.ts): as horas
+  // informadas são exatas no interno e PISO no mercado. Parecer gravado pela
+  // regra de 30/10 tem as horas gastas nos três perfis e não muda.
+  const novos = lista.map((p) => {
+    const h = p.perfil === "freelancer" || p.perfil === "software_house" ? Math.max(horas, arred(Number(p.horas) || 0, 1)) : horas;
+    return { ...p, horas: h, valor: arred(h * Number(p.valor_hora) * Number(p.fator_complexidade ?? 1), 2) };
+  });
   // Com horas gastas, o card da equipe interna vira o "valor real gasto"
   // (abaixo) — custo nosso, não preço de mercado: a média é só de quem o
   // mercado cobraria (freelancer e software house).
@@ -75,6 +77,7 @@ export function valorMedioMercado(precos: PrecoPorHoras[] | null | undefined, va
   const lista = precos ?? [];
   const mesmasHoras = lista.length > 1 && lista.every((p) => Number(p.horas) === Number(lista[0].horas));
   const mercado = lista.filter((p) => p.perfil && p.perfil !== "interno");
+  // Horas diferentes: pelo escopo (o gravado já é só de mercado) ou estimativa antiga.
   if (!mesmasHoras || mercado.length === 0) return valorMedio ?? null;
   return arred(mercado.reduce((s, p) => s + Number(p.valor), 0) / mercado.length, 2);
 }

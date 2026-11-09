@@ -236,11 +236,11 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
     // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
   });
 
-  // Havendo horas gastas, preço e média só por elas (30/10/2026) — mesmo
-  // num parecer gravado antes da regra, com a estimativa da I.A por perfil.
+  // Havendo horas gastas, elas são exatas no interno e piso no mercado (09/11/2026).
   const conta = parecer
     ? precificarPorHorasGastas(parecer.precos, parecer.valor_medio, parecer.horas_estimadas, reais)
     : null;
+  const peloEscopo = !!conta?.pelasHorasGastas && conta.precos.some((p) => p.perfil !== "interno" && Number(p.horas) > Number(conta.horas));
   // Com horas gastas, o card "Equipe interna" vira o valor real gasto
   // conosco: hora do salário × horas, sem complexidade (30/10/2026).
   const real = valorRealGasto(reais);
@@ -314,7 +314,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
               <p className="text-2xl font-bold">{fmtReais(conta!.valor_medio)}</p>
               {conta!.horas != null && (
                 <p className="text-[11px] text-muted-foreground">
-                  {conta!.pelasHorasGastas ? (horasEstimadas ? `~${fmtHorasGastas(conta!.horas)} h (estimadas)` : `${fmtHorasGastas(conta!.horas)} h gastas`) : `~${conta!.horas.toLocaleString("pt-BR")} h em média`}
+                  {conta!.pelasHorasGastas ? (horasEstimadas ? `~${fmtHorasGastas(conta!.horas)} h (estimadas)` : peloEscopo ? `escopo entregue · ${fmtHorasGastas(conta!.horas)} h gastas por nós` : `${fmtHorasGastas(conta!.horas)} h gastas`) : `~${conta!.horas.toLocaleString("pt-BR")} h em média`}
                 </p>
               )}
             </div>
@@ -357,7 +357,14 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
           {/* Com horas gastas, a conta toda é por elas (30/10/2026) — a
               estimativa da I.A aparece só como referência, fora da conta. */}
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
-            {conta!.pelasHorasGastas ? (
+            {peloEscopo ? (
+              <>
+                <p className="font-semibold">Calculado pelo escopo entregue</p>
+                <p className="mt-0.5 text-muted-foreground">
+                  Freelancer e software house usam as horas que a I.A estimou para entregar o mesmo resultado do zero, nunca menos que as {fmtHorasGastas(conta!.horas)} h informadas. O valor médio de mercado é a média dos dois. O card verde é o custo real conosco.
+                </p>
+              </>
+            ) : conta!.pelasHorasGastas ? (
               <>
                 <p className="font-semibold">{horasEstimadas
                   ? <>Calculado por ~{fmtHorasGastas(conta!.horas)} h <b>estimadas</b> pela complexidade (chamado antigo, sem horas informadas)</>

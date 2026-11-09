@@ -105,6 +105,24 @@ export default function TvPlayer() {
   const [erro, setErro] = useState<string | null>(null);
   const tokenRef = useRef<string | null>(chaveFixa ?? lerToken());
   const ultimoOk = useRef(Date.now());
+  const versaoConferidaEm = useRef(Date.now());
+
+  // 09/11/2026 — volta a conferência de versão, sem timer próprio: pega carona
+  // no ping de 4 min e olha o index.html a cada CONFERE_VERSAO_MS. Pablo: "ao
+  // mudar algo parece que nas tvs não atualiza" — sem isso a TV ficava com o JS
+  // antigo até o F5 (no Ao vivo: "versão antiga da tela"). Arquivo estático:
+  // não chega ao banco, que era o motivo do corte de 03/11.
+  const conferirVersao = () => {
+    if (VERSAO_JS === "dev" || Date.now() - versaoConferidaEm.current < CONFERE_VERSAO_MS) return;
+    versaoConferidaEm.current = Date.now();
+    fetch(`/?v=${Date.now()}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : null))
+      .then((html) => {
+        const publicada = scriptPrincipal(html)?.match(/index-([^./]+)\.js/)?.[1]?.slice(0, 8);
+        if (publicada && publicada !== VERSAO_JS) recarregarTv();
+      })
+      .catch(() => { /* sem rede: a próxima conferência tenta de novo */ });
+  };
 
   const consultar = useCallback(async () => {
     try {
@@ -127,6 +145,7 @@ export default function TvPlayer() {
       if (e.pareada && e.alerta?.id && recarregarPeloAviso(e.alerta.id)) { recarregarTv(); return; }
       setEstado(e); setErro(null);
       batimento();
+      conferirVersao();
     } catch (e) {
       setErro((e as Error).message || "Sem conexão com o ERP.");
     }
@@ -177,9 +196,7 @@ export default function TvPlayer() {
     }, () => { /* sem rede */ });
   };
 
-  // Versão publicada mudou → recarrega (o JS da página aberta fica velho para sempre sem isso).
-  // (conferência de versão a cada CONFERE_VERSAO_MS: removida em 03/11/2026 —
-  // ver "TV SEM BUSCA AUTOMÁTICA" acima.)
+  // Versão publicada mudou → recarrega: ver conferirVersao, no ping (09/11/2026).
 
   // Cão de guarda: sem falar com o ERP há SEM_CONTATO_RECARREGA_MS, ou de
   // madrugada depois de 20 h no ar, recarrega a página inteira (rede caiu,
