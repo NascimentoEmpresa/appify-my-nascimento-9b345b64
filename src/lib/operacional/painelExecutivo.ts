@@ -31,7 +31,28 @@ export interface DadosPainelExecutivo {
   };
   serie: { competencia: string; receita: number; lucro: number }[];
   situacao: { saudavel: number; atencao: number; critico: number } | null;
+  /** Mig 20261109003100; ausente enquanto a migration não entrou. */
+  situacao_detalhe?: DetalheSituacao | null;
   critico_anterior: number | null;
+}
+
+export interface ContratoSituacao {
+  nome: string;
+  receita: number;
+  margem: number;
+}
+
+export interface DetalheSituacao {
+  contratos: Partial<Record<"saudavel" | "atencao" | "critico", ContratoSituacao[]>>;
+  abaixo_piso: number;
+  ativos: number;
+}
+
+/** Explica a diferença entre os contratos da rosca e os ativos; null sem o detalhe. */
+export function textoForaDaRosca(total: number, d: DetalheSituacao | null | undefined): string | null {
+  if (!d) return null;
+  const semReceita = Math.max(0, d.ativos - total - d.abaixo_piso);
+  return `${total} de ${d.ativos} contratos não encerrados. Fora da conta: ${d.abaixo_piso} com receita abaixo de R$ 10 mil e ${semReceita} sem receita (sem nota) nesta competência (estimativa: ativos menos classificados).`;
 }
 
 export type Medida = "real" | "parcial" | "sem_fonte";
@@ -113,9 +134,13 @@ export function variacaoQtd(atual: number | null | undefined, anterior: number |
   return montarVariacao(delta, `${sinal(delta)}${delta}`, false);
 }
 
-/** Frase que aparece onde o DRE não alcança a competência escolhida. */
+/**
+ * Frase onde não há faturamento na competência escolhida. Desde 09/11/2026
+ * `ultima_dre` é a última competência com nota no Faturamento da Empresa
+ * (painelPeloFaturamento); o nome do campo ficou o da RPC.
+ */
 export function avisoSemDre(d: Pick<DadosPainelExecutivo, "ultima_dre">): string {
-  return d.ultima_dre ? `DRE disponível até ${rotuloCompetencia(d.ultima_dre)}` : "DRE sem competência carregada";
+  return d.ultima_dre ? `Faturamento com nota até ${rotuloCompetencia(d.ultima_dre)}` : "Nenhuma nota de faturamento";
 }
 
 export function montarCards(d: DadosPainelExecutivo): CardIndicador[] {
@@ -126,7 +151,7 @@ export function montarCards(d: DadosPainelExecutivo): CardIndicador[] {
 
   return [
     {
-      chave: "receita", titulo: "Receita (DRE)", medida: "real",
+      chave: "receita", titulo: "Faturamento Líquido", medida: "real",
       valor: d.dre ? fmtBRL(d.dre.receita) : null, aviso: semDre,
       variacao: variacaoPct(d.dre?.receita, d.dre_anterior?.receita, true),
     },

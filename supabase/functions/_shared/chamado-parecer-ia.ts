@@ -29,6 +29,15 @@
 // refaz a mesma conta (src/lib/chamados/parecerHorasGastas.ts) e a mig
 // 20261030000300 recalculou os pareceres já gravados.
 //
+// PELO ESCOPO ENTREGUE (09/11/2026, Pablo, sobre a integração PagFor a
+// R$ 6.000: "da onde que o sistema da pagfor seria 6 mil só? a i.a tem que
+// buscar contexto e reavaliar melhor"): SUBSTITUI a regra de 30/10 para o
+// mercado. Quem conhece o ERP e usa I.A faz em 8 h o que um fornecedor não
+// faz; preço de mercado pelas horas internas saía baixo em qualquer sistema.
+// Freelancer e software house valem as horas que a I.A estima para entregar o
+// mesmo escopo, nunca menos que as horas informadas. O "interno" segue nas
+// horas informadas, e o card verde continua sendo o custo real.
+//
 // COMPLEXIDADE PESA NO PREÇO (29/10/2026, Pablo: "tem coisa que o
 // desenvolvedor faz que leva 1h mas é de extrema importância e complexidade,
 // e tem coisa que leva 1h mas é bem tranquilo"): o preço é
@@ -201,13 +210,15 @@ COMO ESTIMAR:
 1. Se vier a seção "ENTREGA REAL", ela manda: o preço é do que FOI ENTREGUE, não do texto de abertura (que costuma ser curto). Leia os títulos das PRs para entender o escopo verdadeiro e pense no PROJETO equivalente contratado do zero: descoberta, arquitetura, implementação, testes, migração de dados, infraestrutura, documentação/runbook, acompanhamento em produção, correções. Cada PR mergeada de infraestrutura, banco, segurança ou arquitetura costuma representar de 4 a 16 horas de especialista; PR pequena de tela, de 1 a 4 horas. Muitas PRs ao longo de semanas = projeto grande, não chamado pequeno.
 2. Sem entrega real (chamado novo), estime pelo pedido, incluindo entendimento, implementação, testes e publicação.
 3. Pense também no "produto equivalente": se o chamado entrega um módulo ou sistema inteiro (ex.: recrutamento e seleção completo, migração de infraestrutura com alta disponibilidade e failover), compare com quanto o mercado cobra por esse sistema/projeto e NÃO subestime — projetos assim custam dezenas a centenas de milhares de reais numa software house.
-4. Sem horas reais informadas, fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
+4. Fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
+5. Leia também o HISTÓRICO do chamado (comentários e observações), quando vier: ele costuma revelar o escopo que o título esconde.
+6. Integração com banco, governo ou sistema externo não é tela: conte o estudo do manual e do layout, a geração e validação do arquivo, a homologação com o terceiro, o tratamento de rejeição, os testes com dado real e o risco financeiro. Compare com o que o mercado cobra por uma integração dessas pronta.
 
 Perfis (use EXATAMENTE estes códigos). Todos são de DESENVOLVEDOR SÊNIOR e o valor/hora de cada um é FIXO, definido pela empresa — você NÃO escolhe valor/hora, só estima as HORAS que cada perfil levaria:
 - "freelancer": freelancer PJ sênior;
 - "software_house": software house ou consultoria com time sênior;
 - "interno": desenvolvedor sênior interno CLT, que já conhece o ERP.
-Se vier "Horas reais informadas pelo desenvolvedor", os TRÊS perfis usam EXATAMENTE essas horas (repita esse número em "horas" nos três, não estime outras): a diferença de preço entre os perfis vem só do valor/hora fixo de cada um. Na "explicacao", diga o que essas horas cobrem para aquele perfil.
+Se vier "Horas reais informadas pelo desenvolvedor": repita esse número em "horas" SÓ no perfil "interno". Em "freelancer" e "software_house" estime as horas para entregar o MESMO ESCOPO do zero, sem conhecer o ERP: as horas reais são o piso, nunca o teto nem a referência, porque foram gastas por quem já conhece o sistema e trabalha com apoio de I.A. Na "explicacao", cite as etapas concretas que sustentam as horas daquele perfil. Seja realista: um ajuste simples continua sendo poucas horas, e não infle o que o escopo não sustenta.
 
 Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa, NÃO a duração. Algo feito em 1 hora pode ser 5 (correção crítica em produção, regra de acesso/segurança, dado financeiro ou de folha, banco em produção, algo que parava a operação) e algo de 1 hora pode ser 1 (trocar um texto). A complexidade multiplica o preço, então avalie com cuidado:
 1 = muito baixa (texto, rótulo, ajuste trivial, sem risco), 2 = baixa (ajuste numa tela, filtro simples), 3 = média (tela ou regra nova, mexe no banco), 4 = alta (vários módulos, regras de acesso, integração, risco real de quebrar algo em uso), 5 = muito alta (infraestrutura, segurança, migração de dados, alta disponibilidade, correção crítica em produção, integração externa complexa, módulo ou sistema inteiro).
@@ -232,7 +243,7 @@ const corta = (s: string | null | undefined, max: number) => {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 };
 
-export function montarPrompt(c: ChamadoParaParecer, entrega?: EntregaReal | null): string {
+export function montarPrompt(c: ChamadoParaParecer, entrega?: EntregaReal | null, historico?: string[] | null): string {
   const horasReais = Number(c.horas_gastas);
   const linhas = [
     `Chamado ${c.numero ?? ""}`.trim(),
@@ -249,7 +260,10 @@ export function montarPrompt(c: ChamadoParaParecer, entrega?: EntregaReal | null
   linhas.push("", "Descrição:", corta(c.descricao, 6000) || "(sem descrição)");
   if (c.observacoes_solicitante?.trim()) linhas.push("", "Observações do solicitante:", corta(c.observacoes_solicitante, 1500));
   if (horasReais > 0) {
-    linhas.push("", `Horas reais informadas pelo desenvolvedor ao concluir: ${horasReais.toLocaleString("pt-BR")} h (desenvolvedor sênior interno, que já conhece o ERP).`);
+    linhas.push("", `Horas reais informadas pelo desenvolvedor ao concluir: ${horasReais.toLocaleString("pt-BR")} h (desenvolvedor sênior interno, que já conhece o ERP). Vale para o perfil "interno" e é o piso dos outros dois.`);
+  }
+  if (historico?.length) {
+    linhas.push("", "HISTÓRICO DO CHAMADO (comentários e observações):", ...historico.slice(0, 40).map((t) => `- ${corta(t, 400)}`));
   }
   if (entrega) {
     const n = (v: number | null, rot: string) => (v != null ? `${v.toLocaleString("pt-BR")} ${rot}` : null);
@@ -301,7 +315,7 @@ Como responder:
 - Os valores gravados são FIXOS e definitivos: explique e justifique ESSES números. Não proponha preço, horas ou valor/hora diferentes, não refaça a conta com outros números e não diga que "daria outro valor". Se a pessoa discordar, explique o raciocínio por trás das horas gravadas.
 - O valor/hora de cada perfil é a tabela fixa da empresa para DESENVOLVEDOR SÊNIOR (abaixo), não uma escolha sua: diga isso e mostre por que é coerente com o mercado de sênior no Brasil.
 - O preço não mede só o tempo: o fator de complexidade multiplica a conta. Se perguntarem por que algo de poucas horas custa caro (ou barato), explique pela dificuldade, pelo risco e pela importância do que foi feito.
-- Havendo horas reais informadas pelo desenvolvedor ao concluir, os três perfis usam essas mesmas horas; a diferença entre eles é só o valor/hora fixo (o da software house já embute gestão, impostos e margem).
+- Havendo horas reais informadas pelo desenvolvedor ao concluir, só o perfil interno usa essas horas. Freelancer e software house têm as horas estimadas para entregar o mesmo escopo do zero, nunca abaixo das reais (o valor/hora da software house já embute gestão, impostos e margem).
 - O preço é o de MERCADO para contratar o resultado com profissional sênior, não o tempo que a equipe interna levou. Se houver "ENTREGA REAL" abaixo, use as PRs para mostrar de onde vêm as horas.
 - Não invente fonte, pesquisa ou estatística com nome e número exato que você não tem. Pode citar as referências de mercado de forma geral (tabelas de freelancer, propostas de software house, custo CLT de dev pleno/sênior no Brasil em 2026).
 - O parecer gravado não muda — diga isso se pedirem para alterar.
@@ -313,7 +327,7 @@ ${faixas}
 CHAMADO:
 ${montarPrompt(c, entrega)}
 
-PARECER GRAVADO (o preço de cada perfil = horas × valor/hora × fator de complexidade; valor médio = média dos três):
+PARECER GRAVADO (o preço de cada perfil = horas × valor/hora × fator de complexidade; havendo horas reais, valor médio = média de freelancer e software house):
 ${JSON.stringify(p)}`;
 }
 
@@ -361,8 +375,11 @@ export function validarParecer(bruto: unknown, horasReais?: number | string | nu
   for (const ref of PERFIS) {
     const item = lista.find((p) => p && String(p.perfil ?? "").trim() === ref.perfil);
     if (!item) return { ok: false, erro: `A I.A não estimou o perfil "${ref.rotulo}".` };
-    // Horas gastas informadas valem para os três perfis (30/10/2026).
-    const horasBrutas = reais > 0 ? reais : num(item.horas);
+    // Horas informadas: exatas no interno, piso no mercado (09/11/2026).
+    const estimadas = num(item.horas);
+    const horasBrutas = !(reais > 0) ? estimadas
+      : ref.perfil === "interno" ? reais
+      : Math.max(reais, estimadas > 0 ? estimadas : 0);
     if (!(horasBrutas > 0)) {
       return { ok: false, erro: `Horas inválidas para "${ref.rotulo}".` };
     }
@@ -384,8 +401,10 @@ export function validarParecer(bruto: unknown, horasReais?: number | string | nu
   const justificativa = corta(String(b.complexidade_justificativa ?? ""), 1200);
   if (!justificativa) return { ok: false, erro: "A I.A não justificou a complexidade." };
 
-  const valor_medio = arred(precos.reduce((s, p) => s + p.valor, 0) / precos.length, 2);
-  const horas_estimadas = arred(precos.reduce((s, p) => s + p.horas, 0) / precos.length, 1);
+  // Com horas informadas, o interno vira o card de custo real: a média é só de mercado.
+  const base = reais > 0 ? precos.filter((p) => p.perfil !== "interno") : precos;
+  const valor_medio = arred(base.reduce((s, p) => s + p.valor, 0) / base.length, 2);
+  const horas_estimadas = arred(base.reduce((s, p) => s + p.horas, 0) / base.length, 1);
   const premissas = corta(String(b.premissas ?? ""), 800) || null;
 
   return {

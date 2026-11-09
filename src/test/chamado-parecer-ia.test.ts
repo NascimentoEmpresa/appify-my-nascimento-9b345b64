@@ -57,15 +57,31 @@ describe("parecer da I.A do chamado", () => {
     expect(critica.parecer.valor_medio).toBeGreaterThan(facil.parecer.valor_medio * 2);
   });
 
-  it("com horas gastas, os três perfis e a média usam SÓ elas (SIS-2026-0787, 30/10/2026)", () => {
-    // A I.A estimou 10/15/8 h; o dev informou 8 h. Nível 4 = ×2.
-    const v = validarParecer(resposta({ complexidade_nivel: 4 }), "8");
+  it("com horas informadas, o mercado vale pelo escopo e o interno pelas horas (09/11/2026)", () => {
+    // A I.A estimou 40/60 h para o mercado; o dev informou 8 h. Nível 4 = ×2.
+    const r = resposta({ complexidade_nivel: 4 });
+    (r.precos as Array<Record<string, unknown>>)[0].horas = 40;
+    (r.precos as Array<Record<string, unknown>>)[1].horas = 60;
+    const v = validarParecer(r, "8");
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.parecer.precos.map((p) => p.horas)).toEqual([8, 8, 8]);
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([4800, 7200, 2640]);
-    expect(v.parecer.valor_medio).toBe(4880);
-    expect(v.parecer.horas_estimadas).toBe(8);
+    expect(v.parecer.precos.map((p) => p.horas)).toEqual([40, 60, 8]);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([24000, 54000, 2640]);
+    expect(v.parecer.valor_medio).toBe(39000); // só freelancer e software house
+    expect(v.parecer.horas_estimadas).toBe(50);
+  });
+
+  it("as horas informadas são o piso do mercado", () => {
+    const r = resposta();
+    (r.precos as Array<Record<string, unknown>>)[0].horas = 2;
+    const v = validarParecer(r, 8);
+    expect(v.ok && v.parecer.precos[0].horas).toBe(8);
+  });
+
+  it("o histórico do chamado entra no prompt", () => {
+    const c = { id: "1", numero: null, assunto: "x", tipo_solicitacao: null, descricao: null, categorias: null, modulo_sistema: null,
+      modulo_sistema_outro: null, ambiente: null, impacto_trabalho: null, urgencia: null, afeta_usuarios: null, observacoes_solicitante: null };
+    expect(montarPrompt(c, null, ["homologar remessa no banco"])).toContain("homologar remessa no banco");
   });
 
   it("sem horas gastas, vale a estimativa da I.A por perfil", () => {

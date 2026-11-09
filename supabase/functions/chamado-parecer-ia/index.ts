@@ -62,6 +62,19 @@ async function carregarEntrega(admin: ReturnType<typeof createClient>, c: Chamad
   return resumirEntrega((data ?? []) as EventoGithub[], c);
 }
 
+/** Comentários e observações do chamado: o escopo que o título não conta (09/11/2026). */
+async function carregarHistorico(admin: ReturnType<typeof createClient>, chamadoId: string): Promise<string[]> {
+  const { data, error } = await admin.from("CHAMADO_SISTEMA_EVENTO")
+    .select("texto")
+    .eq("chamado_id", chamadoId)
+    .in("tipo", ["comentario", "observacao_interna", "solicitar_info"])
+    .not("texto", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(40);
+  if (error) { console.error("historico", error.message); return []; }
+  return (data ?? []).map((e: { texto: string | null }) => String(e.texto ?? "").trim()).filter(Boolean);
+}
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
@@ -255,7 +268,7 @@ Deno.serve(async (req) => {
     // Temperatura 0: chamados parecidos recebem horas parecidas.
     const res = await chamarIA(provs, [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: montarPrompt(chamado, entrega) },
+      { role: "user", content: montarPrompt(chamado, entrega, await carregarHistorico(admin, chamado.id)) },
     ], true, 0);
     if (!res.texto) {
       await registrarErro(res.erro ?? "Falha ao chamar a IA.");
