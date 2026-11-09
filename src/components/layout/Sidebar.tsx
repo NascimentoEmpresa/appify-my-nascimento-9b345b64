@@ -1333,12 +1333,16 @@ const operacionalModule: ModuleDef = {
       ],
     },
     {
-      // Indicadores (09/11/2026, mig 20261109002000): começa pelo Painel
-      // Executivo; as demais telas entram depois da validação do Pablo.
+      // Indicadores (09/11/2026, migs 20261109002000 e 20261109003300): as
+      // 5 telas do protótipo, na ordem dele.
       label: "Indicadores",
       defaultOpen: true,
       items: [
         { label: "Painel Executivo", to: "/app/operacional/indicadores/painel-executivo", icon: BarChart3 },
+        { label: "Faturamento e Recebimentos", to: "/app/operacional/indicadores/faturamento-recebimentos", icon: Receipt },
+        { label: "Lucratividade e Orçamento", to: "/app/operacional/indicadores/lucratividade-orcamento", icon: TrendingUp },
+        { label: "Pessoas e Capacidade", to: "/app/operacional/indicadores/pessoas-capacidade", icon: Users2 },
+        { label: "Kaizen e Efetividade", to: "/app/operacional/indicadores/kaizen-efetividade", icon: ClipboardCheck },
       ],
     },
     {
