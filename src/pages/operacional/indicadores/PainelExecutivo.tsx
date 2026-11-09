@@ -17,6 +17,13 @@ import {
   type CardIndicador, type ContratoSituacao, type DadosPainelExecutivo, type DetalheSituacao, type FatiaSituacao,
 } from "@/lib/operacional/painelExecutivo";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { painelPeloFaturamento } from "@/lib/operacional/painelPeloFaturamento";
+import { custosPorContratoMes, totalCustos } from "@/pages/controladoria/faturamento/regras";
+import { useLeituraCompartilhada } from "@/pages/controladoria/faturamento/leituraCompartilhada";
+import { codigosDoFiltro } from "@/pages/controladoria/faturamento/FiltroCodigoNota";
+import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
+import { useCustosContratoAno } from "@/pages/controladoria/faturamento/useCustosContratoMes";
+import { useLigacoesRubrica } from "@/pages/controladoria/faturamento/useLigacoesRubrica";
 import { cn } from "@/lib/utils";
 
 // =====================================================================
@@ -111,7 +118,7 @@ function TooltipEvolucao({ active, payload, label }: any) {
 }
 
 function GraficoEvolucao({ serie }: { serie: DadosPainelExecutivo["serie"] }) {
-  if (serie.length === 0) return <SemDados texto="DRE sem competência carregada" />;
+  if (serie.length === 0) return <SemDados texto="Nenhuma nota de faturamento nos últimos 12 meses" />;
   return (
     <ResponsiveContainer width="100%" height={280}>
       <ComposedChart data={serie} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -120,7 +127,7 @@ function GraficoEvolucao({ serie }: { serie: DadosPainelExecutivo["serie"] }) {
         <YAxis tickFormatter={fmtCompacto} width={52} tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
         <Tooltip content={<TooltipEvolucao />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} />
         <Legend verticalAlign="top" align="right" iconType="circle" iconSize={9} wrapperStyle={{ fontSize: 13, paddingBottom: 8 }} />
-        <Bar dataKey="receita" name="Receita" fill={COR_RECEITA} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
+        <Bar dataKey="receita" name="Faturamento Líquido" fill={COR_RECEITA} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
         <Line dataKey="lucro" name="Lucro Bruto" stroke={COR_LUCRO} strokeWidth={2} dot={{ r: 4, fill: COR_LUCRO, strokeWidth: 2, stroke: "hsl(var(--card))" }} isAnimationActive={false} />
       </ComposedChart>
     </ResponsiveContainer>
@@ -249,14 +256,14 @@ export function ConteudoPainelExecutivo({ dados, competencia, onCompetencia }: {
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="p-5 lg:col-span-2">
-              <h2 className="mb-2 font-semibold text-foreground">Evolução da Receita e Lucro Bruto</h2>
+              <h2 className="mb-2 font-semibold text-foreground">Evolução do Faturamento Líquido e Lucro Bruto</h2>
               <GraficoEvolucao serie={dados.serie} />
             </Card>
             <Card className="p-5">
               <h2 className="mb-4 font-semibold text-foreground">Contratos por Situação</h2>
               <RoscaSituacao dados={dados} />
               <p className="mt-4 text-xs text-muted-foreground">
-                Só pela margem do DRE, contratos com receita de R$ 10 mil ou mais. Saudável: 10% ou mais. Atenção: de 0 a 10%. Crítico: negativa.
+                Margem do mês como em Controladoria › Faturamento da Empresa (líquido − despesas do Fluxo de Caixa), contratos com líquido de R$ 10 mil ou mais. Saudável: 10% ou mais. Atenção: de 0 a 10%. Crítico: negativa.
               </p>
               {dados.situacao && textoForaDaRosca(fatiasSituacao(dados.situacao).total, dados.situacao_detalhe) && (
                 <p className="mt-1 text-xs text-muted-foreground">{textoForaDaRosca(fatiasSituacao(dados.situacao).total, dados.situacao_detalhe)}</p>
@@ -282,16 +289,39 @@ export default function PainelExecutivo() {
     placeholderData: keepPreviousData,
   });
 
+  // 09/11/2026: receita, lucro, margem, evolução e situação pelas MESMAS fontes
+  // e funções de Controladoria › Faturamento da Empresa, com a mesma escolha de
+  // empresa, base e código de nota (ver painelPeloFaturamento.ts).
+  const leitura = useLeituraCompartilhada();
+  const codigos = useMemo(() => codigosDoFiltro(leitura.codigo), [leitura.codigo]);
+  const fat = useBaseFaturamento(codigos);
+  const ano = Number((q.data?.competencia ?? "").slice(0, 4)) || new Date().getFullYear();
+  const custosAno = useCustosContratoAno(ano, !!q.data, leitura.base);
+  const custosAnt = useCustosContratoAno(ano - 1, !!q.data, leitura.base);
+  const { data: ligacoes } = useLigacoesRubrica();
+  const erroFaturamento = custosAno.error ?? custosAnt.error;
+  const dados = useMemo(() => {
+    if (!q.data || fat.carregando || !custosAno.data || !custosAnt.data) return undefined;
+    const doRecorte = fat.contratos.filter((c) => leitura.empresaId === "todos" || c.empresa_id === leitura.empresaId);
+    const custo = new Map<string, number>();
+    for (const [chave, c] of custosPorContratoMes([...custosAnt.data, ...custosAno.data], ligacoes)) custo.set(chave, (custo.get(chave) ?? 0) + totalCustos(c));
+    return painelPeloFaturamento(q.data, {
+      nfs: fat.nfs, custoPorContratoMes: custo,
+      contratos: new Map(doRecorte.map((c) => [c.id, c.nome])),
+      ativos: doRecorte.filter((c) => c.status !== "encerrado").length,
+    });
+  }, [q.data, fat.carregando, fat.contratos, fat.nfs, custosAno.data, custosAnt.data, ligacoes, leitura.empresaId]);
+
   return (
     <AcessoGate
       menu={MENU}
       acao="visualizar"
       fallback={<SemDados texto="Você não tem acesso ao Painel Executivo." />}
     >
-      {q.isError ? (
+      {q.isError || erroFaturamento ? (
         <SemDados texto="Não foi possível carregar o Painel Executivo. Tente novamente em instantes." />
       ) : (
-        <ConteudoPainelExecutivo dados={q.data} competencia={competencia} onCompetencia={setCompetencia} />
+        <ConteudoPainelExecutivo dados={dados} competencia={competencia} onCompetencia={setCompetencia} />
       )}
     </AcessoGate>
   );
