@@ -1333,6 +1333,15 @@ const operacionalModule: ModuleDef = {
       ],
     },
     {
+      // Indicadores (09/11/2026, mig 20261109002000): começa pelo Painel
+      // Executivo; as demais telas entram depois da validação do Pablo.
+      label: "Indicadores",
+      defaultOpen: true,
+      items: [
+        { label: "Painel Executivo", to: "/app/operacional/indicadores/painel-executivo", icon: BarChart3 },
+      ],
+    },
+    {
       label: "Recrutamento e Seleção",
       defaultOpen: true,
       items: [
