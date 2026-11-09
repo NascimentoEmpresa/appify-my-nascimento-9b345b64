@@ -51,8 +51,13 @@ export function dataPagamentoDe(item: ItemLinhaMalote): string | null {
   return parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
 }
 
+// Solicitação com cotação aprovada ainda não virou despesa: valor_total é o ESTIMADO do pedido e o que vale é o valor aprovado na cotação
+// (mesmo que a tela Criar Despesa já usa de ponto de partida). Ao virar despesa, valor_total passa a ser o lançado, e esse segue valendo.
 export function valorDe(item: ItemLinhaMalote): number {
-  return Number(item.parcela ? item.parcela.valor : item.despesa.valor_total);
+  if (item.parcela) return Number(item.parcela.valor);
+  const { despesa } = item;
+  if (despesa.status === "cotacao_aprovada" && despesa.valor_aprovado_cotacao != null) return Number(despesa.valor_aprovado_cotacao);
+  return Number(despesa.valor_total);
 }
 
 // `origem` não muda depois que a Solicitação vira Despesa (fica "solicitacao"

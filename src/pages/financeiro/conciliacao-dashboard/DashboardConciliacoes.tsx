@@ -13,9 +13,10 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
 import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes, useSalvarSaldoFinalManual } from "@/hooks/useGerarResumoConciliacao";
-import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, totaisDoExtrato, totaisFluxoDosBancosConciliados, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { explicarFluxoXExtrato, registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, totaisDoExtrato, totaisFluxoDosBancosConciliados, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { TabelaConferenciaPorConta } from "./TabelaConferenciaPorConta";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
 import { useContasBanco, useContasDosLancamentos } from "@/hooks/useContasBanco";
@@ -265,6 +266,13 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   );
   const fluxoConciliado = useMemo(
     () => totaisFluxoDosBancosConciliados(linhasComConta, atuais, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido, mesDe, mesAte }, hojeISO()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [linhasComConta, atuais, dataDe, dataAte, empresaId, bancoValido, mesDe, mesAte],
+  );
+
+  // SIS-2026-0833: abre a diferença entre o Fluxo e o extrato (ponte) e mostra, por banco/conta/mês, quem não bate e quanto.
+  const ponte = useMemo(
+    () => explicarFluxoXExtrato(linhasComConta, atuais, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido, mesDe, mesAte }, hojeISO()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [linhasComConta, atuais, dataDe, dataAte, empresaId, bancoValido, mesDe, mesAte],
   );
@@ -610,8 +618,8 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
         {/* SIS-2026-0736: totais do período para conferir com os cards "Entradas/Saídas (filtro atual)" do Fluxo de Caixa — Realizado. */}
         <div className="grid gap-3 sm:grid-cols-2">
           {[
-            { rotulo: "Saldo de movimentação de entradas", valor: totaisMov.entradas, Icone: ArrowUp, cor: "text-emerald-700", fundo: "bg-emerald-50 dark:bg-emerald-950/30", borda: "border-emerald-200", card: "Entradas (filtro atual)" },
-            { rotulo: "Saldo de movimentação de saídas", valor: totaisMov.saidas, Icone: ArrowDown, cor: "text-rose-700", fundo: "bg-rose-50 dark:bg-rose-950/30", borda: "border-rose-200", card: "Saídas (filtro atual)" },
+            { rotulo: "Saldo de movimentação de entradas", valor: totaisMov.entradas, saldoAnterior: ponte.entradas.saldoAnterior, tipoSaldo: "entrada", Icone: ArrowUp, cor: "text-emerald-700", fundo: "bg-emerald-50 dark:bg-emerald-950/30", borda: "border-emerald-200", card: "Entradas (filtro atual)" },
+            { rotulo: "Saldo de movimentação de saídas", valor: totaisMov.saidas, saldoAnterior: ponte.saidas.saldoAnterior, tipoSaldo: "saída", Icone: ArrowDown, cor: "text-rose-700", fundo: "bg-rose-50 dark:bg-rose-950/30", borda: "border-rose-200", card: "Saídas (filtro atual)" },
           ].map((k) => (
             <div key={k.rotulo} className={cn("flex items-center gap-4 rounded-xl border p-4", k.fundo, k.borda)}>
               <k.Icone className={cn("h-8 w-8 shrink-0", k.cor)} />
@@ -622,6 +630,11 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                   {empresaId === TODAS ? "Todas as empresas" : empresaNome(empresaId)} · {bancoValido === TODAS ? "todos os bancos" : bancoNome(bancoValido)} · {dataDe ? isoParaBR(dataDe) : "início"} a {dataAte ? isoParaBR(dataAte) : "hoje"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">Compare com “{k.card}” do Fluxo de Caixa — Realizado ({totaisMov.lancamentos.toLocaleString("pt-BR")} lançamentos).</p>
+                {k.saldoAnterior !== 0 && (
+                  <p className="text-[11px] font-medium text-blue-700 dark:text-blue-300">
+                    Inclui {fmtBRL(k.saldoAnterior)} de saldo anterior (abertura das contas, lançado como {k.tipoSaldo}): não é movimento e não aparece em extrato.
+                  </p>
+                )}
               </div>
             </div>
           ))}
@@ -662,6 +675,64 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
           Mesma conta do Fluxo de Caixa: soma tudo o que o Fluxo mostra no período (inclusive saldo anterior e conta vinculada, que a conferência de saldos abaixo
           desconsidera) e o rateio entre empresas conta pelo total, na empresa do primeiro lançamento, como no Fluxo. Na tabela mensal abaixo, o mês entra inteiro.
         </p>
+        {/* SIS-2026-0833: a diferença entre o Fluxo e o extrato, aberta em partes e por banco/conta. */}
+        {totaisExt.conciliacoes > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">De onde vem a diferença entre o Fluxo e o extrato</CardTitle>
+              <p className="text-[11px] font-normal text-muted-foreground">
+                O Fluxo soma tudo; o extrato só existe onde há conciliação salva. A tabela leva o total do Fluxo até o valor que se compara ao extrato, tirando o que não entra nessa comparação.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4 p-4 pt-0">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b bg-muted/40">
+                    <th className="px-3 py-2 text-left" />
+                    <th className="px-3 py-2 text-right">Entradas</th>
+                    <th className="px-3 py-2 text-right">Saídas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([
+                    ["Total do Fluxo no período (soma de tudo)", "fluxoTotal", "Mesma conta do card de cima, por cota (sem juntar o rateio entre empresas)."],
+                    ["(−) Saldo anterior", "saldoAnterior", "Saldo de abertura lançado no Fluxo: não é movimento do mês e não aparece no extrato."],
+                    ["(−) Ignorado pela conciliação (conta vinculada)", "ignoradas", "Resgates e aplicações de conta vinculada lançados em bancos que não são a própria conta vinculada: a conciliação os ignora."],
+                    ["(−) Bancos, contas e meses sem conciliação salva", "semConciliacao", "Têm lançamento no Fluxo, mas ninguém salvou a conciliação: o extrato deles não entra. São as linhas amarelas abaixo."],
+                    ["= Fluxo dos bancos conciliados", "conciliado", "O que se compara ao extrato."],
+                    ["Extrato bancário (conciliações salvas)", "extrato", "Totais lidos do OFX."],
+                    ["Diferença (Fluxo conciliado − extrato)", "diferenca", "Se não for zero, veja as linhas em vermelho abaixo."],
+                  ] as const).map(([rotulo, campo, dica], i) => {
+                    const forte = campo === "conciliado" || campo === "diferenca";
+                    return (
+                      <tr key={campo} className={cn("border-b", forte && "bg-muted/30 font-semibold")} title={dica}>
+                        <td className="px-3 py-1.5">{rotulo}</td>
+                        {(["entradas", "saidas"] as const).map((t) => {
+                          const v = ponte[t][campo];
+                          const dif = campo === "diferenca";
+                          const tira = i >= 1 && i <= 3 && v !== 0;
+                          return (
+                            <td key={t} className={cn("px-3 py-1.5 text-right tabular-nums", dif && (Math.abs(v) < 0.005 ? "text-emerald-700" : "text-red-600"), tira && "text-muted-foreground")}>
+                              {tira ? "−" : ""}{fmtBRL(v)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              <TabelaConferenciaPorConta
+                linhas={ponte.linhas}
+                bancoNome={bancoNome}
+                empresaNome={empresaNome}
+                rotuloConta={(id) => rotulosDeConta.get(id)}
+                onVerDetalhes={onVerDetalhes}
+              />
+            </CardContent>
+          </Card>
+        )}
         {/* SIS-2026-0724: totais de Saldo final (sistema), Saldo final (extrato) e Diferença das empresas/bancos filtrados. */}
         <div className="grid gap-3 sm:grid-cols-3">
           {[

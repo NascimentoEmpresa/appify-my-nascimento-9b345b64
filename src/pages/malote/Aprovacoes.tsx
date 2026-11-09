@@ -45,6 +45,7 @@ import { ClassificacaoRateioCell } from "./ClassificacaoRateioCell";
 import { AvisoPontoIndisponivel, SeloPontoDiaria } from "./PontoDiariaMalote";
 import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
 import type { PontoDiariaMalote } from "@/lib/diariaPonto";
+import { valorDe } from "./meusItensUtils";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
 // Empresa pra ordenar, o badge continua mostrando os dois), Parcela
@@ -56,8 +57,9 @@ function dataPagamentoDeItem(item: ItemLinhaMalote): string | null {
   return item.parcela ? item.parcela.data_pagamento_real ?? item.parcela.data_vencimento : item.despesa.data_pagamento;
 }
 
+// Cotação aprovada ainda sem despesa lançada mostra o valor aprovado na cotação, não o estimado (regra única em meusItensUtils).
 function valorDeItem(item: ItemLinhaMalote): number {
-  return Number(item.parcela ? item.parcela.valor : item.despesa.valor_total);
+  return valorDe(item);
 }
 
 // SIS-2026-0223: despesa parcelada vira N linhas (1 por parcela) a partir de
@@ -1016,7 +1018,7 @@ function LinhaItem({
   const { data: nomeEspecial } = useNomeUsuario(formaEspecial?.aprovador_especial_user_id ?? undefined);
   const isSolicitacao = STATUS_FASE_SOLICITACAO.includes(despesa.status);
   const status = statusEfetivo(item);
-  const valor = parcela ? parcela.valor : despesa.valor_total;
+  const valor = valorDe(item);
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
     <TableRow

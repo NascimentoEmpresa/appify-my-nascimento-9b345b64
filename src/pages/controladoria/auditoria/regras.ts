@@ -636,13 +636,16 @@ export interface ConciliacaoAud {
   created_at?: string;
   extrato_entradas?: number | null;
   extrato_saidas?: number | null;
+  // SIS-2026-0833: sem a conta, duas contas do mesmo banco e empresa (ex.: Sicredi 119 e 155) viravam uma conciliação só.
+  conta_extrato?: string | null;
+  conta_banco_id?: string | null;
 }
 
 // A mesma conta/período salvo mais de uma vez (acontece) conta UMA vez: vale a mais recente.
 export function conciliacoesUnicas(cabs: ConciliacaoAud[]): ConciliacaoAud[] {
   const por = new Map<string, ConciliacaoAud>();
   for (const c of cabs) {
-    const chave = [c.banco_id ?? "", c.todas_empresas ? "*" : [...(c.empresa_ids ?? [])].sort().join(","), c.data_inicio ?? "", c.data_fim ?? ""].join("|");
+    const chave = [c.banco_id ?? "", c.todas_empresas ? "*" : [...(c.empresa_ids ?? [])].sort().join(","), c.conta_extrato ?? "", c.conta_banco_id ?? "", c.data_inicio ?? "", c.data_fim ?? ""].join("|");
     const atual = por.get(chave);
     if (!atual || (c.created_at ?? "") > (atual.created_at ?? "")) por.set(chave, c);
   }

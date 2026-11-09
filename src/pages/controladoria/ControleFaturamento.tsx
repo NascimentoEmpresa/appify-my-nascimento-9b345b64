@@ -23,6 +23,7 @@ import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
 import { StatusCelula, divergenciaEntre, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NfsNaoEmitidasTab } from "./NfsNaoEmitidasTab";
+import { abaPermitida } from "./faturamento/abasPermitidas";
 import { CODIGO_PADRAO, CODIGO_TODOS, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
@@ -100,6 +101,8 @@ export default function ControleFaturamento() {
   const { data: empresas = [] } = useEmpresasGrupo();
   // SIS-2026-0808: chat de justificativa dos contratos não faturados (escrever exige 'responder'; ler, 'visualizar').
   const { data: podeJustificar = false } = useScreenAccess("controle-faturamento", "responder");
+  // Sem 'visao_completa' a pessoa vê só a aba "NFs Não Emitidas" (ex.: supervisores). Quem já usava a tela ganhou a ação na migration 20261109000400.
+  const { data: temVisaoCompleta = false, isLoading: carregandoAcessoVisao } = useScreenAccess("controle-faturamento", "visao_completa");
   const [alvoJustificativa, setAlvoJustificativa] = useState<AlvoJustificativaFaturamento | null>(null);
   const [params, setParams] = useSearchParams();
 
@@ -354,7 +357,8 @@ export default function ControleFaturamento() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatDoLink, contratos]);
 
-  const carregando = carregandoContratos || carregandoPlanilha || carregandoNfs;
+  const carregando = carregandoContratos || carregandoPlanilha || carregandoNfs || carregandoAcessoVisao;
+  const abaAtiva = abaPermitida(aba, temVisaoCompleta);
 
   // SIS-2026-0650: volta empresa, busca, ano e competência ao padrão.
   function limparFiltros() {
@@ -408,14 +412,14 @@ export default function ControleFaturamento() {
       {carregando ? (
         <p className="text-sm text-muted-foreground py-10 text-center">Carregando...</p>
       ) : (
-        <Tabs value={aba} onValueChange={setAba}>
+        <Tabs value={abaAtiva} onValueChange={setAba}>
           <TabsList>
-            <TabsTrigger value="geral">Visão Geral</TabsTrigger>
-            <TabsTrigger value="anual">Visão Anual</TabsTrigger>
+            {temVisaoCompleta && <TabsTrigger value="geral">Visão Geral</TabsTrigger>}
+            {temVisaoCompleta && <TabsTrigger value="anual">Visão Anual</TabsTrigger>}
             <TabsTrigger value="pendentes">NFs Não Emitidas{pendentesCompetencia.length > 0 ? ` (${pendentesCompetencia.length})` : ""}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="geral" className="space-y-4 mt-4">
+          {temVisaoCompleta && <TabsContent value="geral" className="space-y-4 mt-4">
             <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs">
               {FiltroEmpresaAno}
               <span className="text-muted-foreground ml-auto">Competência ({rotuloCodigo}): {competenciasComDadosN.has(competencia) ? "com dados no relatório" : "ainda sem dado no relatório"}</span>
@@ -578,9 +582,9 @@ export default function ControleFaturamento() {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent>}
 
-          <TabsContent value="anual" className="space-y-4 mt-4">
+          {temVisaoCompleta && <TabsContent value="anual" className="space-y-4 mt-4">
             <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs">
               {FiltroEmpresaAno}
               <Select value={filtroStatusAno} onValueChange={(v) => setFiltroStatusAno(v as StatusCelula | "todos")}>
@@ -662,7 +666,7 @@ export default function ControleFaturamento() {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent>}
 
           <TabsContent value="pendentes" className="space-y-4 mt-4">
             {/* SIS-2026-0650: layout do mockup do Ruan (KPIs, tabela priorizada e resumo do impacto). */}

@@ -345,3 +345,122 @@ export function totaisFluxoDosBancosConciliados(
   }
   return { entradas: r2(entradas), saidas: r2(saidas) };
 }
+
+// SIS-2026-0833: de onde vem a diferença entre o Fluxo (card "Saldo de movimentação") e o extrato conciliado.
+// Os dois cards não medem a mesma coisa: o Fluxo soma TUDO (inclusive saldo anterior, resgate de conta vinculada que a conciliação ignora e bancos/meses
+// sem conciliação salva); o extrato só existe onde há conciliação. Esta função abre a diferença em três partes (ponte) e, por conta, mostra Fluxo × extrato.
+export type LinhaParaPonte = LinhaParaTotais & { classificacao_nome?: string | null; descricao?: string | null; banco_nome?: string | null };
+
+export interface PonteTipo {
+  fluxoTotal: number; // tudo o que o Fluxo mostra no filtro (uma linha por cota, sem juntar o rateio)
+  saldoAnterior: number; // linhas "SALDO ANTERIOR": não é movimento
+  ignoradas: number; // resgate de conta vinculada etc., que a conciliação ignora
+  semConciliacao: number; // banco/conta/mês sem conciliação salva
+  conciliado: number; // o que sobra: Fluxo dos bancos com conciliação (é o que se compara ao extrato)
+  extrato: number;
+  diferenca: number; // conciliado − extrato
+}
+
+export interface LinhaConferenciaConta {
+  chave: string;
+  bancoId: string | null;
+  empresaIds: string[]; // empresas da conciliação ou, sem conciliação, a empresa dos lançamentos
+  contaBancoId: string;
+  mes: string;
+  conciliacaoId: string | null; // null = sem conciliação salva
+  fluxoE: number; fluxoS: number;
+  extratoE: number | null; extratoS: number | null; // null = sem conciliação (ou sem totais gravados)
+  difE: number | null; difS: number | null;
+  /** Fluxo que a conciliação gravou no dia em que foi salva (null = sem valores gravados ou sem conciliação). Diferente do de hoje = o Fluxo mudou depois. */
+  gravadoE: number | null; gravadoS: number | null;
+  contaExtrato: string | null;
+}
+
+export interface PonteConciliacao { entradas: PonteTipo; saidas: PonteTipo; linhas: LinhaConferenciaConta[] }
+
+export function explicarFluxoXExtrato<T extends ConciliacaoParaSaldo & CamposExtrato>(
+  linhas: LinhaParaPonte[],
+  atuais: T[],
+  f: { dataDe: string; dataAte: string; empresaId: string | null; bancoId: string | null; mesDe: string; mesAte: string },
+  hoje: string,
+): PonteConciliacao {
+  const doFiltro = atuais.filter((c) => conciliacaoNoFiltro(c, f));
+  const nova = (): PonteTipo => ({ fluxoTotal: 0, saldoAnterior: 0, ignoradas: 0, semConciliacao: 0, conciliado: 0, extrato: 0, diferenca: 0 });
+  const ponte = { entrada: nova(), saida: nova() };
+  const porConc = new Map<string, LinhaConferenciaConta>();
+  const semConc = new Map<string, LinhaConferenciaConta>();
+
+  const extratoDe = (c: T): { e: number; s: number } | null => {
+    const v = valoresDaConciliacao(c);
+    if (v) return { e: v.ee, s: v.es };
+    if (c.extrato_entradas != null && c.extrato_saidas != null) return { e: Number(c.extrato_entradas), s: Number(c.extrato_saidas) };
+    return null;
+  };
+  for (const c of doFiltro) {
+    const ex = extratoDe(c);
+    porConc.set(c.id, {
+      chave: c.id, bancoId: c.banco_id, empresaIds: c.todas_empresas ? [] : c.empresa_ids, contaBancoId: c.conta_banco_id ?? "", mes: c.data_fim.slice(0, 7), conciliacaoId: c.id,
+      fluxoE: 0, fluxoS: 0, extratoE: ex ? ex.e : null, extratoS: ex ? ex.s : null, difE: null, difS: null,
+      gravadoE: valoresDaConciliacao(c)?.fe ?? null, gravadoS: valoresDaConciliacao(c)?.fs ?? null, contaExtrato: c.conta_extrato ?? null,
+    });
+    if (ex) { ponte.entrada.extrato += ex.e; ponte.saida.extrato += ex.s; }
+  }
+
+  for (const l of linhas) {
+    const data = l.data_pagamento?.slice(0, 10) ?? null;
+    if (!data || l.situacao_base || data > hoje) continue;
+    if (f.dataDe && data < f.dataDe) continue;
+    if (f.dataAte && data > f.dataAte) continue;
+    if (f.empresaId && l.empresa_id !== f.empresaId) continue;
+    if (f.bancoId && l.banco_id !== f.bancoId) continue;
+    const v = Number(l.valor) || 0;
+    const p = l.tipo === "entrada" ? ponte.entrada : ponte.saida;
+    p.fluxoTotal += v;
+    if (ehSaldoAnterior({ classificacao_nome: l.classificacao_nome ?? null })) { p.saldoAnterior += v; continue; }
+    if (ignoraNaConciliacao({ tipo: l.tipo, descricao: l.descricao ?? "", classificacao_nome: l.classificacao_nome ?? null, banco_nome: l.banco_nome ?? null })) { p.ignoradas += v; continue; }
+    const mes = data.slice(0, 7);
+    const c = l.banco_id
+      ? doFiltro.find((x) => x.banco_id === l.banco_id && x.data_fim.slice(0, 7) === mes && (!x.conta_banco_id || l.conta_banco_id === x.conta_banco_id) && (x.todas_empresas || (!!l.empresa_id && x.empresa_ids.includes(l.empresa_id))))
+      : undefined;
+    if (c) {
+      p.conciliado += v;
+      const r = porConc.get(c.id)!;
+      if (l.tipo === "entrada") r.fluxoE += v; else r.fluxoS += v;
+    } else {
+      p.semConciliacao += v;
+      const k = `${l.empresa_id ?? ""}|${l.banco_id ?? ""}|${l.conta_banco_id ?? ""}|${mes}`;
+      const r = semConc.get(k) ?? { chave: k, bancoId: l.banco_id, empresaIds: l.empresa_id ? [l.empresa_id] : [], contaBancoId: l.conta_banco_id ?? "", mes, conciliacaoId: null, fluxoE: 0, fluxoS: 0, extratoE: null, extratoS: null, difE: null, difS: null, gravadoE: null, gravadoS: null, contaExtrato: null };
+      semConc.set(k, r);
+      if (l.tipo === "entrada") r.fluxoE += v; else r.fluxoS += v;
+    }
+  }
+
+  const todas = [...porConc.values(), ...semConc.values()].map((r) => {
+    const fluxoE = r2(r.fluxoE), fluxoS = r2(r.fluxoS);
+    return { ...r, fluxoE, fluxoS, difE: r.extratoE == null ? null : r2(fluxoE - r.extratoE), difS: r.extratoS == null ? null : r2(fluxoS - r.extratoS) };
+  });
+  for (const p of [ponte.entrada, ponte.saida]) {
+    p.fluxoTotal = r2(p.fluxoTotal); p.saldoAnterior = r2(p.saldoAnterior); p.ignoradas = r2(p.ignoradas);
+    p.semConciliacao = r2(p.semConciliacao); p.conciliado = r2(p.conciliado); p.extrato = r2(p.extrato);
+    p.diferenca = r2(p.conciliado - p.extrato);
+  }
+  const peso = (r: LinhaConferenciaConta) => (r.conciliacaoId ? Math.abs(r.difE ?? 0) + Math.abs(r.difS ?? 0) : r.fluxoE + r.fluxoS);
+  todas.sort((a, b) => peso(b) - peso(a));
+  return { entradas: ponte.entrada, saidas: ponte.saida, linhas: todas };
+}
+
+// SIS-2026-0833: a mesma conta do extrato (mesma empresa e mês) conciliada mais de uma vez em bancos/contas diferentes: o extrato é contado duas vezes.
+// Só vale com número de conta de verdade (o "-" de bancos sem conta não identifica nada).
+export interface GrupoDuplicado { contaExtrato: string; mes: string; empresaIds: string[]; ids: string[]; bancoIds: (string | null)[] }
+export function conciliacoesDuplicadas(atuais: ConciliacaoParaSaldo[]): GrupoDuplicado[] {
+  const grupos = new Map<string, ConciliacaoParaSaldo[]>();
+  for (const c of atuais) {
+    const conta = (c.conta_extrato ?? "").replace(/\s+/g, "");
+    if (!/\d{4,}/.test(conta) || c.todas_empresas) continue;
+    const k = [conta, [...c.empresa_ids].sort().join(","), c.data_inicio, c.data_fim].join("|");
+    grupos.set(k, [...(grupos.get(k) ?? []), c]);
+  }
+  return [...grupos.values()]
+    .filter((g) => g.length > 1)
+    .map((g) => ({ contaExtrato: g[0].conta_extrato ?? "", mes: g[0].data_fim.slice(0, 7), empresaIds: g[0].empresa_ids, ids: g.map((c) => c.id), bancoIds: g.map((c) => c.banco_id) }));
+}
