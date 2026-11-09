@@ -25,7 +25,8 @@ export type AppAcao =
   | "alterar_dre"
   | "responder"
   | "fundamentar"
-  | "editar_concluida";
+  | "editar_concluida"
+  | "visao_completa";
 
 /** O pacote de trabalho que ligar uma tela concede, quando não há exceção. */
 export const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] = [
@@ -77,6 +78,9 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   // Fluxo de Caixa (30/10/2026, SIS-2026-0712): Editar (alterar) e Excluir passaram a ter switch próprio ao lado de Ratear (incluir).
   // O RH só rateia e a Calita rateia e exclui; ligar a tela dá visualizar + ratear e o resto se liga de propósito.
   "financeiro-fluxo-caixa-gestao": ["alterar", "excluir"],
+  // Controle de Faturamento (09/11/2026): 'visao_completa' libera as abas Visão Geral e Visão Anual. Quem só tem a tela vê apenas
+  // "NFs Não Emitidas" (caso dos supervisores); a visão completa é ligada de propósito. Desligar a tela revoga junto.
+  "controle-faturamento": ["visao_completa"],
 };
 
 /**

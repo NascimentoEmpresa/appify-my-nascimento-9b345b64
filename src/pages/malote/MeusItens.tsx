@@ -594,7 +594,7 @@ export default function MeusItens() {
               {ordenados.map((item) => {
                 const { despesa, parcela } = item;
                 const status = statusEfetivo(item);
-                const valor = parcela ? parcela.valor : despesa.valor_total;
+                const valor = valorDe(item);
                 const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
                 return (
                   <TableRow

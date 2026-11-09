@@ -182,8 +182,10 @@ export function useConciliadoMes(mes: string) {
       // Conciliação que se sobrepõe ao mês.
       const ler = (colunas: string) =>
         db.from("financeiro_conciliacao_fluxo_caixa").select(colunas).lt("data_inicio", proximoMesData(mes)).gte("data_fim", `${mes}-01`);
-      const COMPLETA = "id, banco_id, empresa_ids, todas_empresas, data_inicio, data_fim, created_at, extrato_entradas, extrato_saidas";
+      const COMPLETA = "id, banco_id, empresa_ids, todas_empresas, data_inicio, data_fim, created_at, extrato_entradas, extrato_saidas, conta_extrato, conta_banco_id";
       let { data: cabs, error } = await ler(COMPLETA);
+      // SIS-2026-0833: coluna da conta ainda não existe -> lê como antes (sem separar as contas do mesmo banco).
+      if (error?.code === "42703") ({ data: cabs, error } = await ler("id, banco_id, empresa_ids, todas_empresas, data_inicio, data_fim, created_at, extrato_entradas, extrato_saidas"));
       // Migration 20261014000006 (totais do extrato) ainda não aplicada.
       if (error?.code === "42703") ({ data: cabs, error } = await ler("id, banco_id, empresa_ids, todas_empresas, data_inicio, data_fim, created_at"));
       // Migration 20261005000010 (empresa/banco da conciliação) ainda não aplicada:
