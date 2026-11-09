@@ -24,7 +24,7 @@ describe("Painel Executivo: número só se for verdadeiro", () => {
     for (const chave of ["receita", "lucro", "margem", "criticos"]) {
       expect(card(d, chave).valor).toBeNull();
       expect(card(d, chave).variacao).toBeNull();
-      expect(card(d, chave).aviso).toBe("DRE disponível até Mai/2026");
+      expect(card(d, chave).aviso).toBe("Faturamento com nota até Mai/2026");
     }
   });
 
