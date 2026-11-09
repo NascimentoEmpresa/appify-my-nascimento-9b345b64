@@ -284,6 +284,7 @@ import ConferenciaPonto from "./pages/rh/ConferenciaPonto";
 import ConferenciaPontoPainel from "./pages/rh/ConferenciaPontoPainel";
 import OperacionalConferenciaPonto from "./pages/operacional/ConferenciaPonto";
 import EfetividadePainelDia from "./pages/operacional/efetividade/PainelDia";
+import IndicadoresPainelExecutivo from "./pages/operacional/indicadores/PainelExecutivo";
 import EfetividadeControlePostos from "./pages/operacional/efetividade/ControlePostos";
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
@@ -1043,6 +1044,7 @@ const App = () => (
             <Route path="operacional/conferencia-ponto" element={<OperacionalConferenciaPonto />} />
             {/* Efetividade e Coberturas (branch local efetividade, mig 20261008000030): 5 telas sob
                 um menu só (ope_efetividade), casadas pelo prefixo da rota. */}
+            <Route path="operacional/indicadores/painel-executivo" element={<IndicadoresPainelExecutivo />} />
             <Route path="operacional/efetividade" element={<EfetividadePainelDia />} />
             <Route path="operacional/efetividade/postos" element={<EfetividadeControlePostos />} />
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />

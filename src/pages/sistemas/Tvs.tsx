@@ -28,7 +28,7 @@ import {
   urlValida, youtubeEmbed, type ItemTv, type LayoutAviso, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
-import { VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
+import { PAINEIS_DO_DOCUMENTO, VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
 
 // =====================================================================
 // SISTEMAS › TV's (07/10/2026, mig 20261007000012)
@@ -533,7 +533,8 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         // Licitações e Treinamentos não usam período nem contrato: não grava (a lista não mostra um filtro que não vale).
         relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" && comFiltros ? f.periodo : null,
         rel_contrato: f.tipo === "relatorio" && comFiltros && f.contrato ? f.contrato : null,
-        rel_visual: f.tipo === "relatorio" && f.relatorio.startsWith("ger-") ? f.visual : null,
+        // Item novo de uma das 10 TVs do documento nasce nos cards (o seletor segue valendo depois, na lista).
+        rel_visual: f.tipo === "relatorio" && f.relatorio.startsWith("ger-") ? (f.visual === VAZIO.visual && PAINEIS_DO_DOCUMENTO.includes(f.relatorio) ? "documento" : f.visual) : null,
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });

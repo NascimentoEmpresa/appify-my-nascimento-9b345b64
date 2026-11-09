@@ -13,6 +13,7 @@ import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } 
 import { PaginaLicitacaoAberturas, PaginaLicitacaoMapa, PaginaLicitacaoResponsaveis, PaginaLicitacaoResumo } from "./relatorio/paginasLicitacao";
 import { PaginaTrnCursos, PaginaTrnEngajamento, PaginaTrnGeral } from "./relatorio/paginasTreinamentos";
 import { TelaPainelGerencial, fundoDoPainel } from "./relatorio/paginasGerencialPainel";
+import { TelaDocumento } from "./relatorio/paginasGerencialDocumento";
 import { TelaDashboardGerencial, TelaIndicadorGerencial } from "./relatorio/paginasGerencialDashboard";
 import { TelaBiTv, type PainelBiTv, type WidgetBiTv } from "./relatorio/paginasBi";
 import { codigoDoIndicador, ehDashboard, ehIndicadorAvulso, ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
@@ -167,7 +168,7 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
   const ap = aparencia(dados?.tipo === "indicador" ? dados.painel?.slug : slug);
   const { cor, Icone } = ap;
   // TVs gerenciais: o visual do item (mig 20261014000002) decide quantos indicadores por tela.
-  const visual = visualDoItem(item.rel_visual);
+  const visual = visualDoItem(item.rel_visual, item.relatorio);
   const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados.tipo === "gerencial" ? { ...dados, visual } : dados) : []), [dados, visual]);
   const duracaoMs = tempoDaPaginaMs(item.duracao_seg, paginas.length);
   const [pagina, setPagina] = useState(0);
@@ -229,6 +230,14 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
     return (
       <Palco fundo={dados.painel.tema === "escuro" ? "#0b0b0a" : "#f4f4f5"}>
         <TelaBiTv d={dados} cor={cor} atualizado={atualizado} />
+      </Palco>
+    );
+  }
+  if (dados?.tipo === "gerencial" && atual && visual === "documento") {
+    return (
+      <Palco fundo={fundoDoPainel(visual)}>
+        <TelaDocumento p={dados} cor={cor} visual={visual} chave={atual} paginas={paginas}
+          pagina={Math.min(pagina, Math.max(0, paginas.length - 1))} duracaoMs={duracaoMs} atualizado={atualizado} onIndicador={previa ? onIndicador : undefined} />
       </Palco>
     );
   }

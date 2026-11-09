@@ -18,6 +18,7 @@ export type Unidade = "qtd" | "pct" | "brl" | "dias";
 export type Sentido = "menor" | "maior";
 export type Fonte = "auto" | "manual" | "espelho" | "soma";
 export type Situacao = "vermelho" | "amarelo" | "verde" | "neutro" | "sem_dado";
+export type Medida = "real" | "parcial" | "sem_fonte";
 
 export interface LinhaDetalhe {
   nome: string; valor: number | null; rotulo?: string | null; /** duas séries (postos: contratados × cobertos; quadro: ativos × necessários) */ a?: number | null; b?: number | null;
@@ -41,6 +42,12 @@ export interface IndicadorGerencial {
   meta: number | string | null; alerta: number | string | null; periodicidade: "diaria" | "semanal" | "mensal";
   responsavel: string | null; pai: string | null; na_tv: boolean; ordem: number;
   parametro: number | string | null; parametro_rotulo: string | null; espelho_de: string | null;
+  /** Mig 20261109001000: o quanto o número responde ao card do documento. Ausente = "real". */
+  medida?: Medida | null;
+  /** O que o número parcial conta, ou o que falta no ERP. */
+  medida_nota?: string | null;
+  /** A meta como o documento escreve; só vem quando a escala é a do valor calculado. */
+  meta_texto?: string | null;
   resultado: ResultadoIndicador;
 }
 
@@ -113,9 +120,14 @@ const num = (v: number | string | null | undefined): number | null => {
  * limite de atenção = amarelo; acima = vermelho. "maior": o espelho. Sem meta
  * = neutro (só acompanhamento). Sem valor = sem dado.
  */
-export function situacao(i: Pick<IndicadorGerencial, "meta" | "alerta" | "sentido"> & { resultado: Pick<ResultadoIndicador, "valor"> }): Situacao {
+export function situacao(i: Pick<IndicadorGerencial, "meta" | "alerta" | "sentido" | "medida"> & { resultado: Pick<ResultadoIndicador, "valor"> }): Situacao {
+  // 09/11/2026 (mig 20261109001000): sem fonte não tem semáforo, e número
+  // parcial também não: é verdadeiro, mas não é o do card. Regra de 14/10/2026:
+  // "não dá pra gente expor informação ruim assim pra prejudicar os setores".
+  if (i.medida === "sem_fonte") return "sem_dado";
   const v = num(i.resultado?.valor);
   if (v == null) return "sem_dado";
+  if (i.medida === "parcial") return "neutro";
   const meta = num(i.meta);
   // "Quanto mais, melhor" sem meta = o que o setor entregou (chamados concluídos,
   // vagas preenchidas, recebido no mês…): é notícia boa, vai em verde. Pablo,
@@ -188,7 +200,8 @@ export function formatarValor(v: number | string | null | undefined, unidade: Un
 }
 
 /** "Meta ≤ 0" / "Meta ≥ 95%" / "Sem meta" — o texto da comparação com a meta. */
-export function textoMeta(i: Pick<IndicadorGerencial, "meta" | "sentido" | "unidade">): string {
+export function textoMeta(i: Pick<IndicadorGerencial, "meta" | "sentido" | "unidade" | "meta_texto">): string {
+  if (i.meta_texto) return i.meta_texto;
   const meta = num(i.meta);
   if (meta == null) return i.sentido === "maior" ? "Entregue no período" : "Sem meta · acompanhamento";
   // Meta quebrada vai inteira ("3,42%", aceitável do turnover mensal), não arredondada para "3,4%".
@@ -248,9 +261,12 @@ export function placar(itens: IndicadorGerencial[]): Record<Situacao, number> {
 // completo com gráficos e números reais": o DASHBOARD (faixa de números, a
 // tendência de 12 meses, onde agir e os gráficos dos piores) passa a ser o
 // padrão; os painéis de cartões ficam como opção.
-export type VisualGerencial = "dashboard" | "dashboard-escuro" | "painel" | "painel-claro" | "graficos";
+// 09/11/2026 — "tem que aparecer exatamente essas informações desses 7 cards, só
+// os gráficos estão horríveis": o visual "documento" é o das 10 TVs do protótipo.
+export type VisualGerencial = "dashboard" | "dashboard-escuro" | "documento" | "painel" | "painel-claro" | "graficos";
 export const VISUAIS_GERENCIAIS: { valor: VisualGerencial; rotulo: string; dica: string; porTela: number; colunas: number; escuro: boolean }[] = [
-  { valor: "dashboard", rotulo: "Dashboard completo — claro (padrão)", dica: "Uma tela só: todos os números com semáforo, a tendência de 12 meses, onde agir agora e os gráficos dos indicadores mais críticos", porTela: 99, colunas: 0, escuro: false },
+  { valor: "dashboard", rotulo: "Dashboard completo — claro", dica: "Uma tela só: todos os números com semáforo, a tendência de 12 meses, onde agir agora e os gráficos dos indicadores mais críticos", porTela: 99, colunas: 0, escuro: false },
+  { valor: "documento", rotulo: "Cards do documento — escuro", dica: "Os cards do documento em letra grande: resultado, meta, gráfico, contrato afetado, causa e responsável. 4 por tela", porTela: 4, colunas: 2, escuro: true },
   { valor: "dashboard-escuro", rotulo: "Dashboard completo — escuro", dica: "O mesmo dashboard no fundo escuro", porTela: 99, colunas: 0, escuro: true },
   // 14/10/2026 — "visual parecido com o HTML, mas mais bonito, na qualidade de carmed.vercel.app": o claro (faixa de cor, cartões brancos com sombra) é o padrão.
   { valor: "painel-claro", rotulo: "Cartões com gráfico — claro", dica: "O painel inteiro numa tela: gráfico por indicador, resultado × meta, onde, causa e responsável — fundo claro, cartões brancos", porTela: 8, colunas: 0, escuro: false },
@@ -265,7 +281,21 @@ export const colunasDaTela = (visual: VisualGerencial, n: number) => {
 export const visualGerencial = (v: string | null | undefined) => VISUAIS_GERENCIAIS.find((x) => x.valor === v) ?? VISUAIS_GERENCIAIS[0];
 /** O visual que a TV toca: o do item, ou o padrão (o primeiro da lista: o dashboard claro). */
 export const ehDashboard = (v: VisualGerencial) => v === "dashboard" || v === "dashboard-escuro";
-export const visualDoItem = (v: string | null | undefined): VisualGerencial => visualGerencial(v).valor;
+/** As TVs que seguem os cards do documento. Frota, TI e Treinamento não estão no protótipo. */
+export const PAINEIS_DO_DOCUMENTO = ["ger-operacional", "ger-licitacoes", "ger-supply", "ger-recrutamento", "ger-rh", "ger-sst", "ger-financeiro", "ger-juridico", "ger-controladoria", "ger-presidencia"];
+export const visualDoItem = (v: string | null | undefined, slug?: string | null): VisualGerencial =>
+  !v && slug && PAINEIS_DO_DOCUMENTO.includes(slug) ? "documento" : visualGerencial(v).valor;
+
+/** Barras por contrato são lidas da esquerda para a direita; só série no tempo vira linha. */
+export const ehSerieNoTempo = (dados: Pick<LinhaDetalhe, "nome">[]) =>
+  dados.length >= 2 && dados.every((d) => /^(\d{2}\/\d{4}|\d{4}-\d{2}|(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zç]*([\s/.-]*\d{2,4})?)$/i.test(d.nome.trim()));
+
+/** O número grande do card: sem fonte diz isso, em vez de "—" ou "Sem dado". */
+export function resultadoDoCard(i: IndicadorGerencial): string {
+  if (i.medida === "sem_fonte") return "Sem fonte no sistema";
+  if (num(i.resultado?.valor) == null) return i.resultado?.erro ? "Erro no cálculo" : "Sem dado";
+  return formatarValor(i.resultado.valor, i.unidade, true, i.resultado.casas);
+}
 
 /** "lista": linhas de alerta com data, título e apoio (lic_prazo — o slide Alertas da TV de Licitações, 14/10/2026). */
 export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo" | "lista";

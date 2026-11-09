@@ -39,6 +39,55 @@ export async function lerLinhasPdf(file: File): Promise<string[]> {
 }
 
 /**
+ * OCR do PDF sem camada de texto, página a página, no navegador (o arquivo não
+ * sai daqui). Criado para o BSF com listagem de trabalhadores (09/11/2026),
+ * cujas letras são desenhos vetoriais. Página em ~2.400 px, como em Férias
+ * (lerReciboFerias.ts). PSM 6 = "bloco único": no modo automático o tesseract
+ * separa as colunas e a linha da pessoa se perde. Três workers em paralelo: um
+ * só levava ~2 min em 9 páginas. Devolve as linhas na ordem das páginas.
+ */
+export async function lerLinhasPdfOcr(file: File, progresso?: (msg: string) => void): Promise<string[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pdfjs: any = await import(/* @vite-ignore */ `${PDFJS}/pdf.min.mjs`);
+  pdfjs.GlobalWorkerOptions.workerSrc = `${PDFJS}/pdf.worker.min.mjs`;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const { createWorker, PSM } = await import("tesseract.js");
+  const paginas: string[][] = Array.from({ length: pdf.numPages }, () => []);
+  let proxima = 1;
+  let prontas = 0;
+  progresso?.("PDF sem texto — preparando o OCR (a primeira vez demora um pouco)…");
+  const trabalhar = async () => {
+    const worker = await createWorker("por");
+    try {
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: "1" });
+      while (proxima <= pdf.numPages) {
+        const p = proxima++;
+        const pg = await pdf.getPage(p);
+        const viewport = pg.getViewport({ scale: 2400 / pg.getViewport({ scale: 1 }).width });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("O navegador não deixou desenhar a página do PDF.");
+        // intent "print": sem requestAnimationFrame, não para com a aba em segundo plano.
+        await pg.render({ canvasContext: ctx, viewport, intent: "print" }).promise;
+        const { data } = await worker.recognize(canvas);
+        paginas[p - 1] = data.text.split("\n");
+        progresso?.(`Lendo o PDF por OCR: ${++prontas} de ${pdf.numPages} página(s)…`);
+      }
+    } finally {
+      await worker.terminate();
+    }
+  };
+  try {
+    await Promise.all([trabalhar(), trabalhar(), trabalhar()]);
+  } finally {
+    void pdf.destroy();
+  }
+  return paginas.flat();
+}
+
+/**
  * PDF escaneado (só imagem): pdf.js não acha texto nenhum. O BSF da SAMU de
  * 12/2025 veio assim. Erro com tipo próprio para a tela ainda tentar o
  * contrato pelo NOME DO ARQUIVO (contratoPeloNomeArquivo) em vez de parar.

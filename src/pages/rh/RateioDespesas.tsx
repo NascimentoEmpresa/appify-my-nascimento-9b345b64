@@ -42,12 +42,12 @@ import {
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
   competenciaRotulo, contratoPeloNomeArquivo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
-  extrairLinhasDoPdf, identificarLayoutPdf, layoutPorMatricula, linhasDoLayout, totalDoPdf,
+  extrairLinhasDoPdf, identificarLayoutPdf, layoutPorMatricula, linhasDoLayout, qtdEsperadaBsf, totalDoPdf,
   basesPorParte, partesDoPdf, ROTULO_PARTE, type ParteDoPdf, type ParteGuia,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
-import { lerLinhasPdf, PdfSemTextoError } from "@/lib/rh/rateioPdf";
+import { lerLinhasPdf, lerLinhasPdfOcr, PdfSemTextoError } from "@/lib/rh/rateioPdf";
 
 const MENU = "rh_rateio_despesas";
 const SEM = "__sem__";
@@ -451,11 +451,18 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         linhas = await lerLinhasPdf(f);
       } catch (e) {
         if (!(e instanceof PdfSemTextoError)) throw e;
-        setPdfInfo({ total: null, rotulo: "PDF escaneado (imagem) — sem texto para ler" });
-        setPartesFora([]);
-        setAjustes({});
-        peloNomeDoArquivo(null, "Este PDF é escaneado (só imagem): não dá para ler os valores — digite o valor da despesa.");
-        return;
+        // BSF com listagem de trabalhadores (09/11/2026): sem camada de texto,
+        // mas o OCR lê. Se não for esse layout, segue o caminho do escaneado.
+        const doOcr = tipo === "bsf" ? await lerLinhasPdfOcr(f, setAvisoPdf).catch(() => null) : null;
+        setAvisoPdf(null);
+        if (!doOcr || identificarLayoutPdf(doOcr).layout !== "bsf_listagem") {
+          setPdfInfo({ total: null, rotulo: "PDF escaneado (imagem) — sem texto para ler" });
+          setPartesFora([]);
+          setAjustes({});
+          peloNomeDoArquivo(null, "Este PDF é escaneado (só imagem): não dá para ler os valores — digite o valor da despesa.");
+          return;
+        }
+        linhas = doOcr;
       }
       setLinhasBrutas(linhas);
       const layout = identificarLayoutPdf(linhas);
@@ -465,7 +472,30 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setPartesFora([]);
       let lido = 0;
       const comCpf = extrairLinhasDoPdf(linhas, layout.layout);
-      if (layoutPorMatricula(layout.layout) && comCpf.length) {
+      if (layout.layout === "bsf_listagem") {
+        // CPF que o OCR leu certo → cadastro; o resto (dígito verificador não
+        // fechou, ou CPF fora da EMPREGADOS) tenta pelo nome antes de pendurar.
+        const porCpf = new Map((await casarCpfs([...new Set(comCpf.flatMap((l) => (l.cpf ? [l.cpf] : [])))])).map((c) => [c.cpf, c]));
+        const peloNome = comCpf.flatMap((l, i) => (l.cpf && porCpf.get(l.cpf)?.nome ? [] : [{ chave: String(i), empresa: null, cadastro: null, nome: l.nomePdf ?? null }]));
+        const porNome = new Map((await casarCadastros(peloNome)).map((c) => [c.chave, c]));
+        const det: LinhaDetalhePdf[] = comCpf.map((l, i) => {
+          const c = (l.cpf ? porCpf.get(l.cpf) : undefined) ?? undefined;
+          const n = porNome.get(String(i));
+          return { n: l.n, texto: l.texto, cpf: l.cpf, nome: c?.nome ?? n?.nome ?? null, situacao: c?.situacao ?? n?.situacao ?? null, valor: l.valor, contrato_id: c?.contrato_id ?? n?.contrato_id ?? null };
+        });
+        setLinhasPdf(det);
+        lido = det.reduce((a, d) => a + d.valor, 0);
+        const semCad = det.filter((d) => !d.nome).length;
+        const semCt = det.filter((d) => d.nome && !d.contrato_id).length;
+        const esperadas = qtdEsperadaBsf(linhas);
+        setSoPendentes(det.length > 200 && semCad + semCt > 0);
+        const avisos = [
+          esperadas !== det.length ? `O rodapé do BSF diz ${esperadas} trabalhadores com custo e o OCR achou ${det.length} — o valor total vale, mas confira a lista` : "",
+          semCad ? `${semCad} trabalhador(es) não encontrados na EMPREGADOS (CPF ou nome)` : "",
+          semCt ? `${semCt} colaborador(es) sem contrato` : "",
+        ].filter(Boolean);
+        setAvisoPdf(avisos.length ? `${avisos.join("; ")}. Escolha o contrato na lista abaixo quando faltar.` : null);
+      } else if (layoutPorMatricula(layout.layout) && comCpf.length) {
         // Sem CPF (Relação de Eventos do consignado; Vale Transporte BSVT001, 26/10/2026): matrícula → cadastro → contrato.
         const casados = await casarCadastros(comCpf.map((l, i) => ({ chave: String(i), empresa: l.empresa ?? null, cadastro: l.cadastro ?? null, nome: l.nomePdf ?? null })));
         const porChave = new Map(casados.map((c) => [c.chave, c]));

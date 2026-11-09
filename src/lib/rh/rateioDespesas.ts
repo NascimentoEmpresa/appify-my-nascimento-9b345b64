@@ -431,7 +431,7 @@ const RE_TOTAL_DE_RELATORIO = /\bTOTAL\s+DE\s+(COLABORADORES|FUNCION|TRABALHADOR
 
 export interface LayoutPdf {
   /** Layout reconhecido; "generico" quando nenhum bate. */
-  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "vale_transporte" | "generico";
+  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "vale_transporte" | "bsf_listagem" | "generico";
   rotulo: string;
 }
 
@@ -528,6 +528,67 @@ export function totalValeTransporte(linhas: string[]): number | null {
   return tot.length ? Math.round(tot.reduce((a, v) => a + v[v.length - 1], 0) * 100) / 100 : null;
 }
 
+/**
+ * BSF COM LISTAGEM DE TRABALHADORES — boleto do portal beneficiosocial.com.br
+ * (PDF real "BENEFICIO SOCIAL FAMILIAR MES 10.2026 - RATEIO HAGG", 09/11/2026,
+ * 9 páginas, 882 pessoas). Diferente do BSF que já era lido:
+ *   · NÃO TEM CAMADA DE TEXTO — as letras são desenhos vetoriais; o pdf.js não
+ *     acha caractere nenhum. As linhas vêm do OCR (lerLinhasPdfOcr).
+ *   · Duas pessoas POR LINHA: "1 467.…-20 NOME Normal 2 567.…-53 NOME Normal".
+ *   · NÃO TEM VALOR POR PESSOA. O valor está no rodapé, por faixa:
+ *       Total de 779 TRABALHADORES NORMAIS x R$25,52 = R$19.880,08.
+ *       Total de 87 TRABALHADORES AFASTADOS ATÉ 12 MESES x R$25,52 = R$2.220,24.
+ *       Total de 16 TRABALHADORES AFASTADOS APÓS 12 MESES x R$0,00 = R$0,00.
+ *     Quem está "Afastado+12m" custa zero e não entra no rateio; a soma das
+ *     faixas é o boleto (22100,32 — sem ponto de milhar).
+ * OCR erra um dígito de vez em quando: o CPF que não fecha o dígito verificador
+ * NÃO derruba a linha (a pessoa custa do mesmo jeito) — vem com cpf null e o
+ * nome, para a tela casar pelo nome ou a pessoa escolher o contrato.
+ */
+// Letra no lugar de dígito e pontuação trocada são erros reais do OCR nesse PDF ("B47.…", "004/109.…", "785]405.…"); quem julga o CPF é o dígito verificador.
+const RE_BSF_PESSOA = /([\dOBSI]{3}[^\da-zA-Z]{0,2}[\dOBSI]{3}[^\da-zA-Z]{0,2}[\dOBSI]{3}[^\da-zA-Z]{0,2}[\dOBSI]{2})(?![\dOBSI])\s+(\S.*?)\s+(Normal|Afastado\s*[+-]?\s*(?:\d+\s*m?)?)(?=\s|$)/g;
+const cpfDoOcr = (t: string) => t.replace(/O/g, "0").replace(/B/g, "8").replace(/S/g, "5").replace(/I/g, "1");
+const RE_BSF_FAIXA = /Total\s+de\s+(\d[\d.]*)\s+TRABALHADORES\s+(.+?)\s*x\s*R\s*\$\s*([\d.]*\d,\d{2})\s*=\s*R\s*\$\s*([\d.]*\d,\d{2})/i;
+
+/** O rodapé com as faixas: quantos, quanto cada um e o subtotal. */
+export function faixasBsf(linhas: string[]): { qtd: number; descricao: string; unitario: number; subtotal: number }[] {
+  const out: { qtd: number; descricao: string; unitario: number; subtotal: number }[] = [];
+  for (const l of linhas) {
+    const m = l.match(RE_BSF_FAIXA);
+    if (m) out.push({ qtd: Number(m[1].replace(/\./g, "")), descricao: m[2].trim(), unitario: lerMoeda(m[3]) ?? 0, subtotal: lerMoeda(m[4]) ?? 0 });
+  }
+  return out;
+}
+
+/** Afastado há mais de 12 meses: está na lista, mas o valor dele é zero. */
+const bsfSemCusto = (situacao: string) => /AFAST/i.test(situacao) && /\+|12/.test(situacao);
+
+/** Uma pessoa por registro da listagem (com custo); o valor é o da faixa do rodapé. */
+export function extrairLinhasBsfListagem(linhas: string[]): LinhaPdf[] {
+  const unitario = faixasBsf(linhas).find((f) => f.unitario > 0)?.unitario ?? 0;
+  if (!(unitario > 0)) return [];
+  const out: LinhaPdf[] = [];
+  linhas.forEach((l, i) => {
+    for (const m of l.matchAll(RE_BSF_PESSOA)) {
+      if (bsfSemCusto(m[3])) continue;
+      const nome = m[2].trim();
+      const cpf = cpfDoOcr(m[1]);
+      out.push({ n: i + 1, texto: `${m[1]} ${nome} ${m[3].trim()}`, cpf: cpfValido(cpf) ? somenteDigitos(cpf) : null, valor: unitario, nomePdf: nome });
+    }
+  });
+  return out;
+}
+
+/** Soma das faixas do rodapé; null se faltar faixa ou se subtotal ≠ qtd × unitário (leitura duvidosa). */
+export function totalBsfListagem(linhas: string[]): number | null {
+  const fx = faixasBsf(linhas);
+  if (!fx.length || fx.some((f) => Math.round(f.qtd * f.unitario * 100) !== Math.round(f.subtotal * 100))) return null;
+  return Math.round(fx.reduce((a, f) => a + f.subtotal, 0) * 100) / 100;
+}
+
+/** Quantas pessoas o rodapé diz que têm custo (para avisar se o OCR perdeu alguém). */
+export const qtdEsperadaBsf = (linhas: string[]) => faixasBsf(linhas).filter((f) => f.unitario > 0).reduce((a, f) => a + f.qtd, 0);
+
 /** Layouts sem CPF em que a MATRÍCULA (empresa + cadastro) leva ao colaborador e ao contrato. */
 export const layoutPorMatricula = (l: LayoutPdf["layout"]) => l === "relacao_eventos" || l === "vale_transporte";
 
@@ -592,6 +653,9 @@ export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
   // nenhuma linha tem CPF — com CPF, a leitura genérica já resolve.
   if (tudo.includes("RELACAODEEVENTOS") && !extrairLinhasComCpf(linhas).length && extrairLinhasRelacaoEventos(linhas).length) {
     return { layout: "relacao_eventos", rotulo: "Relação de Eventos da Senior — valor por matrícula (o contrato vem do cadastro)" };
+  }
+  if (tudo.includes("TRABALHADORESCOMDIREITO") && faixasBsf(linhas).length && extrairLinhasBsfListagem(linhas).length) {
+    return { layout: "bsf_listagem", rotulo: "BSF — listagem de trabalhadores (valor por faixa do rodapé; afastado +12 meses não entra)" };
   }
   return { layout: "generico", rotulo: "Leitura genérica (CPF + último valor da linha)" };
 }
@@ -720,6 +784,7 @@ export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]
   }
   if (layout === "relacao_eventos") return extrairLinhasRelacaoEventos(linhas);
   if (layout === "vale_transporte") return extrairLinhasValeTransporte(linhas);
+  if (layout === "bsf_listagem") return extrairLinhasBsfListagem(linhas);
   return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
 }
 
@@ -737,6 +802,7 @@ export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): numbe
   // outros layouts ele é anexo e fica de fora — RE_TOTAL_DE_RELATORIO).
   if (layout === "relacao_eventos") return totalRelacaoEventos(linhas) ?? valorDoBoleto(linhas);
   if (layout === "vale_transporte") return totalValeTransporte(linhas);
+  if (layout === "bsf_listagem") return totalBsfListagem(linhas);
   // Sem linha de TOTAL, vale o valor do boleto (documento que é só o boleto).
   return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout)) ?? valorDoBoleto(linhas);
 }
