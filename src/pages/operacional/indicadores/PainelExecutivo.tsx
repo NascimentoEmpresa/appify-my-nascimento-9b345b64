@@ -13,9 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  avisoSemDre, fatiasSituacao, fmtBRL, fmtCompacto, montarCards, rotuloCompetencia, rotuloEixo,
-  type CardIndicador, type DadosPainelExecutivo, type FatiaSituacao,
+  avisoSemDre, fatiasSituacao, fmtBRL, fmtCompacto, montarCards, rotuloCompetencia, rotuloEixo, textoForaDaRosca,
+  type CardIndicador, type ContratoSituacao, type DadosPainelExecutivo, type DetalheSituacao, type FatiaSituacao,
 } from "@/lib/operacional/painelExecutivo";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { cn } from "@/lib/utils";
 
 // =====================================================================
@@ -126,8 +127,42 @@ function GraficoEvolucao({ serie }: { serie: DadosPainelExecutivo["serie"] }) {
   );
 }
 
+/** Os contratos de uma situação, do pior para o melhor (a RPC já ordena pela margem). */
+function ListaContratos({ fatia, contratos }: { fatia: FatiaSituacao; contratos: ContratoSituacao[] | undefined }) {
+  return (
+    <div className="text-xs">
+      <p className="mb-1.5 font-semibold text-popover-foreground">{fatia.nome}: {fatia.qtd} contrato(s)</p>
+      {!contratos?.length ? (
+        <p className="text-muted-foreground">Lista indisponível nesta competência.</p>
+      ) : (
+        <ul className="max-h-64 space-y-1 overflow-y-auto pr-1">
+          {contratos.map((c) => (
+            <li key={c.nome} className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 break-words text-popover-foreground">{c.nome}</span>
+              <span className="shrink-0 text-right tabular-nums text-muted-foreground">
+                {c.margem.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% · {fmtCompacto(c.receita)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TooltipSituacao({ active, payload, detalhe }: { active?: boolean; payload?: { payload: FatiaSituacao }[]; detalhe?: DetalheSituacao | null }) {
+  if (!active || !payload?.length) return null;
+  const fatia = payload[0].payload as FatiaSituacao;
+  return (
+    <div className="w-80 rounded-md border bg-popover p-3 shadow-md">
+      <ListaContratos fatia={fatia} contratos={detalhe?.contratos?.[fatia.chave]} />
+    </div>
+  );
+}
+
 function RoscaSituacao({ dados }: { dados: DadosPainelExecutivo }) {
   const { total, fatias } = useMemo(() => fatiasSituacao(dados.situacao), [dados.situacao]);
+  const detalhe = dados.situacao_detalhe;
   if (!dados.situacao) return <SemDados texto={avisoSemDre(dados)} />;
   if (total === 0) return <SemDados texto="Nenhum contrato com receita nesta competência" />;
   return (
@@ -138,7 +173,7 @@ function RoscaSituacao({ dados }: { dados: DadosPainelExecutivo }) {
             <Pie data={fatias} dataKey="qtd" nameKey="nome" innerRadius={62} outerRadius={94} startAngle={90} endAngle={-270} stroke="hsl(var(--card))" strokeWidth={2} isAnimationActive={false}>
               {fatias.map((f) => <Cell key={f.chave} fill={COR_SITUACAO[f.chave]} />)}
             </Pie>
-            <Tooltip formatter={(v: number, n: string) => [`${v} contrato(s)`, n]} />
+            <Tooltip content={<TooltipSituacao detalhe={detalhe} />} wrapperStyle={{ zIndex: 20 }} />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -148,12 +183,21 @@ function RoscaSituacao({ dados }: { dados: DadosPainelExecutivo }) {
       </div>
       <ul className="space-y-3 text-sm">
         {fatias.map((f) => (
-          <li key={f.chave} className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-full" style={{ background: COR_SITUACAO[f.chave] }} />
-            <span className="w-20 text-muted-foreground">{f.nome}</span>
-            <span className="font-semibold tabular-nums text-foreground">
-              {f.qtd} ({f.pct.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%)
-            </span>
+          <li key={f.chave}>
+            <HoverCard openDelay={80} closeDelay={120}>
+              <HoverCardTrigger asChild>
+                <button type="button" className="flex cursor-default items-center gap-2 rounded px-1 hover:bg-muted">
+                  <span className="h-3 w-3 rounded-full" style={{ background: COR_SITUACAO[f.chave] }} />
+                  <span className="w-20 text-left text-muted-foreground">{f.nome}</span>
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {f.qtd} ({f.pct.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%)
+                  </span>
+                </button>
+              </HoverCardTrigger>
+              <HoverCardContent side="left" align="center" className="w-80 p-3">
+                <ListaContratos fatia={f} contratos={detalhe?.contratos?.[f.chave]} />
+              </HoverCardContent>
+            </HoverCard>
           </li>
         ))}
       </ul>
@@ -214,6 +258,9 @@ export function ConteudoPainelExecutivo({ dados, competencia, onCompetencia }: {
               <p className="mt-4 text-xs text-muted-foreground">
                 Só pela margem do DRE, contratos com receita de R$ 10 mil ou mais. Saudável: 10% ou mais. Atenção: de 0 a 10%. Crítico: negativa.
               </p>
+              {dados.situacao && textoForaDaRosca(fatiasSituacao(dados.situacao).total, dados.situacao_detalhe) && (
+                <p className="mt-1 text-xs text-muted-foreground">{textoForaDaRosca(fatiasSituacao(dados.situacao).total, dados.situacao_detalhe)}</p>
+              )}
             </Card>
           </div>
         </>
