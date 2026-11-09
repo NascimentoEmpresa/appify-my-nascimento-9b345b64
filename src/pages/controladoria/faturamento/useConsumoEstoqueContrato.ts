@@ -1,0 +1,46 @@
+/**
+ * Consumo de estoque por contrato no mês (SIS-2026-0769).
+ *
+ * Lê sup_rel_consumo_custo_por_contrato, criada em 20261109004000. A RPC é
+ * SECURITY DEFINER e gateada por has_screen_access(..., 'lucratividade-contratos',
+ * 'visualizar') — quem abre a Lucratividade enxerga; quem não abre recebe lista
+ * vazia, não erro.
+ *
+ * Só conta saída com pedido de verdade: o contrato reconstruído dos exports do
+ * sistema antigo mede volume, não dinheiro. Ver a migration.
+ */
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  consumoPorContrato,
+  intervaloDoMes,
+  unidadesSemPreco,
+  type ConsumoDoContrato,
+  type LinhaConsumoEstoque,
+} from "./consumoEstoque";
+
+// types.ts é gerado fora do CI e não conhece a RPC nova. Mesmo padrão dos
+// outros hooks de RPC recente do projeto.
+const sb = supabase as any;
+
+export interface ConsumoEstoqueMes {
+  porContrato: Map<string, ConsumoDoContrato>;
+  unidadesSemPreco: number;
+}
+
+export function useConsumoEstoqueContrato(mes: string) {
+  return useQuery({
+    queryKey: ["consumo-estoque-contrato", mes],
+    queryFn: async (): Promise<ConsumoEstoqueMes> => {
+      const { inicio, fim } = intervaloDoMes(mes);
+      const { data, error } = await sb.rpc("sup_rel_consumo_custo_por_contrato", {
+        p_inicio: inicio,
+        p_fim: fim,
+      });
+      if (error) throw error;
+      const linhas = (data ?? []) as LinhaConsumoEstoque[];
+      return { porContrato: consumoPorContrato(linhas), unidadesSemPreco: unidadesSemPreco(linhas) };
+    },
+    enabled: Boolean(mes),
+  });
+}
