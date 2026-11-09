@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { totaisDoRelatorio, type NfParaTotais } from "@/pages/financeiro/relatorio-servicos/totais";
+import { totaisDoRelatorio, retencoesPorContrato, type NfParaTotais } from "@/pages/financeiro/relatorio-servicos/totais";
 import { pendenciaContaVinculada } from "@/pages/financeiro/nf-emissao/shared";
 
 const nf = (o: Partial<NfParaTotais> = {}): NfParaTotais => ({
@@ -73,5 +73,28 @@ describe("SIS-2026-0794 · pendência da conta vinculada", () => {
     expect(t.contaVinculada).toBe(250);
     expect(t.contaVinculadaRecebida).toBe(220);
     expect(t.pendenciaContaVinculada).toBe(60);
+  });
+});
+
+describe("SIS-2026-0819 · impostos retidos", () => {
+  const imp = (o: Partial<NfParaTotais> = {}) => nf({ issqn_total: 10, inss_total: 20, ir_total: 5, cofins_total: 1, pis_total: 2, csll_total: 3, ...o });
+  it("o KPI soma os seis impostos das notas", () => {
+    const t = totaisDoRelatorio([imp(), imp({ contrato_id: "c2", issqn_total: 100 })], exec, pend);
+    expect(t.retencoes).toBe(41 + 131);
+  });
+  it("nota sem os campos de imposto conta zero", () => {
+    expect(totaisDoRelatorio([nf()], exec, pend).retencoes).toBe(0);
+  });
+  it("cancelada e substituída ficam fora do KPI e do detalhe por contrato", () => {
+    const linhas = [imp(), imp({ status: "cancelada", issqn_total: 999 }), imp({ contrato_id: "c2", situacao_dominio: "SUBSTITUIDA" })];
+    expect(totaisDoRelatorio(linhas, exec, pend).retencoes).toBe(41);
+    expect(retencoesPorContrato(linhas).map((r) => r.contratoId)).toEqual(["c1"]);
+  });
+  it("o total por contrato fecha com o KPI, vem do maior para o menor e não lista contrato sem retenção", () => {
+    const linhas = [imp(), imp(), imp({ contrato_id: "c2", issqn_total: 500 }), nf({ contrato_id: "c3" })];
+    const porContrato = retencoesPorContrato(linhas);
+    expect(porContrato.map((r) => [r.contratoId, r.total, r.notas])).toEqual([["c2", 531, 1], ["c1", 82, 2]]);
+    expect(porContrato[1].porImposto.issqn_total).toBe(20);
+    expect(porContrato.reduce((a, r) => a + r.total, 0)).toBe(totaisDoRelatorio(linhas, exec, pend).retencoes);
   });
 });
