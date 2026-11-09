@@ -46,6 +46,9 @@ describe("conciliação da própria conta vinculada", () => {
     expect(r).toHaveLength(1);
     expect(r[0].valor).toBe(43739.19);
   });
+  it("tolera o erro de digitação do cadastro ('Vinculda'): o resgate da Embrapa Canoinha não some da conciliação", () => {
+    expect(ignoraNaConciliacao(l("saida", "RESGATE CONTA VINCULADA", { banco_nome: "Banco do Brasil Conta Vinculda Embrapa Canoinha", valor: 12795.04 }))).toBe(false);
+  });
 });
 
 describe("conciliação: rateio entra pelo total (SIS-2026-0637)", () => {

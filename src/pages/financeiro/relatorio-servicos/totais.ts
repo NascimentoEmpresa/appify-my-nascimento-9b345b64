@@ -18,6 +18,61 @@ export interface NfParaTotais {
   valor_pago?: number | null;
   desconto_conta_vinculada: number;
   conta_vinculada_valor_recebido?: number | null;
+  // SIS-2026-0819: impostos retidos na nota (opcionais: quem não informa conta zero).
+  issqn_total?: number | null;
+  inss_total?: number | null;
+  ir_total?: number | null;
+  cofins_total?: number | null;
+  pis_total?: number | null;
+  csll_total?: number | null;
+}
+
+// SIS-2026-0819: os seis impostos retidos nas notas, na ordem das colunas do Relatório Geral.
+export const IMPOSTOS_RETIDOS = [
+  { campo: "issqn_total", rotulo: "ISSQN" },
+  { campo: "inss_total", rotulo: "INSS" },
+  { campo: "ir_total", rotulo: "IR" },
+  { campo: "cofins_total", rotulo: "COFINS" },
+  { campo: "pis_total", rotulo: "PIS" },
+  { campo: "csll_total", rotulo: "CSLL" },
+] as const;
+
+export type CampoImposto = (typeof IMPOSTOS_RETIDOS)[number]["campo"];
+
+/** Soma dos seis impostos retidos numa nota. */
+export function retencoesDaNf(n: NfParaTotais): number {
+  return IMPOSTOS_RETIDOS.reduce((soma, i) => soma + (n[i.campo] ?? 0), 0);
+}
+
+export interface RetencaoPorContrato {
+  contratoId: string;
+  total: number;
+  porImposto: Record<CampoImposto, number>;
+  notas: number;
+}
+
+/** Total retido por contrato (maior primeiro). Cancelada/Substituída fica de fora, como em todos os totais. Contratos sem retenção não aparecem. */
+export function retencoesPorContrato<T extends NfParaTotais>(linhas: T[]): RetencaoPorContrato[] {
+  const mapa = new Map<string, RetencaoPorContrato>();
+  for (const n of linhas) {
+    if (naoContabilizaKpi(n)) continue;
+    const total = retencoesDaNf(n);
+    if (total === 0) continue;
+    let r = mapa.get(n.contrato_id);
+    if (!r) {
+      r = { contratoId: n.contrato_id, total: 0, notas: 0, porImposto: { issqn_total: 0, inss_total: 0, ir_total: 0, cofins_total: 0, pis_total: 0, csll_total: 0 } };
+      mapa.set(n.contrato_id, r);
+    }
+    r.total += total;
+    r.notas += 1;
+    for (const i of IMPOSTOS_RETIDOS) r.porImposto[i.campo] += n[i.campo] ?? 0;
+  }
+  const out = [...mapa.values()].map((r) => ({
+    ...r,
+    total: r2(r.total),
+    porImposto: Object.fromEntries(IMPOSTOS_RETIDOS.map((i) => [i.campo, r2(r.porImposto[i.campo])])) as Record<CampoImposto, number>,
+  }));
+  return out.sort((a, b) => b.total - a.total);
 }
 
 export interface TotaisRelatorio {
@@ -35,6 +90,8 @@ export interface TotaisRelatorio {
   pendenciaContaVinculada: number;
   recebido: number;
   pendente: number;
+  // SIS-2026-0819: soma dos impostos retidos (ISSQN, INSS, IR, COFINS, PIS, CSLL) nas notas das linhas filtradas.
+  retencoes: number;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -44,7 +101,7 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
   executavelDoContratoMes: (contratoId: string, anoMes: string) => number,
   pendenteDaNf: (nf: T) => number,
 ): TotaisRelatorio {
-  let executado = 0, faturado = 0, liquido = 0, contaVinculada = 0, contaVinculadaRecebida = 0, pendenciaCv = 0, recebido = 0, pendente = 0;
+  let executado = 0, faturado = 0, liquido = 0, contaVinculada = 0, contaVinculadaRecebida = 0, pendenciaCv = 0, recebido = 0, pendente = 0, retencoes = 0;
   // Só nota Código N é lançamento (mesmo critério do Controle de Faturamento); o executável de cada contrato/mês entra uma vez.
   const paresExecutavel = new Set<string>();
   for (const n of linhas) {
@@ -57,6 +114,7 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
     pendenciaCv += pendenciaContaVinculada(n);
     recebido += n.valor_pago ?? 0;
     pendente += pendenteDaNf(n);
+    retencoes += retencoesDaNf(n);
     if (n.tipo_nota === "N") paresExecutavel.add(`${n.contrato_id}|${n.competencia.slice(0, 7)}`);
   }
   let executavel = 0;
@@ -75,6 +133,7 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
     pendenciaContaVinculada: r2(pendenciaCv),
     recebido: r2(recebido),
     pendente: r2(pendente),
+    retencoes: r2(retencoes),
   };
 }
 

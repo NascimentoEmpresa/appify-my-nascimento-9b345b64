@@ -6,8 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/financeiro/KpiTile";
-import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, Trash2, RotateCcw, FileText, Wallet, Scale, Landmark } from "lucide-react";
+import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, Trash2, RotateCcw, FileText, Wallet, Scale, Landmark, Receipt } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { toast } from "sonner";
@@ -15,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
-import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio } from "./totais";
+import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio, retencoesPorContrato, IMPOSTOS_RETIDOS } from "./totais";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
 import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, pendenciaContaVinculada, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
@@ -209,6 +210,19 @@ export default function RelatorioGeralTab() {
     [linhas, itensPorNf, contratoBasePorId, executavelDoContrato],
   );
 
+  // SIS-2026-0819: ao clicar no KPI "Impostos Retidos", abre o total retido por contrato (mesmas linhas filtradas do KPI).
+  // A janela abre no geral (todas as competências das linhas filtradas) e dá para estreitar por competência sem mexer nos filtros da tela.
+  const [verRetencoes, setVerRetencoes] = useState(false);
+  const [retencaoCompetencia, setRetencaoCompetencia] = useState("");
+  const competenciasRetencao = useMemo(
+    () => [...new Set(linhas.filter((n) => !naoContabilizaKpi(n)).map((n) => n.competencia))].sort().reverse(),
+    [linhas],
+  );
+  const retencoesContratos = useMemo(
+    () => retencoesPorContrato(retencaoCompetencia ? linhas.filter((n) => n.competencia === retencaoCompetencia) : linhas),
+    [linhas, retencaoCompetencia],
+  );
+
   function limparFiltros() {
     setFiltroEmpresa("");
     setFiltroCompetencia("");
@@ -271,6 +285,14 @@ export default function RelatorioGeralTab() {
         <KpiTile label="Valor Executado" valor={fmtMoney(kpis.executado)} sub="Executado pelo analista" icon={<ListChecks />} cor="slate" />
         <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.faturado)} sub="Bruto das notas" icon={<TrendingUp />} cor="sky" />
         <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} sub="Faturado − retenções" icon={<Wallet />} cor="sky" />
+        <KpiTile
+          label="Impostos Retidos"
+          valor={fmtMoney(kpis.retencoes)}
+          sub="ISSQN, INSS, IR, COFINS, PIS e CSLL · clique para ver por contrato"
+          icon={<Receipt />}
+          cor="amber"
+          onClick={() => { setRetencaoCompetencia(""); setVerRetencoes(true); }}
+        />
         <KpiTile
           label="Divergência"
           valor={fmtMoney(kpis.divergencia)}
@@ -494,6 +516,65 @@ export default function RelatorioGeralTab() {
           </Table>
         </div>
       </div>
+
+      <Dialog open={verRetencoes} onOpenChange={setVerRetencoes}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Impostos retidos por contrato</DialogTitle>
+            <DialogDescription>
+              Soma de ISSQN, INSS, IR, COFINS, PIS e CSLL das notas que estão nos filtros atuais. Notas canceladas ou substituídas não entram.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Competência:</span>
+            <Select value={retencaoCompetencia || "__todas"} onValueChange={(v) => setRetencaoCompetencia(v === "__todas" ? "" : v)}>
+              <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__todas">Todas</SelectItem>
+                {competenciasRetencao.map((c) => <SelectItem key={c} value={c}>{competenciaCurta(c)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </label>
+          {retencoesContratos.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Nenhuma retenção nas notas filtradas.</p>
+          ) : (
+            <div className="max-h-[60vh] overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Contrato</TableHead>
+                    <TableHead className="text-right">Notas</TableHead>
+                    {IMPOSTOS_RETIDOS.map((i) => <TableHead key={i.campo} className="text-right">{i.rotulo}</TableHead>)}
+                    <TableHead className="text-right">Total retido</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {retencoesContratos.map((r) => {
+                    const c = contratoPorId.get(r.contratoId);
+                    return (
+                      <TableRow key={r.contratoId}>
+                        <TableCell className="font-medium">
+                          {c?.nome ?? "Contrato não encontrado"}
+                          {c && empresaPorId.get(c.empresa_id) && <span className="block text-xs font-normal text-muted-foreground">{empresaPorId.get(c.empresa_id)}</span>}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{r.notas}</TableCell>
+                        {IMPOSTOS_RETIDOS.map((i) => <TableCell key={i.campo} className="text-right whitespace-nowrap tabular-nums">{fmtMoney(r.porImposto[i.campo])}</TableCell>)}
+                        <TableCell className="text-right whitespace-nowrap font-semibold tabular-nums">{fmtMoney(r.total)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  <TableRow className="bg-muted/40 font-semibold">
+                    <TableCell>Total</TableCell>
+                    <TableCell className="text-right tabular-nums">{retencoesContratos.reduce((a, r) => a + r.notas, 0)}</TableCell>
+                    {IMPOSTOS_RETIDOS.map((i) => <TableCell key={i.campo} className="text-right whitespace-nowrap tabular-nums">{fmtMoney(retencoesContratos.reduce((a, r) => a + r.porImposto[i.campo], 0))}</TableCell>)}
+                    <TableCell className="text-right whitespace-nowrap tabular-nums">{fmtMoney(retencoesContratos.reduce((a, r) => a + r.total, 0))}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
         <AlertDialogContent>
