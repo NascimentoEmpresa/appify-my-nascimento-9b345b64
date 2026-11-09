@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PAINEIS_GERENCIAIS, colunasDaTela, dadosDoGrafico, desvio, formatarValor, frase, graficoDo, indicadoresDaTela, indicadoresDaTv, lancamentoAtrasado, nomeCurto,
   notaSubindicadores, ordenarParaTv, paginasPainel, visualDoItem, destaquesDoDashboard, ondeAgir, tendenciaValida, codigoDoIndicador, ehIndicadorAvulso,
-  placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type PainelGerencial,
+  placar, situacao, subindicadores, textoMeta, PAINEIS_DO_DOCUMENTO, resultadoDoCard, ehSerieNoTempo, type IndicadorGerencial, type PainelGerencial,
 } from "@/lib/tv/gerencial";
 import { RELATORIOS_TV, relatorioTemFiltros, tituloRelatorioTv } from "@/lib/tv/tv";
 import { corDoRelatorioTv, paginasDoRelatorio } from "@/lib/tv/relatorioTv";
@@ -29,6 +29,46 @@ describe("as 13 TVs do documento", () => {
       expect(corDoRelatorioTv(p.slug)).toBe(p.cor);
     }
     expect(new Set(PAINEIS_GERENCIAIS.map((p) => p.diretoria))).toEqual(new Set(["Diretor Operacional", "Diretora Administrativa", "Áreas Transversais", "Presidência"]));
+  });
+});
+
+describe("cards do documento (mig 20261109001000)", () => {
+  it("número parcial é mostrado, mas não acusa o setor", () => {
+    expect(situacao({ ...ind({ valor: 500 }), medida: "parcial" })).toBe("neutro");
+    expect(situacao({ ...ind({ valor: 500 }), medida: "real" })).toBe("vermelho");
+  });
+  it("sem fonte não mostra número nenhum, mesmo que venha valor", () => {
+    const i = { ...ind({ valor: 7 }), medida: "sem_fonte" as const };
+    expect(situacao(i)).toBe("sem_dado");
+    expect(resultadoDoCard(i)).toBe("Sem fonte no sistema");
+  });
+  it("resultado do card: número formatado, ou diz que não há dado", () => {
+    expect(resultadoDoCard(ind({ valor: 12.5, unidade: "pct" }))).toBe("12,5%");
+    expect(resultadoDoCard(ind({ valor: null }))).toBe("Sem dado");
+  });
+  it("a meta escrita no documento vence o texto calculado", () => {
+    expect(textoMeta({ meta: 0, sentido: "menor", unidade: "qtd", meta_texto: "0 pedidos em atraso" })).toBe("0 pedidos em atraso");
+    expect(textoMeta({ meta: 5, sentido: "menor", unidade: "qtd" })).toBe("Meta ≤ 5");
+  });
+  it("as 10 TVs abrem nos cards; as outras seguem no dashboard; a escolha do item vence", () => {
+    expect(PAINEIS_DO_DOCUMENTO).toHaveLength(10);
+    expect(visualDoItem(null, "ger-supply")).toBe("documento");
+    expect(visualDoItem(null, "ger-frota")).toBe("dashboard");
+    expect(visualDoItem("painel", "ger-supply")).toBe("painel");
+  });
+  it("7 cards viram 2 telas de 4 + 3, com os piores na primeira", () => {
+    const itens = Array.from({ length: 7 }, (_, k) => ind({ codigo: `c${k}`, ordem: k, valor: k === 6 ? 99 : 0 }));
+    const p: PainelGerencial = { painel: { slug: "ger-operacional", titulo: "", diretoria: "", pergunta: "" }, indicadores: itens };
+    expect(paginasPainel(p, "documento")).toHaveLength(2);
+    const primeira = indicadoresDaTela(p, "documento", "painel-1");
+    expect(primeira).toHaveLength(4);
+    expect(primeira[0].codigo).toBe("c6");
+    expect(indicadoresDaTela(p, "documento", "painel-2")).toHaveLength(3);
+  });
+  it("só mês vira linha; contrato nunca", () => {
+    expect(ehSerieNoTempo([{ nome: "01/2026" }, { nome: "02/2026" }])).toBe(true);
+    expect(ehSerieNoTempo([{ nome: "jan" }, { nome: "fev" }])).toBe(true);
+    expect(ehSerieNoTempo([{ nome: "Hospital Vida" }, { nome: "Fórum Central" }])).toBe(false);
   });
 });
 
