@@ -477,7 +477,7 @@ function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
             <h4 className="mb-1 font-semibold">Qualidade e satisfação</h4>
             <p className="text-muted-foreground">
               {e.qualidade ? ROTULO_QUALIDADE[e.qualidade] : "—"} {!e.qualidadeAvaliada && <Badge variant="outline" className="ml-1 text-[10px]">sugestão</Badge>}<br />
-              Reaberturas: {e.reaberturas}<br />
+              Reaberturas: {e.reaberturas}{e.reaberturas > 0 && <span className="text-muted-foreground"> (não contam como erro)</span>}<br />
               Nota do solicitante: {e.satisfacao === null ? "não avaliou" : `${e.satisfacao}/5`}
             </p>
           </Card>

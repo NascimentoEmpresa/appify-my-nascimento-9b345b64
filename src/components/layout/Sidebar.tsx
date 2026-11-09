@@ -101,6 +101,8 @@ import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
 import { selNovoVigente } from "@/lib/selNovo";
 import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { ChevronLeft, PanelLeft } from "lucide-react";
+import { Mail, AtSign } from "lucide-react";
+import { CAIXAS_EMAIL_LIBERADAS } from "@/lib/email/caixa";
 // Ícones da barra de módulos (06/11/2026) — ver ICONE_DO_MODULO.
 import { Mailbox, BookOpenCheck, ReceiptText, UserSearch, Tv, Server, MonitorCog, LineChart, Activity, FileChartColumn, UsersRound } from "lucide-react";
 
@@ -438,7 +440,6 @@ const financeiroModule: ModuleDef = {
         { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight },
         { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard },
         { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree },
-        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet },
         // SIS-2026-0473: registra aplicações (CDB/Fundo DI/etc.) e resgates,
         // alimenta o Fluxo de Caixa igual ao Débito Automático.
         { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark },
@@ -616,6 +617,9 @@ const rhModule: ModuleDef = {
         // Gestão de Ponto (branch local gestaoponto, mig 20261007000001): o mês
         // de cada colaborador pelas marcações da Senior.
         { label: "Gestão de Ponto", to: "/app/rh/gestao-ponto", icon: Fingerprint },
+        // Extrator de Benefícios (VA/VT): veio do Financeiro em 06/11/2026
+        // (mig 20261106020000) — mesmo menu, mesmas pessoas liberadas.
+        { label: "Extrator de Benefícios (VA/VT)", to: "/app/rh/extrator-beneficios", icon: FileSpreadsheet },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota
@@ -1165,6 +1169,27 @@ const whatsappModule: ModuleDef = {
   ],
 };
 
+// E-mail — cada um envia do próprio endereço (mig 20261106010000). As duas
+// telas nascem sem ninguém: liberar em Acesso por Usuário.
+const emailModule: ModuleDef = {
+  id: "email",
+  label: "E-mail",
+  description: "Envie e-mails do seu endereço pelo ERP",
+  icon: Mail,
+  basePath: "/app/email",
+  status: "active",
+  groups: [
+    {
+      label: "E-mail",
+      defaultOpen: true,
+      items: [
+        { label: "Meu E-mail", to: "/app/email", icon: Mail },
+        { label: "Remetentes e histórico geral", to: "/app/email/remetentes", icon: AtSign },
+      ],
+    },
+  ],
+};
+
 // Jurídico — Gestão Patrimonial e Obrigações
 const juridicoModule: ModuleDef = {
   id: "juridico",
@@ -1504,6 +1529,8 @@ const erpModules: ModuleDef[] = [
   organogramaModule,
   treinamentosModule,
   whatsappModule,
+  // Desligado para todos por ora — ver CAIXAS_EMAIL_LIBERADAS (lib/email/caixa.ts).
+  ...(CAIXAS_EMAIL_LIBERADAS ? [emailModule] : []),
   biModule,
 ];
 
@@ -2126,7 +2153,9 @@ function PainelSubmodulos({
         <div className="border-b border-sidebar-border px-4 pb-4 pt-5">
           <CabecalhoModulo mod={mod} ativo={ativo} />
         </div>
-        <div className="flex-1 overflow-y-auto scroll-elegant px-3 py-3">
+        {/* sb-scroll (06/11/2026): sem a barra de rolagem, igual à lista
+            principal — rola pela roda do mouse, toque e teclado. */}
+        <div className="sb-scroll flex-1 overflow-y-auto px-3 py-3">
           <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} desativado={fechando} />
         </div>
       </div>

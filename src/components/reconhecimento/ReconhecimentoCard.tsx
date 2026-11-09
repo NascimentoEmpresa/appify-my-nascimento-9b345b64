@@ -27,17 +27,31 @@ import { lerNota, rotuloMes } from "@/lib/formularios/muralReconhecimento";
  */
 const INTERVALO_MS = 7000;
 
+/** O que o cartão precisa de cada recado (o Início e a prévia da moderação). */
+export type ItemCartao = Pick<ItemMuralInicio, "chave" | "colaborador" | "setor" | "cargo" | "avatar_url" | "nota" | "escala" | "comentario">;
+
 export function ReconhecimentoCard() {
-  useEstiloReconhecimento();
   const { data, isLoading, isError } = useMuralInicio();
   const itens = useMemo(() => data?.itens ?? [], [data]);
+  if (isLoading || isError || !itens.length) return null;
+  return <CartaoReconhecimento mes={data!.mes} itens={itens} />;
+}
+
+/**
+ * O cartão em si, sem buscar nada. Usado pelo Início e pela PRÉVIA do Mural
+ * do Início (MuralModeracao, 06/11/2026: "tem que ter uma prévia pra ver
+ * como fica antes de ser publicado") — o mesmo componente, para a prévia
+ * nunca ficar diferente do que vai ao ar.
+ */
+export function CartaoReconhecimento({ mes, itens, rodape }: { mes: string; itens: ItemCartao[]; rodape?: string }) {
+  useEstiloReconhecimento();
   const [atual, setAtual] = useState(0);
   const [pausado, setPausado] = useState(false);
   const [ciclo, setCiclo] = useState(0);   // reinicia a barra de progresso a cada troca
 
   // Uma pessoa por rosto na fila, com quantos recados recebeu.
   const pessoas = useMemo(() => {
-    const m = new Map<string, { item: ItemMuralInicio; indice: number; total: number }>();
+    const m = new Map<string, { item: ItemCartao; indice: number; total: number }>();
     itens.forEach((it, i) => {
       const k = it.colaborador.toUpperCase();
       const atualP = m.get(k);
@@ -63,7 +77,7 @@ export function ReconhecimentoCard() {
     return () => window.clearTimeout(t);
   }, [atual, pausado, itens.length, ir, ciclo]);
 
-  if (isLoading || isError || !itens.length) return null;
+  if (!itens.length) return null;
   const it = itens[Math.min(atual, itens.length - 1)];
   const nota = lerNota(it.nota);
   const escala = Math.max(2, it.escala || 5);
@@ -79,7 +93,7 @@ export function ReconhecimentoCard() {
         <div className="ini-hd-tx">
           <h3><Award className="ini-hd-ic rec-trofeu" aria-hidden /> Reconhecimento e Convivência Profissional</h3>
           <p>
-            O que os colegas disseram uns dos outros em <b>{rotuloMes(data!.mes)}</b> ·{" "}
+            O que os colegas disseram uns dos outros em <b>{rotuloMes(mes)}</b> ·{" "}
             {itens.length} {itens.length === 1 ? "recado" : "recados"} para {pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"}
           </p>
         </div>
@@ -135,7 +149,7 @@ export function ReconhecimentoCard() {
             })}
           </div>
         )}
-        <p className="rec-rodape">Recados anônimos, liberados por quem cuida da avaliação.</p>
+        <p className="rec-rodape">{rodape ?? "Recados anônimos, liberados por quem cuida da avaliação."}</p>
       </div>
     </section>
   );
@@ -170,6 +184,20 @@ function useEstiloReconhecimento() {
 }
 
 const CSS_RECONHECIMENTO = `
+/* Prévia fora do Início (Mural do Início, na tela de Respostas): lá não existe
+   o CSS dos cartões do Início, então o básico vem aqui, preso a .rec-previa
+   — no Início esta parte não pega em nada. Mesmos valores do CSS_INICIO. */
+.rec-previa .ini-card{position:relative;background:hsl(var(--card));border:1px solid hsl(var(--border));
+  border-radius:18px;box-shadow:var(--shadow-md);overflow:hidden;margin:0;text-align:left;}
+.rec-previa .ini-card-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  padding:16px 20px;border-bottom:1px solid hsl(var(--border));}
+.rec-previa .ini-card-hd h3{font-size:.98rem;font-weight:700;color:hsl(var(--foreground));display:flex;align-items:center;gap:10px;margin:0;}
+.rec-previa .ini-hd-tx p{font-size:.76rem;color:hsl(var(--muted-foreground));margin:3px 0 0 36px;}
+.rec-previa .ini-hd-ic{box-sizing:content-box;width:16px;height:16px;padding:5px;border-radius:9px;flex-shrink:0;
+  color:hsl(var(--primary));background:hsl(var(--primary) / .09);}
+.rec-previa p{margin:0;}
+.rec-previa blockquote{margin:10px 0 0;}
+
 .ini-card.rec-card{position:relative;overflow:hidden;
   animation:rec-entra .7s cubic-bezier(.16,1,.3,1) both;}
 /* Fio de luz na borda de cima, o mesmo gesto do hero do Início. */

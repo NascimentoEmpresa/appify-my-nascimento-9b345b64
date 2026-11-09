@@ -29,7 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { diasAguardandoComprovante, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
 import { classificacaoPorRateio } from "./classificacaoRateio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
-import { CardPontoDiaria } from "./PontoDiariaMalote";
+import { AvisoPontoIndisponivel, CardPontoDiaria } from "./PontoDiariaMalote";
 import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
 import {
   useDespesa,
@@ -445,7 +445,7 @@ export default function DespesaVisualizar() {
   const parceladaSemParcelas = !!despesa?.parcelado && (data?.parcelas.length ?? 0) === 0;
   const despesaParceladaComParcelas = !!despesa?.parcelado && !parceladaSemParcelas;
   // SIS-2026-0626: despesa de diária — o ponto do faltante em cada dia (mig 20261014000001).
-  const { data: pontoDiarias } = useDiariaPontoMalote(despesa?.id ? [despesa.id] : []);
+  const { data: pontoDiarias, isError: erroPontoDiarias } = useDiariaPontoMalote(despesa?.id ? [despesa.id] : []);
 
   // Orçado da Classificação no período da despesa (SIS-2026-0132/0168) —
   // usado só pra decidir se a aprovação escalona pro próximo nível ou vai
@@ -1661,6 +1661,7 @@ export default function DespesaVisualizar() {
       </Card>
 
       <CardPontoDiaria itens={pontoDiarias?.porDespesa.get(despesa.id)} sincronizadoAte={pontoDiarias?.sincronizadoAte} />
+      {erroPontoDiarias && <AvisoPontoIndisponivel />}
 
       {despesa.status === "necessidade_de_ajuste" && despesa.motivo_ajuste && (
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">

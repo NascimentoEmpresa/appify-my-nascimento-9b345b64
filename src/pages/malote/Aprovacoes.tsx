@@ -42,7 +42,7 @@ import { ordenarPor } from "@/lib/ordenarTabela";
 import { abreviarNome } from "./JustificativaPendenteBadge";
 import { EmpresaContratoBadge } from "./EmpresaContratoBadge";
 import { ClassificacaoRateioCell } from "./ClassificacaoRateioCell";
-import { SeloPontoDiaria } from "./PontoDiariaMalote";
+import { AvisoPontoIndisponivel, SeloPontoDiaria } from "./PontoDiariaMalote";
 import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
 import type { PontoDiariaMalote } from "@/lib/diariaPonto";
 
@@ -574,7 +574,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
   // SIS-2026-0626: despesa que veio de diária mostra se o faltante bateu ponto no dia (mig 20261014000001).
-  const { data: pontoDiarias } = useDiariaPontoMalote(visiveis.map((i) => i.despesa.id));
+  const { data: pontoDiarias, isError: erroPontoDiarias } = useDiariaPontoMalote(visiveis.map((i) => i.despesa.id));
 
   function contar(s: StatusDespesa) {
     return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
@@ -661,6 +661,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
       <Card>
         <CardContent className="p-4 space-y-3">
+          {erroPontoDiarias && <AvisoPontoIndisponivel />}
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold">Filtros</p>
             <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={limparFiltros}>

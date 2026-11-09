@@ -3,7 +3,7 @@ import { X, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   emailValido, filtrarSugestoes, separarEnderecos, type SugestaoEndereco,
-} from "@/lib/suprimentos/fornecedorEmail";
+} from "@/lib/email/caixa";
 
 /**
  * Campo Para/Cc/Cco no jeito do Gmail: cada endereço vira um chip; vírgula,
@@ -30,7 +30,7 @@ export function CampoDestinatarios({
   const lista = useMemo(() => filtrarSugestoes(sugestoes, texto, valor), [sugestoes, texto, valor]);
   const nomePorEmail = useMemo(() => {
     const m = new Map<string, string>();
-    for (const s of sugestoes) if (!m.has(s.email)) m.set(s.email, s.fornecedorNome);
+    for (const s of sugestoes) if (!m.has(s.email)) m.set(s.email, s.donoNome);
     return m;
   }, [sugestoes]);
 
@@ -108,17 +108,17 @@ export function CampoDestinatarios({
         <div className="absolute left-14 right-4 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-md border bg-popover shadow-lg">
           {lista.map((s, i) => (
             <button
-              key={`${s.fornecedorId}-${s.email}`}
+              key={`${s.donoId}-${s.email}`}
               type="button"
               onMouseDown={(e) => { e.preventDefault(); adicionar([s.email]); }}
               onMouseEnter={() => setIndice(i)}
               className={cn("flex w-full items-center gap-3 px-3 py-2 text-left", i === indice && "bg-accent")}
             >
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                {s.fornecedorNome.slice(0, 2).toUpperCase()}
+                {s.donoNome.slice(0, 2).toUpperCase()}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{s.fornecedorNome}</span>
+                <span className="block truncate text-sm font-medium">{s.donoNome}</span>
                 <span className="block truncate text-xs text-muted-foreground">{s.email} · {s.rotulo}</span>
               </span>
             </button>

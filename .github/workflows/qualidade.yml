@@ -43,8 +43,6 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
-  # versão fixa: o page.clock (adiantar o relógio) existe desde a 1.45
-  PLAYWRIGHT_VERSION: '1.49.1'
 
 jobs:
   guardiao:
@@ -64,13 +62,15 @@ jobs:
       - name: Regras de desempenho nas linhas que a PR adiciona
         run: node .github/scripts/guardiao-desempenho.mjs --base origin/${{ github.base_ref }}
 
-  qa-requisicoes:
-    name: qa-requisicoes
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  qa-preparar:
+    name: Preparar build do QA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
     permissions:
       contents: read
+    outputs:
+      executar: ${{ steps.mexe.outputs.sim }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -84,31 +84,23 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "sim=1" >> "$GITHUB_OUTPUT"
             echo "Push na main: medindo as telas para publicar o baseline da catraca."
-          elif git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/|index.html|vite.config|package)'; then
-            echo "sim=1" >> "$GITHUB_OUTPUT"
           else
-            echo "PR sem mudança de frontend — QA de requisições não se aplica." >> "$GITHUB_STEP_SUMMARY"
+            git diff --name-only origin/${{ github.base_ref }}...HEAD > arquivos-qa.txt
+            if grep -Eq '^(src/|public/|infra/qa/|index\.html$|vite\.config\.|package(-lock)?\.json$|\.github/workflows/qualidade\.yml$|\.github/tabelas-grandes\.json$)' arquivos-qa.txt; then
+              echo "sim=1" >> "$GITHUB_OUTPUT"
+            else
+              echo "PR sem mudança de frontend — QA de requisições não se aplica." >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
-
-      # Baseline da main para a catraca por tela. `restore` só: quem grava é o
-      # push da main, no fim deste job. Ausente (primeira vez, ou cache
-      # expirado) = catraca desligada e só o teto absoluto vale — o script diz
-      # isso no resumo. Baseline que falta nunca reprova PR.
-      - name: Restaurar o baseline da main
-        if: steps.mexe.outputs.sim && github.event_name == 'pull_request'
-        id: baseline
-        uses: actions/cache/restore@v4
-        with:
-          path: orcamento-main.json
-          key: orcamento-main-nunca-acerta
-          restore-keys: |
-            orcamento-main-
 
       - uses: actions/setup-node@v4
         if: steps.mexe.outputs.sim
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Provar divisão e consolidação das telas
+        if: steps.mexe.outputs.sim
+        run: node --test infra/qa/fatias.test.mjs
       - name: Cache do node_modules
         if: steps.mexe.outputs.sim
         id: node-modules
@@ -130,39 +122,150 @@ jobs:
           VITE_SUPABASE_ANON_KEY: qa
         run: npm run build
 
-      - name: Playwright
+      - name: Compartilhar a mesma build entre as fatias
         if: steps.mexe.outputs.sim
-        run: |
-          npm i --no-save --no-audit --no-fund playwright@${{ env.PLAYWRIGHT_VERSION }}
-          npx playwright install --with-deps chromium
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-qa
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
+  # 06/11/2026: no run 42315466250, --with-deps gastou 3min53s baixando
+  # FONTES do Ubuntu. As bibliotecas do Chromium já existem no runner 24.04.
+  # Instalamos só o headless shell, sem apt, com versão presa no lock próprio.
+  # Três runners dividem TODAS as rotas; não aumentamos a disputa por CPU no
+  # mesmo runner nem encurtamos os 10 minutos simulados de observação.
+  qa-telas:
+    name: QA de telas (${{ matrix.fatia }}/3)
+    needs: qa-preparar
+    if: needs.qa-preparar.outputs.executar == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        fatia: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: infra/qa/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-qa
+          path: dist
+      - name: Restaurar dependências da build (Vite preview)
+        id: node-modules
+        uses: actions/cache/restore@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - name: Instalar dependências se o cache expirou
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Cache isolado do Playwright e do Chromium
+        id: playwright
+        uses: actions/cache@v4
+        with:
+          path: |
+            infra/qa/node_modules
+            ~/.cache/ms-playwright
+          key: qa-pw-${{ runner.os }}-${{ runner.arch }}-ubuntu24-node${{ env.NODE_VERSION }}-${{ hashFiles('infra/qa/package-lock.json') }}
+      - name: Instalar Playwright sem alterar as dependências do ERP
+        if: steps.playwright.outputs.cache-hit != 'true'
+        run: npm ci --prefix infra/qa --prefer-offline --no-audit --no-fund
+      - name: Instalar somente Chromium headless
+        run: node infra/qa/node_modules/playwright/cli.js install --only-shell chromium
+      - name: Restaurar o baseline da main
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: orcamento-main.json
+          key: orcamento-main-nunca-acerta
+          restore-keys: |
+            orcamento-main-
 
       - name: Abrir cada tela e contar requisições
-        if: steps.mexe.outputs.sim
         run: |
-          npx vite preview --port 4173 --strictPort &
-          for i in $(seq 1 30); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
-          CATRACA=""
-          [ -f orcamento-main.json ] && CATRACA="--baseline orcamento-main.json"
-          # shellcheck disable=SC2086
-          PLAYWRIGHT=playwright node infra/qa/orcamento-requisicoes.mjs \
-            --base http://localhost:4173 --paralelo 6 --saida orcamento.json $CATRACA
+          node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4173 --strictPort &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID"' EXIT
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:4173/ >/dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:4173/ >/dev/null
+          CATRACA=()
+          [ ! -f orcamento-main.json ] || CATRACA=(--baseline orcamento-main.json)
+          node infra/qa/orcamento-requisicoes.mjs \
+            --base http://127.0.0.1:4173 --paralelo 4 --fatia ${{ matrix.fatia }}/3 \
+            --saida orcamento.json "${CATRACA[@]}"
 
       - uses: actions/upload-artifact@v4
-        if: always() && steps.mexe.outputs.sim
+        if: always()
+        with:
+          name: orcamento-fatia-${{ matrix.fatia }}
+          path: orcamento.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Este nome é obrigatório na proteção da main. Sucesso só depois das três
+  # fatias verdes E da conferência de cobertura (sem rota faltando/repetida).
+  qa-requisicoes:
+    name: qa-requisicoes
+    needs: [qa-preparar, qa-telas]
+    if: always() && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Conferir se todos os jobs terminaram corretamente
+        env:
+          PREPARACAO: ${{ needs.qa-preparar.result }}
+          EXECUTAR: ${{ needs.qa-preparar.outputs.executar }}
+          TELAS: ${{ needs.qa-telas.result }}
+        run: |
+          [ "$PREPARACAO" = success ]
+          if [ "$EXECUTAR" = 1 ]; then
+            [ "$TELAS" = success ]
+          else
+            [ "$TELAS" = skipped ]
+            echo "PR sem mudança de frontend — QA de requisições não se aplica." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@v6
+        if: needs.qa-preparar.outputs.executar == '1'
+      - uses: actions/setup-node@v4
+        if: needs.qa-preparar.outputs.executar == '1'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        if: needs.qa-preparar.outputs.executar == '1'
+        with:
+          pattern: orcamento-fatia-*
+          path: orcamentos
+      - name: Conferir cobertura e juntar os resultados
+        if: needs.qa-preparar.outputs.executar == '1'
+        run: node infra/qa/juntar-orcamentos.mjs orcamentos/*/orcamento.json
+      - uses: actions/upload-artifact@v4
+        if: needs.qa-preparar.outputs.executar == '1'
         with:
           name: orcamento-requisicoes
           path: orcamento.json
+          if-no-files-found: error
           retention-days: 14
 
       # Publica o resultado da main como BASELINE da catraca por tela. Cache
       # escrito na main é visível para todas as PRs; cache escrito numa PR só
       # vale para ela — por isso a semeadura precisa ser aqui.
       - name: Preparar o baseline (só na main)
-        if: github.event_name == 'push' && steps.mexe.outputs.sim
+        if: github.event_name == 'push' && needs.qa-preparar.outputs.executar == '1'
         run: cp orcamento.json orcamento-main.json
 
       - name: Publicar o baseline da main
-        if: github.event_name == 'push' && steps.mexe.outputs.sim
+        if: github.event_name == 'push' && needs.qa-preparar.outputs.executar == '1'
         uses: actions/cache/save@v4
         with:
           # MESMO caminho do restore na PR: cache guarda o caminho literal.

@@ -70,6 +70,44 @@ Medido em 03/11 nas telas do WhatsApp:
 | Requisições sozinhas em 10 min parada | **35–36 por tela** → reprova | **0** |
 | Requisições para abrir | 54 | 42 |
 
+### Tempo do QA — 06/11/2026
+
+Na [execução 42315466250](https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/actions/runs/42315466250),
+o job levou **12min31s**: build **59s**, preparação do Playwright **4min17s**
+e varredura das **354 telas** **6min54s**. O log mostra que **3min53s** foram
+gastos baixando 21,1 MB de fontes do Ubuntu no `install --with-deps`; instalar
+os dois pacotes npm levou só 3s. Na main seguinte (run 42317145891), o mesmo
+job levou 6min20s: a instalação do sistema era também uma fonte de oscilação.
+
+O QA agora faz uma única build com a API falsa (`qa-preparar`), compartilha
+`dist` e distribui todas as rotas em **três fatias**, com quatro páginas por
+runner (`qa-telas`). A espera para a tela assentar e o `clock.runFor` de dez
+minutos continuam iguais. Mais runners reduzem a espera do desenvolvedor;
+há custo adicional de inicialização, cache e transferência de artefatos.
+Não é uma redução garantida de minutos totais de runner.
+
+O Playwright fica em `infra/qa/package-lock.json`, separado das dependências
+do ERP, e instala só o Chromium headless. Seu pacote e navegador têm cache
+próprio por SO, arquitetura, Node e lockfile. O runner está preso em
+`ubuntu-24.04`, cujas bibliotecas já suportam o Chromium; não se executa `apt`
+em cada PR. A instalação segue a [opção oficial `--only-shell`](https://playwright.dev/docs/browsers#chromium-headless-shell).
+Se a imagem do runner perder uma biblioteca necessária, o lançamento do
+navegador falha e o check reprova; não há fallback para pular testes.
+
+O check obrigatório continua se chamando **`qa-requisicoes`**. Ele exige
+preparação e três fatias bem-sucedidas, confere se cada rota apareceu
+exatamente na fatia esperada e só então gera o artefato consolidado
+`orcamento-requisicoes`. Falha, cancelamento, fatia ausente, rota repetida ou
+resultado incompleto reprovam. O baseline só é publicado na main depois
+dessa conferência, no formato anterior. Os relatórios individuais ficam nos
+artefatos das fatias, inclusive quando uma tela reprova.
+
+PR só de documentação/migration continua dispensando a varredura. Mudança no
+próprio workflow, em `infra/qa/`, em `public/` ou na lista de tabelas grandes
+também dispara o QA completo, para a otimização não ficar sem validação.
+`node --test infra/qa/fatias.test.mjs` prova a cobertura e as rejeições da
+consolidação, sem precisar abrir o navegador.
+
 ## 3. Obrigatório desde 04/11/2026 — FEITO
 
 Até 04/11 nada disso travava o merge: o único check obrigatório na `main` era

@@ -24,6 +24,17 @@ interface Props<T> {
   onChange: (contratos: string[]) => void;
   rotulo?: string;
   className?: string;
+  // Opcionais (06/11/2026) — o mesmo dropdown serve pros outros filtros da
+  // Gestão de Advertências (mês, tipo, grau, solicitante, função). Sem eles,
+  // fica exatamente como era o de contratos.
+  /** Título dentro do dropdown. */
+  titulo?: string;
+  /** Placeholder da busca interna. */
+  placeholderBusca?: string;
+  /** Como mostrar cada valor (ex.: "2026-11" → "nov/2026"). */
+  rotuloOpcao?: (valor: string) => string;
+  /** Ordem decrescente pelo valor (mês mais recente primeiro). */
+  ordemDecrescente?: boolean;
 }
 
 export function contratoDaLinha<T>(linha: T, campo: Props<T>["campo"]): string {
@@ -36,7 +47,8 @@ export function passaNoFiltroContratos<T>(linha: T, campo: Props<T>["campo"], se
   return selecionados.length === 0 || selecionados.includes(contratoDaLinha(linha, campo));
 }
 
-export function FiltroContratos<T>({ linhas, campo, selecionados, onChange, rotulo = "Filtros · Contratos", className }: Props<T>) {
+export function FiltroContratos<T>({ linhas, campo, selecionados, onChange, rotulo = "Filtros · Contratos", className,
+  titulo = "Mostrar só estes contratos", placeholderBusca = "Buscar contrato…", rotuloOpcao, ordemDecrescente }: Props<T>) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
 
@@ -47,13 +59,17 @@ export function FiltroContratos<T>({ linhas, campo, selecionados, onChange, rotu
       if (!c) continue;
       m.set(c, (m.get(c) ?? 0) + 1);
     }
-    return [...m.entries()].map(([nome, n]) => ({ nome, n })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  }, [linhas, campo]);
+    // Marcado que sumiu das linhas (outro filtro zerou) continua na lista
+    // com 0 — senão não dá pra desmarcar por aqui.
+    for (const s of selecionados) if (!m.has(s)) m.set(s, 0);
+    const lista = [...m.entries()].map(([nome, n]) => ({ nome, n })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    return ordemDecrescente ? lista.reverse() : lista;
+  }, [linhas, campo, selecionados, ordemDecrescente]);
 
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return q ? contratos.filter(c => c.nome.toLowerCase().includes(q)) : contratos;
-  }, [contratos, busca]);
+    return q ? contratos.filter(c => (rotuloOpcao ? rotuloOpcao(c.nome) : c.nome).toLowerCase().includes(q)) : contratos;
+  }, [contratos, busca, rotuloOpcao]);
 
   return (
     <div className={cn("relative", className)}>
@@ -66,13 +82,13 @@ export function FiltroContratos<T>({ linhas, campo, selecionados, onChange, rotu
           <div className="fixed inset-0 z-40" onClick={() => setAberto(false)} />
           <div className="absolute left-0 z-50 mt-2 flex max-h-96 w-[min(24rem,90vw)] flex-col rounded-xl border bg-popover p-2 shadow-lg">
             <div className="flex items-center justify-between px-2 pb-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mostrar só estes contratos</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{titulo}</span>
               {selecionados.length > 0 && (
                 <button type="button" className="text-xs font-semibold text-primary hover:underline" onClick={() => onChange([])}>Limpar</button>
               )}
             </div>
             {contratos.length > 8 && (
-              <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar contrato…"
+              <input value={busca} onChange={e => setBusca(e.target.value)} placeholder={placeholderBusca}
                      className="mx-2 mb-2 h-8 rounded-md border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring" />
             )}
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -85,7 +101,7 @@ export function FiltroContratos<T>({ linhas, campo, selecionados, onChange, rotu
                          className={cn("flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm", marcado ? "bg-accent" : "hover:bg-muted/60")}>
                     <Checkbox checked={marcado}
                               onCheckedChange={() => onChange(marcado ? selecionados.filter(x => x !== c.nome) : [...selecionados, c.nome])} />
-                    <span className="min-w-0 flex-1 truncate" title={c.nome}>{c.nome}</span>
+                    <span className="min-w-0 flex-1 truncate" title={c.nome}>{rotuloOpcao ? rotuloOpcao(c.nome) : c.nome}</span>
                     <span className="shrink-0 rounded-full border px-1.5 text-[11px] font-semibold text-muted-foreground">{c.n}</span>
                   </label>
                 );
