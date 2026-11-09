@@ -20,12 +20,17 @@
 --   · medida_nota: o que o número conta, ou o que falta.
 --   · meta_texto: a meta como o documento/protótipo escreve. Só onde a escala
 --     é a do valor calculado; nos demais a TV usa o texto calculado da meta.
---   · tvg_calc_documento(): Supply passa a ler o pedido de compra real
---     (sup_compra_pedido), com fornecedor e data limite de entrega.
+--   · tvg_dre_mv é populada aqui. Conferido em produção em 09/11/2026: a visão
+--     chegou vazia ao cluster, os 8 cards de margem davam "has not been
+--     populated" e o refresh CONCURRENTLY do pg_cron não funciona em visão
+--     vazia. O primeiro refresh precisa ser o comum.
 --
--- Orçado × realizado e fluxo de caixa seguem como 'parcial': as tabelas
--- existem, mas o preenchimento e o vínculo com o DRE não puderam ser
--- conferidos em produção quando esta migration foi escrita.
+-- O que a conferência de 09/11 manteve como 'parcial':
+--   · sup_compra_pedido tem 3 linhas, nenhuma ativa: lê-la daria "0 em
+--     atraso, dentro da meta", falso. Supply segue no pedido interno.
+--   · orçamento: os 115 orçamentos estão em rascunho e o DRE termina em 05/2026;
+--   · ponto: nenhuma tabela guarda a falta apurada por colaborador;
+--   · fluxo: sem conferência entre projeção e saldo bancário.
 -- =========================================================================
 
 -- ── 1) Colunas novas ─────────────────────────────────────────────────────
@@ -94,11 +99,11 @@ UPDATE public."TVG_INDICADOR" i SET
    ('lic_perdidas', 6, 'Licitações perdidas e principal motivo', 'real', NULL, NULL, NULL, NULL),
    ('lic_valor', 7, 'Valor potencial das propostas em andamento', 'real', NULL, NULL, NULL, NULL),
    -- SUPPLY
-   ('sup_compras_vencidas', 1, 'Compras vencidas e não entregues', 'real', NULL, '0 pedidos em atraso', 0, 3),
+   ('sup_compras_vencidas', 1, 'Compras vencidas e não entregues', 'parcial', 'Pedidos internos aguardando compra; a entrega do fornecedor não é registrada', '0 pedidos em atraso', NULL, NULL),
    ('sup_abaixo_minimo', 2, 'Itens abaixo do estoque mínimo', 'real', NULL, '0 itens abaixo do estoque mínimo', NULL, NULL),
    ('sup_valor_estoque', 3, 'Valor total do estoque', 'real', NULL, NULL, NULL, NULL),
    ('sup_sem_mov', 4, 'Itens sem movimentação', 'real', NULL, '≤ 90 dias sem movimentação', NULL, NULL),
-   ('sup_fornecedor', 5, 'Pedidos em atraso por fornecedor', 'real', NULL, '0 pedidos em atraso', 0, 3),
+   ('sup_fornecedor', 5, 'Pedidos em atraso por fornecedor', 'parcial', 'Agrupa por tipo de pedido; o fornecedor do atraso não é registrado', '0 pedidos em atraso', NULL, NULL),
    ('sup_contratos_sem_entrega', 6, 'Contratos sem entrega de material prevista', 'real', NULL, '0 contratos sem entrega prevista', NULL, NULL),
    -- RECRUTAMENTO E SELEÇÃO
    ('rec_risco', 1, 'Vagas com risco de posto descoberto', 'real', NULL, '0 vagas críticas', NULL, NULL),
@@ -152,61 +157,15 @@ UPDATE public."TVG_INDICADOR" i SET
   ) AS v(codigo, ordem, nome, medida, nota, meta_texto, meta, alerta)
  WHERE i.codigo = v.codigo;
 
-UPDATE public."TVG_INDICADOR" SET parametro = NULL, parametro_rotulo = NULL,
-  regra = 'Pedidos de compra enviados ou com entrega parcial cuja data limite de entrega já passou (Suprimentos › Pedidos de Compra).'
- WHERE codigo = 'sup_compras_vencidas';
-UPDATE public."TVG_INDICADOR" SET
-  regra = 'Pedidos de compra com a data limite de entrega vencida, agrupados pelo fornecedor (Suprimentos › Pedidos de Compra).'
- WHERE codigo = 'sup_fornecedor';
-
 -- ── 6) Playlists das 10 TVs abrem no visual novo ─────────────────────────
 UPDATE public."TV_ITEM" SET rel_visual = 'documento'
  WHERE relatorio IN ('ger-operacional', 'ger-licitacoes', 'ger-supply', 'ger-recrutamento', 'ger-rh', 'ger-sst',
                      'ger-financeiro', 'ger-juridico', 'ger-controladoria', 'ger-presidencia');
 
--- ── 7) Supply lê o pedido de compra de verdade ───────────────────────────
-CREATE OR REPLACE FUNCTION public.tvg_calc_documento(p_codigo text, p_param numeric DEFAULT NULL)
-RETURNS jsonb
-LANGUAGE plpgsql
-STABLE SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-DECLARE
-  hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
-BEGIN
-  IF p_codigo NOT IN ('sup_compras_vencidas', 'sup_fornecedor') THEN RETURN NULL; END IF;
+-- ── 7) O DRE dos cards de margem ─────────────────────────────────────────
+REFRESH MATERIALIZED VIEW public.tvg_dre_mv;
 
-  RETURN (
-    WITH p AS (
-      SELECT c.numero, coalesce(nullif(btrim(c.fornecedor_nome), ''), 'Fornecedor não informado') AS fornecedor,
-             hoje - c.data_limite_entrega AS dias, coalesce(c.valor_total, 0) AS valor
-        FROM public.sup_compra_pedido c
-       WHERE c.status IN ('enviado', 'aguardando_entrega', 'entrega_parcial')
-         AND c.data_limite_entrega < hoje
-    ),
-    f AS (SELECT fornecedor, count(*) AS q, sum(valor) AS v FROM p GROUP BY fornecedor)
-    SELECT jsonb_build_object(
-      'valor', (SELECT count(*) FROM p),
-      'impacto', (SELECT sum(valor) FROM p),
-      'afetado', CASE p_codigo
-        WHEN 'sup_compras_vencidas' THEN (SELECT numero || ' · ' || fornecedor FROM p ORDER BY dias DESC, valor DESC LIMIT 1)
-        ELSE (SELECT fornecedor FROM f ORDER BY q DESC, v DESC LIMIT 1) END,
-      'causa', CASE WHEN EXISTS (SELECT 1 FROM p)
-        THEN 'Maior atraso: ' || (SELECT max(dias) FROM p) || ' dias após a data limite' END,
-      'base', (SELECT count(DISTINCT fornecedor) || ' fornecedor(es) com entrega vencida' FROM p),
-      'detalhe', CASE p_codigo
-        WHEN 'sup_compras_vencidas' THEN coalesce((
-          SELECT jsonb_agg(jsonb_build_object('nome', x.numero || ' · ' || x.fornecedor, 'valor', x.dias) ORDER BY x.dias DESC)
-            FROM (SELECT * FROM p ORDER BY dias DESC, valor DESC LIMIT 6) x), '[]'::jsonb)
-        ELSE coalesce((
-          SELECT jsonb_agg(jsonb_build_object('nome', x.fornecedor, 'valor', x.q) ORDER BY x.q DESC)
-            FROM (SELECT * FROM f ORDER BY q DESC, v DESC LIMIT 6) x), '[]'::jsonb) END)
-  );
-END $$;
-REVOKE ALL ON FUNCTION public.tvg_calc_documento(text, numeric) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.tvg_calc_documento(text, numeric) TO service_role;
-
--- ── 8) tvg_resultado: a de 20261019000005 + medida e tvg_calc_documento ──
+-- ── 8) tvg_resultado: a de 20261019000005 + medida ──────────────────────
 CREATE OR REPLACE FUNCTION public.tvg_resultado(p_codigo text, p_nivel integer DEFAULT 0)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -225,7 +184,7 @@ BEGIN
     r := jsonb_build_object('valor', NULL, 'origem', 'Sem fonte');
   ELSIF i.fonte = 'auto' THEN
     BEGIN
-      r := coalesce(public.tvg_calc_documento(i.codigo, i.parametro), public.tvg_espelho_resultado(i.codigo), public.tvg_calc_espelho(i.codigo, i.parametro),
+      r := coalesce(public.tvg_espelho_resultado(i.codigo), public.tvg_calc_espelho(i.codigo, i.parametro),
                     public.tvg_calc_ajuste(i.codigo, i.parametro), public.tvg_calc(i.codigo, i.parametro), public.tvg_calc_extra(i.codigo, i.parametro));
       r := coalesce(r, jsonb_build_object('valor', NULL)) || jsonb_build_object('atualizado_em', now(), 'origem', 'ERP');
     EXCEPTION WHEN OTHERS THEN
@@ -272,7 +231,6 @@ NOTIFY pgrst, 'reload schema';
 
 -- ROLLBACK
 -- Reaplicar a tvg_resultado de 20261019000005 e:
--- DROP FUNCTION IF EXISTS public.tvg_calc_documento(text, numeric);
 -- UPDATE public."TV_ITEM" SET rel_visual = NULL WHERE rel_visual = 'documento';
 -- UPDATE public."TVG_INDICADOR" SET ativo = true WHERE espelho_fonte IS NOT NULL;
 -- UPDATE public."TVG_INDICADOR" SET na_tv = (espelho_fonte IS NOT NULL)
