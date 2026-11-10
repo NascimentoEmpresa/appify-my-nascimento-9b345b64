@@ -47,7 +47,7 @@ import {
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
-import { lerLinhasPdf, lerLinhasPdfOcr, PdfSemTextoError } from "@/lib/rh/rateioPdf";
+import { ehArquivoTxt, juntarTxts, lerLinhasPdf, lerLinhasPdfOcr, lerLinhasTxt, PdfSemTextoError } from "@/lib/rh/rateioPdf";
 
 const MENU = "rh_rateio_despesas";
 const SEM = "__sem__";
@@ -459,7 +459,8 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     try {
       let linhas: string[];
       try {
-        linhas = await lerLinhasPdf(f);
+        // TXT da Bullla (10/11/2026): já é texto, linha a linha.
+        linhas = ehArquivoTxt(f) ? await lerLinhasTxt(f) : await lerLinhasPdf(f);
       } catch (e) {
         if (!(e instanceof PdfSemTextoError)) throw e;
         // BSF com listagem de trabalhadores (09/11/2026): sem camada de texto,
@@ -829,10 +830,18 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           )}
           {!somenteLeitura && usaPdf && (
             <>
-              <input ref={inputPdf} type="file" accept="application/pdf,.pdf" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void lerPdf(f); e.target.value = ""; }} />
+              {/* PDF, ou os TXT da Bullla (10/11/2026) — vários TXT de uma vez viram um arquivo só. */}
+              <input ref={inputPdf} type="file" accept="application/pdf,.pdf,.txt,text/plain" multiple className="hidden"
+                onChange={(e) => {
+                  const fs = Array.from(e.target.files ?? []);
+                  e.target.value = "";
+                  if (!fs.length) return;
+                  const txts = fs.filter(ehArquivoTxt);
+                  if (txts.length === fs.length) void juntarTxts(txts).then(lerPdf);
+                  else void lerPdf(fs.find((f) => !ehArquivoTxt(f)) ?? fs[0]);
+                }} />
               <Button size="sm" className="gap-1.5" onClick={() => inputPdf.current?.click()} disabled={lendo}>
-                {lendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} {linhasPdf.length || anexoNome ? "Ler outro PDF" : "Anexar e ler PDF"}
+                {lendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} {linhasPdf.length || anexoNome ? "Ler outro arquivo" : "Anexar e ler PDF/TXT"}
               </Button>
               {linhasBrutas && (
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void lerComIa()} disabled={lendo || lendoIa}>
