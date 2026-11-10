@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { extrairLinhasDoPdf, identificarLayoutPdf, rotuloTipo, TIPOS_RATEIO, totalDoPdf } from "@/lib/rh/rateioDespesas";
 
-// Pedido do Pablo (10/11/2026, mig 20261110190000): tipo novo "Auxílio
+// Pedido do Pablo (10/11/2026, mig 20261110190100): tipo novo "Auxílio
 // Farmácia PCD". O comprovante de pedido da SWAP/Prospera tem uma linha por
 // beneficiário (Nome, CPF, Time, Valor) e o "Total" do pedido — a leitura
 // genérica (CPF + último valor) já resolve. Linhas no formato do PDF real;
