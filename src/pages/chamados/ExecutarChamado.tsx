@@ -143,7 +143,10 @@ export default function ExecutarChamado() {
     },
   });
   // Gestor de Sistemas (mig 20261110009000) intermedia qualquer chamado.
-  const podeAgir = canCoordenar || canAprovar || canGestorSistemas || (canDev && ehResponsavel);
+  // Gestão inteira (painel, coordenar, aprovar, Gestor de Sistemas — o mesmo OR
+  // de chamado_sistema_gestor() no banco) age aqui: o Painel abre o concluído
+  // nesta tela desde 10/11/2026, com chat e o "Finalizar chamado".
+  const podeAgir = gestor || (canDev && ehResponsavel);
 
   // Dev responsável abriu o chamado → zera a bolinha de novidades do dev.
   useEffect(() => { if (ehResponsavel) chamadosMarkSeen(user?.id, "dev"); }, [ehResponsavel, user?.id]);

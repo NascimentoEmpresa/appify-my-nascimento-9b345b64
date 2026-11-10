@@ -569,8 +569,9 @@ export default function PainelDistribuicao() {
                 <TableBody>
                   <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={reordenar}>
                   <SortableContext items={visiveis.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                  {/* Concluído não tem mais o que distribuir: abre a tela de execução (chat, horas e o "Finalizar chamado" do Gestor de Sistemas), igual à do dev. Pedido do Pablo, 10/11/2026. */}
                   {visiveis.map((c) => (
-                    <LinhaArrastavel key={c.id} id={c.id} habilitado={arrastando} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
+                    <LinhaArrastavel key={c.id} id={c.id} habilitado={arrastando} className="cursor-pointer" onClick={() => nav(c.status === "concluido" ? `/app/sistemas/chamados/${c.id}` : `/app/sistemas/chamados/${c.id}/coordenar`)}>
                     {(alca) => (<>
                       <TableCell className="text-center">
                         {ABAS_FILA_DEV.includes(aba) && posicaoDev[c.id] ? (
