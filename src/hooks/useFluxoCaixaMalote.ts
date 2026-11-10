@@ -147,6 +147,9 @@ export interface FluxoCaixaMaloteLinha {
   // SIS-2026-0777: conta do banco (ex.: Sicredi HAGG 119) atribuída ao lançamento em financeiro_fluxo_caixa_conta. Não vem das views:
   // as telas carimbam com comContaBanco(). Ausente = sem conta definida.
   conta_banco_id?: string | null;
+  // SIS-2026-0823: integrante (colaborador) da linha de rateio do Malote; só a view do Malote devolve. Nulo nas demais origens e na fatura consolidada.
+  integrante_empregado_id?: number | null;
+  integrante_nome?: string | null;
   // SIS-2026-0569: só a view da importação histórica devolve — texto com o
   // que subiu sem vínculo (contrato/classificação não mapeados, possível
   // duplicidade). Calculado na view, então some sozinho quando a linha é
@@ -422,6 +425,33 @@ export async function trocarContratoFluxoCaixa({ origem, despesaId, contratoId }
   if (error) throw error;
 }
 
+// SIS-2026-0823: troca o integrante da despesa do Malote pelo Fluxo (grava na linha de rateio de origem). Ver a migration 20261110000200.
+export async function trocarIntegranteFluxoCaixa({ origem, despesaId, empregadoId }: { origem: string; despesaId: string; empregadoId: number }): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any).rpc("fluxo_caixa_trocar_integrante", {
+    _origem: origem,
+    _despesa_id: despesaId,
+    _empregado_id: empregadoId,
+  });
+  if (error) throw error;
+}
+
+export interface IntegranteFluxo { id: number; nome: string }
+/** Colaboradores para o seletor da alteração em massa (a leitura de EMPREGADOS é restrita ao RH, por isso vem por RPC). */
+export function useIntegrantesFluxo(ativo: boolean) {
+  return useQuery({
+    queryKey: ["fluxo_caixa_integrantes"],
+    enabled: ativo,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<IntegranteFluxo[]> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any).rpc("fluxo_caixa_integrantes_listar");
+      if (error) throw error;
+      return (data ?? []) as IntegranteFluxo[];
+    },
+  });
+}
+
 export function useTrocarContratoFluxoCaixa() {
   const qc = useQueryClient();
   return useMutation({
@@ -450,7 +480,7 @@ export function useAlteracaoEmMassaFluxo() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (i: {
-      tipo: "centro_custo" | "classificacao" | "conta_banco";
+      tipo: "centro_custo" | "classificacao" | "conta_banco" | "integrante";
       linhas: LinhaDaAlteracaoEmMassa[];
       destinoId: string;
       aoAndar?: (feitas: number, total: number) => void;
@@ -466,6 +496,8 @@ export function useAlteracaoEmMassaFluxo() {
         try {
           if (i.tipo === "classificacao") {
             await gravarAjusteFluxoCaixa({ origem: linha.origem, despesaId: linha.despesa_id, numeroParcela: linha.numero_parcela, classificacaoId: i.destinoId });
+          } else if (i.tipo === "integrante") {
+            await trocarIntegranteFluxoCaixa({ origem: linha.origem, despesaId: linha.despesa_id, empregadoId: Number(i.destinoId) });
           } else {
             await trocarContratoFluxoCaixa({ origem: linha.origem, despesaId: linha.despesa_id, contratoId: i.destinoId });
           }
