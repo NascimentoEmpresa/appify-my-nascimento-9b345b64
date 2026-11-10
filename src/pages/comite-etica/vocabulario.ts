@@ -87,6 +87,31 @@ export const SITUACAO: Opcao[] = [
 export const SITUACOES_CONCLUIDAS = ["concluida", "arquivada"];
 
 /**
+ * Atalhos do cabeçalho de Denúncias → menu que GUARDA a tela de destino
+ * (app_menu.rota; é por ele que o RouteGuard decide). Botão sem o menu leva
+ * direto para "Sem acesso" — foi o que aconteceu com um membro do Comitê em
+ * 10/11/2026: o Indicadores mora no módulo Presidência desde a
+ * 20260930000229, e um "desmarcar" lá em 02/10 gravou allow=false nas cinco
+ * ações dele. Quem vê a fila de denúncias NÃO ganha o painel automaticamente:
+ * o acesso continua sendo dado em Acesso por Usuário.
+ */
+export const MENU_DO_ATALHO = {
+  indicadores: "comite_etica_indicadores",
+  configuracao: "comite_etica_configuracao",
+} as const;
+
+export type AtalhoDenuncias = keyof typeof MENU_DO_ATALHO;
+
+export function atalhosVisiveis(
+  pode: (menu: string) => boolean,
+): Record<AtalhoDenuncias, boolean> {
+  return {
+    indicadores: pode(MENU_DO_ATALHO.indicadores),
+    configuracao: pode(MENU_DO_ATALHO.configuracao),
+  };
+}
+
+/**
  * O que o painel da Presidência enxerga: o caso já apurado, da decisão em
  * diante. Espelho de `canal_denuncia_situacao_presidencia()` na
  * 20260930000217 — é o banco que recorta; mudar um lado obriga o outro.
