@@ -141,6 +141,36 @@ export function podeConfirmarConclusao(
   return conclusaoAguardandoConfirmacao(c) && avaliacaoLiberada(v).liberada;
 }
 
+// ---- Finalização pelo Gestor de Sistemas (mig 20261110009000) ----
+// Ordem: dev conclui → solicitante confirma → Gestor de Sistemas finaliza.
+// O status continua 'concluido' nas três; a etapa é a coluna gestao_finalizada_em.
+
+/** Solicitante confirmou e o Gestor de Sistemas ainda não finalizou? */
+export const aguardandoGestorSistemas = (
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">,
+) => c.status === "concluido" && !!c.conclusao_confirmada_em && c.gestao_finalizada_em === null;
+
+/** Pode clicar em FINALIZAR CHAMADO? ESPELHA a RPC chamado_finalizar_gestao. */
+export function podeFinalizarGestao(
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">,
+  ehGestorSistemas: boolean,
+): boolean {
+  return ehGestorSistemas && aguardandoGestorSistemas(c);
+}
+
+/** Passo "o Gestor de Sistemas finalizou" na linha do tempo. */
+function passoFinalizacaoGestao(c: ChamadoStatus): PassoStatus {
+  const feito = !!c.gestao_finalizada_em;
+  const atual = !feito && c.status === "concluido" && !!c.conclusao_confirmada_em;
+  return {
+    key: "gestao",
+    titulo: "Finalizado pelo Gestor de Sistemas",
+    situacao: feito ? "feito" : atual ? "atual" : "pendente",
+    quando: c.gestao_finalizada_em ?? null,
+    detalhe: atual ? "O Gestor de Sistemas confere a entrega e finaliza o chamado" : null,
+  };
+}
+
 /** Separa as pendências: o que falta confirmar e o que falta avaliar. */
 export function separarPendencias<T extends Pick<PendenciaSolicitante, "pendencia">>(pendentes: readonly T[]) {
   return {
@@ -174,7 +204,7 @@ export interface PassoStatus {
 
 type ChamadoStatus = Pick<Chamado,
   "status" | "created_at" | "responsavel_id" | "concluido_em" | "motivo_reprovacao" | "motivo_cancelamento" | "cancelado_em" | "updated_at"
-  | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">;
+  | "conclusao_confirmada_em" | "gestao_finalizada_em" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">;
 
 const dataHoraBr = (s: string) =>
   new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -263,6 +293,7 @@ export function montarLinhaDoTempo(
 
   if (!v) {
     passos.push(passoConfirmacao(c, devConcluiu));
+    passos.push(passoFinalizacaoGestao(c));
     return passos;
   }
 
@@ -280,6 +311,7 @@ export function montarLinhaDoTempo(
 
   // Confirmação do solicitante: abre depois que a Presidência aprova.
   passos.push(passoConfirmacao(c, presidenciaFeita));
+  passos.push(passoFinalizacaoGestao(c));
 
   // Treinamento
   const treinoFeito = etapa === "finalizado";
@@ -315,11 +347,13 @@ export function montarLinhaDoTempo(
 }
 
 /** Rótulo curto da situação atual — o que aparece no botão "Status". */
-export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em">, v: ValidacaoChamado | null | undefined): string {
+export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em"> & Partial<Pick<Chamado, "gestao_finalizada_em">>, v: ValidacaoChamado | null | undefined): string {
   if (c.status === "reprovado") return "Reprovado";
   if (c.status === "cancelado") return "Cancelado";
   // Concluído pelo time e ainda sem a confirmação (quando já dá para confirmar).
   if (conclusaoAguardandoConfirmacao(c) && avaliacaoLiberada(v).liberada) return "Aguardando confirmação do solicitante";
+  // Confirmado, falta o Gestor de Sistemas (mig 20261110009000).
+  if (aguardandoGestorSistemas({ ...c, gestao_finalizada_em: c.gestao_finalizada_em })) return "Aguardando o Gestor de Sistemas";
   if (v && v.etapa !== "desenvolvimento") return ETAPAS_VALIDACAO[v.etapa].label;
   if (c.status === "concluido") return "Concluído";
   if (c.status === "aguardando_retorno") return "Aguardando retorno";

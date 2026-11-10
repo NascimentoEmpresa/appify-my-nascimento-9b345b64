@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,7 @@ import { AvisoPontoIndisponivel, SeloPontoDiaria } from "./PontoDiariaMalote";
 import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
 import type { PontoDiariaMalote } from "@/lib/diariaPonto";
 import { valorDe } from "./meusItensUtils";
+import { estadoDeRetornoDaLista } from "./retornoAprovacao";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
 // Empresa pra ordenar, o badge continua mostrando os dois), Parcela
@@ -216,6 +217,7 @@ function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: 
  */
 export default function Aprovacoes({ base = "/app/malote" }: { base?: string } = {}) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { data: itens = [], isLoading } = useItensAprovacoesMalote();
   const { data: empresas = [] } = useEmpresasGrupo();
@@ -649,7 +651,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
   function abrirItem(despesa: ItemLinhaMalote["despesa"]) {
     const tela = STATUS_FASE_SOLICITACAO.includes(despesa.status) ? "solicitacao" : "despesa";
-    navigate(tela === "solicitacao" ? `${base}/solicitacao/${despesa.id}` : `${base}/despesa/${despesa.id}`);
+    // SIS-2026-0840: a despesa lembra de onde veio e, aprovada com sucesso, volta para esta lista (filtros ficam na sessão).
+    navigate(tela === "solicitacao" ? `${base}/solicitacao/${despesa.id}` : `${base}/despesa/${despesa.id}`, { state: estadoDeRetornoDaLista(location.pathname, location.search) });
   }
 
   return (
