@@ -48,6 +48,23 @@ export interface DashboardComprasEstoqueDados {
     itens_distintos: number;
     entradas: number;
     saidas: number;
+    /**
+     * Unidades pedidas em Pedidos de Materiais que o almoxarifado ainda não
+     * entregou. É POSIÇÃO DE AGORA: não respeita o período do filtro, ao
+     * contrário de `entradas`/`saidas`.
+     */
+    quantidade_pendente_entrega?: number;
+    /**
+     * Pendência de linha de pedido escrita como nome livre, sem item do
+     * catálogo. Não cabe em nenhuma linha da tabela por item — fica neste
+     * total para a tela avisar, em vez de exibir uma soma menor calada.
+     */
+    quantidade_pendente_sem_vinculo?: number;
+    /** Solicitação do Malote em cotação, antes do envio ao fornecedor. */
+    quantidade_aguardando_compra?: number;
+    /** Pedido já enviado ao fornecedor, descontado o que foi conferido. */
+    quantidade_em_transito?: number;
+    itens_com_pendencia?: number;
   };
   saving_resumo: { total: number; implantacao: number; execucao: number };
   solicitacoes_por_contrato: (SerieNomeQuantidade & { despachadas: number; pendentes: number })[];
@@ -132,6 +149,43 @@ export interface DashboardComprasEstoqueDados {
     saving: number;
     percentual: number;
   }[];
+  /**
+   * Uma linha por (item, tamanho): o que tem, o que entrou e saiu no período,
+   * o que está pendente de entrega e o que está em processo de compra.
+   *
+   * Opcional porque o painel só existe depois da migration 20261110000100 —
+   * enquanto o PostgREST serve o schema antigo, a chave não vem e a tela
+   * mostra o aviso em vez de uma tabela vazia.
+   */
+  posicao_por_item?: PosicaoItem[];
+}
+
+/**
+ * Atenção ao misturar naturezas nesta linha: `entrou`/`saiu`/`ajustes` são do
+ * período filtrado; `disponivel`, `reservado`, `pendente_entrega`,
+ * `aguardando_compra` e `em_transito` são posição de AGORA. O cabeçalho do
+ * painel escreve essa diferença — sem isso a leitura mais natural está errada.
+ */
+export interface PosicaoItem {
+  base_id: string;
+  /** `null` é o "sem tamanho" do sistema antigo, não um tamanho chamado "Único". */
+  tamanho: string | null;
+  codigo: string | null;
+  item: string;
+  categoria: string;
+  ordem_tamanho: number;
+  disponivel: number;
+  reservado: number;
+  fisico: number;
+  entrou: number;
+  saiu: number;
+  /** Ajuste e correção de inventário: nem entrada nem saída de operação. */
+  ajustes: number;
+  pendente_entrega: number;
+  aguardando_compra: number;
+  em_transito: number;
+  valor_unitario: number | null;
+  valor_total: number;
 }
 
 export interface ItemMovimentado {
@@ -285,6 +339,39 @@ export function consolidarDashboardsCompras(
     }
   }
 
+  // Empresas diferentes têm catálogo próprio, então o mesmo material tem
+  // base_id distinto em cada uma. A chave de consolidação é (nome, tamanho) —
+  // somar por base_id devolveria a linha de uma empresa só, calado.
+  const posicaoPorItem = (): PosicaoItem[] | undefined => {
+    if (!paineis.some((p) => p.posicao_por_item)) return undefined;
+    const mapa = new Map<string, PosicaoItem>();
+    for (const painel of paineis) {
+      for (const linha of painel.posicao_por_item ?? []) {
+        const chave = `${linha.item}|${linha.tamanho ?? ""}`;
+        const atual = mapa.get(chave);
+        if (!atual) {
+          mapa.set(chave, { ...linha });
+          continue;
+        }
+        atual.disponivel += Number(linha.disponivel);
+        atual.reservado += Number(linha.reservado);
+        atual.fisico += Number(linha.fisico);
+        atual.entrou += Number(linha.entrou);
+        atual.saiu += Number(linha.saiu);
+        atual.ajustes += Number(linha.ajustes);
+        atual.pendente_entrega += Number(linha.pendente_entrega);
+        atual.aguardando_compra += Number(linha.aguardando_compra);
+        atual.em_transito += Number(linha.em_transito);
+        atual.valor_total += Number(linha.valor_total);
+        // Código e preço são da empresa: no consolidado deixam de identificar
+        // um produto só, então não se inventa um vencedor.
+        if (atual.codigo !== linha.codigo) atual.codigo = null;
+        if (atual.valor_unitario !== linha.valor_unitario) atual.valor_unitario = null;
+      }
+    }
+    return [...mapa.values()];
+  };
+
   const movimentados = (campo: "mais_movimentados" | "menos_movimentados", desc: boolean) => {
     const mapa = new Map<string, ItemMovimentado>();
     for (const painel of paineis) {
@@ -340,6 +427,11 @@ export function consolidarDashboardsCompras(
       itens_distintos: soma((p) => p.estoque_resumo.itens_distintos),
       entradas: soma((p) => p.estoque_resumo.entradas),
       saidas: soma((p) => p.estoque_resumo.saidas),
+      quantidade_pendente_entrega: soma((p) => p.estoque_resumo.quantidade_pendente_entrega ?? 0),
+      quantidade_pendente_sem_vinculo: soma((p) => p.estoque_resumo.quantidade_pendente_sem_vinculo ?? 0),
+      quantidade_aguardando_compra: soma((p) => p.estoque_resumo.quantidade_aguardando_compra ?? 0),
+      quantidade_em_transito: soma((p) => p.estoque_resumo.quantidade_em_transito ?? 0),
+      itens_com_pendencia: soma((p) => p.estoque_resumo.itens_com_pendencia ?? 0),
     },
     saving_resumo: {
       total: soma((p) => p.saving_resumo.total),
@@ -383,5 +475,6 @@ export function consolidarDashboardsCompras(
     estoque_detalhado: paineis.flatMap((p) => p.estoque_detalhado)
       .sort((a, b) => b.valor_total - a.valor_total).slice(0, 15),
     saving_por_contrato: [...savingPorContrato.values()].sort((a, b) => b.saving - a.saving),
+    posicao_por_item: posicaoPorItem(),
   };
 }
