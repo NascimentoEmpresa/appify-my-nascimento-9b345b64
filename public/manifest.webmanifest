@@ -1,7 +1,10 @@
 {
   "name": "Grupo Nascimento ERP",
-  "short_name": "Nascimento ERP",
-  "start_url": "/",
+  "short_name": "Nascimento",
+  "description": "ERP do Grupo Nascimento",
+  "lang": "pt-BR",
+  "id": "/app",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -9,5 +12,9 @@
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "WhatsApp", "url": "/app/whatsapp", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Minhas tarefas", "url": "/app/minhas-tarefas", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]
 }

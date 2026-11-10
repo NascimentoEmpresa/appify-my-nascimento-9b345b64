@@ -3,7 +3,11 @@ import * as React from "react";
 const MOBILE_BREAKPOINT = 768;
 
 export function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined);
+  // Já nasce certo: começar em `false` e corrigir no efeito desenhava o layout
+  // de computador por um instante em todo celular.
+  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(() =>
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : undefined,
+  );
 
   React.useEffect(() => {
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);

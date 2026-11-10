@@ -568,9 +568,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
             </Card>
           )}
 
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <Button variant="outline" onClick={() => nav(base)}>Cancelar</Button>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <Button variant="ghost" onClick={limpar}>Limpar</Button>
               <Button
                 onClick={enviar}

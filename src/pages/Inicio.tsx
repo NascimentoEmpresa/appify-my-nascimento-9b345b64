@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
+import { AtalhosMobile } from "@/components/layout/AtalhosMobile";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
@@ -370,6 +371,8 @@ export default function Inicio() {
           <p className="ini-badge-ref">{versiculo.ref}</p>
         </div>
       </header>
+
+      <AtalhosMobile />
 
       {/* ═══════ Corpo: o trabalho à esquerda, as pessoas à direita ══════ */}
       {/* Favoritos e Reuniões são o que a pessoa VEM fazer; o recado da
