@@ -146,6 +146,7 @@ export function PainelDespesaMalote({
   rateioInicial,
   arquivosIniciais,
   rhRateioId,
+  classificacoesPorLinha,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -174,6 +175,10 @@ export function PainelDespesaMalote({
   // já anexado. Lido só na montagem, como o resto do "inicial": depois é da
   // pessoa. Quem usa troca a key do painel para recomeçar.
   rateioInicial?: RateioLinha[];
+  // Guia do FGTS com consignado (10/11/2026): cada linha leva a SUA
+  // classificação (FGTS MENSAL × CONSIGNADO) — mostra a coluna Classificação
+  // do RateioGrid, como em Malote › Ratear Classificação.
+  classificacoesPorLinha?: { id: string; nome: string; tipo?: TipoClassificacaoOrcamento | null }[];
   arquivosIniciais?: File[];
   // Malote › Criar Despesa › "Importar rateio" (19/10/2026, mig
   // 20261019000003): vai no INSERT como rh_rateio_id — o gatilho vincula e
@@ -778,6 +783,8 @@ export function PainelDespesaMalote({
               disabled={!ativo}
               contratoPorClassificacao
               classificacaoTipoUnica={classificacaoTipo ?? null}
+              mostrarClassificacao={!!classificacoesPorLinha?.length}
+              classificacoesRateaveis={classificacoesPorLinha}
               mostrarResumoValorTotal
               linhaPadrao={padraoRateio}
             />

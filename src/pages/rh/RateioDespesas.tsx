@@ -344,6 +344,17 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   // Colunas por parte no resultado e no Excel (só guia com mais de uma parte no rateio).
   const colunasParte = comPartes && usaPdf ? partesAtivas : [];
   const porPartePorChave = useMemo(() => new Map(basesEfetivas.map((b) => [chave(b.contrato_id), b.porParte])), [basesEfetivas]);
+  // Enviar ao Malote (10/11/2026): guia com partes (FGTS + consignado) vai
+  // numa despesa só, mas cada parte nas linhas com a sua classificação.
+  const porPartePorContrato = useMemo(
+    () => new Map(basesEfetivas.filter((b) => b.porParte).map((b) => [b.contrato_id, b.porParte ?? {}])),
+    [basesEfetivas],
+  );
+  const partesMalote = useMemo(
+    () => (comPartes && partesAtivas.length > 1 ? partesAtivas.map((p) => ({ parte: p.parte, rotulo: p.rotulo })) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [comPartes, partesAtivas.map((p) => p.parte).join()],
+  );
 
   // ── trocar tipo ───────────────────────────────────────────────────────
   const trocarTipo = (t: TipoRateio) => {
@@ -1134,6 +1145,8 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           aberto
           rateio={{ id, tipo, competencia: competenciaParaData(mes), valor, anexo_path: anexoPath, anexo_nome: anexoNome }}
           itens={itens}
+          partes={partesMalote}
+          porParte={porPartePorContrato}
           onFechar={() => setEnviandoMalote(false)}
           onEnviado={() => setEnviandoMalote(false)}
         />
