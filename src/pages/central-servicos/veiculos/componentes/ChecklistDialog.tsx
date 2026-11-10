@@ -31,7 +31,7 @@ import {
 // até chegar a última. O KM daqui alimenta o KM da viagem (inicial na saída,
 // final na chegada) quando ele ainda estiver vazio.
 //
-// 10/11/2026 (mig 20261110200000, pedido do Senilton):
+// 10/11/2026 (mig 20261110220000, pedido do Senilton):
 //   · SAÍDA = início da viagem. Só sai com a viagem anterior do responsável
 //     com a prestação completa (o banco barra; aqui a tela mostra o que falta
 //     e não deixa salvar). O KM passa a ser obrigatório, e a tela mostra o

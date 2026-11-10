@@ -73,7 +73,7 @@ export interface SalvarChecklist {
   interiorNovas: File[];
   defeitoMantidas: string[];
   defeitoNovas: File[];
-  /** Prestação da viagem (chegada, mig 20261110200000). */
+  /** Prestação da viagem (chegada, mig 20261110220000). */
   videoNovo?: File | null;
   extra?: { agua_verificada?: boolean; oleo_verificado?: boolean; avaria?: boolean | null; avaria_descricao?: string; sem_abastecimento?: boolean };
 }
@@ -133,7 +133,7 @@ export function useSalvarChecklist() {
   });
 }
 
-// ── Prestação da viagem e último KM (mig 20261110200000) ─────────────────
+// ── Prestação da viagem e último KM (mig 20261110220000) ─────────────────
 
 export interface PrestacaoPendente {
   agendamento_id: string; numero: number; veiculo: string; placa: string | null;

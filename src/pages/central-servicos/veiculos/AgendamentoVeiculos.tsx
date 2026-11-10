@@ -90,7 +90,7 @@ export default function AgendamentoVeiculos() {
   // Checklist de saída/chegada (04/11/2026): o que está atrasado nos MEUS
   // agendamentos vira o aviso "VOCÊ PRECISA PREENCHER…" no topo da tela.
   const checklists = useChecklists();
-  // Último KM de cada carro, no card de escolher (mig 20261110200000).
+  // Último KM de cada carro, no card de escolher (mig 20261110220000).
   const ultimosKm = useUltimosKm();
   const listaChecklists = useMemo(() => checklists.data ?? [], [checklists.data]);
   const meusAtrasados = useMemo(

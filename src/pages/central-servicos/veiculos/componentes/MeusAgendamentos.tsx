@@ -62,7 +62,7 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
   const [naoUsei, setNaoUsei] = useState<Agendamento | null>(null);
   const cancelar = useCancelarAgendamento();
   const hoje = hojeISO();
-  // Prestação pendente (mig 20261110200000): enquanto houver, a próxima viagem não sai.
+  // Prestação pendente (mig 20261110220000): enquanto houver, a próxima viagem não sai.
   const pendentes = usePrestacoesPendentes(null, null);
 
   // Mais recente primeiro: quem abre esta aba quer ver o que acabou de marcar.

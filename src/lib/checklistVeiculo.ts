@@ -58,7 +58,7 @@ export interface ChecklistVeiculo {
   preenchido_por_nome?: string | null;
   /** Coluna gerada no banco; a tela recalcula com checklistCompleto() quando não vier. */
   completo?: boolean | null;
-  /** Prestação da viagem (chegada, mig 20261110200000). */
+  /** Prestação da viagem (chegada, mig 20261110220000). */
   video_veiculo?: string | null;
   agua_verificada?: boolean | null;
   oleo_verificado?: boolean | null;

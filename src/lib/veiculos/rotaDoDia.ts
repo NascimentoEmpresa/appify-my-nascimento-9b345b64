@@ -1,6 +1,6 @@
 // =====================================================================
 // Agendamento de Veículos — o DIA, a PRESTAÇÃO da viagem e o KM sem
-// registro (10/11/2026, mig 20261110200000).
+// registro (10/11/2026, mig 20261110220000).
 //
 // Pedido (Cássio / Senilton):
 //   · "conforme os agendamentos diários precisa aparecer o agendamento do

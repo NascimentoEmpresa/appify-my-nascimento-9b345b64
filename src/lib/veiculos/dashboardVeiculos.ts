@@ -39,7 +39,7 @@ export interface AgendamentoDash {
   km_inicial: number | null; km_inicial_em: string | null; km_final: number | null; km_final_em: string | null;
   controle_km?: boolean | null;
   contratos: ContratoDash[];
-  // Dia, prestação e KM sem registro (mig 20261110200000) — ver rotaDoDia.ts.
+  // Dia, prestação e KM sem registro (mig 20261110220000) — ver rotaDoDia.ts.
   km_inicial_foto?: string | null;
   finalizada_em?: string | null;
   nao_utilizado_em?: string | null;

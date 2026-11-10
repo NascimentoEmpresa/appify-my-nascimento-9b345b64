@@ -11,7 +11,7 @@ interface Props {
   /** Posição na grade — só para escalonar a entrada dos cards. */
   indice: number;
   onSelecionar: (v: VeiculoFrota) => void;
-  /** Último KM informado deste carro (mig 20261110200000). */
+  /** Último KM informado deste carro (mig 20261110220000). */
   ultimoKm?: UltimoKm | null;
 }
 
