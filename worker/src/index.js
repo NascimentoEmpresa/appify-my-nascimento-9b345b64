@@ -13,6 +13,7 @@ const { alertarErroWhatsapp } = require("./discordAlert");
 const { processarJobsExtratorBeneficios } = require("./extratorBeneficios");
 const { verificarSaudeBanco } = require("./saudeBanco");
 const { processarFilaHttp } = require("./filaHttp");
+const { processarFilaNfse } = require("./nfse");
 
 const CICLO_MS = 60_000;
 
@@ -86,6 +87,11 @@ async function rodarTarefas(waClient, transportador) {
     await sincronizarNfe(supabase, alertarErroWhatsapp);
   } catch (e) {
     console.error("[worker] erro no ciclo de NF-e:", e);
+  }
+  try {
+    await processarFilaNfse(supabase);
+  } catch {
+    console.error("[worker] erro no processamento de NFS-e; consulte o estado da solicitação.");
   }
   try {
     // Escrita irreversivel na SEFAZ: so roda com NFE_CIENCIA=1 e em lotes

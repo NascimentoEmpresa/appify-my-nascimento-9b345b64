@@ -400,6 +400,8 @@ jobs:
       - name: Instalar dependências
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Instalar dependências do worker para os testes de NFS-e
+        run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
       - name: Testes
         run: npm test
 

@@ -31,6 +31,7 @@ import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEd
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
 import { contratoCombinaComEmpresa, contratosDasNotasDaEmpresa, notaCombinaComStatus } from "./filtros";
+import { NfseIntegracaoPainel } from "./NfseIntegracaoPainel";
 
 // "concluida" no banco cobre tanto a validação normal quanto notas do
 // relatório legado que na origem já constavam SUBSTITUIDA/CANCELADA (o
@@ -506,6 +507,10 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
             onQtdColaboradoresChange={qtdColaboradoresChange}
           />
         )}
+
+        {nf && <NfseIntegracaoPainel nf={nf} alteracoesPendentes={Object.entries(totais).some(([campo, valor]) =>
+          Math.abs(Number(valor) - Number(nf[campo as keyof NfEmissaoRow] ?? 0)) > 0.005
+        )} />}
 
         {nf && (
           <section className="rounded-xl border bg-card p-3 space-y-3">
