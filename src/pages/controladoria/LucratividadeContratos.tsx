@@ -287,7 +287,7 @@ export default function LucratividadeContratos() {
                       formula={<><p>Lucro Bruto ÷ Valor Líquido × 100. Fica em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor segue a faixa:</p><FaixasTexto /></>}
                     />
                   </TableHead>
-                  <TableHead className={CAB}><TituloComFormula titulo="Consumo de Estoque (R$)" formula="Material que saiu do estoque para o contrato no mês, a preço de custo. NÃO entra no Total de Custos nem no Lucro Bruto: hoje a compra do material já é lançada direto no contrato (a maior parte das compras de material, uniforme e EPI do malote desde setembro/2026), então somar a saída por cima cobraria o mesmo material duas vezes. Serve para a análise de contratos ver quanto cada contrato consumiu e sinalizar excesso. Conta só saída ligada a pedido do ERP." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Consumo de Estoque (R$)" formula="Material que saiu do estoque para o contrato no mês, a preço de custo. NÃO entra no Total de Custos nem no Lucro Bruto: hoje a compra do material já é lançada direto no contrato (a maior parte das compras de material, uniforme e EPI do malote desde setembro/2026), então somar a saída por cima cobraria o mesmo material duas vezes. Serve para a análise de contratos ver quanto cada contrato consumiu e sinalizar excesso. É o mesmo valor do quadro por contrato em Suprimentos → Saídas por Contrato, no mesmo período." /></TableHead>
                   <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." /></TableHead>
                   {podeVerJustificativas && (
                     <TableHead className={`${CAB} text-center print:hidden`}><TituloComFormula alinhar="center" titulo="Justificativa de valor" formula="A Controladoria pede a um gerente que justifique um valor de qualquer coluna desta linha. Mostra quantas cobranças estão aguardando resposta, respondidas ou encerradas neste mês; clique para ver todas." /></TableHead>
@@ -374,7 +374,7 @@ export default function LucratividadeContratos() {
               continuar sendo lançada direto no contrato. Quando o setor passar a
               lançar como estoque, ela pode virar custo — a conta já está pronta. */}
           <p className="text-[11px] text-muted-foreground">
-            <strong>Consumo de Estoque</strong> é informativo e <strong>não</strong> entra no Total de Custos nem no Lucro Bruto. Hoje a compra do material já é lançada direto no contrato, então somar a saída do estoque por cima cobraria o mesmo material duas vezes. A coluna mostra quanto cada contrato consumiu, para sinalizar excesso. Conta só saída ligada a pedido do ERP.
+            <strong>Consumo de Estoque</strong> é informativo e <strong>não</strong> entra no Total de Custos nem no Lucro Bruto. Hoje a compra do material já é lançada direto no contrato, então somar a saída do estoque por cima cobraria o mesmo material duas vezes. A coluna mostra quanto cada contrato consumiu, para sinalizar excesso. É o mesmo valor que aparece em Suprimentos → Saídas por Contrato, no quadro por contrato, para o mesmo período.
           </p>
           {(consumoEstoque?.unidadesSemPreco ?? 0) > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
