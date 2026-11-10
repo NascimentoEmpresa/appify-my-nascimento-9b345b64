@@ -16,7 +16,11 @@ export function useChamadoPerms() {
   const canAprovar = has("chamados_sistemas_aprovar");
   const canDev = has("chamados_sistemas_dev");
   const canExcluir = has("chamados_sistemas_excluir");
-  const gestor = canPainel || canCoordenar || canAprovar;
+  // Gestor de Sistemas (mig 20261110009000): finaliza o chamado depois da
+  // confirmação do solicitante e conta como gestão — vê e participa de todos
+  // os chats. Mesmo OR de chamado_sistema_gestor() no banco.
+  const canGestorSistemas = has("chamados_sistemas_gestor_sistemas");
+  const gestor = canPainel || canCoordenar || canAprovar || canGestorSistemas;
 
-  return { canAbrir, canPainel, canCoordenar, canAprovar, canDev, canExcluir, gestor, loading: isLoading || !access };
+  return { canAbrir, canPainel, canCoordenar, canAprovar, canDev, canExcluir, canGestorSistemas, gestor, loading: isLoading || !access };
 }

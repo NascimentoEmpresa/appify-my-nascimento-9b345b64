@@ -34,7 +34,7 @@ import { desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPres
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
+  StatCard, StatusBadge, SeloConfirmacao, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, type CriterioSolicitanteKey,
 } from "./types";
@@ -649,7 +649,13 @@ export default function PainelDistribuicao() {
                           ) : (
                             <div className="text-[11px] font-semibold text-warning">○ Envio pendente</div>
                           )
-                        ) : <StatusBadge status={c.status} />}
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1">
+                            <StatusBadge status={c.status} />
+                            {/* Confirmação do solicitante e finalização do Gestor de Sistemas (mig 20261110009000). */}
+                            <SeloConfirmacao chamado={c} />
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="max-w-[110px] text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>

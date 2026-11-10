@@ -119,14 +119,14 @@ describe("montarLinhaDoTempo", () => {
   // "confirmacao" = o solicitante confirma a conclusão (mig 20261028001300).
   it("sem Presidência: aberto → desenvolvimento → concluído → confirmação", () => {
     const p = montarLinhaDoTempo(chamado(), null);
-    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "confirmacao"]);
+    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "confirmacao", "gestao"]);
     expect(situacao(p, "desenvolvimento")).toBe("atual");
     expect(situacao(p, "concluido")).toBe("pendente");
   });
 
   it("com Presidência mostra validação, treinamento e finalização", () => {
     const p = montarLinhaDoTempo(chamado(), validacao());
-    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "presidencia", "confirmacao", "treinamento", "finalizado"]);
+    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "presidencia", "confirmacao", "gestao", "treinamento", "finalizado"]);
   });
 
   it("dev concluiu → Presidência é o passo atual", () => {
@@ -155,7 +155,7 @@ describe("montarLinhaDoTempo", () => {
 
   it("finalizado fecha todos os passos", () => {
     const p = montarLinhaDoTempo(
-      chamado({ status: "concluido", conclusao_confirmada_em: "2026-09-06T10:00:00Z" }),
+      chamado({ status: "concluido", conclusao_confirmada_em: "2026-09-06T10:00:00Z", gestao_finalizada_em: "2026-09-06T12:00:00Z" }),
       validacao({ etapa: "finalizado", presidencia_aprovado: true, finalizado_em: "2026-09-07T10:00:00Z" }),
     );
     expect(p.every((x) => x.situacao === "feito")).toBe(true);
