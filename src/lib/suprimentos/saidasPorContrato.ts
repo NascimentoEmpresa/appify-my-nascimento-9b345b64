@@ -30,9 +30,20 @@ export interface LinhaSaida {
   item_nome: string;
   item_codigo: string | null;
   item_tipo: string | null;
-  quantidade: number;
+  quantidade: number | string;
+  /**
+   * Valor da saída em reais (quantidade × valor de custo do item), desde
+   * 20261110200000. `numeric` do Postgres chega como TEXTO no PostgREST — somar
+   * sem converter concatena string. Use sempre `numero()`.
+   */
+  valor: number | string;
   /** 'sistema' | 'sem_destino' | 'planilha:<arquivo>' — cru, como a RPC devolve. */
   origem: string;
+}
+
+/** PostgREST devolve numeric como texto e bigint como número. Normaliza os dois. */
+export function numero(v: number | string | null | undefined): number {
+  return Number(v) || 0;
 }
 
 export interface LinhaCobertura {
@@ -107,10 +118,191 @@ export function resumirPorContrato(linhas: LinhaSaida[]): ResumoContrato[] {
       };
       porContrato.set(chave, r);
     }
-    r.quantidade += l.quantidade;
-    r[categoriaOrigem(l.origem)] += l.quantidade;
+    r.quantidade += numero(l.quantidade);
+    r[categoriaOrigem(l.origem)] += numero(l.quantidade);
   }
   return [...porContrato.values()].sort((a, b) => b.quantidade - a.quantidade);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Quadro "Por contrato" por CATEGORIA DE ITEM (decisão da CEO, 10/11/2026)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * As cinco categorias são exatamente os valores de `sup_item.tipo` — o CHECK da
+ * tabela, ampliado em 20260930000013 para incluir 'limpeza'. Não é lista
+ * paralela: se alguém criar um sexto tipo no banco, ele cai em "Outros" abaixo
+ * em vez de desaparecer da conta.
+ */
+export const CATEGORIAS_ITEM = ["uniforme", "epi", "limpeza", "insumo", "equipamento"] as const;
+
+export type CategoriaItem = (typeof CATEGORIAS_ITEM)[number] | "outros";
+
+export const ROTULO_CATEGORIA: Record<CategoriaItem, string> = {
+  uniforme: "Uniforme",
+  epi: "EPI",
+  limpeza: "Material de limpeza",
+  insumo: "Insumo",
+  equipamento: "Equipamento",
+  outros: "Outros",
+};
+
+/**
+ * Item sem tipo ("(material removido)", porque o cadastro foi excluído depois
+ * da saída) e tipo novo que o front ainda não conhece caem em "Outros".
+ *
+ * Isso existe para as colunas FECHAREM com o total da linha. Se o tipo
+ * desconhecido fosse ignorado, a soma das categorias daria menos que o Total e
+ * quem lê a tela não teria como saber onde está a diferença — exatamente o tipo
+ * de buraco silencioso que gerou este chamado.
+ */
+export function categoriaDoItem(tipo: string | null | undefined): CategoriaItem {
+  const t = (tipo ?? "").toLowerCase();
+  return (CATEGORIAS_ITEM as readonly string[]).includes(t) ? (t as CategoriaItem) : "outros";
+}
+
+export interface QuantidadeValor {
+  quantidade: number;
+  valor: number;
+}
+
+export interface ContratoPorCategoria {
+  contrato_id: string | null;
+  contrato_nome: string;
+  porCategoria: Record<CategoriaItem, QuantidadeValor>;
+  quantidade: number;
+  valor: number;
+}
+
+export interface ResumoCategorias {
+  contratos: ContratoPorCategoria[];
+  /** Rodapé "Total geral" — por categoria. */
+  totalPorCategoria: Record<CategoriaItem, QuantidadeValor>;
+  quantidade: number;
+  valor: number;
+  /**
+   * Só as categorias com movimento no período, na ordem canônica. A tela não
+   * desenha coluna vazia: com cinco categorias e duas colunas cada, mês que só
+   * teve limpeza mostraria oito colunas de zero.
+   */
+  categoriasPresentes: CategoriaItem[];
+}
+
+function zerado(): Record<CategoriaItem, QuantidadeValor> {
+  const r = {} as Record<CategoriaItem, QuantidadeValor>;
+  for (const c of [...CATEGORIAS_ITEM, "outros"] as CategoriaItem[]) {
+    r[c] = { quantidade: 0, valor: 0 };
+  }
+  return r;
+}
+
+/**
+ * Agrupa as saídas em contrato × categoria, com quantidade e valor em cada
+ * cruzamento, e devolve também os totais de rodapé.
+ *
+ * `categoria` opcional recorta ANTES de somar, para o filtro de categoria da
+ * tela mudar os totais e não só esconder colunas — se o total continuasse o do
+ * período inteiro, o rodapé contradiria a tabela.
+ */
+export function resumirPorCategoria(
+  linhas: LinhaSaida[],
+  categoria?: CategoriaItem | null,
+): ResumoCategorias {
+  const porContrato = new Map<string, ContratoPorCategoria>();
+  const totalPorCategoria = zerado();
+  const vistas = new Set<CategoriaItem>();
+  let quantidade = 0;
+  let valor = 0;
+
+  for (const l of linhas) {
+    const cat = categoriaDoItem(l.item_tipo);
+    if (categoria && cat !== categoria) continue;
+
+    const q = numero(l.quantidade);
+    const v = numero(l.valor);
+    const chave = l.contrato_id ?? "__sem__";
+
+    let r = porContrato.get(chave);
+    if (!r) {
+      r = {
+        contrato_id: l.contrato_id,
+        contrato_nome: l.contrato_nome,
+        porCategoria: zerado(),
+        quantidade: 0,
+        valor: 0,
+      };
+      porContrato.set(chave, r);
+    }
+
+    r.porCategoria[cat].quantidade += q;
+    r.porCategoria[cat].valor += v;
+    r.quantidade += q;
+    r.valor += v;
+
+    totalPorCategoria[cat].quantidade += q;
+    totalPorCategoria[cat].valor += v;
+    quantidade += q;
+    valor += v;
+    vistas.add(cat);
+  }
+
+  const categoriasPresentes = ([...CATEGORIAS_ITEM, "outros"] as CategoriaItem[]).filter((c) =>
+    vistas.has(c),
+  );
+
+  return {
+    // Maior valor primeiro: a pergunta da tela é "qual contrato consumiu mais".
+    contratos: [...porContrato.values()].sort((a, b) => b.valor - a.valor),
+    totalPorCategoria,
+    quantidade,
+    valor,
+    categoriasPresentes,
+  };
+}
+
+/**
+ * Totais do rodapé e dos cartões a partir das linhas QUE ESTÃO NA TELA.
+ *
+ * Separado de `resumirPorCategoria` porque a busca por nome filtra depois: se o
+ * rodapé continuasse somando o período inteiro, ele contradiria as linhas logo
+ * acima dele, e a exportação sairia com um "Total geral" que não fecha com as
+ * próprias linhas do arquivo.
+ */
+export function totalizar(contratos: ContratoPorCategoria[]): {
+  totalPorCategoria: Record<CategoriaItem, QuantidadeValor>;
+  quantidade: number;
+  valor: number;
+} {
+  const totalPorCategoria = zerado();
+  let quantidade = 0;
+  let valor = 0;
+  for (const c of contratos) {
+    for (const cat of [...CATEGORIAS_ITEM, "outros"] as CategoriaItem[]) {
+      totalPorCategoria[cat].quantidade += c.porCategoria[cat].quantidade;
+      totalPorCategoria[cat].valor += c.porCategoria[cat].valor;
+    }
+    quantidade += c.quantidade;
+    valor += c.valor;
+  }
+  return { totalPorCategoria, quantidade, valor };
+}
+
+/** Filtra por nome de contrato, sem acento nem caixa atrapalhando a busca. */
+export function filtrarPorNome(
+  contratos: ContratoPorCategoria[],
+  busca: string,
+): ContratoPorCategoria[] {
+  const alvo = normalizar(busca);
+  if (!alvo) return contratos;
+  return contratos.filter((c) => normalizar(c.contrato_nome).includes(alvo));
+}
+
+function normalizar(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 /**
@@ -140,6 +332,7 @@ const CABECALHO_CSV = [
   "codigo",
   "tipo",
   "quantidade",
+  "valor",
   "origem",
   "arquivo_origem",
 ];
@@ -162,7 +355,8 @@ export function gerarCsvSaidas(linhas: LinhaSaida[]): string {
       l.item_nome,
       l.item_codigo,
       l.item_tipo,
-      l.quantidade,
+      numero(l.quantidade),
+      dinheiroCsv(numero(l.valor)),
       ROTULO_ORIGEM[categoriaOrigem(l.origem)],
       arquivoDaOrigem(l.origem),
     ]
@@ -170,4 +364,51 @@ export function gerarCsvSaidas(linhas: LinhaSaida[]): string {
       .join(";"),
   );
   return [CABECALHO_CSV.join(";"), ...corpo].join("\n");
+}
+
+/** Vírgula decimal: o Excel em pt-BR soma a coluna sem precisar converter. */
+function dinheiroCsv(v: number): string {
+  return v.toFixed(2).replace(".", ",");
+}
+
+/**
+ * CSV do quadro por categoria — uma linha por contrato, duas colunas por
+ * categoria presente, mais o total. Mesmas colunas que a tela mostra, porque
+ * planilha que não confere com a tela vira discussão sobre qual das duas está
+ * certa.
+ */
+export function gerarCsvPorCategoria(
+  contratos: ContratoPorCategoria[],
+  categoriasPresentes: CategoriaItem[],
+): string {
+  const cats = categoriasPresentes;
+  const totais = totalizar(contratos);
+  const cabecalho = [
+    "Contrato",
+    ...cats.flatMap((c) => [`${ROTULO_CATEGORIA[c]} - Quantidade`, `${ROTULO_CATEGORIA[c]} - Valor`]),
+    "Quantidade total",
+    "Valor total",
+  ];
+  const corpo = contratos.map((r) =>
+    [
+      r.contrato_nome,
+      ...cats.flatMap((c) => [r.porCategoria[c].quantidade, dinheiroCsv(r.porCategoria[c].valor)]),
+      r.quantidade,
+      dinheiroCsv(r.valor),
+    ]
+      .map(campoCsv)
+      .join(";"),
+  );
+  const rodape = [
+    "Total geral",
+    ...cats.flatMap((c) => [
+      totais.totalPorCategoria[c].quantidade,
+      dinheiroCsv(totais.totalPorCategoria[c].valor),
+    ]),
+    totais.quantidade,
+    dinheiroCsv(totais.valor),
+  ]
+    .map(campoCsv)
+    .join(";");
+  return [cabecalho.join(";"), ...corpo, rodape].join("\n");
 }
