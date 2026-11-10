@@ -73,7 +73,7 @@ export function SetoresTab() {
       <header className="border-b border-border px-5 py-3.5">
         <h2 className="font-display text-sm font-bold">Setores</h2>
         <p className="text-xs text-muted-foreground">
-          Setor é só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Permissões são configuradas em Módulos & Menus → Acesso por Usuário.
+          Setor é o departamento da pessoa — sozinho não concede acesso. Para liberar telas a um setor inteiro (ou a um nível de cargo dentro dele), use Módulos & Menus → Por Setor / Cargo; pessoa a pessoa, Acesso por Usuário.
         </p>
       </header>
 
@@ -196,8 +196,8 @@ function ExcluirSetorDialog({ nome, qtdPessoas, onDeleted }: { nome: string; qtd
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
           {qtdPessoas > 0
-            ? <>Isso remove o setor de <strong>{qtdPessoas} pessoa(s)</strong> que têm ele atribuído hoje. Não afeta nenhum acesso — é só o rótulo.</>
-            : "Nenhuma pessoa tem esse setor atribuído hoje."}
+            ? <>Isso remove o setor de <strong>{qtdPessoas} pessoa(s)</strong> que têm ele atribuído hoje, e apaga os modelos de acesso dele (Por Setor / Cargo). Acessos já aplicados continuam como estão.</>
+            : "Nenhuma pessoa tem esse setor atribuído hoje. Os modelos de acesso dele (Por Setor / Cargo), se houver, também saem."}
         </p>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={deletando}>Cancelar</Button>

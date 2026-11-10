@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search, SlidersHorizontal } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search, SlidersHorizontal, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { FormCap } from "@/hooks/useFormPerms";
@@ -24,6 +24,7 @@ import { ReembolsoSetoresUsuario } from "@/components/admin/ReembolsoSetoresUsua
 import { TrocaFuncaoSetoresUsuario } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { rotaVisivelNoGerenciamento } from "@/lib/menusOcultosGerenciamento";
 import { acoesGravadasPeloToggle } from "@/lib/acoesDoToggleAcesso";
+import { AcessoPorSetorCargoPanel } from "@/pages/admin/tabs/AcessoPorSetorCargoPanel";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
 const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
@@ -86,6 +87,13 @@ const TROCA_FUNCAO_APROVACAO_MENU_CODIGOS = [
   // Diretoria (16/09/2026): a mesma configuração vale pra demissão e vaga.
   "diretoria_solicitacoes_demissao", "diretoria_recrutamento",
 ];
+// As telas acima têm, além do switch, configuração fina POR PESSOA (setores,
+// papéis). A liberação em massa por Setor / Cargo (SIS-2026-0851) só liga a
+// tela — a prévia dela avisa quando o modelo inclui uma destas.
+const MENUS_COM_AJUSTE_POR_PESSOA: readonly string[] = [
+  FORM_MENU_CODIGO, REUNIOES_MENU_CODIGO, ...MALOTE_SETOR_MENU_CODIGOS,
+  REEMBOLSO_APROVACAO_MENU_CODIGO, ...TROCA_FUNCAO_APROVACAO_MENU_CODIGOS,
+];
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
 interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }
@@ -105,7 +113,7 @@ function slugify(text: string): string {
     .replace(/\s+/g, "_");
 }
 
-type View = "catalogo" | "acesso" | "por_modulo";
+type View = "catalogo" | "acesso" | "por_modulo" | "por_setor_cargo";
 
 interface PerfilAcesso { id: string; nome: string; descricao: string | null; concede_tudo: boolean; ativo: boolean }
 
@@ -185,6 +193,16 @@ export function ModulosMenusTab() {
             <Boxes className="h-3.5 w-3.5" />
             Por Módulo
           </button>
+          <button
+            onClick={() => { setView("por_setor_cargo"); setShowAddForm(false); }}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "por_setor_cargo" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Users className="h-3.5 w-3.5" />
+            Por Setor / Cargo
+          </button>
         </div>
       </header>
 
@@ -213,6 +231,15 @@ export function ModulosMenusTab() {
           podeGerenciar={podeGerenciar}
           modulos={modulosQ.data ?? []}
           menus={menusQ.data ?? []}
+        />
+      )}
+
+      {view === "por_setor_cargo" && (
+        <AcessoPorSetorCargoPanel
+          podeGerenciar={podeGerenciar}
+          modulos={modulosQ.data ?? []}
+          menus={menusQ.data ?? []}
+          menusComAjustePorPessoa={MENUS_COM_AJUSTE_POR_PESSOA}
         />
       )}
     </section>
