@@ -58,8 +58,12 @@ REVOKE ALL ON FUNCTION public.lic_prazo_recurso_controlar_pronto() FROM PUBLIC, 
 DROP POLICY IF EXISTS lic_prazo_recurso_delete ON public."LIC_PRAZO_RECURSO";
 CREATE POLICY lic_prazo_recurso_delete ON public."LIC_PRAZO_RECURSO" FOR DELETE TO authenticated
   USING (
-    public.lic_prazo_recurso_eh_otniel(auth.uid())
-    OR public.has_screen_access(auth.uid(), 'licitacoes_prazos_recursos_excluir', 'excluir'::public.app_acao)
+    (SELECT public.lic_prazo_recurso_eh_otniel((SELECT auth.uid())))
+    OR (SELECT public.has_screen_access(
+      (SELECT auth.uid()),
+      'licitacoes_prazos_recursos_excluir',
+      'excluir'::public.app_acao
+    ))
   );
 
 -- A demanda pronta retorna a quem a criou/solicitou. A lista distinta cobre
