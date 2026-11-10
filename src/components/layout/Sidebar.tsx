@@ -77,6 +77,7 @@ import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
 import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
+import { usePrazosRecursosNotif } from "@/hooks/usePrazosRecursosNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
@@ -116,7 +117,7 @@ interface NavItem {
   // Ao lançar uma tela de verdade, basta preencher a data de hoje.
   novoDesde?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
-  notif?: "meus" | "dev" | "troca_funcao" | "juridico" | "reembolso";
+  notif?: "meus" | "dev" | "troca_funcao" | "juridico" | "reembolso" | "prazos_recursos";
   dot?: boolean;
 }
 interface NavGroup {
@@ -195,7 +196,7 @@ const licitacoesModule: ModuleDef = {
         // Base dos benefícios da vaga: a CCT/decreto vinculada ao posto na
         // Planilha de Custo aparece sozinha na Abertura de Vagas (mig 20261027000930).
         { label: "Convenções Coletivas e Decretos Municipais", to: "/app/licitacoes/convencoes", icon: FileText },
-        { label: "Prazos, Recursos e Impugnações", to: "/app/licitacoes/prazos-recursos", icon: CalendarClock },
+        { label: "Prazos, Recursos e Impugnações", to: "/app/licitacoes/prazos-recursos", icon: CalendarClock, notif: "prazos_recursos" },
       ],
     },
     {
@@ -1632,6 +1633,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const chamadosNotif = useChamadosNotif();
   const trocaFuncaoNotif = useTrocaFuncaoNotif();
   const juridicoNotif = useJuridicoNotif();
+  const prazosRecursosNotif = usePrazosRecursosNotif();
   const reembolsoNotif = useReembolsoNotif();
   // 06/10/2026 (mig 20261006000006): aprovação parada esperando a pessoa —
   // Malote, Recrutamento, Demissões, Plano de Ações, Suprimentos. Vem por
@@ -1690,6 +1692,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
 
       : item.notif === "juridico" ? (juridicoNotif.porRota[item.to] ?? false)
+      : item.notif === "prazos_recursos" ? prazosRecursosNotif
       : item.notif === "reembolso" ? reembolsoNotif.temPendente
       : false;
     // Ordem: a da organização salva. Sem organização salva, o padrão já vem
@@ -1707,7 +1710,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         })),
       })),
     }));
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"
