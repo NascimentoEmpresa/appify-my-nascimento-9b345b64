@@ -5,19 +5,22 @@
   "description": "Worker Node.js separado do app: NF-e da SEFAZ, catalogo de CA do MTE, chamados de dev, ata por e-mail e lembrete de reuniao (WhatsApp Cloud API via Edge Function).",
   "main": "src/index.js",
   "scripts": {
-    "start": "node --openssl-legacy-provider src/index.js"
+    "start": "node --openssl-legacy-provider src/index.js",
+    "nfse:homologacao": "node src/nfse/servico.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "@xmldom/xmldom": "0.9.12",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "node-forge": "^1.4.0",
     "node-unrar-js": "^2.0.2",
     "nodemailer": "^6.9.14",
     "pdf-lib": "^1.17.1",
-    "xml-crypto": "^6.1.2"
+    "xml-crypto": "^6.1.2",
+    "xmllint-wasm": "5.3.0"
   }
 }
