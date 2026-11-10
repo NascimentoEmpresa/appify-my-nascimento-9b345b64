@@ -523,6 +523,26 @@ export function receitasForaDaColuna(linhas: LinhaFluxoCusto[], meses: Set<strin
   return agruparPorClassificacao(linhas.filter((l) => !!entradaNoRecorte(l, meses, empresaId) && !receitaExtraConta(l, ligacoes, ajustes)));
 }
 
+/**
+ * SIS-2026-0836: "Entradas fora desta coluna" com TODAS as classificações que ainda não contam como Receitas Extras, não só as que tiveram
+ * entrada no período aberto. As do período vêm com valor e lançamentos; as demais do catálogo vêm com 0 (assim dá para adicionar, por exemplo,
+ * "cashback" antes de ele ter qualquer lançamento no mês). O ajuste vale em todos os meses.
+ */
+export function receitasForaDaColunaComCatalogo(
+  linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes: LigacoesRubrica | undefined, ajustes: AjustesReceitaExtra | undefined, empresaId: string | null | undefined,
+  catalogo: { id: string; nome: string; ativo: boolean }[],
+): ItemDetalheClassificacao[] {
+  const comMovimento = receitasForaDaColuna(linhas, meses, ligacoes, ajustes, empresaId);
+  const ids = new Set(comMovimento.flatMap((i) => i.classificacaoIds));
+  const nomes = new Set(comMovimento.map((i) => i.classificacao.trim().toLowerCase()));
+  const semMovimento: ItemDetalheClassificacao[] = catalogo
+    .filter((c) => c.ativo && !!c.nome.trim() && !ids.has(c.id) && !nomes.has(c.nome.trim().toLowerCase())
+      && !receitaExtraConta({ tipo: "entrada", classificacao_id: c.id, classificacao_nome: c.nome }, ligacoes, ajustes))
+    .map((c) => ({ classificacaoId: c.id, classificacao: c.nome.trim(), valor: 0, lancamentos: 0, classificacaoIds: [c.id], itens: [] }))
+    .sort((a, b) => a.classificacao.localeCompare(b.classificacao, "pt-BR"));
+  return [...comMovimento, ...semMovimento];
+}
+
 /** IRPJ/CSLL lançados nos meses, por classificação (mesma seleção de tributosPorMes). */
 export function detalheTributosPorClassificacao(linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes?: LigacoesRubrica, empresaId?: string | null): ItemDetalheClassificacao[] {
   const escolhidas = linhas.filter((l) => {
