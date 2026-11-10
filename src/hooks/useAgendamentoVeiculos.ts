@@ -630,6 +630,23 @@ export function useNaoUsei() {
   });
 }
 
+/**
+ * Concluir o agendamento (10/11/2026): viagem finalizada passa de
+ * 'confirmado' para 'concluido'. Antes nada gravava esse status e o card
+ * ficava "confirmado" para sempre. Régua em src/lib/veiculos/concluirAgendamento.ts.
+ */
+export function useConcluirAgendamento() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string }) => {
+      const { error } = await sb.rpc("cs_veiculo_concluir", { p_agendamento: v.id });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Agendamento concluído."); },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
 /** Reserva que já começou, segue aberta e pode ser marcada como "não usei". */
 export function podeMarcarNaoUsei(a: Pick<Agendamento, "status" | "data_inicio" | "finalizada_em" | "nao_utilizado_em">, hoje = hojeISO()): boolean {
   return a.status === "confirmado" && a.data_inicio <= hoje && !a.finalizada_em && !a.nao_utilizado_em;

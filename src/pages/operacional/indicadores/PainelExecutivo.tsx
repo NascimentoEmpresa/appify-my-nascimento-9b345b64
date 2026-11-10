@@ -17,7 +17,7 @@ import {
   type CardIndicador, type ContratoSituacao, type DadosPainelExecutivo, type DetalheSituacao, type FatiaSituacao,
 } from "@/lib/operacional/painelExecutivo";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { painelPeloFaturamento } from "@/lib/operacional/painelPeloFaturamento";
+import { painelPeloFaturamento, type EntradaChecklist } from "@/lib/operacional/painelPeloFaturamento";
 import { custosPorContratoMes, totalCustos } from "@/pages/controladoria/faturamento/regras";
 import { useLeituraCompartilhada } from "@/pages/controladoria/faturamento/leituraCompartilhada";
 import { codigosDoFiltro } from "@/pages/controladoria/faturamento/FiltroCodigoNota";
@@ -90,6 +90,26 @@ function CardKpi({ card }: { card: CardIndicador }) {
         {card.aviso && <p className="mt-1 text-xs text-muted-foreground">{card.aviso}</p>}
       </div>
     </Card>
+  );
+}
+
+/**
+ * 10/11/2026 — Pablo: "ao colocar o mouse em cima de contratos críticos tem
+ * que aparecer quais são os contratos". Mesma lista da fatia "Crítico" da rosca.
+ */
+function CardCriticos({ card, dados }: { card: CardIndicador; dados: DadosPainelExecutivo }) {
+  const fatia = fatiasSituacao(dados.situacao).fatias.find((f) => f.chave === "critico")!;
+  return (
+    <HoverCard openDelay={80} closeDelay={120}>
+      <HoverCardTrigger asChild>
+        <div tabIndex={0} className="cursor-default rounded-lg outline-none [&>*]:h-full focus-visible:ring-2 focus-visible:ring-ring">
+          <CardKpi card={card} />
+        </div>
+      </HoverCardTrigger>
+      <HoverCardContent side="bottom" align="end" className="w-80 p-3">
+        <ListaContratos fatia={fatia} contratos={dados.situacao_detalhe?.contratos?.critico} />
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
@@ -252,7 +272,9 @@ export function ConteudoPainelExecutivo({ dados, competencia, onCompetencia }: {
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {cards.map((c) => <CardKpi key={c.chave} card={c} />)}
+            {cards.map((c) => (c.chave === "criticos" && dados.situacao
+              ? <CardCriticos key={c.chave} card={c} dados={dados} />
+              : <CardKpi key={c.chave} card={c} />))}
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="p-5 lg:col-span-2">
@@ -274,6 +296,42 @@ export function ConteudoPainelExecutivo({ dados, competencia, onCompetencia }: {
       )}
     </div>
   );
+}
+
+/**
+ * Prazo e envio do Checklist de Faturamento da competência e da anterior,
+ * para o "% Faturado no Prazo". A RLS dessas tabelas é a da tela do checklist
+ * (financeiro-checklist-faturamento): quem não a tem recebe erro ou nada, e o
+ * card fica "sem fonte" (nunca 0%) em vez de derrubar o painel.
+ */
+function useChecklistDoPainel(competencia: string | undefined) {
+  return useQuery({
+    queryKey: ["ope-painel-executivo-checklist", competencia],
+    enabled: !!competencia,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<EntradaChecklist | null> => {
+      const [a, m] = competencia!.split("-").map(Number);
+      const ant = m === 1 ? `${a - 1}-12` : `${a}-${String(m - 1).padStart(2, "0")}`;
+      const comps = [`${ant}-01`, `${competencia}-01`];
+      type Linhas<T> = Promise<{ data: T[] | null; error: unknown }>;
+      // Tabelas fora dos types gerados: a mesma leitura de useChecklistFaturamento.ts.
+      const sb = supabase as unknown as {
+        from: (t: string) => { select: (c: string) => Linhas<never> & { in: (col: string, v: string[]) => Linhas<never> } };
+      };
+      const [cfg, exc, env] = await Promise.all([
+        sb.from("CHECKLIST_FATURAMENTO_CONTRATO_CONFIG").select("contrato_id, dia_limite_padrao, comp_inicio") as Linhas<{ contrato_id: string; dia_limite_padrao: number | null; comp_inicio: string | null }>,
+        sb.from("CHECKLIST_FATURAMENTO_COMP_LIMITE").select("contrato_id, competencia, data_limite").in("competencia", comps) as Linhas<{ contrato_id: string; competencia: string; data_limite: string }>,
+        sb.from("CHECKLIST_FATURAMENTO_ENVIO").select("contrato_id, competencia, baixado_em").in("competencia", comps) as Linhas<{ contrato_id: string; competencia: string; baixado_em: string }>,
+      ]);
+      if (cfg.error || exc.error || env.error) return null;
+      const chave = (r: { contrato_id: string; competencia: string }) => `${r.contrato_id}|${String(r.competencia).slice(0, 7)}`;
+      return {
+        configs: new Map((cfg.data ?? []).map((r) => [r.contrato_id, { dia: r.dia_limite_padrao, inicio: r.comp_inicio }])),
+        excecoes: new Map((exc.data ?? []).map((r) => [chave(r), r.data_limite])),
+        envios: new Map((env.data ?? []).map((r) => [chave(r), r.baixado_em])),
+      };
+    },
+  });
 }
 
 export default function PainelExecutivo() {
@@ -299,6 +357,7 @@ export default function PainelExecutivo() {
   const custosAno = useCustosContratoAno(ano, !!q.data, leitura.base);
   const custosAnt = useCustosContratoAno(ano - 1, !!q.data, leitura.base);
   const { data: ligacoes } = useLigacoesRubrica();
+  const checklist = useChecklistDoPainel(q.data?.competencia);
   const erroFaturamento = custosAno.error ?? custosAnt.error;
   const dados = useMemo(() => {
     if (!q.data || fat.carregando || !custosAno.data || !custosAnt.data) return undefined;
@@ -309,8 +368,9 @@ export default function PainelExecutivo() {
       nfs: fat.nfs, custoPorContratoMes: custo,
       contratos: new Map(doRecorte.map((c) => [c.id, c.nome])),
       ativos: doRecorte.filter((c) => c.status !== "encerrado").length,
+      checklist: checklist.data ?? null,
     });
-  }, [q.data, fat.carregando, fat.contratos, fat.nfs, custosAno.data, custosAnt.data, ligacoes, leitura.empresaId]);
+  }, [q.data, fat.carregando, fat.contratos, fat.nfs, custosAno.data, custosAnt.data, ligacoes, leitura.empresaId, checklist.data]);
 
   return (
     <AcessoGate

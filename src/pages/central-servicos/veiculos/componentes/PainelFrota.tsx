@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Car, CalendarCheck, Ban, TrendingUp } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { agendamentoVivo } from "@/lib/veiculos/concluirAgendamento";
 import {
   disponibilidadeDoVeiculo,
   hojeISO,
@@ -34,7 +35,10 @@ export function PainelFrota({ agendamentos, frota }: Props) {
   const hoje = hojeISO();
 
   const dados = useMemo(() => {
+    // "confirmados" = o que ainda segura o carro; "vivos" soma os concluídos
+    // (10/11/2026), que são viagens que aconteceram e contam no uso.
     const confirmados = agendamentos.filter((a) => a.status === "confirmado");
+    const vivos = agendamentos.filter(agendamentoVivo);
 
     const livresAgora = frota.filter((v) => {
       if (!disponibilidadeDoVeiculo(v, hoje).disponivel) return false;
@@ -56,7 +60,7 @@ export function PainelFrota({ agendamentos, frota }: Props) {
     // Uso por veículo — ordenado do maior para o menor, que é como se lê
     // magnitude. Sem corte artificial: a frota toda cabe.
     const porVeiculo = Object.entries(
-      confirmados.reduce<Record<string, number>>((acc, a) => {
+      vivos.reduce<Record<string, number>>((acc, a) => {
         acc[a.veiculo_nome] = (acc[a.veiculo_nome] ?? 0) + 1;
         return acc;
       }, {}),
@@ -72,12 +76,12 @@ export function PainelFrota({ agendamentos, frota }: Props) {
       const chave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       meses.push({ rotulo: MES_CURTO[d.getMonth()], chave, total: 0 });
     }
-    confirmados.forEach((a) => {
+    vivos.forEach((a) => {
       const m = meses.find((x) => x.chave === a.data_inicio.slice(0, 7));
       if (m) m.total++;
     });
 
-    return { confirmados: confirmados.length, livresAgora, em30, taxaCancel, porVeiculo, meses };
+    return { confirmados: vivos.length, livresAgora, em30, taxaCancel, porVeiculo, meses };
   }, [agendamentos, frota, hoje]);
 
   if (agendamentos.length === 0) return null;

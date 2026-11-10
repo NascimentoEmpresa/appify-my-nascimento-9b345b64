@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Wrench } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { agendamentoVivo } from "@/lib/veiculos/concluirAgendamento";
 import {
   LABEL_TURNO,
   disponibilidadeDoVeiculo,
@@ -42,7 +43,8 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
   const emManutencao = frota.filter((v) => !disponibilidadeDoVeiculo(v, hoje).disponivel);
 
   const confirmados = useMemo(
-    () => agendamentos.filter((a) => a.status === "confirmado"),
+    // Concluído (10/11/2026) continua no calendário: a viagem aconteceu.
+    () => agendamentos.filter(agendamentoVivo),
     [agendamentos],
   );
 
