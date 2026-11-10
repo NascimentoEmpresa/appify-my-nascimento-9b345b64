@@ -11,7 +11,7 @@
 // sozinha dava 99,9999% ou 100,0001% com 40 contratos).
 // =====================================================================
 import type { RateioLinha } from "@/hooks/useMaloteDespesa";
-import { distribuirCentavos, type ItemRateio, type TipoRateio } from "@/lib/rh/rateioDespesas";
+import { distribuirCentavos, type ItemRateio, type ParteGuia, type TipoRateio } from "@/lib/rh/rateioDespesas";
 
 /** Classificação do Malote sugerida por tipo (nome no catálogo; quem lança pode trocar). */
 export const CLASSIFICACAO_SUGERIDA: Partial<Record<TipoRateio, string>> = {
@@ -74,4 +74,52 @@ export function linhasDoRateioParaMalote(
       ordem: k,
     };
   });
+}
+
+// ---- Guia do FGTS com consignado: uma classificação por parte (10/11/2026) ----
+// Pablo: "tá rateando o FGTS e consignado como se fosse só um, mas são duas
+// classificações diferentes". A guia é UM pagamento (uma despesa no Malote),
+// mas cada parte vai na SUA classificação: as linhas do rateio passam a ser
+// parte × contrato, cada uma com o classificacao_id da parte — o mesmo
+// desenho de Malote › Ratear Classificação (a coluna já existia na linha).
+
+/** Classificação do Malote sugerida por parte da guia (nome no catálogo). */
+export const CLASSIFICACAO_SUGERIDA_PARTE: Record<ParteGuia, string> = {
+  fgts: "FGTS MENSAL",
+  consignado: "CONSIGNADO",
+};
+
+/**
+ * Divide o valor de cada contrato entre as partes, na proporção do que cada
+ * parte pôs nele (porParte). O valor do item manda — se foi ajustado à mão,
+ * a divisão segue a proporção — e a soma das partes fecha o item no centavo.
+ * Contrato sem porParte (não deveria acontecer numa guia com partes) fica
+ * inteiro na primeira parte.
+ */
+export function itensPorParte(
+  itens: ItemOrigem[],
+  porParte: Map<string | null, Partial<Record<ParteGuia, number>>>,
+  partes: ParteGuia[],
+): (ItemOrigem & { parte: ParteGuia })[] {
+  const out: (ItemOrigem & { parte: ParteGuia })[] = [];
+  for (const parte of partes) {
+    for (const i of itens) {
+      const pesos = partes.map((p) => porParte.get(i.contrato_id)?.[p] ?? 0);
+      const valores = pesos.some((x) => x > 0) ? distribuirCentavos(i.valor, pesos) : partes.map((_, k) => (k === 0 ? i.valor : 0));
+      const v = valores[partes.indexOf(parte)];
+      if (centavos(v) > 0) out.push({ contrato_id: i.contrato_id, valor: v, parte });
+    }
+  }
+  return out;
+}
+
+/** Como linhasDoRateioParaMalote, com a classificação da parte em cada linha. */
+export function linhasPorParteParaMalote(
+  itens: (ItemOrigem & { parte: ParteGuia })[],
+  classificacaoDaParte: Partial<Record<ParteGuia, string>>,
+  opcoes: { empresaDoContrato: Map<string, string>; empresaPadrao: string | null; fornecedorId: string | null },
+): RateioLinha[] {
+  const comValor = itens.filter((i) => centavos(i.valor) > 0);
+  const linhas = linhasDoRateioParaMalote(comValor, opcoes);
+  return linhas.map((l, k) => ({ ...l, classificacao_id: classificacaoDaParte[comValor[k].parte] || null }));
 }

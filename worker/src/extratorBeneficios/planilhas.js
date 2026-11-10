@@ -24,6 +24,13 @@ function formatarData(v) {
   return v ?? "";
 }
 
+// Data da base; sem data lá, a do cadastro do ERP (admissoes.js, 10/11/2026).
+function admissaoDe(valorBase, nome, admissaoPorNome) {
+  const daBase = formatarData(valorBase);
+  if (/\d{2}\/\d{2}\/\d{4}/.test(String(daBase))) return daBase;
+  return admissaoPorNome?.get(limparTexto(nome)) || "";
+}
+
 async function construirWorkbookSaida(colunas, linhas) {
   const workbook = new ExcelJS.Workbook();
   const aba = workbook.addWorksheet("Planilha");
@@ -33,7 +40,7 @@ async function construirWorkbookSaida(colunas, linhas) {
 }
 
 // ── TJ ────────────────────────────────────────────────────────────────────
-async function gerarPlanilhaTj({ bufferBase, bufferPdf, periodo, valorUnitario, tipoBeneficio = "VA" }) {
+async function gerarPlanilhaTj({ bufferBase, bufferPdf, periodo, valorUnitario, tipoBeneficio = "VA", admissaoPorNome }) {
   const todasLinhas = await carregarPrimeiraAba(bufferBase);
   const { nome: colNome, admissao: colAdmissao, cargo: colCargo } = lerColunasPorCabecalho(
     todasLinhas,
@@ -58,7 +65,7 @@ async function gerarPlanilhaTj({ bufferBase, bufferPdf, periodo, valorUnitario, 
     if (!(valorPago > 0)) continue;
     linhasSaida.push({
       Nome: colNome[i],
-      "Data de Admissão": formatarData(colAdmissao[i]),
+      "Data de Admissão": admissaoDe(colAdmissao[i], colNome[i], admissaoPorNome),
       Cargo: colCargo[i],
       Período: periodo,
       "Total de dias": Math.round(valorPago / valorUnitario),
@@ -75,7 +82,7 @@ async function gerarPlanilhaTj({ bufferBase, bufferPdf, periodo, valorUnitario, 
 }
 
 // ── SAMU ──────────────────────────────────────────────────────────────────
-async function gerarPlanilhaSamu({ bufferBase, bufferPonto, valorUnitario24h, tipoBeneficio = "VA" }) {
+async function gerarPlanilhaSamu({ bufferBase, bufferPonto, valorUnitario24h, tipoBeneficio = "VA", admissaoPorNome }) {
   const todasLinhas = await carregarPrimeiraAba(bufferBase);
   const { nome: colNome, carga: colCarga, admissao: colAdmissao } = lerColunasPorCabecalho(
     todasLinhas,
@@ -108,7 +115,7 @@ async function gerarPlanilhaSamu({ bufferBase, bufferPonto, valorUnitario24h, ti
     const valorUnidade = eh12h ? valorUnitario24h / 2 : valorUnitario24h;
     linhasSaida.push({
       Nome: colNome[i],
-      "Data de Admissão": formatarData(colAdmissao[i]),
+      "Data de Admissão": admissaoDe(colAdmissao[i], colNome[i], admissaoPorNome),
       "Carga horaria diária": colCarga[i],
       "Total de dias": diasTrabalhados,
       [nomeUnidade]: valorUnidade,
@@ -124,7 +131,7 @@ async function gerarPlanilhaSamu({ bufferBase, bufferPonto, valorUnitario24h, ti
 }
 
 // ── SMS ───────────────────────────────────────────────────────────────────
-async function gerarPlanilhaSms({ bufferBase, bufferPonto, valorUnitario24h, tipoBeneficio = "VA" }) {
+async function gerarPlanilhaSms({ bufferBase, bufferPonto, valorUnitario24h, tipoBeneficio = "VA", admissaoPorNome }) {
   const todasLinhas = await carregarPrimeiraAba(bufferBase);
   const { nome: colNome, admissao: colAdmissao, cargo: colCargo } = lerColunasPorCabecalho(
     todasLinhas,
@@ -153,7 +160,7 @@ async function gerarPlanilhaSms({ bufferBase, bufferPonto, valorUnitario24h, tip
     const valorUnidade = eh12h ? valorUnitario24h / 2 : valorUnitario24h;
     linhasSaida.push({
       Nome: colNome[i],
-      "Data de Admissão": formatarData(colAdmissao[i]),
+      "Data de Admissão": admissaoDe(colAdmissao[i], colNome[i], admissaoPorNome),
       "Carga horaria diária": colCargo[i],
       "Total de dias": diasTrabalhados,
       [nomeUnidade]: valorUnidade,

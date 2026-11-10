@@ -22,8 +22,11 @@ import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario"
 import { useContratosAtivos, useEmpresasGrupo, useFornecedoresAtivos, type RateioLinha } from "@/hooks/useMaloteDespesa";
 import { baixarAnexoRateio, useEnviarRateioMalote } from "@/hooks/useRateioDespesas";
 import { FORM_ID_PAINEL_DESPESA_DIARIA, PainelDespesaMalote, type PayloadPainelDespesaMalote } from "@/pages/malote/PainelDespesaMalote";
-import { competenciaRotulo, fmtMoeda, rotuloTipo, type ItemRateio, type TipoRateio } from "@/lib/rh/rateioDespesas";
-import { CLASSIFICACAO_SUGERIDA, empresaQueMaisLeva, linhasDoRateioParaMalote } from "@/lib/rh/rateioParaMalote";
+import { competenciaRotulo, fmtMoeda, rotuloTipo, type ItemRateio, type ParteGuia, type TipoRateio } from "@/lib/rh/rateioDespesas";
+import {
+  CLASSIFICACAO_SUGERIDA, CLASSIFICACAO_SUGERIDA_PARTE, empresaQueMaisLeva, itensPorParte,
+  linhasDoRateioParaMalote, linhasPorParteParaMalote,
+} from "@/lib/rh/rateioParaMalote";
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
 
@@ -37,11 +40,15 @@ export interface RateioParaMalote {
 }
 
 export function EnviarRateioMalote({
-  aberto, rateio, itens, onFechar, onEnviado,
+  aberto, rateio, itens, partes = [], porParte, onFechar, onEnviado,
 }: {
   aberto: boolean;
   rateio: RateioParaMalote;
   itens: ItemRateio[];
+  /** Guia com mais de uma parte (FGTS + consignado, 10/11/2026): cada parte vai na sua classificação. */
+  partes?: { parte: ParteGuia; rotulo: string }[];
+  /** Quanto de cada parte caiu em cada contrato (chave = contrato_id; null = sem contrato). */
+  porParte?: Map<string | null, Partial<Record<ParteGuia, number>>>;
   onFechar: () => void;
   onEnviado: (numero: string | null) => void;
 }) {
@@ -56,6 +63,10 @@ export function EnviarRateioMalote({
   const [fornecedorId, setFornecedorId] = useState("");
   const [anexo, setAnexo] = useState<File | null>(null);
   const [anexoPronto, setAnexoPronto] = useState(!rateio.anexo_path);
+  // Guia com partes: a 1ª parte (FGTS) usa a classificação de cima; as
+  // outras (Consignado) escolhem a sua aqui.
+  const comPartes = partes.length > 1 && !!porParte;
+  const [classOutras, setClassOutras] = useState<Partial<Record<ParteGuia, string>>>({});
 
   const empresaDoContrato = useMemo(() => new Map(contratos.map((c) => [c.id, c.empresa_id])), [contratos]);
   const comValor = useMemo(() => itens.filter((i) => i.valor > 0), [itens]);
@@ -68,6 +79,19 @@ export function EnviarRateioMalote({
     const achou = alvo && classificacoes.find((c) => c.ativo && norm(c.nome) === norm(alvo));
     if (achou) setClassificacaoId(achou.id);
   }, [classificacoes, rateio.tipo, classificacaoId]);
+  useEffect(() => {
+    if (!comPartes || !classificacoes.length) return;
+    setClassOutras((atual) => {
+      const novo = { ...atual };
+      let mudou = false;
+      for (const p of partes.slice(1)) {
+        if (novo[p.parte]) continue;
+        const achou = classificacoes.find((c) => c.ativo && norm(c.nome) === norm(CLASSIFICACAO_SUGERIDA_PARTE[p.parte]));
+        if (achou) { novo[p.parte] = achou.id; mudou = true; }
+      }
+      return mudou ? novo : atual;
+    });
+  }, [comPartes, classificacoes, partes]);
   useEffect(() => {
     if (empresaId || !contratosProntos) return;
     const maior = empresaQueMaisLeva(comValor, empresaDoContrato);
@@ -88,12 +112,25 @@ export function EnviarRateioMalote({
   const classificacao = classificacoes.find((c) => c.id === classificacaoId) ?? null;
 
   // Mesma regra do "Importar rateio" do Malote (src/lib/rh/rateioParaMalote.ts).
-  const rateioInicial: RateioLinha[] = useMemo(
-    () => linhasDoRateioParaMalote(comValor, { empresaDoContrato, empresaPadrao: empresaId || null, fornecedorId: fornecedorId || null }),
-    [comValor, empresaDoContrato, empresaId, fornecedorId],
+  const classDaParte: Partial<Record<ParteGuia, string>> = useMemo(
+    () => (comPartes ? { ...classOutras, [partes[0].parte]: classificacaoId } : {}),
+    [comPartes, classOutras, partes, classificacaoId],
   );
+  const rateioInicial: RateioLinha[] = useMemo(() => {
+    const opcoes = { empresaDoContrato, empresaPadrao: empresaId || null, fornecedorId: fornecedorId || null };
+    if (comPartes && porParte) {
+      return linhasPorParteParaMalote(itensPorParte(comValor, porParte, partes.map((p) => p.parte)), classDaParte, opcoes);
+    }
+    return linhasDoRateioParaMalote(comValor, opcoes);
+  }, [comValor, empresaDoContrato, empresaId, fornecedorId, comPartes, porParte, partes, classDaParte]);
+  const classificacoesPorLinha = useMemo(() => {
+    if (!comPartes) return undefined;
+    const ids = new Set(Object.values(classDaParte).filter(Boolean));
+    return classificacoes.filter((c) => ids.has(c.id)).map((c) => ({ id: c.id, nome: c.nome, tipo: c.tipo }));
+  }, [comPartes, classDaParte, classificacoes]);
 
-  const pronto = !!classificacao && !!empresaId && contratosProntos && anexoPronto;
+  const partesProntas = !comPartes || partes.every((p) => !!classDaParte[p.parte]);
+  const pronto = !!classificacao && !!empresaId && contratosProntos && anexoPronto && partesProntas;
   const mesAno = competenciaRotulo(rateio.competencia);
 
   const aoSalvar = async (payload: PayloadPainelDespesaMalote) => {
@@ -109,20 +146,34 @@ export function EnviarRateioMalote({
         <DialogHeader>
           <DialogTitle>Enviar ao Malote — {rotuloTipo(rateio.tipo)} {mesAno}</DialogTitle>
           <DialogDescription>
-            Cria uma despesa nova de {fmtMoeda(rateio.valor)} no Malote, com {comValor.length} linha(s) de rateio — uma por
-            contrato, na empresa do contrato. Depois de enviado, o rateio fica travado até a despesa ser excluída ou reprovada no Malote.
+            Cria uma despesa nova de {fmtMoeda(rateio.valor)} no Malote, com {rateioInicial.length || comValor.length} linha(s) de rateio — uma por
+            contrato{comPartes ? ` em cada parte (${partes.map((p) => p.rotulo).join(" e ")})` : ""}, na empresa do contrato. Depois de enviado, o rateio fica travado até a despesa ser excluída ou reprovada no Malote.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
-            <Label className="text-xs">Classificação *</Label>
+            <Label className="text-xs">Classificação{comPartes ? ` — ${partes[0].rotulo}` : ""} *</Label>
             <SearchableSelect
               value={classificacaoId}
               onChange={setClassificacaoId}
               options={classificacoes.filter((c) => c.ativo).map((c) => ({ value: c.id, label: c.nome }))}
               placeholder="Escolha a classificação"
             />
+            {comPartes && partes.slice(1).map((p) => (
+              <div key={p.parte} className="space-y-1 pt-2">
+                <Label className="text-xs">Classificação — {p.rotulo} *</Label>
+                <SearchableSelect
+                  value={classOutras[p.parte] ?? ""}
+                  onChange={(v) => setClassOutras((a) => ({ ...a, [p.parte]: v }))}
+                  options={classificacoes.filter((c) => c.ativo).map((c) => ({ value: c.id, label: c.nome }))}
+                  placeholder="Escolha a classificação"
+                />
+              </div>
+            ))}
+            {comPartes && (
+              <p className="text-[11px] text-muted-foreground">Uma despesa só no Malote; cada parte da guia vai nas linhas com a sua classificação.</p>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Empresa pagadora *</Label>
@@ -152,11 +203,12 @@ export function EnviarRateioMalote({
           <div className="py-6 text-center text-sm text-muted-foreground">
             {!anexoPronto || !contratosProntos
               ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Preparando…</span>
-              : "Escolha a classificação e a empresa pagadora."}
+              : comPartes ? "Escolha as classificações de cada parte e a empresa pagadora." : "Escolha a classificação e a empresa pagadora."}
           </div>
         ) : (
           <PainelDespesaMalote
-            key={`${classificacaoId}|${empresaId}|${fornecedorId}`}
+            key={`${classificacaoId}|${Object.values(classOutras).join(",")}|${empresaId}|${fornecedorId}`}
+            classificacoesPorLinha={classificacoesPorLinha}
             classificacaoId={classificacaoId}
             classificacaoTipo={classificacao?.tipo ?? "contrato"}
             empresaId={empresaId}
