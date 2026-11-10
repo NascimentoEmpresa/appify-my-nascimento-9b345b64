@@ -25,3 +25,24 @@ export function nomesSelecionados(lista: [string, string][], ids: string[], vazi
   if (ids.length === 0) return vazio;
   return ids.map((id) => (id === FILTRO_SEM_VALOR ? "Sem (—)" : lista.find(([i]) => i === id)?.[1] ?? id)).join(", ");
 }
+
+// Classificações que aparecem nas linhas do(s) tipo(s) escolhido(s) (Entrada / Saída). Lista vazia = os dois tipos.
+// Com o filtro Tipo = Entrada, o filtro Classificação só oferece as classificações usadas em entradas (e vice-versa),
+// para não misturar classificação de saída na análise de entradas.
+export function classificacoesDoTipo(
+  linhas: { tipo: string; classificacao_id?: string | null; classificacao_nome?: string | null }[],
+  tipos: string[],
+): [string, string][] {
+  const map = new Map<string, string>();
+  linhas.forEach((l) => {
+    if (tipos.length > 0 && !tipos.includes(l.tipo)) return;
+    if (l.classificacao_id && l.classificacao_nome) map.set(l.classificacao_id, l.classificacao_nome);
+  });
+  return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+}
+
+// Ao trocar o Tipo, tira da seleção as classificações que não existem no(s) novo(s) tipo(s) ("Sem …" fica).
+export function manterSelecionadasDisponiveis(selecionados: string[], disponiveis: [string, string][]): string[] {
+  const ids = new Set(disponiveis.map(([id]) => id));
+  return selecionados.filter((id) => id === FILTRO_SEM_VALOR || ids.has(id));
+}

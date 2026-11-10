@@ -30,7 +30,7 @@ import {
   useSalvarDespesa,
   uploadAnexosMalote,
 } from "@/hooks/useMaloteDespesa";
-import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
+import { useMaloteConfig, useMaloteDiasBloqueados, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { cn } from "@/lib/utils";
@@ -39,7 +39,7 @@ import {
   vincularReembolsoAoMalote, comprovantesDoReembolso, PARAM_ORIGEM_REEMBOLSO,
 } from "@/lib/reembolso/vinculoMalote";
 import { AnexosField } from "./AnexosField";
-import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { DiaPagamentoPicker, diaEstaBloqueado } from "./DiaPagamentoPicker";
 import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
 import { useCartaoEspecialDaForma } from "./cartaoEspecial";
 import { conferirExcecaoComDespesa, PARAM_EXCECAO, type ExcecaoValidada } from "./excecao/regras";
@@ -363,6 +363,17 @@ export function PainelDespesaMalote({
   // (a compra já foi feita). Ver cartaoEspecial.ts.
   const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento, empresaId);
   const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  // Data de pagamento em dia bloqueado (feriado, recesso, fim de semana) sem exceção: o calendário já desabilita esses dias no
+  // clique, mas a data que chega pronta (link "Enviar ao Malote" do Patrimônio: ?pagamento=AAAA-MM-DD) não passa pelo calendário
+  // e o trigger malote_bloqueia_dia_pagamento recusava só ao salvar. Mesma regra do banco, avisada antes.
+  const { data: diasBloqueados = [] } = useMaloteDiasBloqueados();
+  const diasBloqueadosPorData = useMemo(() => new Map(diasBloqueados.map((d) => [d.data, d])), [diasBloqueados]);
+  const dataEmDiaBloqueado = useMemo(() => {
+    if (cartaoEspecial || excecao || !dataPagamento || !maloteConfig) return false;
+    const [y, m, d] = dataPagamento.split("-").map(Number);
+    if (!y || !m || !d) return false;
+    return diaEstaBloqueado(new Date(y, m - 1, d), maloteConfig, diasBloqueadosPorData, { classificacaoId });
+  }, [cartaoEspecial, excecao, dataPagamento, maloteConfig, diasBloqueadosPorData, classificacaoId]);
   useEffect(() => {
     if (!cartaoEspecial) return;
     setDataPagamento(cartaoEspecial.dataPagamento);
@@ -423,6 +434,9 @@ export function PainelDespesaMalote({
     // SIS-2026-0361 (complemento): piso absoluto, nem Exceção passa por
     // cima — mesma regra do trigger malote_bloqueia_dia_pagamento.
     if (dataPagamento < hoje) return "Data de pagamento é anterior a hoje — não é permitido, nem como exceção.";
+    if (dataEmDiaBloqueado) {
+      return "A data de pagamento cai em dia bloqueado (feriado, recesso ou fim de semana). Escolha outra data no calendário ou peça uma exceção em Malote › Solicitar Exceção e informe a senha aqui.";
+    }
     if (paraEnviar && exigeExcecao && !excecao) {
       return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — peça uma exceção em Malote › Solicitar Exceção e informe a senha aqui.`;
     }
@@ -647,7 +661,10 @@ export function PainelDespesaMalote({
         setQuantidadeParcelas(""); setArquivos([]); setDatasManuais({}); setValoresManuais({}); setModoValorParcela("compra");
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar despesa.");
+      // O erro do Supabase (regra do banco, RLS) é um objeto simples com `message`, não uma instância de Error: sem olhar
+      // `message` o motivo real ficava escondido atrás do genérico "Erro ao salvar despesa.".
+      const msg = e instanceof Error ? e.message : (e as { message?: unknown } | null)?.message;
+      toast.error(typeof msg === "string" && msg ? msg : "Erro ao salvar despesa.");
     } finally {
       setSalvando(null);
     }

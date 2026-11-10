@@ -31,6 +31,7 @@ import {
   useFluxoCaixaPrevisto,
   useAjustarLinhaFluxoCaixa,
   useTrocarContratoFluxoCaixa,
+  useTrocarIntegranteFluxoCaixa,
   useSemContratoImportado,
   useReverterAjusteFluxoCaixa,
   type FluxoCaixaMaloteLinha,
@@ -50,7 +51,7 @@ import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
-import { FILTRO_SEM_VALOR, casaSelecao, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
 import { AlteracaoEmMassaBar } from "./fluxo-caixa/AlteracaoEmMassaBar";
@@ -60,6 +61,7 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
+import { IntegranteTrocaCampo } from "@/pages/financeiro/fluxo-caixa/IntegranteTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
 import { totaisPorNatureza } from "@/pages/financeiro/fluxo-caixa/naturezaFluxo";
 import { CardsPorNatureza } from "@/pages/financeiro/fluxo-caixa/CardsPorNatureza";
@@ -342,6 +344,9 @@ export default function FluxoCaixaGestao() {
   const trocarContrato = useTrocarContratoFluxoCaixa();
   const semContrato = useSemContratoImportado();
   const [editNovoContratoId, setEditNovoContratoId] = useState("");
+  // Troca de integrante dentro da edição — mesma ideia do contrato: grava na ORIGEM (linha de rateio do Malote) via RPC.
+  const trocarIntegrante = useTrocarIntegranteFluxoCaixa();
+  const [editNovoIntegranteId, setEditNovoIntegranteId] = useState("");
   const [editCienteEstouro, setEditCienteEstouro] = useState(false);
   const [editExigeCiencia, setEditExigeCiencia] = useState(false);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
@@ -397,6 +402,7 @@ export default function FluxoCaixaGestao() {
     setEditBancoId(l.banco_id ?? "");
     setEditContaId(l.conta_banco_id ?? "");
     setEditNovoContratoId("");
+    setEditNovoIntegranteId("");
     setEditCienteEstouro(false);
     setEditExigeCiencia(false);
   }
@@ -415,6 +421,9 @@ export default function FluxoCaixaGestao() {
         await semContrato.mutateAsync({ linhaId: itemEditar.despesa_id });
       } else if (editNovoContratoId) {
         await trocarContrato.mutateAsync({ origem: itemEditar.origem, despesaId: itemEditar.despesa_id, contratoId: editNovoContratoId });
+      }
+      if (editNovoIntegranteId) {
+        await trocarIntegrante.mutateAsync({ origem: itemEditar.origem, despesaId: itemEditar.despesa_id, empregadoId: Number(editNovoIntegranteId) });
       }
       await ajustarLinha.mutateAsync({
         origem: itemEditar.origem,
@@ -445,7 +454,9 @@ export default function FluxoCaixaGestao() {
         editNovoContratoId === SEM_CONTRATO
           ? "Confirmado: lançamento sem contrato (administrativo); os demais campos valem só neste Fluxo de Caixa."
           : editNovoContratoId
-          ?"Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + "; os demais campos valem só neste Fluxo de Caixa."
+          ?"Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + (editNovoIntegranteId ? "; integrante alterado na origem" : "") + "; os demais campos valem só neste Fluxo de Caixa."
+          : editNovoIntegranteId
+          ? "Integrante alterado na origem (Malote); os demais campos valem só neste Fluxo de Caixa."
           : "Atualizado só neste Fluxo de Caixa — o lançamento original não muda."
       );
       setItemEditar(null);
@@ -561,11 +572,10 @@ export default function FluxoCaixaGestao() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhasBrutas]);
 
-  const classificacoesDisponiveis = useMemo(() => {
-    const map = new Map<string, string>();
-    linhas.forEach((l) => l.classificacao_id && l.classificacao_nome && map.set(l.classificacao_id, l.classificacao_nome));
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [linhas]);
+  // Todas as classificações (entrada e saída) — usada para os nomes no resumo da planilha.
+  const classificacoesDisponiveis = useMemo(() => classificacoesDoTipo(linhas, []), [linhas]);
+  // O filtro Classificação acompanha o filtro Tipo: com "Entrada" só lista classificações de entrada (e vice-versa).
+  const classificacoesDoTipoFiltro = useMemo(() => classificacoesDoTipo(linhas, tiposFiltro), [linhas, tiposFiltro]);
 
   // SIS-2026-0307: mesmo padrão dos filtros acima — deriva direto das
   // linhas já carregadas (a view já entrega banco_nome pronto), sem
@@ -861,7 +871,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tipo</Label>
-              <Select value={fx.tipo} onValueChange={(v) => setFx((f) => ({ ...f, tipo: v as FiltrosExport["tipo"] }))}>
+              <Select value={fx.tipo} onValueChange={(v) => setFx((f) => ({ ...f, tipo: v as FiltrosExport["tipo"], classificacaoIds: manterSelecionadasDisponiveis(f.classificacaoIds, classificacoesDoTipo(linhas, v === "todos" ? [] : [v])) }))}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Entradas e saídas</SelectItem>
@@ -888,7 +898,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Classificação</Label>
-              <SearchableMultiSelect value={fx.classificacaoIds} onChange={(v) => setFx((f) => ({ ...f, classificacaoIds: v }))} options={opcoesDe(classificacoesDisponiveis, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect value={fx.classificacaoIds} onChange={(v) => setFx((f) => ({ ...f, classificacaoIds: v }))} options={opcoesDe(classificacoesDoTipo(linhas, fx.tipo === "todos" ? [] : [fx.tipo]), "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Forma de pagamento</Label>
@@ -1136,7 +1146,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div>
               <Label className="text-xs">Tipo</Label>
-              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoTipo(linhas, v))); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
@@ -1158,7 +1168,7 @@ export default function FluxoCaixaGestao() {
             )}
             <div>
               <Label className="text-xs">Classificação</Label>
-              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesDe(classificacoesDisponiveis, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesDe(classificacoesDoTipoFiltro, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Forma de Pagamento</Label>
@@ -1852,6 +1862,9 @@ export default function FluxoCaixaGestao() {
                   onExigeCiencia={setEditExigeCiencia}
                 />
               </div>
+            )}
+            {itemEditar && (
+              <IntegranteTrocaCampo linha={itemEditar} novoId={editNovoIntegranteId} onNovoId={setEditNovoIntegranteId} />
             )}
           </div>
           <HistoricoAjusteFluxo linha={itemEditar} />

@@ -452,6 +452,19 @@ export function useIntegrantesFluxo(ativo: boolean) {
   });
 }
 
+/** Troca do integrante de UM lançamento pelo diálogo de edição (a alteração em massa usa trocarIntegranteFluxoCaixa direto). */
+export function useTrocarIntegranteFluxoCaixa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: trocarIntegranteFluxoCaixa,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+      qc.invalidateQueries({ queryKey: ["malote_despesa"] });
+    },
+  });
+}
+
 export function useTrocarContratoFluxoCaixa() {
   const qc = useQueryClient();
   return useMutation({
