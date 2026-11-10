@@ -1,0 +1,14 @@
+{
+  "empresas": [
+    {
+      "cnpj": "00000000000000",
+      "url": "https://reformatributaria.cidade360.cloud/NFSe.Api.Teste",
+      "serie": 1,
+      "homologacao_confirmada": false,
+      "serie_confirmada": false,
+      "algoritmo_assinatura": "sha1",
+      "certificado_caminho": "./certificados/empresa.pfx",
+      "senha_variavel": "NFSE_CERTIFICADO_SENHA"
+    }
+  ]
+}
