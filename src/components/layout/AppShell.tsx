@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { LembreteTarefas } from "@/components/organograma/LembreteTarefas";
 import { Topbar } from "./Topbar";
+import { NavegacaoMobile } from "./NavegacaoMobile";
 import { DemoBanner } from "./DemoBanner";
 import { ChamadoFab } from "@/components/chamados/ChamadoFab";
 import { RouteGuard } from "@/components/auth/RouteGuard";
@@ -24,6 +25,10 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const desktopSidebarWidth = collapsed ? "172px" : "268px";
+  const telaTv = location.pathname === "/app/painel-executivo/tv";
+  // A caixa de entrada do WhatsApp ocupa a tela toda no celular: sem o respiro
+  // do <main>, encostada nas barras, como um app de mensagens.
+  const telaCheiaNoCelular = location.pathname === "/app/whatsapp";
   // Painel "quem está online" (30/10/2026): lembra aberto/recolhido por
   // navegador; na primeira vez abre só em tela larga, onde não aperta tabela.
   const [painelOnlineAberto, setPainelOnlineAberto] = useState<boolean>(() => {
@@ -83,11 +88,16 @@ export function AppShell() {
 
       <div
         style={{ "--desktop-sidebar-width": desktopSidebarWidth } as React.CSSProperties}
-        className="flex min-w-0 flex-1 flex-col overflow-x-hidden transition-[margin,width] duration-300 lg:ml-[var(--desktop-sidebar-width)] lg:mr-[var(--painel-online-width)] lg:w-[calc(100%_-_var(--desktop-sidebar-width)_-_var(--painel-online-width))] lg:flex-none"
+        // overflow-x-clip abaixo do lg: com hidden este div vira contêiner de
+        // rolagem, e o `sticky` da barra de cima rolava junto com a página.
+        className="flex min-w-0 flex-1 flex-col overflow-x-clip transition-[margin,width] duration-300 lg:ml-[var(--desktop-sidebar-width)] lg:mr-[var(--painel-online-width)] lg:w-[calc(100%_-_var(--desktop-sidebar-width)_-_var(--painel-online-width))] lg:flex-none lg:overflow-x-hidden"
       >
         <DemoBanner />
         <Topbar onToggleSidebar={() => setCollapsed((c) => !c)} onOpenMobile={() => setMobileOpen(true)} />
-        <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8 min-w-0">
+        {/* overflow-x-auto abaixo do lg: tela densa que ainda não cabe (tabela
+            sem contêiner próprio, por exemplo) rola de lado. Com `hidden`, o que
+            passava da borda ficava cortado e inalcançável no dedo. */}
+        <main className={`min-w-0 flex-1 overflow-x-auto p-3 sm:p-6 lg:overflow-x-hidden lg:p-8 max-lg:pb-[calc(var(--nav-mobile)_+_1rem)] ${telaCheiaNoCelular ? "max-md:!p-0" : ""}`}>
           {/* ErroDeTela por DENTRO do <main> e por FORA do RouteGuard: uma
               tela que estoura no render fica contida na área de conteúdo,
               com sidebar e topbar de pé pra pessoa navegar pra outro lugar
@@ -99,8 +109,8 @@ export function AppShell() {
               02/10/2026): canto superior direito de TODA rota do catálogo.
               Fica no fluxo, acima da tela, para nunca cobrir os botões dela;
               a margem negativa encosta o card na faixa do padding. */}
-          {!externo && location.pathname !== "/app/painel-executivo/tv" && (
-            <div className="-mt-2 mb-2 flex justify-end sm:-mt-3 lg:-mt-5">
+          {!externo && !telaTv && (
+            <div className="-mt-2 mb-2 hidden justify-end sm:-mt-3 md:flex lg:-mt-5">
               <StatusDevTela />
             </div>
           )}
@@ -129,6 +139,7 @@ export function AppShell() {
           </ErroDeTela>
         </main>
       </div>
+      {!telaTv && <NavegacaoMobile menuAberto={mobileOpen} aoAlternarMenu={() => setMobileOpen((a) => !a)} />}
       {!externo && <PainelOnline aberto={painelOnlineAberto} onAlternar={alternarPainelOnline} />}
       {!externo && <ChamadoFab />}
       {/* Admissão urgente (14/10/2026): card tremendo pro SST e pro Compras, em qualquer tela. */}

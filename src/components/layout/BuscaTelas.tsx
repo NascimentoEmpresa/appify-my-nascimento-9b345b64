@@ -125,11 +125,11 @@ export function BuscaTelas() {
   return (
     <>
       <button type="button" aria-label="Buscar telas" onClick={() => { setNoCelular(true); setAberto(true); setTimeout(() => inputRef.current?.focus(), 0); }}
-        className="ml-1 inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted md:hidden">
-        <Search className="h-4 w-4" />
+        className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-muted md:hidden">
+        <Search className="h-5 w-5" />
       </button>
 
-      <div className={cn("ml-2 flex-1 justify-center md:flex", noCelular ? "absolute inset-x-0 top-0 z-30 ml-0 flex h-16 items-center bg-surface px-3" : "hidden")}>
+      <div className={cn("ml-2 flex-1 justify-center md:flex", noCelular ? "absolute inset-x-0 bottom-0 z-30 ml-0 flex h-14 items-center bg-surface px-3 md:h-full" : "hidden")}>
         <div ref={caixaRef} className="relative w-full max-w-xl">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -145,32 +145,39 @@ export function BuscaTelas() {
             onChange={(e) => { setTexto(e.target.value); setAberto(true); }}
             onFocus={() => setAberto(true)}
             onKeyDown={aoTeclar}
-            className="h-9 w-full rounded-md border border-border bg-card pl-9 pr-16 text-sm shadow-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
+            className="h-10 w-full rounded-md border border-border bg-card pl-9 pr-12 text-sm shadow-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30 md:h-9 md:pr-16"
           />
           {noCelular || texto ? (
             <button type="button" aria-label={texto ? "Limpar busca" : "Fechar busca"}
               onClick={() => { if (texto) { setTexto(""); inputRef.current?.focus(); } else fechar(); }}
-              className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted">
-              <X className="h-3.5 w-3.5" />
+              className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted md:right-2 md:h-6 md:w-6">
+              <X className="h-4 w-4 md:h-3.5 md:w-3.5" />
             </button>
           ) : (
             <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{ehMac ? "⌘K" : "Ctrl K"}</kbd>
           )}
 
           {mostrarLista && (
-            <div className="absolute inset-x-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg">
+            <div className={cn(
+              "absolute inset-x-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg",
+              // Celular: a lista ganha a tela toda abaixo do campo, com os
+              // resultados acima do teclado.
+              // `fixed` aqui é relativo ao <header> (backdrop-blur), por isso a
+              // altura é calculada: um bottom-0 pararia no fim da barra.
+              noCelular && "max-md:fixed max-md:top-[var(--topo-mobile)] max-md:mt-0 max-md:h-[calc(100dvh_-_var(--topo-mobile))] max-md:overflow-y-auto max-md:rounded-none max-md:border-x-0 max-md:border-b-0 max-md:shadow-none",
+            )}>
               {!buscando && (
                 <p className="flex items-center gap-1.5 px-3 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   <History className="h-3 w-3" /> Abertas recentemente
                 </p>
               )}
-              <ul id={idLista} role="listbox" aria-label="Resultados da busca" className="max-h-[60vh] overflow-y-auto py-1">
+              <ul id={idLista} role="listbox" aria-label="Resultados da busca" className="max-h-[60vh] overflow-y-auto py-1 max-md:max-h-none">
                 {resultados.map((r, i) => (
                   <li key={r.to} id={`${idLista}-${i}`} role="option" aria-selected={i === ativo}
                     onPointerEnter={() => setAtivo(i)}
                     onPointerDown={(e) => e.preventDefault()}
                     onClick={() => abrir(r.to)}
-                    className={cn("cursor-pointer px-3 py-2 text-sm", i === ativo && "bg-muted")}>
+                    className={cn("cursor-pointer px-3 py-2 text-sm max-md:py-3", i === ativo && "bg-muted")}>
                     <span className="block truncate font-medium">
                       {trechosDestacados(r.label, texto).map((p, j) => (
                         <span key={j} className={p.marcado ? "font-bold text-primary" : undefined}>{p.texto}</span>

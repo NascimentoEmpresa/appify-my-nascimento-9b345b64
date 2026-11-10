@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useAreaVisivel } from "@/hooks/useAreaVisivel";
 import { novoUuid, erroDaFunction } from "@/lib/utils";
 import { HistoricoConversa } from "./HistoricoConversa";
 import { NovaConversa } from "./NovaConversa";
 import { FichaContato } from "./FichaContato";
+import { filtrarConversas } from "./filtroConversas";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   MenuMensagens, PreencherVariaveis, useMensagensProntas, useRespostasBot, useStatusNaMeta,
   type ItemMenu, type WaTemplate,
@@ -20,7 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History, MessageCirclePlus, Tag, Clock, Ban } from "lucide-react";
+import { ArrowLeft, Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, MoreVertical, Paperclip, RefreshCw, X, SmilePlus, CheckCircle2, History, MessageCirclePlus, Tag, Clock, Ban, Zap } from "lucide-react";
 import {
   fmtHora, fmtTelefone, iniciais, motivoFalha, nomeContato, MENU_TODAS, EMOJIS_REACAO, avisoPendente, avisoForaDaJanela,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
@@ -44,8 +49,19 @@ export default function WhatsAppInbox() {
   // o atendente para o candidato certo sem ele ter que caçar na lista.
   const [searchParams, setSearchParams] = useSearchParams();
   const conversaDaUrl = searchParams.get("conversa");
+  // Celular: lista e conversa são duas telas. A aberta fica em ?chat=<uuid>
+  // para o botão Voltar do aparelho voltar à lista, em vez de sair do WhatsApp.
+  const telaPequena = useIsMobile();
+  const chatDaUrl = telaPequena ? searchParams.get("chat") : null;
+  const empilhouChat = useRef(false);
+  const chatAnterior = useRef<string | null>(null);
 
   const [selId, setSelId] = useState<string | null>(null);
+  const [opcoesConversa, setOpcoesConversa] = useState(false);
+  // Toque: um ícone de reação em cada bolha poluía a conversa. Ele aparece só na
+  // mensagem tocada, que é o equivalente do hover do computador.
+  const [mensagemTocada, setMensagemTocada] = useState<string | null>(null);
+  const campoTexto = useRef<HTMLTextAreaElement>(null);
   const [busca, setBusca] = useState("");
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -140,6 +156,41 @@ export default function WhatsAppInbox() {
 
   const sel = useMemo(() => conversas.find((c) => c.id === selId) ?? null, [conversas, selId]);
 
+  const selecionarConversa = (id: string) => {
+    setSelId(id);
+    if (!telaPequena || chatDaUrl === id) return;
+    const p = new URLSearchParams(searchParams);
+    p.set("chat", id);
+    setSearchParams(p, { replace: !!chatDaUrl });
+    if (!chatDaUrl) empilhouChat.current = true;
+  };
+
+  const fecharConversa = () => {
+    setOpcoesConversa(false);
+    if (!telaPequena || !chatDaUrl) { setSelId(null); return; }
+    // Quem veio da lista desempilha, como o Voltar do aparelho. Quem caiu direto
+    // na conversa (link, recarga) não tem a lista atrás: troca o endereço.
+    if (empilhouChat.current) { empilhouChat.current = false; nav(-1); return; }
+    setSelId(null);
+    const p = new URLSearchParams(searchParams);
+    p.delete("chat");
+    setSearchParams(p, { replace: true });
+  };
+
+  // O endereço manda no celular: Voltar/Avançar e recarga abrem ou fecham aqui.
+  useEffect(() => {
+    if (!telaPequena) return;
+    if (chatDaUrl) {
+      if (chatDaUrl !== selId && conversas.some((c) => c.id === chatDaUrl)) setSelId(chatDaUrl);
+    } else if (chatAnterior.current && selId) {
+      setSelId(null);
+      setOpcoesConversa(false);
+      empilhouChat.current = false;
+    }
+    chatAnterior.current = chatDaUrl;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatDaUrl, conversas, telaPequena]);
+
   // Abre a conversa pedida pela URL assim que a lista chega. Também alinha a
   // aba de pasta: sem isso a thread abriria certa, mas a lista ao lado estaria
   // noutra pasta e pareceria que nada foi selecionado. Consome o parâmetro
@@ -158,6 +209,7 @@ export default function WhatsAppInbox() {
       toast({ title: "Conversa fora do seu acesso", description: "Você não tem permissão para a pasta onde ela está." });
     }
     searchParams.delete("conversa");
+    if (alvo && telaPequena) searchParams.set("chat", alvo.id);
     setSearchParams(searchParams, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversaDaUrl, conversas]);
@@ -200,13 +252,13 @@ export default function WhatsAppInbox() {
     // Sem acesso ao destino a conversa sai de vista na hora (a RLS deixa de
     // devolvê-la) — fechar a thread evita um painel preso num registro sumido.
     const aindaVejo = podeTodas || pastasVisiveis.some((p) => p.codigo === destino);
-    if (!aindaVejo) setSelId(null);
+    if (!aindaVejo) fecharConversa();
     qc.invalidateQueries({ queryKey: ["wa-conversas"] });
     qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
   };
 
   // Mensagens da conversa selecionada — poll mais rápido.
-  const { data: mensagens = [] } = useQuery({
+  const { data: mensagens = [], isFetching: buscandoMensagens } = useQuery({
     queryKey: ["wa-mensagens", selId],
     enabled: podeVer && !!selId,
     // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
@@ -219,9 +271,30 @@ export default function WhatsAppInbox() {
 
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "end" }); }, [mensagens.length, selId]);
 
+  // O campo cresce com o texto, até o limite do max-h do próprio Textarea.
+  useEffect(() => {
+    const el = campoTexto.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [texto, selId]);
+
+  // No celular a conversa cobre as barras do ERP, inclusive o botão Atualizar.
+  // Sem este, não haveria como ver mensagem nova: nenhuma tela busca sozinha.
+  const atualizarConversa = () => {
+    if (!selId) return;
+    qc.invalidateQueries({ queryKey: ["wa-mensagens", selId] });
+    qc.invalidateQueries({ queryKey: ["wa-conversas"] });
+  };
+
+  const abrirMensagensProntas = () => {
+    setTexto((t) => (t.startsWith("/") ? "" : "/"));
+    campoTexto.current?.focus();
+  };
+
   // Ao abrir a conversa, zera as não lidas.
   const abrir = async (c: WaConversa) => {
-    setSelId(c.id);
+    selecionarConversa(c.id);
     if (c.nao_lidas > 0) {
       await (supabase as any).from("WA_CONVERSA").update({ nao_lidas: 0 }).eq("id", c.id);
       qc.invalidateQueries({ queryKey: ["wa-conversas"] });
@@ -389,23 +462,7 @@ export default function WhatsAppInbox() {
 
   const filtradas = useMemo(() => {
     const base = pastaSel ? daPasta(pastaSel) : [];
-    const t = busca.trim().toLowerCase();
-    const lista = !t ? base : base.filter((c) =>
-      [c.contato?.nome, c.contato?.nome_manual, c.contato?.wa_id, c.ultima_mensagem_preview,
-       ...(c.contato?.etiquetas ?? [])].some((v) => String(v ?? "").toLowerCase().includes(t)));
-
-    // Não lidas sempre no topo. Quem espera resposta não pode ficar soterrado
-    // por conversa que já foi respondida só porque a resposta é mais recente.
-    //
-    // A conversa aberta conta como "topo" mesmo depois de zerar as não lidas:
-    // abrir uma conversa zera o contador, e sem isso ela despencaria da lista
-    // no instante do clique, com o quadro se remontando embaixo do cursor.
-    //
-    // Dentro de cada grupo, mais recente primeiro; conversa sem mensagem
-    // (criada pelo recrutamento, por exemplo) tem data nula e vai para o fim.
-    const noTopo = (c: WaConversa) => (c.nao_lidas > 0 || c.id === selId ? 0 : 1);
-    const quando = (c: WaConversa) => (c.ultima_mensagem_em ? Date.parse(c.ultima_mensagem_em) : -Infinity);
-    return [...lista].sort((a, b) => noTopo(a) - noTopo(b) || quando(b) - quando(a));
+    return filtrarConversas(base, { busca, etiqueta: etiquetaSel, selecionada: selId });
   }, [conversas, busca, pastaSel, selId, etiquetaSel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
@@ -440,28 +497,39 @@ export default function WhatsAppInbox() {
   }
 
   return (
-    <div>
-      <PageHeader
-        title="WhatsApp — Caixa de Entrada"
-        subtitle="Atenda conversas e acompanhe o chatbot."
-        module="Central de Serviços"
-        breadcrumb={["WhatsApp", "Caixa de Entrada"]}
-        actions={
-          <div className="flex gap-2">
-            <Button
-              className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
-              onClick={() => setNovaConversa(true)}
-            >
-              <MessageCirclePlus className="h-4 w-4" /> Nova conversa
-            </Button>
-            {podeConfig && (
-              <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/whatsapp/chatbot")}>
-                <Settings className="h-4 w-4" /> Chatbot
+    <div className="max-md:h-[calc(100dvh_-_var(--topo-mobile)_-_var(--nav-mobile))]">
+      <div className="hidden md:block">
+        <PageHeader
+          title="WhatsApp — Caixa de Entrada"
+          subtitle="Atenda conversas e acompanhe o chatbot."
+          module="Central de Serviços"
+          breadcrumb={["WhatsApp", "Caixa de Entrada"]}
+          actions={
+            <div className="flex gap-2">
+              <Button
+                className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
+                onClick={() => setNovaConversa(true)}
+              >
+                <MessageCirclePlus className="h-4 w-4" /> Nova conversa
               </Button>
-            )}
-          </div>
-        }
-      />
+              {podeConfig && (
+                <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/whatsapp/chatbot")}>
+                  <Settings className="h-4 w-4" /> Chatbot
+                </Button>
+              )}
+            </div>
+          }
+        />
+      </div>
+
+      {/* Celular: nova conversa fica onde o polegar alcança. */}
+      <Button
+        aria-label="Nova conversa"
+        onClick={() => setNovaConversa(true)}
+        className="some-com-teclado fixed bottom-[calc(var(--nav-mobile)_+_0.75rem)] right-3 z-20 h-14 w-14 rounded-2xl bg-success p-0 text-success-foreground shadow-lg hover:bg-success/90 active:scale-95 md:hidden"
+      >
+        <MessageCirclePlus className="h-6 w-6" />
+      </Button>
 
       <PreencherVariaveis
         mensagem={preenchendo}
@@ -483,16 +551,19 @@ export default function WhatsAppInbox() {
           qc.invalidateQueries({ queryKey: ["wa-conversas"] });
           if (podeTodas) setPastaSel(pasta ?? SEM_PASTA);
           else if (pasta && pastasVisiveis.some((p) => p.codigo === pasta)) setPastaSel(pasta);
-          setSelId(id);
+          selecionarConversa(id);
         }}
       />
 
-      <Card className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-[320px_minmax(0,1fr)] overflow-hidden p-0">
+      {/* Até o `md` só cabe uma coluna: a lista toma a tela, e a conversa abre
+          por cima dela (ConversaTelaCheia). */}
+      <Card className="grid h-[calc(100dvh_-_220px_-_var(--nav-mobile))] min-h-[480px] grid-cols-1 overflow-hidden p-0 max-md:h-full max-md:min-h-0 max-md:rounded-none max-md:border-0 max-md:shadow-none md:grid-cols-[320px_minmax(0,1fr)]">
         {/* Lista de conversas */}
-        <div className="flex min-h-0 flex-col border-r border-border">
+        <div className="flex min-h-0 flex-col md:border-r md:border-border">
           {/* Pastas. A lista só mostra a pasta aberta — "Todas as conversas" é
-              uma opção, não o padrão de todo mundo. */}
-          <div className="flex flex-wrap gap-1 border-b border-border p-2">
+              uma opção, não o padrão de todo mundo. No celular corre de lado:
+              em várias linhas tomava metade da tela. */}
+          <div className="rolagem-chips order-2 flex gap-1.5 overflow-x-auto px-2 pb-2 md:order-none md:flex-wrap md:gap-1 md:overflow-visible md:border-b md:border-border md:p-2">
             {abas.map((a) => {
               const n = daPasta(a.codigo).reduce((s, c) => s + (c.nao_lidas || 0), 0);
               const ativa = pastaSel === a.codigo;
@@ -500,7 +571,7 @@ export default function WhatsAppInbox() {
                 <button
                   key={a.codigo}
                   onClick={() => { setPastaSel(a.codigo); setSelId(null); }}
-                  className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  className={`flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors md:px-2.5 md:py-1 md:text-[11px] ${
                     ativa ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}
                 >
                   {a.codigo === TODAS && <Inbox className="h-3 w-3" />}
@@ -517,20 +588,27 @@ export default function WhatsAppInbox() {
               </p>
             )}
           </div>
-          <div className="border-b border-border p-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input className="h-9 pl-8 text-sm" placeholder="Buscar por nome, número ou etiqueta…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+          <div className="order-1 flex items-center gap-1.5 p-2 md:order-none md:block md:pb-0">
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground md:left-2.5" />
+              <Input className="h-10 rounded-full pl-9 text-sm md:h-9 md:rounded-md md:pl-8" placeholder="Buscar por nome, número ou etiqueta…" value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
+            {podeConfig && (
+              <Button variant="ghost" size="icon" aria-label="Configurar o chatbot" className="h-10 w-10 shrink-0 text-muted-foreground md:hidden" onClick={() => nav("/app/whatsapp/chatbot")}>
+                <Settings className="h-5 w-5" />
+              </Button>
+            )}
+          </div>
 
-            {/* Filtro por etiqueta, dentro da pasta. Só aparece quando há
-                etiqueta na pasta — em pasta sem nenhuma, uma fileira de
-                chips vazia é só ruído ocupando a altura da lista. */}
-            {etiquetasDaPasta.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-1">
+          {/* Filtro por etiqueta, dentro da pasta. Só aparece quando há
+              etiqueta na pasta — em pasta sem nenhuma, uma fileira de
+              chips vazia é só ruído ocupando a altura da lista. */}
+          {etiquetasDaPasta.length > 0 && (
+            <div className="rolagem-chips order-3 px-2 pb-2 md:order-none md:pt-2">
+              <div className="flex items-center gap-1 overflow-x-auto md:flex-wrap md:overflow-visible">
                 <button
                   type="button" onClick={() => setEtiquetaSel("")}
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium md:px-2 md:py-0.5 ${
                     etiquetaSel === "" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}
                 >
                   Todas
@@ -539,27 +617,27 @@ export default function WhatsAppInbox() {
                   <button
                     key={e} type="button"
                     onClick={() => setEtiquetaSel((v) => (v === e ? "" : e))}
-                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-medium md:px-2 md:py-0.5 ${
                       etiquetaSel === e ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary hover:bg-primary/20"}`}
                   >
                     {e} <span className="opacity-70">{n}</span>
                   </button>
                 ))}
               </div>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto">
+            </div>
+          )}
+          <div className="order-4 min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-border max-md:pb-20 md:order-none">
             {filtradas.map((c) => (
               <button
                 key={c.id}
                 onClick={() => abrir(c)}
-                className={`flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left hover:bg-muted/50 ${selId === c.id ? "bg-muted" : ""}`}
+                className={`flex w-full items-center gap-3 border-b border-border/50 px-3 py-3 text-left hover:bg-muted/50 active:bg-muted md:gap-2.5 md:py-2.5 ${selId === c.id ? "bg-muted" : ""}`}
               >
-                <Avatar className="h-9 w-9 shrink-0"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(nomeContato(c.contato), c.contato?.wa_id)}</AvatarFallback></Avatar>
+                <Avatar className="h-12 w-12 shrink-0 md:h-9 md:w-9"><AvatarFallback className="bg-success/15 text-sm text-success md:text-[11px]">{iniciais(nomeContato(c.contato), c.contato?.wa_id)}</AvatarFallback></Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium">{nomeContato(c.contato)}</p>
-                    <span className="shrink-0 text-[10px] text-muted-foreground">{fmtHora(c.ultima_mensagem_em)}</span>
+                    <p className={`truncate text-[15px] md:text-sm ${c.nao_lidas > 0 ? "font-semibold" : "font-medium"}`}>{nomeContato(c.contato)}</p>
+                    <span className={`shrink-0 text-[11px] md:text-[10px] ${c.nao_lidas > 0 ? "font-semibold text-success" : "text-muted-foreground"}`}>{fmtHora(c.ultima_mensagem_em)}</span>
                   </div>
                   {/* Etiquetas: no máximo duas na lista, para a linha não virar
                       uma parede de chips e esconder a prévia da mensagem. */}
@@ -574,11 +652,11 @@ export default function WhatsAppInbox() {
                     </div>
                   )}
                   <div className="flex items-center gap-1.5">
-                    <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    <p className={`min-w-0 flex-1 truncate text-[13px] md:text-xs ${c.nao_lidas > 0 ? "text-foreground" : "text-muted-foreground"}`}>
                       {c.ultima_direcao === "saida" ? "Você: " : ""}{c.ultima_mensagem_preview || "—"}
                     </p>
                     {!c.bot_ativo && <User className="h-3 w-3 shrink-0 text-info" />}
-                    {c.nao_lidas > 0 && <Badge className="h-4 min-w-4 justify-center rounded-full bg-success px-1 text-[10px] text-success-foreground">{c.nao_lidas}</Badge>}
+                    {c.nao_lidas > 0 && <Badge className="h-5 min-w-5 justify-center rounded-full bg-success px-1 text-[11px] text-success-foreground md:h-4 md:min-w-4 md:text-[10px]">{c.nao_lidas}</Badge>}
                   </div>
                 </div>
               </button>
@@ -589,7 +667,7 @@ export default function WhatsAppInbox() {
 
         {/* Thread */}
         {!sel ? (
-          <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
+          <div className="hidden flex-col items-center justify-center gap-2 text-muted-foreground md:flex">
             <MessageCircle className="h-10 w-10 opacity-40" />
             <p className="text-sm">Selecione uma conversa</p>
           </div>
@@ -597,14 +675,78 @@ export default function WhatsAppInbox() {
           // min-h-0: sem isso o item do grid cresce com o conteúdo, o composer
           // é empurrado para fora do Card (que tem overflow-hidden) e some da
           // tela assim que a conversa fica longa.
-          <div className="flex min-h-0 min-w-0 flex-col">
+          <ConversaTelaCheia ativa={telaPequena} fim={fimRef}>
+          <div className="flex h-full min-h-0 min-w-0 flex-col">
+            {/* Cabeçalho do celular: voltar, quem é, e o resto no menu. Tocar no
+                nome abre a ficha, como nos apps de mensagem. */}
+            <div className="flex shrink-0 items-center gap-1 border-b border-border bg-surface pl-1 pr-1 pt-[env(safe-area-inset-top)] md:hidden">
+              <Button variant="ghost" size="icon" aria-label="Voltar para as conversas" className="h-11 w-11 shrink-0" onClick={fecharConversa}>
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <button type="button" onClick={() => setFicha(true)} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-2 text-left active:bg-muted/60">
+                <Avatar className="h-9 w-9 shrink-0"><AvatarFallback className="bg-success/15 text-xs text-success">{iniciais(nomeContato(sel.contato), sel.contato?.wa_id)}</AvatarFallback></Avatar>
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-semibold leading-tight">{nomeContato(sel.contato)}</span>
+                  <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                    {sel.bot_ativo ? <Bot className="h-3 w-3 shrink-0" /> : <User className="h-3 w-3 shrink-0" />}
+                    {fmtTelefone(sel.contato?.wa_id)}
+                  </span>
+                </span>
+              </button>
+              <Button variant="ghost" size="icon" aria-label="Buscar mensagens novas" className="h-11 w-11 shrink-0 text-muted-foreground" onClick={atualizarConversa} disabled={buscandoMensagens}>
+                <RefreshCw className={`h-5 w-5 ${buscandoMensagens ? "animate-spin" : ""}`} />
+              </Button>
+              <Button variant="ghost" size="icon" aria-label="Opções da conversa" className="h-11 w-11 shrink-0 text-muted-foreground" onClick={() => setOpcoesConversa(true)}>
+                <MoreVertical className="h-5 w-5" />
+              </Button>
+            </div>
+
+            {/* Tudo o que no computador fica à vista no cabeçalho. */}
+            <Sheet open={opcoesConversa && telaPequena} onOpenChange={setOpcoesConversa}>
+              <SheetContent
+                side="bottom"
+                onOpenAutoFocus={(e) => e.preventDefault()}
+                className="rounded-t-2xl pb-[calc(1.5rem_+_env(safe-area-inset-bottom))]"
+              >
+                <SheetHeader className="text-left">
+                  <SheetTitle className="truncate pr-8 text-base">{nomeContato(sel.contato)}</SheetTitle>
+                </SheetHeader>
+                <div className="mt-4 space-y-2">
+                  {!!sel.contato?.etiquetas?.length && (
+                    <div className="flex flex-wrap gap-1 pb-1">
+                      {sel.contato.etiquetas.map((e) => (
+                        <span key={e} className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">{e}</span>
+                      ))}
+                    </div>
+                  )}
+                  <label className="block text-xs font-medium text-muted-foreground">Pasta da conversa</label>
+                  <Select value={sel.pasta_codigo ?? SEM_PASTA} onValueChange={moverPara}>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="Pasta" /></SelectTrigger>
+                    <SelectContent>
+                      {podeTodas && <SelectItem value={SEM_PASTA}>Sem pasta</SelectItem>}
+                      {pastasVisiveis.map((p) => <SelectItem key={p.codigo} value={p.codigo}>{p.nome}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" className={`h-11 w-full justify-start gap-2 ${sel.bot_ativo ? "text-success" : "text-info"}`} onClick={alternarBot}>
+                    {sel.bot_ativo ? <><User className="h-4 w-4" /> Assumir o atendimento</> : <><Bot className="h-4 w-4" /> Devolver para o bot</>}
+                  </Button>
+                  <Button variant="outline" className="h-11 w-full justify-start gap-2" onClick={() => { setOpcoesConversa(false); setFicha(true); }}>
+                    <Tag className="h-4 w-4" /> Ficha do contato
+                  </Button>
+                  <Button variant="outline" className="h-11 w-full justify-start gap-2" onClick={() => { setOpcoesConversa(false); setHistorico(true); }}>
+                    <History className="h-4 w-4" /> Histórico
+                  </Button>
+                </div>
+              </SheetContent>
+            </Sheet>
+
             {/* Cabeçalho */}
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <Avatar className="h-8 w-8"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(nomeContato(sel.contato), sel.contato?.wa_id)}</AvatarFallback></Avatar>
+            <div className="hidden shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5 md:flex">
+              <div className="flex min-w-[12rem] flex-1 basis-48 items-center gap-2.5">
+                <Avatar className="h-8 w-8 shrink-0"><AvatarFallback className="bg-success/15 text-[11px] text-success">{iniciais(nomeContato(sel.contato), sel.contato?.wa_id)}</AvatarFallback></Avatar>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{nomeContato(sel.contato)}</p>
-                  <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <p className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
                     {fmtTelefone(sel.contato?.wa_id)}
                     {sel.contato?.etiquetas?.map((e) => (
                       <span key={e} className="rounded-full bg-primary/10 px-1.5 py-px font-medium text-primary">{e}</span>
@@ -612,7 +754,9 @@ export default function WhatsAppInbox() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              {/* Sem espaço, os botões descem para uma segunda linha: antes eram
+                  empurrados para fora da caixa, e o Histórico ficava cortado. */}
+              <div className="flex flex-wrap items-center gap-2">
                 <Select value={sel.pasta_codigo ?? SEM_PASTA} onValueChange={moverPara}>
                   <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="Pasta" /></SelectTrigger>
                   <SelectContent>
@@ -640,7 +784,7 @@ export default function WhatsAppInbox() {
                 escondida na ficha — o recado só serve se for lido ANTES de
                 responder. */}
             {sel.contato?.observacao && (
-              <div className="shrink-0 border-b border-border bg-warning/5 px-4 py-1.5 text-[11px] text-muted-foreground">
+              <div className="line-clamp-2 shrink-0 border-b border-border bg-warning/5 px-4 py-1.5 text-[11px] text-muted-foreground md:line-clamp-none">
                 <b>Observação:</b> {sel.contato.observacao}
               </div>
             )}
@@ -655,7 +799,7 @@ export default function WhatsAppInbox() {
             <FichaContato contato={sel.contato ?? null} aberto={ficha} onFechar={() => setFicha(false)} />
 
             {/* Mensagens */}
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-muted/30 p-4">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain bg-muted/30 p-3 md:p-4">
               {mensagens.map((m) => {
                 const saida = m.direcao === "saida";
                 // Evento da conversa (conclusão/reabertura): não foi enviado a
@@ -675,8 +819,11 @@ export default function WhatsAppInbox() {
                   <div key={m.id} className={`group flex items-center gap-1 ${saida ? "justify-end" : "justify-start"}`}>
                     {/* Seletor de reação: aparece no hover, do lado de fora da
                         bolha, para não empurrar o texto nem cobrir o conteúdo. */}
-                    {saida && m.wa_message_id && <SeletorReacao onEscolher={(e) => reagir(m, e)} atual={m.payload?.reacoes?.nossa} />}
-                    <div className={`relative max-w-[75%] rounded-lg px-3 py-1.5 text-sm shadow-sm ${saida ? "bg-success/90 text-success-foreground" : "bg-card"}`}>
+                    {saida && m.wa_message_id && <SeletorReacao lado="esquerda" tocada={mensagemTocada === m.id} onEscolher={(e) => reagir(m, e)} atual={m.payload?.reacoes?.nossa} />}
+                    <div
+                      onClick={() => { if (telaDeToque()) setMensagemTocada((t) => (t === m.id ? null : m.id)); }}
+                      className={`relative min-w-0 max-w-[82%] rounded-lg px-3 py-1.5 text-sm shadow-sm md:max-w-[75%] ${saida ? "bg-success/90 text-success-foreground" : "bg-card"}`}
+                    >
                       {m.origem === "bot" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-80"><Bot className="h-3 w-3" /> bot</p>}
                       {!saida && m.payload?.reply_id && (
                         <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase opacity-70"><MousePointerClick className="h-3 w-3" /> resposta</p>
@@ -737,7 +884,7 @@ export default function WhatsAppInbox() {
                         </div>
                       )}
                     </div>
-                    {!saida && m.wa_message_id && <SeletorReacao onEscolher={(e) => reagir(m, e)} atual={m.payload?.reacoes?.nossa} />}
+                    {!saida && m.wa_message_id && <SeletorReacao lado="direita" tocada={mensagemTocada === m.id} onEscolher={(e) => reagir(m, e)} atual={m.payload?.reacoes?.nossa} />}
                   </div>
                 );
               })}
@@ -748,8 +895,14 @@ export default function WhatsAppInbox() {
             {/* Composer. Menus de botões são configurados no Chatbot e enviados
                 pelo bot; aqui o atendente escreve texto e pode anexar arquivo
                 (clipe, arrastar ou Ctrl+V com print na área de transferência). */}
+            {telaPequena && sel.bot_ativo && (
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border/50 bg-warning/5 px-3 py-1 text-xs text-muted-foreground">
+                <span className="flex min-w-0 items-center gap-1.5"><Bot className="h-3.5 w-3.5 shrink-0" /> O bot está respondendo</span>
+                <button type="button" onClick={alternarBot} className="shrink-0 rounded px-2 py-1.5 font-semibold text-primary active:bg-muted">Assumir</button>
+              </div>
+            )}
             <div
-              className="shrink-0 border-t border-border p-3"
+              className="shrink-0 border-t border-border bg-surface p-2 pb-[calc(0.5rem_+_env(safe-area-inset-bottom))] md:bg-transparent md:p-3"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); anexar(e.dataTransfer.files?.[0]); }}
             >
@@ -764,59 +917,112 @@ export default function WhatsAppInbox() {
                 />
               )}
               {anexo && <PreviaAnexo arquivo={anexo} onRemover={() => setAnexo(null)} />}
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-1.5 md:gap-2">
                 <input
                   ref={inputArquivo} type="file" className="hidden"
                   onChange={(e) => { anexar(e.target.files?.[0]); e.target.value = ""; }}
                 />
                 <Button
-                  variant="outline" size="icon" className="h-10 w-10 shrink-0"
+                  variant="outline" size="icon" className="h-10 w-10 shrink-0 max-md:rounded-full max-md:border-0 max-md:text-muted-foreground"
                   title="Anexar arquivo (ou cole um print com Ctrl+V)"
+                  aria-label="Anexar arquivo"
                   onClick={() => inputArquivo.current?.click()} disabled={enviando}
                 >
-                  <Paperclip className="h-4 w-4" />
+                  <Paperclip className="h-4 w-4 max-md:h-5 max-md:w-5" />
+                </Button>
+                {/* No teclado do celular a "/" fica escondida; aqui ela é um toque. */}
+                <Button
+                  variant="ghost" size="icon" aria-label="Mensagens prontas"
+                  className={`-ml-1.5 h-10 w-10 shrink-0 rounded-full md:hidden ${menuAberto ? "text-primary" : "text-muted-foreground"}`}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={abrirMensagensProntas} disabled={enviando || !!anexo}
+                >
+                  <Zap className="h-5 w-5" />
                 </Button>
                 <Textarea
-                  rows={1} className="max-h-32 min-h-[40px] resize-none"
-                  placeholder={anexo ? "Legenda (opcional)…" : "Digite uma mensagem, ou / para as prontas…"}
+                  ref={campoTexto}
+                  rows={1} className="max-h-32 min-h-[40px] resize-none max-md:rounded-2xl"
+                  placeholder={anexo ? "Legenda (opcional)…" : telaPequena ? "Mensagem" : "Digite uma mensagem, ou / para as prontas…"}
                   value={texto} onChange={(e) => setTexto(e.target.value)}
                   onPaste={aoColar}
                   onKeyDown={(e) => {
                     // Com o menu aberto, ↑/↓/Enter/Esc são dele — só o que
                     // ele não usar cai no comportamento normal do campo.
                     if (menuAberto && navegarMenu.current?.(e)) { e.preventDefault(); return; }
-                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); }
+                    // No toque o Enter pula linha, como em todo app de mensagem:
+                    // não existe Shift, e o envio tem botão próprio.
+                    if (e.key === "Enter" && !e.shiftKey && !telaDeToque()) { e.preventDefault(); enviar(); }
                   }}
                 />
-                <Button className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90" onClick={enviar} disabled={(!texto.trim() && !anexo) || menuAberto || enviando}>
+                {/* onPointerDown: tocar em enviar não tira o foco do campo, e o
+                    teclado continua aberto para a próxima mensagem. */}
+                <Button
+                  aria-label="Enviar"
+                  className="shrink-0 gap-1.5 bg-success text-success-foreground hover:bg-success/90 max-md:h-10 max-md:w-10 max-md:rounded-full max-md:p-0"
+                  onPointerDown={(e) => { if (telaPequena) e.preventDefault(); }}
+                  onClick={enviar} disabled={(!texto.trim() && !anexo) || menuAberto || enviando}
+                >
                   {enviando
-                    ? <><Loader2 className="h-4 w-4 animate-spin" /> Enviando…</>
-                    : <><Send className="h-4 w-4" /> Enviar</>}
+                    ? <><Loader2 className="h-4 w-4 animate-spin" /> <span className="max-md:hidden">Enviando…</span></>
+                    : <><Send className="h-4 w-4" /> <span className="max-md:hidden">Enviar</span></>}
                 </Button>
               </div>
             </div>
-            {sel.bot_ativo && (
+            {!telaPequena && sel.bot_ativo && (
               <p className="shrink-0 border-t border-border/50 bg-warning/5 px-3 py-1 text-[11px] text-muted-foreground">
                 O bot responde automaticamente. Ao enviar manualmente, considere desligar o bot para assumir o atendimento.
               </p>
             )}
           </div>
+          </ConversaTelaCheia>
         )}
       </Card>
     </div>
   );
 }
 
+const telaDeToque = () => typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+
+/**
+ * No celular a conversa é uma tela própria, por cima das barras do ERP. Vai por
+ * portal para o <body>: o `sh-entra` do AppShell anima com transform, e transform
+ * num ancestral prende o `fixed` na área de conteúdo. A altura vem do viewport
+ * visível, para o campo de digitar ficar acima do teclado também no iPhone.
+ * No computador não faz nada: os filhos ficam na grade.
+ */
+function ConversaTelaCheia({ ativa, fim, children }: { ativa: boolean; fim: React.RefObject<HTMLDivElement>; children: React.ReactNode }) {
+  const area = useAreaVisivel(ativa);
+  // O teclado abriu ou fechou: a última mensagem continua à vista.
+  useEffect(() => { if (ativa) fim.current?.scrollIntoView({ block: "end" }); }, [ativa, area?.height, fim]);
+  useEffect(() => {
+    if (!ativa) return;
+    const antes = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = antes; };
+  }, [ativa]);
+  if (!ativa) return <>{children}</>;
+  return createPortal(
+    <div
+      style={area ? { top: area.top, height: area.height } : { top: 0, height: "100dvh" }}
+      className="fixed inset-x-0 z-40 flex flex-col overflow-hidden bg-background"
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 // Seletor de reação. Fica invisível até passar o mouse na linha da mensagem
 // (group-hover) para não poluir a conversa com seis emojis por bolha.
-function SeletorReacao({ onEscolher, atual }: { onEscolher: (emoji: string) => void; atual?: string | null }) {
+function SeletorReacao({ onEscolher, atual, lado, tocada }: { onEscolher: (emoji: string) => void; atual?: string | null; lado: "esquerda" | "direita"; tocada: boolean }) {
   const [aberto, setAberto] = useState(false);
   return (
     <div className="relative shrink-0">
       <button
         type="button"
         onClick={() => setAberto((v) => !v)}
-        className={`rounded-full p-1 text-muted-foreground transition hover:bg-muted ${aberto ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+        // Sem mouse não existe hover: no toque quem mostra é `tocada`.
+        className={`rounded-full p-1 text-muted-foreground transition hover:bg-muted ${aberto || tocada ? "opacity-100" : "opacity-0 group-hover:opacity-100 [@media(hover:none)]:pointer-events-none [@media(hover:none)]:opacity-0"}`}
         title="Reagir"
       >
         <SmilePlus className="h-4 w-4" />
@@ -825,12 +1031,13 @@ function SeletorReacao({ onEscolher, atual }: { onEscolher: (emoji: string) => v
         <>
           {/* Camada de fora fecha ao clicar em qualquer lugar. */}
           <div className="fixed inset-0 z-10" onClick={() => setAberto(false)} />
-          <div className="absolute bottom-full z-20 mb-1 flex gap-0.5 rounded-full border border-border bg-popover p-1 shadow-md">
+          {/* Abre para dentro da conversa: colado na borda, sairia da tela. */}
+          <div className={`absolute bottom-full z-20 mb-1 flex gap-0.5 rounded-full border border-border bg-popover p-1 shadow-md ${lado === "esquerda" ? "left-0" : "right-0"}`}>
             {EMOJIS_REACAO.map((e) => (
               <button
                 key={e} type="button"
                 onClick={() => { onEscolher(e); setAberto(false); }}
-                className={`rounded-full px-1 text-base leading-none transition hover:scale-125 ${atual === e ? "bg-muted" : ""}`}
+                className={`rounded-full px-1 text-base leading-none transition hover:scale-125 max-md:p-1 max-md:text-xl ${atual === e ? "bg-muted" : ""}`}
                 title={atual === e ? "Remover reação" : `Reagir com ${e}`}
               >
                 {e}

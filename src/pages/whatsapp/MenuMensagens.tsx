@@ -232,7 +232,7 @@ export function MenuMensagens({ filtro, itens, status, onEscolher, onFechar, reg
             className={`flex w-full flex-col gap-0.5 border-b border-border/50 px-3 py-2 text-left last:border-b-0 ${
               i === ativo ? "bg-accent" : "hover:bg-accent/50"}`}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{tituloDoItem(item)}</span>
               <code className="text-[11px] text-muted-foreground">/{codigoDoItem(item)}</code>
               {item.tipo === "bot" && (
