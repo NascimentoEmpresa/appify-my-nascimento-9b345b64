@@ -109,6 +109,7 @@ interface FiltrosExport {
   empresaIds: string[];
   bancoIds: string[];
   contratoIds: string[];
+  integranteIds: string[];
   classificacaoIds: string[];
   formasPagamento: string[];
   valor: string;
@@ -118,7 +119,7 @@ interface FiltrosExport {
 }
 
 const FILTROS_EXPORT_VAZIOS: FiltrosExport = {
-  dataDe: "", dataAte: "", competencia: "", competenciaAte: "", empresaIds: [], bancoIds: [], contratoIds: [], classificacaoIds: [], formasPagamento: [], valor: "",
+  dataDe: "", dataAte: "", competencia: "", competenciaAte: "", empresaIds: [], bancoIds: [], contratoIds: [], integranteIds: [], classificacaoIds: [], formasPagamento: [], valor: "",
   tipo: "todos", origens: [], soRevisar: false,
 };
 
@@ -207,16 +208,19 @@ export default function FluxoCaixaGestao() {
   const linhasTodas = useMemo(() => {
     const grupos = new Map<
       string,
-      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao>; partes: Map<string, number> }
+      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao>; partes: Map<string, number>; integrantes: Map<number, string>; qtd: number }
     >();
     for (const l of linhasBrutas) {
       const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
       let grupo = grupos.get(chave);
       if (!grupo) {
-        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map(), partes: new Map() };
+        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map(), partes: new Map(), integrantes: new Map(), qtd: 0 };
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
+      // SIS-2026-0823: integrante(s) e quantas linhas de rateio a despesa tem (a troca em massa só vale com uma).
+      grupo.qtd += 1;
+      if (l.integrante_empregado_id != null && !l.fatura_cartao_id) grupo.integrantes.set(Number(l.integrante_empregado_id), l.integrante_nome ?? "—");
       grupo.partes.set(l.classificacao_id ?? "", (grupo.partes.get(l.classificacao_id ?? "") ?? 0) + (Number(l.valor) || 0));
       if (l.classificacao_id) grupo.classes.add(l.classificacao_id);
       if (!l.fatura_cartao_id) {
@@ -251,7 +255,14 @@ export default function FluxoCaixaGestao() {
         grupo.contratos.set(chaveContrato, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
       }
     }
-    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass, partes }) => {
+    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass, partes, integrantes, qtd }) => {
+      // SIS-2026-0823: um integrante só mostra o nome; mais de um, "Vários" (despesa rateada entre pessoas).
+      const infoIntegrante = {
+        integrante_empregado_id: integrantes.size === 1 ? Array.from(integrantes.keys())[0] : null,
+        integrante_nome: integrantes.size === 1 ? Array.from(integrantes.values())[0] : integrantes.size > 1 ? "Vários" : null,
+        qtdLinhasRateio: qtd,
+        integrantesIds: Array.from(integrantes.keys()),
+      };
       // SIS-2026-0726: valor por classificação, para os cards separarem por natureza (conta movimento / vinculada / CDB).
       const partesClassificacao = Array.from(partes, ([k, v]) => ({ classificacaoId: k || null, valor: v }));
       // SIS-2026-0632: fatura consolidada junta despesas de classificações diferentes numa linha só.
@@ -268,15 +279,15 @@ export default function FluxoCaixaGestao() {
       if (base.fatura_cartao_id && despesas.size > 0) {
         const rateioDetalhe = Array.from(despesas.values())
           .sort((a, b) => (a.dataCompra ?? "").localeCompare(b.dataCompra ?? "") || a.nome.localeCompare(b.nome, "pt-BR", { numeric: true }));
-        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe, classificacaoDetalhe, classificacoesIds, partesClassificacao };
+        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe, classificacaoDetalhe, classificacoesIds, partesClassificacao, ...infoIntegrante };
       }
       if (contratos.size > 1) {
         const rateioDetalhe = Array.from(contratos.entries())
           .map(([id, { nome, valor: valorContrato }]) => ({ id, nome, valor: valorContrato }))
           .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe, classificacaoDetalhe, classificacoesIds, partesClassificacao };
+        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe, classificacaoDetalhe, classificacoesIds, partesClassificacao, ...infoIntegrante };
       }
-      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined, classificacaoDetalhe, classificacoesIds, partesClassificacao };
+      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined, classificacaoDetalhe, classificacoesIds, partesClassificacao, ...infoIntegrante };
     });
   }, [linhasBrutas]);
 
@@ -496,6 +507,8 @@ export default function FluxoCaixaGestao() {
   const doParametroLista = (k: string) => (searchParams.get(k) ?? "").split(",").filter(Boolean);
   const [contratoIds, setContratoIds] = useState<string[]>(() => doParametroLista("contrato"));
   const [classificacaoIds, setClassificacaoIds] = useState<string[]>(() => doParametroLista("classificacao"));
+  // SIS-2026-0823: filtro por Integrante (só despesa do Malote tem; "Sem integrante" = as demais e as ainda sem ninguém).
+  const [integranteIds, setIntegranteIds] = useState<string[]>(() => doParametroLista("integrante"));
   const [formasFiltro, setFormasFiltro] = useState<string[]>([]);
   const [situacoes, setSituacoes] = useState<SituacaoFluxo[]>([]);
   const [kpiAberto, setKpiAberto] = useState<KpiFluxo | null>(null);
@@ -541,6 +554,13 @@ export default function FluxoCaixaGestao() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhas]);
 
+  // As opções saem das linhas brutas: a linha agrupada de uma despesa rateada entre pessoas só carrega "Vários".
+  const integrantesDisponiveis = useMemo(() => {
+    const map = new Map<string, string>();
+    linhasBrutas.forEach((l) => l.integrante_empregado_id != null && l.integrante_nome && map.set(String(l.integrante_empregado_id), l.integrante_nome));
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+  }, [linhasBrutas]);
+
   const classificacoesDisponiveis = useMemo(() => {
     const map = new Map<string, string>();
     linhas.forEach((l) => l.classificacao_id && l.classificacao_nome && map.set(l.classificacao_id, l.classificacao_nome));
@@ -580,6 +600,7 @@ export default function FluxoCaixaGestao() {
     setEmpresaIds([]);
     setOrigensFiltro([]);
     setContratoIds([]);
+    setIntegranteIds([]);
     setClassificacaoIds([]);
     setFormasFiltro([]);
     setSituacoes([]);
@@ -604,6 +625,7 @@ export default function FluxoCaixaGestao() {
       if (origensFiltro.length > 0 && !origensFiltro.some((o) => linhaDaOrigemDoCard(l, o))) return false;
       // Rateio com cota no contrato escolhido também entra (a fatia dele é somada abaixo).
       if (!casaSelecao(contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) return false;
+      if (!casaSelecao(integranteIds, !!l.integrante_nome, (id) => !!l.integrantesIds?.includes(Number(id)))) return false;
       if (!casaSelecao(classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
       if (formasFiltro.length > 0 && !formasFiltro.includes(l.forma_pagamento ?? "")) return false;
       if (bancoIds.length > 0 && !bancoIds.includes(l.banco_id ?? "")) return false;
@@ -613,7 +635,7 @@ export default function FluxoCaixaGestao() {
       if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     }).map((l) => fatiaDoContratoNaLinha(l, contratoIds.filter((id) => id !== FILTRO_SEM_VALOR)));
-  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tiposFiltro, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, contaIds, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tiposFiltro, empresaIds, origensFiltro, contratoIds, integranteIds, classificacaoIds, formasFiltro, bancoIds, contaIds, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -649,7 +671,7 @@ export default function FluxoCaixaGestao() {
 
   function abrirExportacao() {
     setFx({
-      dataDe, dataAte, competencia, competenciaAte, empresaIds, bancoIds, contratoIds, classificacaoIds, formasPagamento: formasFiltro, valor,
+      dataDe, dataAte, competencia, competenciaAte, empresaIds, bancoIds, contratoIds, integranteIds, classificacaoIds, formasPagamento: formasFiltro, valor,
       tipo: tiposFiltro.length === 1 ? (tiposFiltro[0] as FiltrosExport["tipo"]) : "todos", origens: origensFiltro.filter((o): o is FluxoCaixaMaloteLinha["origem"] => o in LABEL_ORIGEM), soRevisar: soInconsistentes,
     });
     setExportando(true);
@@ -674,6 +696,7 @@ export default function FluxoCaixaGestao() {
       if (fx.empresaIds.length > 0 && !fx.empresaIds.includes(l.empresa_id ?? "")) return false;
       if (fx.bancoIds.length > 0 && !fx.bancoIds.includes(l.banco_id ?? "")) return false;
       if (!casaSelecao(fx.contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) return false;
+      if (!casaSelecao(fx.integranteIds, !!l.integrante_nome, (id) => !!l.integrantesIds?.includes(Number(id)))) return false;
       if (!casaSelecao(fx.classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
       if (fx.formasPagamento.length > 0 && !fx.formasPagamento.includes(l.forma_pagamento ?? "")) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
@@ -709,6 +732,7 @@ export default function FluxoCaixaGestao() {
         Competência: mesAno(l.competencia),
         Empresa: l.empresa_nome ?? "",
         Contrato: contrato,
+        Integrante: l.integrante_nome ?? "",
         Rateado: rateado ? "Sim" : "",
         "Valor do lançamento (rateado)": rateado ? (l.tipo === "entrada" ? valorLancamento : -valorLancamento) : "",
         "Forma de pagamento": l.forma_pagamento ?? "",
@@ -724,6 +748,7 @@ export default function FluxoCaixaGestao() {
       ["Empresa", nomesSelecionados(empresasDisponiveis, fx.empresaIds, "Todas")],
       ["Banco", nomesSelecionados(bancosDisponiveis, fx.bancoIds, "Todos")],
       ["Centro de Custo", nomesSelecionados(contratosDisponiveis, fx.contratoIds, "Todos")],
+      ["Integrante", nomesSelecionados(integrantesDisponiveis, fx.integranteIds, "Todos")],
       ["Classificação", nomesSelecionados(classificacoesDisponiveis, fx.classificacaoIds, "Todas")],
       ["Forma de pagamento", fx.formasPagamento.length > 0 ? fx.formasPagamento.join(", ") : "Todas"],
       ["Valor (exato)", parseValorBR(fx.valor) !== null ? fx.valor.trim() : "Todos"],
@@ -856,6 +881,10 @@ export default function FluxoCaixaGestao() {
             <div className="space-y-1">
               <Label className="text-xs">Centro de Custo</Label>
               <SearchableMultiSelect value={fx.contratoIds} onChange={(v) => setFx((f) => ({ ...f, contratoIds: v }))} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Integrante</Label>
+              <SearchableMultiSelect value={fx.integranteIds} onChange={(v) => setFx((f) => ({ ...f, integranteIds: v }))} options={opcoesDe(integrantesDisponiveis, "Sem integrante (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Classificação</Label>
@@ -1117,6 +1146,10 @@ export default function FluxoCaixaGestao() {
               <Label className="text-xs">Centro de Custo</Label>
               <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
+            <div>
+              <Label className="text-xs" title="Só despesas do Malote têm integrante: ao escolher uma pessoa, as linhas de outras origens saem da lista.">Integrante</Label>
+              <SearchableMultiSelect className="text-xs" value={integranteIds} onChange={(v) => { setIntegranteIds(v); setPage(1); }} options={opcoesDe(integrantesDisponiveis, "Sem integrante (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+            </div>
             {aba !== "realizado" && (
               <div>
                 <Label className="text-xs">Situação</Label>
@@ -1243,6 +1276,7 @@ export default function FluxoCaixaGestao() {
                   <TableHead className="text-center">Competência</TableHead>
                   <TableHead className="text-center">Empresa</TableHead>
                   <TableHead className="text-center">Centro de Custo</TableHead>
+                  <TableHead className="text-center">Integrante</TableHead>
                   <TableHead className="text-center">Banco</TableHead>
                   <TableHead className="text-center">Forma de Pagamento</TableHead>
                   <TableHead className="text-center">Valor (R$)</TableHead>
@@ -1252,12 +1286,12 @@ export default function FluxoCaixaGestao() {
               <TableBody>
                 {!erroDoFluxo && estaCarregandoFluxo && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={14} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!erroDoFluxo && !estaCarregandoFluxo && filtradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={14} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <TrendingDown className="h-8 w-8 text-muted-foreground/50" />
                         Nenhuma movimentação encontrada com os filtros atuais.
@@ -1367,6 +1401,9 @@ export default function FluxoCaixaGestao() {
                       ) : (
                         <span className="mx-auto line-clamp-2 max-w-[130px] leading-tight" title={l.contrato_nome ?? undefined}>{l.contrato_nome ?? "—"}</span>
                       )}
+                    </TableCell>
+                    <TableCell className="text-center text-sm">
+                      <span className="mx-auto line-clamp-2 max-w-[130px] leading-tight" title={l.integrante_nome ?? undefined}>{l.integrante_nome ?? "—"}</span>
                     </TableCell>
                     <TableCell className="text-center text-sm">
                       {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
@@ -1564,7 +1601,7 @@ export default function FluxoCaixaGestao() {
                       </TableCell>
                       <TableCell />
                       <TableCell className="text-center text-xs text-muted-foreground">{c.classificacao ?? "—"}</TableCell>
-                      <TableCell colSpan={4} className="text-center text-xs text-muted-foreground">
+                      <TableCell colSpan={5} className="text-center text-xs text-muted-foreground">
                         {c.descricao}
                         {c.parcela && <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{c.parcela}</span>}
                       </TableCell>
@@ -1588,6 +1625,7 @@ export default function FluxoCaixaGestao() {
                       <TableCell />
                       <TableCell />
                       <TableCell />
+                      <TableCell />
                       <TableCell className="text-center text-xs font-medium text-muted-foreground">{formatBRL(c.valor)}</TableCell>
                       <TableCell />
                     </TableRow>
@@ -1606,6 +1644,7 @@ export default function FluxoCaixaGestao() {
                           )}
                         </span>
                       </TableCell>
+                      <TableCell />
                       <TableCell />
                       <TableCell />
                       <TableCell />
