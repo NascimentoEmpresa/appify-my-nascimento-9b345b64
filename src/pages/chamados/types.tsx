@@ -128,6 +128,10 @@ export interface Chamado {
   // 'concluido' = o time concluiu e o solicitante ainda não confirmou.
   conclusao_confirmada_em?: string | null;
   conclusao_confirmada_por?: string | null;
+  // Finalização pelo Gestor de Sistemas (mig 20261110009000), depois da
+  // confirmação do solicitante. NULL com 'concluido' = ainda não fechou de vez.
+  gestao_finalizada_em?: string | null;
+  gestao_finalizada_por?: string | null;
   // Início do desenvolvimento + prazo informado pelo dev (mig 20261028001400).
   // Com status 'em_andamento': iniciado = "Em desenvolvimento"; sem = na fila.
   desenvolvimento_iniciado_em?: string | null;
@@ -392,9 +396,18 @@ export function StatusBadge({ status }: { status: string }) {
  * confirma. `paraSolicitante` troca o texto para "sua confirmação".
  */
 export function SeloConfirmacao({ chamado, paraSolicitante = false }: {
-  chamado: Pick<Chamado, "status" | "conclusao_confirmada_em">; paraSolicitante?: boolean;
+  chamado: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">; paraSolicitante?: boolean;
 }) {
-  if (chamado.status !== "concluido" || chamado.conclusao_confirmada_em) return null;
+  if (chamado.status !== "concluido") return null;
+  // Solicitante já confirmou: falta o Gestor de Sistemas finalizar (mig 20261110009000).
+  if (chamado.conclusao_confirmada_em) {
+    if (chamado.gestao_finalizada_em !== null) return null; // undefined = coluna não lida → não acusa
+    return (
+      <Badge variant="outline" className="border-info/40 bg-info/10 text-[10px] font-semibold text-info">
+        Aguardando o Gestor de Sistemas
+      </Badge>
+    );
+  }
   return (
     <Badge variant="outline" className="border-warning/40 bg-warning/10 text-[10px] font-semibold text-warning">
       {paraSolicitante ? "Aguardando sua confirmação" : "Aguardando confirmação do solicitante"}

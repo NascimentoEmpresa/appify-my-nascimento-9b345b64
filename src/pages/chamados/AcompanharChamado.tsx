@@ -25,6 +25,7 @@ import {
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
+import { useChamadoPerms } from "./useChamadoPerms";
 
 interface ConsultaEventosChamado {
   select(colunas: string): {
@@ -47,6 +48,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  // Gestão de chamados (inclusive o Gestor de Sistemas, mig 20261110009000)
+  // intermedia a conversa: escreve aqui também, não só lê.
+  const { gestor } = useChamadoPerms();
 
   const [avaliarAberto, setAvaliarAberto] = useState(false);
   const [reabrirAberto, setReabrirAberto] = useState(false);
@@ -261,7 +265,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             solicitanteId={chamado.solicitante_id}
             perfil="solicitante"
             encerrado={conversaChamadoFechada(chamado.status)}
-            somenteLeitura={!ehSolicitante}
+            somenteLeitura={!ehSolicitante && !gestor}
           />
         </div>
 

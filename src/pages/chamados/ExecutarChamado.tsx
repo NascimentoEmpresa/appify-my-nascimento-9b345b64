@@ -16,6 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { aguardandoGestorSistemas, podeFinalizarGestao } from "./validacaoPresidencia";
 import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil } from "lucide-react";
 import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
@@ -49,7 +50,7 @@ export default function ExecutarChamado() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { canCoordenar, canAprovar, canDev, canExcluir, gestor } = useChamadoPerms();
+  const { canCoordenar, canAprovar, canDev, canExcluir, canGestorSistemas, gestor } = useChamadoPerms();
 
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
@@ -141,7 +142,8 @@ export default function ExecutarChamado() {
       return !!data;
     },
   });
-  const podeAgir = canCoordenar || canAprovar || (canDev && ehResponsavel);
+  // Gestor de Sistemas (mig 20261110009000) intermedia qualquer chamado.
+  const podeAgir = canCoordenar || canAprovar || canGestorSistemas || (canDev && ehResponsavel);
 
   // Dev responsável abriu o chamado → zera a bolinha de novidades do dev.
   useEffect(() => { if (ehResponsavel) chamadosMarkSeen(user?.id, "dev"); }, [ehResponsavel, user?.id]);
@@ -203,6 +205,19 @@ export default function ExecutarChamado() {
     setHorasDepois("");
     setEditandoHoras(false);
     qc.invalidateQueries({ queryKey: ["chamado-parecer-ia"] });
+    invalidar();
+  };
+
+  /** Gestor de Sistemas fecha de vez, depois da confirmação do solicitante (mig 20261110009000). */
+  const finalizarGestao = async () => {
+    if (agindo) return;
+    setAgindo("finalizar");
+    // RPC ainda fora dos tipos gerados; cast sem `any` (catraca do lint).
+    const cliente = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }> };
+    const { error } = await cliente.rpc("chamado_finalizar_gestao", { p_chamado_id: id });
+    setAgindo(null);
+    if (error) { toast({ title: "Erro ao finalizar", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Chamado finalizado", description: "Agora ele está de fato concluído." });
     invalidar();
   };
 
@@ -494,6 +509,23 @@ export default function ExecutarChamado() {
                     <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
                       Aguardando o solicitante <b>confirmar a conclusão</b>. Se não resolveu, ele reabre e o chamado volta para você.
                     </p>
+                  )}
+                  {/* Última etapa (mig 20261110009000): o Gestor de Sistemas
+                      confere e finaliza — só aí está de fato concluído. */}
+                  {aguardandoGestorSistemas(chamado) && (
+                    podeFinalizarGestao(chamado, canGestorSistemas) ? (
+                      <Button
+                        className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
+                        disabled={!!agindo}
+                        onClick={finalizarGestao}
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> {agindo === "finalizar" ? "Finalizando…" : "Finalizar chamado"}
+                      </Button>
+                    ) : (
+                      <p className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-xs text-info">
+                        Solicitante confirmou. Falta o <b>Gestor de Sistemas</b> finalizar o chamado.
+                      </p>
+                    )
                   )}
                   {/* Concluído sem passar pelo diálogo (merge da PR) ou pulado:
                       dá para avaliar depois. Só de agora em diante — os

@@ -93,14 +93,15 @@ describe("linha do tempo e resumo do botão Status", () => {
 
   it("concluído pelo time: confirmação é o passo atual", () => {
     const p = montarLinhaDoTempo(chamado(), null);
-    expect(p.map((x) => x.key)).toEqual(["aberto", "desenvolvimento", "concluido", "confirmacao"]);
+    expect(p.map((x) => x.key)).toEqual(["aberto", "desenvolvimento", "concluido", "confirmacao", "gestao"]);
     expect(situacao(p, "concluido")).toBe("feito");
     expect(situacao(p, "confirmacao")).toBe("atual");
     expect(resumoStatus(chamado(), null)).toBe("Aguardando confirmação do solicitante");
   });
 
   it("confirmado fecha a linha e o resumo volta a 'Concluído'", () => {
-    const c = chamado({ conclusao_confirmada_em: "2026-10-28T09:00:00Z" });
+    // Fecha de vez com o Gestor de Sistemas (mig 20261110009000).
+    const c = chamado({ conclusao_confirmada_em: "2026-10-28T09:00:00Z", gestao_finalizada_em: "2026-10-28T12:00:00Z" });
     const p = montarLinhaDoTempo(c, null);
     expect(p.every((x) => x.situacao === "feito")).toBe(true);
     expect(resumoStatus(c, null)).toBe("Concluído");

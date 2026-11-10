@@ -30,11 +30,11 @@ import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
-import { desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
+import { aguardandoGestorSistemas, desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
+  StatCard, StatusBadge, SeloConfirmacao, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, type CriterioSolicitanteKey,
 } from "./types";
@@ -76,6 +76,9 @@ const ABAS = [
   // ENVIAR (escolher usuários/setores) ou os participantes confirmarem. O dev
   // envia na execução; a gestão (gerente do dev) pode enviar por ele aqui.
   { key: "treinamento", label: "Pendentes treinamento" },
+  // Dev concluiu e o solicitante confirmou: falta o Gestor de Sistemas clicar
+  // em "Finalizar chamado" (mig 20261110009000). Pedido do Pablo, 10/11/2026.
+  { key: "pendente_conclusao", label: "Pendente de conclusão" },
 ] as const;
 
 const DONUT = {
@@ -298,12 +301,15 @@ export default function PainelDistribuicao() {
   const posicaoFila = useMemo(() => posicoesFilaGlobal(chamados), [chamados]);
   const posicaoDev = useMemo(() => posicoesFilaDev(chamados), [chamados]);
 
+  const pendentesGestao = useMemo(() => chamados.filter(aguardandoGestorSistemas).length, [chamados]);
+
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
     const deTs = fDe ? new Date(fDe + "T00:00:00").getTime() : null;
     const ateTs = fAte ? new Date(fAte + "T23:59:59").getTime() : null;
     const lista = chamados.filter((c) => {
       if (aba === "treinamento") { if (!treinosPendentes[c.id]) return false; }
+      else if (aba === "pendente_conclusao") { if (!aguardandoGestorSistemas(c)) return false; }
       else if (aba === "fila" ? !chamadoAtivo(c.status) : c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
@@ -491,6 +497,9 @@ export default function PainelDistribuicao() {
                 {a.key === "treinamento" && Object.keys(treinosPendentes).length > 0 && (
                   <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">{Object.keys(treinosPendentes).length}</span>
                 )}
+                {a.key === "pendente_conclusao" && pendentesGestao > 0 && (
+                  <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">{pendentesGestao}</span>
+                )}
               </button>
             ))}
           </div>
@@ -649,7 +658,13 @@ export default function PainelDistribuicao() {
                           ) : (
                             <div className="text-[11px] font-semibold text-warning">○ Envio pendente</div>
                           )
-                        ) : <StatusBadge status={c.status} />}
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1">
+                            <StatusBadge status={c.status} />
+                            {/* Confirmação do solicitante e finalização do Gestor de Sistemas (mig 20261110009000). */}
+                            <SeloConfirmacao chamado={c} />
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="max-w-[110px] text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
