@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, CalendarDays, FileText, Loader2, Trash2, Upload, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, CalendarDays, ExternalLink, FileText, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,15 +10,14 @@ import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import {
-  BUCKET_CONVENCOES, abrirAnexoConvencao, enviarAnexoConvencao, useSalvarConvencao,
+  abrirAnexoConvencao, enviarAnexoConvencao, salvarAnexosConvencao, useSalvarConvencao,
   type Convencao, type ConvencaoInput,
 } from "@/hooks/useConvencoes";
-import { supabase } from "@/integrations/supabase/client";
 import {
-  BASES_CALCULO, BENEFICIOS_CCT, pendenciasConvencao, periodoEfetivo,
-  type BaseCalculo, type DefBeneficio, type DescontoColaborador, type MapaBeneficios, type ModoLider,
+  BASES_CALCULO, BENEFICIOS_CCT, anexosDoCadastro, espelhoAnexoPrincipal, lerPercentual, pendenciasConvencao,
+  percentualTexto, periodoEfetivo,
+  type AnexoLista, type BaseCalculo, type DefBeneficio, type DescontoColaborador, type MapaBeneficios, type ModoLider,
   type Periodo, type ValorBeneficio,
 } from "@/lib/licitacoes/convencoes";
 import { IconeBeneficio } from "./IconeBeneficio";
@@ -96,16 +96,104 @@ export function CampoAnexo({ anexo, onEscolher, onRemover, somenteLeitura, rotul
   );
 }
 
+/** Um anexo na tela: gravado (path) ou escolhido agora (novo, sobe ao salvar). */
+type ItemAnexo = AnexoLista & { chave: string; novo?: File | null };
+
+let seqAnexo = 0;
+const chaveNova = () => `novo-${Date.now()}-${++seqAnexo}`;
+
+/**
+ * Vários anexos da CCT (09/11/2026): cada arquivo abre sozinho e leva a
+ * descrição da abrangência (o SEEAC publica mais de uma CCT). Anexar de novo
+ * SOMA à lista — não substitui.
+ */
+function ListaAnexos({ itens, onChange, somenteLeitura }: {
+  itens: ItemAnexo[]; onChange: (l: ItemAnexo[]) => void; somenteLeitura?: boolean;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const mudar = (chave: string, p: Partial<ItemAnexo>) => onChange(itens.map((a) => (a.chave === chave ? { ...a, ...p } : a)));
+  const adicionar = (files: FileList | null) => {
+    if (!files?.length) return;
+    onChange([...itens, ...Array.from(files).map((f): ItemAnexo => ({
+      chave: chaveNova(), id: null, path: null, nome: f.name, tamanho: f.size, descricao: null, novo: f,
+    }))]);
+  };
+  return (
+    <div className="space-y-2">
+      {itens.length === 0 && somenteLeitura && (
+        <p className="flex h-[52px] items-center rounded-md border border-dashed px-3 text-xs text-muted-foreground">Sem anexo</p>
+      )}
+      {itens.map((a, i) => (
+        <div key={a.chave} className="space-y-1.5 rounded-md border p-2.5">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-red-50 text-red-600 dark:bg-red-950/40"><FileText className="h-4 w-4" /></span>
+            <button type="button" disabled={!a.path} onClick={() => a.path && abrirAnexoConvencao(a.path).then((e) => e && toast.error(e))}
+              className="min-w-0 flex-1 text-left disabled:cursor-default" title={a.path ? "Abrir o arquivo" : "Será enviado ao salvar"}>
+              <p className="truncate text-xs font-medium text-foreground hover:underline">{a.nome ?? "Arquivo"}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {i === 0 ? "Principal · " : ""}{MB(a.tamanho)}{a.novo ? " · envia ao salvar" : ""}
+              </p>
+            </button>
+            {a.path && (
+              <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs"
+                onClick={() => abrirAnexoConvencao(a.path!).then((e) => e && toast.error(e))}>
+                <ExternalLink className="mr-1 h-3.5 w-3.5" />Abrir
+              </Button>
+            )}
+            {!somenteLeitura && (
+              <button type="button" onClick={() => onChange(itens.filter((x) => x.chave !== a.chave))} title="Remover anexo"
+                aria-label={`Remover ${a.nome ?? "anexo"}`} className="rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {somenteLeitura
+            ? a.descricao && <p className="pl-[42px] text-[11px] text-muted-foreground">{a.descricao}</p>
+            : (
+              <Input value={a.descricao ?? ""} onChange={(e) => mudar(a.chave, { descricao: e.target.value })}
+                placeholder="Descrição / abrangência (ex.: CCT SEEAC — Limpeza, Capital)" aria-label={`Descrição de ${a.nome ?? "anexo"}`}
+                className="h-8 text-xs" />
+            )}
+        </div>
+      ))}
+      {!somenteLeitura && (
+        <>
+          <button type="button" onClick={() => input.current?.click()}
+            className="flex h-[46px] w-full items-center justify-center gap-2 rounded-md border border-dashed text-xs font-medium text-muted-foreground hover:border-primary hover:text-primary">
+            {itens.length ? <Plus className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+            {itens.length ? "Adicionar outro anexo" : "Anexar a convenção (PDF)"}
+          </button>
+          <input ref={input} type="file" accept=".pdf,image/*" multiple className="hidden"
+            onChange={(e) => { adicionar(e.target.files); e.target.value = ""; }} />
+        </>
+      )}
+    </div>
+  );
+}
+
 export const PERIODO_LABEL: Record<Periodo, string> = { dia: "Por dia", mes: "Por mês" };
 
 const GRADE = "grid grid-cols-[minmax(150px,1.2fr)_minmax(150px,1fr)_minmax(150px,1fr)_64px] items-center gap-2";
 
-/** Percentual digitado (sem lista fixa), 0–100. */
-function CampoPercentual({ valor, onChange, disabled }: { valor: number | null | undefined; onChange: (n: number | null) => void; disabled?: boolean }) {
+/**
+ * Percentual digitado (sem lista fixa), 0–100. Texto com vírgula, não
+ * type="number" (09/11/2026): ao lado de "Porcentagem" a seta do input
+ * numérico tomava o espaço do número e o campo parecia desabilitado.
+ */
+function CampoPercentual({ valor, onChange, disabled, rotulo }: {
+  valor: number | null | undefined; onChange: (n: number | null) => void; disabled?: boolean; rotulo?: string;
+}) {
+  const [texto, setTexto] = useState(percentualTexto(valor));
+  // Valor trocado por fora (abrir outro cadastro, trocar o modo): reflete;
+  // enquanto a pessoa digita ("7," ainda é 7), não atropela o texto.
+  useEffect(() => {
+    if (lerPercentual(texto) !== (valor ?? null)) setTexto(percentualTexto(valor));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valor]);
   return (
     <div className="relative">
-      <Input type="number" inputMode="decimal" min={0} max={100} step="0.01" value={valor ?? ""} disabled={disabled}
-        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+      <Input type="text" inputMode="decimal" value={texto} disabled={disabled} aria-label={rotulo ?? "Percentual"}
+        onChange={(e) => { setTexto(e.target.value); onChange(lerPercentual(e.target.value)); }}
         placeholder="0" className="h-8 pr-7 text-xs" />
       <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
     </div>
@@ -121,10 +209,12 @@ function CampoBase({ valor, onChange, disabled }: { valor: BaseCalculo | null | 
   );
 }
 
-function CampoModo({ valor, onChange, disabled }: { valor: ModoLider | null | undefined; onChange: (m: ModoLider) => void; disabled?: boolean }) {
+function CampoModo({ valor, onChange, disabled, largura = "w-[104px]" }: {
+  valor: ModoLider | null | undefined; onChange: (m: ModoLider) => void; disabled?: boolean; largura?: string;
+}) {
   return (
     <Select value={valor ?? ""} onValueChange={(m) => onChange(m as ModoLider)} disabled={disabled}>
-      <SelectTrigger className="h-8 w-[104px] shrink-0 text-xs"><SelectValue placeholder="Modo" /></SelectTrigger>
+      <SelectTrigger className={cn("h-8 shrink-0 text-xs", largura)}><SelectValue placeholder="Modo" /></SelectTrigger>
       <SelectContent>
         <SelectItem value="valor">Valor</SelectItem>
         <SelectItem value="porcentagem">Porcentagem</SelectItem>
@@ -204,20 +294,20 @@ function LinhaDesconto({ d, onChange, desligado, somenteLeitura, nome }: {
   d: DescontoColaborador; onChange: (d: DescontoColaborador) => void; desligado: boolean; somenteLeitura?: boolean; nome: string;
 }) {
   const off = desligado || !!d.nao_contem;
+  // 09/11/2026: modo e valor em colunas próprias. Os dois juntos na coluna
+  // "Valor / %" deixavam ~45 px para o percentual — o campo parecia
+  // desabilitado e não dava para digitar (pedido da Licitação).
   return (
     <div className={GRADE}>
       <Rotulo>Desconto do colaborador</Rotulo>
-      <div className="flex gap-1.5">
-        <CampoModo valor={d.modo} disabled={off} onChange={(m) => onChange({ nao_contem: false, modo: m })} />
-        <div className="min-w-0 flex-1">
-          {d.modo === "porcentagem"
-            ? <CampoPercentual valor={d.percentual} onChange={(n) => onChange({ ...d, percentual: n })} disabled={off} />
-            : d.modo === "valor"
-              ? <CurrencyInput value={d.valor ? String(d.valor) : ""} onChange={(s) => onChange({ ...d, valor: s ? Number(s) : null })} disabled={off} className="h-8 text-xs" />
-              : <div className="flex h-8 items-center rounded-md border bg-muted/40 px-2 text-[11px] text-muted-foreground">Escolha o modo</div>}
-        </div>
+      <CampoModo valor={d.modo} disabled={off} largura="w-full" onChange={(m) => onChange({ nao_contem: false, modo: m })} />
+      <div className="min-w-0">
+        {d.modo === "porcentagem"
+          ? <CampoPercentual valor={d.percentual} onChange={(n) => onChange({ ...d, percentual: n })} disabled={off} rotulo={`${nome}: percentual de desconto`} />
+          : d.modo === "valor"
+            ? <CurrencyInput value={d.valor ? String(d.valor) : ""} onChange={(s) => onChange({ ...d, valor: s ? Number(s) : null })} disabled={off} className="h-8 text-xs" />
+            : <div className="flex h-8 items-center rounded-md border bg-muted/40 px-2 text-[11px] text-muted-foreground">Escolha o modo</div>}
       </div>
-      <span />
       <div className="flex justify-center">
         <Checkbox checked={!!d.nao_contem} disabled={somenteLeitura || desligado} aria-label={`${nome}: desconto do colaborador não contém`}
           onCheckedChange={(c) => onChange(c ? { nao_contem: true } : { nao_contem: false })} />
@@ -236,27 +326,31 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
   existentes: Convencao[];
 }) {
   const salvar = useSalvarConvencao();
-  const { data: empresas = [] } = useEmpresasGrupo();
+  const qc = useQueryClient();
 
-  const [empresaId, setEmpresaId] = useState("");
+  // Empresa saiu do cadastro em 09/11/2026 (mig 20261109004500): a CCT vale
+  // para todas as empresas a que se aplica. Cadastro antigo mantém a empresa
+  // que tinha (a tela só não mostra nem exige mais).
   const [categoria, setCategoria] = useState("");
   const [sindicato, setSindicato] = useState("");
   const [vigIni, setVigIni] = useState("");
   const [vigFim, setVigFim] = useState("");
-  const [cct, setCct] = useState<Anexo>(ANEXO_VAZIO);
+  const [anexos, setAnexos] = useState<ItemAnexo[]>([]);
   const [beneficios, setBeneficios] = useState<MapaBeneficios>({});
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
 
+  // O que estava gravado ao abrir — o plano de anexos compara com isso.
+  const anexosOriginais = convencao ? anexosDoCadastro(convencao, convencao.anexos) : [];
+
   useEffect(() => {
     if (!aberto) return;
     const c = convencao;
-    setEmpresaId(c?.empresa_id ?? "");
     setCategoria(c?.categoria_profissional ?? "");
     setSindicato(c?.sindicato ?? "");
     setVigIni(c?.vigencia_inicio ?? "");
     setVigFim(c?.vigencia_fim ?? "");
-    setCct(c ? { path: c.cct_arquivo_path, nome: c.cct_arquivo_nome, tamanho: c.cct_arquivo_tamanho } : ANEXO_VAZIO);
+    setAnexos(c ? anexosDoCadastro(c, c.anexos).map((a, i) => ({ ...a, chave: a.id ?? a.path ?? `antigo-${i}` })) : []);
     setBeneficios(c?.beneficios ?? {});
     setObs(c?.observacoes ?? "");
   }, [aberto, convencao]);
@@ -266,43 +360,47 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
 
   // Pendências do que está na tela (anexo novo conta como anexado).
   const pendencias = pendenciasConvencao({
-    tipo: "cct", empresa_id: empresaId, categoria_profissional: categoria, sindicato,
+    tipo: "cct", categoria_profissional: categoria, sindicato,
     vigencia_inicio: vigIni, vigencia_fim: vigFim,
-    cct_arquivo_path: cct.path || (cct.novo ? "novo" : null),
+    // Anexo escolhido agora conta como anexado.
+    cct_arquivo_path: anexos.length ? (anexos[0].path ?? "novo") : null,
     beneficios,
   });
 
   const confirmar = async () => {
-    if (!empresaId) { toast.error("Escolha a empresa."); return; }
     if (vigIni && vigFim && vigFim < vigIni) { toast.error("A vigência termina antes de começar."); return; }
     setEnviando(true);
     try {
-      const cctFinal: Anexo = cct.novo
-        ? { ...(await enviarAnexoConvencao(convencao?.contrato_id ?? null, "cct", cct.novo)), novo: null }
-        : cct;
-      // Contrato, decreto embutido e município de cadastro antigo seguem como
-      // estavam: a tela não os mostra mais, mas não é ela quem os apaga.
+      // Sobe os arquivos novos (um por vez) e monta a lista final, na ordem da tela.
+      const finais: ItemAnexo[] = [];
+      for (const a of anexos) {
+        if (!a.novo) { finais.push(a); continue; }
+        const up = await enviarAnexoConvencao(convencao?.contrato_id ?? null, "cct", a.novo);
+        finais.push({ ...a, path: up.path, nome: up.nome, tamanho: up.tamanho, novo: null });
+      }
+      // Contrato, empresa, decreto embutido e município de cadastro antigo
+      // seguem como estavam: a tela não os mostra mais, mas não é ela quem os apaga.
       const input: ConvencaoInput & { id?: string } = {
         id: convencao?.id,
         tipo: "cct",
-        empresa_id: empresaId, contrato_id: convencao?.contrato_id ?? null,
+        empresa_id: convencao?.empresa_id ?? null, contrato_id: convencao?.contrato_id ?? null,
         identificacao: convencao?.identificacao ?? null,
         categoria_profissional: categoria.trim() || null, sindicato: sindicato.trim() || null,
         municipio: convencao?.municipio ?? null, uf: convencao?.uf ?? null,
         vigencia_inicio: vigIni || null, vigencia_fim: vigFim || null,
-        cct_arquivo_path: cctFinal.path, cct_arquivo_nome: cctFinal.nome, cct_arquivo_tamanho: cctFinal.tamanho,
+        // Espelho do primeiro anexo: é o que a vaga e os KPIs leem.
+        ...espelhoAnexoPrincipal(finais),
         decreto_numero: convencao?.decreto_numero ?? null,
         decreto_arquivo_path: convencao?.decreto_arquivo_path ?? null,
         decreto_arquivo_nome: convencao?.decreto_arquivo_nome ?? null,
         decreto_arquivo_tamanho: convencao?.decreto_arquivo_tamanho ?? null,
         beneficios, observacoes: obs.trim() || null,
       };
-      await salvar.mutateAsync(input);
-      // Arquivo trocado ou removido: o antigo sai do storage depois do save
-      // (a versão anterior da convenção guarda só o caminho).
-      if (convencao?.cct_arquivo_path && convencao.cct_arquivo_path !== cctFinal.path) {
-        await supabase.storage.from(BUCKET_CONVENCOES).remove([convencao.cct_arquivo_path]).catch(() => undefined);
-      }
+      const id = await salvar.mutateAsync(input);
+      // Anexos depois da convenção (precisa do id); o que saiu da lista sai
+      // também do storage.
+      await salvarAnexosConvencao(id, anexosOriginais, finais);
+      qc.invalidateQueries({ queryKey: ["lic_convencoes"] });
       toast.success(pendencias.length ? "Salvo — o cadastro segue Pendente até completar o que falta." : "Convenção salva.");
       onFechar();
     } catch (e) {
@@ -326,12 +424,6 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
         <div className="flex-1 space-y-6 overflow-y-auto px-5 py-4">
           <Secao n={1} titulo="Informações da Convenção">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Campo label="Empresa" obrigatorio className="sm:col-span-2">
-                <Select value={empresaId} onValueChange={setEmpresaId} disabled={somenteLeitura}>
-                  <SelectTrigger className="h-9"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>{empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}</SelectContent>
-                </Select>
-              </Campo>
               <Campo label="Categoria Profissional" obrigatorio>
                 <Input list="conv-categorias" value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ex.: Limpeza e Conservação" disabled={somenteLeitura} className="h-9" />
                 <datalist id="conv-categorias">{sugestoes("categoria_profissional").map((s) => <option key={s} value={s} />)}</datalist>
@@ -351,10 +443,8 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
                   <Input type="date" value={vigFim} onChange={(e) => setVigFim(e.target.value)} disabled={somenteLeitura} className="h-9 min-w-0 flex-1" />
                 </div>
               </Campo>
-              <Campo label="Anexo da Convenção Coletiva" obrigatorio className="min-w-0 sm:col-span-2">
-                <CampoAnexo anexo={cct} rotulo="a convenção" somenteLeitura={somenteLeitura}
-                  onEscolher={(f) => setCct((a) => ({ ...a, novo: f }))}
-                  onRemover={() => setCct(ANEXO_VAZIO)} />
+              <Campo label="Anexos da Convenção Coletiva" obrigatorio className="min-w-0 sm:col-span-2">
+                <ListaAnexos itens={anexos} onChange={setAnexos} somenteLeitura={somenteLeitura} />
               </Campo>
             </div>
             <p className="text-[11px] text-muted-foreground">

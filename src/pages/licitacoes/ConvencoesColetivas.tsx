@@ -9,7 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useConvencoes, useExcluirConvencao, nomeEmpresa, type Convencao } from "@/hooks/useConvencoes";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { useConvencoes, useExcluirConvencao, type Convencao } from "@/hooks/useConvencoes";
 import { dataBr, identificacaoCct, pendenciasConvencao } from "@/lib/licitacoes/convencoes";
 import { FormConvencao } from "@/components/licitacoes/convencoes/FormConvencao";
 import { FormDecreto } from "@/components/licitacoes/convencoes/FormDecreto";
@@ -27,6 +28,11 @@ import { FormDecreto } from "@/components/licitacoes/convencoes/FormDecreto";
 // 03/11/2026 (mig 20261103002250): "Novo Decreto" ao lado de "Nova
 // Convenção" — o decreto municipal tem cadastro próprio (tipo 'decreto',
 // só com o Vale-Transporte), e a lista ganhou a coluna e o filtro de Tipo.
+//
+// 09/11/2026 (mig 20261109004500, pedido da Licitação): sem coluna/filtro de
+// Empresa — a CCT é cadastrada uma vez e vale para todas as empresas; a CCT
+// aceita vários anexos (a coluna CCT mostra quantos); Nova/Editar/Excluir
+// passam pelo <AcessoGate> das ações incluir/alterar/excluir do menu.
 // =====================================================================
 
 const MENU = "licitacoes_convencoes";
@@ -50,12 +56,10 @@ const pct = (n: number, d: number) => (d ? `${(n / d * 100).toLocaleString("pt-B
 export default function ConvencoesColetivas() {
   const { data: lista = [], isLoading, error } = useConvencoes();
   const excluir = useExcluirConvencao();
-  const { data: podeIncluir = false } = useScreenAccess(MENU, "incluir");
+  // `alterar` decide também se o link ?editar= abre em edição ou só leitura.
   const { data: podeAlterar = false } = useScreenAccess(MENU, "alterar");
-  const { data: podeExcluir = false } = useScreenAccess(MENU, "excluir");
 
   const [params, setParams] = useSearchParams();
-  const [fEmpresa, setFEmpresa] = useState(TODOS);
   const [fContrato, setFContrato] = useState(TODOS);
   const [fSituacao, setFSituacao] = useState(TODOS);
   const [fTipo, setFTipo] = useState(TODOS);
@@ -75,27 +79,22 @@ export default function ConvencoesColetivas() {
     if (alvo) { params.delete("editar"); params.delete("ver"); setParams(params, { replace: true }); }
   };
 
-  const empresas = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const c of lista) if (c.empresa_id) m.set(c.empresa_id, nomeEmpresa(c.empresa));
-    return [...m].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [lista]);
   const contratos = useMemo(() => {
     const m = new Map<string, string>();
-    for (const c of lista) if (c.contrato_id && (fEmpresa === TODOS || c.empresa_id === fEmpresa)) m.set(c.contrato_id, c.contrato?.nome ?? "—");
+    for (const c of lista) if (c.contrato_id) m.set(c.contrato_id, c.contrato?.nome ?? "—");
     return [...m].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [lista, fEmpresa]);
+  }, [lista]);
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return lista.filter((c) =>
-      (fEmpresa === TODOS || c.empresa_id === fEmpresa)
-      && (fContrato === TODOS || c.contrato_id === fContrato)
+      (fContrato === TODOS || c.contrato_id === fContrato)
       && (fSituacao === TODOS || c.situacao === fSituacao)
       && (fTipo === TODOS || c.tipo === fTipo)
-      && (!t || [c.contrato?.nome, c.categoria_profissional, c.sindicato, identificacaoCct(c), c.decreto_numero, c.municipio, nomeEmpresa(c.empresa)]
+      && (!t || [c.contrato?.nome, c.categoria_profissional, c.sindicato, identificacaoCct(c), c.decreto_numero, c.municipio,
+        ...(c.anexos ?? []).flatMap((a) => [a.nome, a.descricao])]
         .some((x) => String(x ?? "").toLowerCase().includes(t))));
-  }, [lista, fEmpresa, fContrato, fSituacao, fTipo, busca]);
+  }, [lista, fContrato, fSituacao, fTipo, busca]);
 
   const total = lista.length;
   const comCct = lista.filter((c) => c.tipo !== "decreto" && !!c.cct_arquivo_path).length;
@@ -106,13 +105,13 @@ export default function ConvencoesColetivas() {
   const paginas = Math.max(1, Math.ceil(filtrados.length / porPagina));
   const pag = Math.min(pagina, paginas);
   const visiveis = filtrados.slice((pag - 1) * porPagina, pag * porPagina);
-  const limpar = () => { setFEmpresa(TODOS); setFContrato(TODOS); setFSituacao(TODOS); setFTipo(TODOS); setBusca(""); setPagina(1); };
+  const limpar = () => { setFContrato(TODOS); setFSituacao(TODOS); setFTipo(TODOS); setBusca(""); setPagina(1); };
 
   const apagar = async (c: Convencao) => {
     const decreto = c.tipo === "decreto";
     if (!confirm(decreto
       ? `Excluir o ${c.decreto_numero ?? "decreto"} (${c.municipio ?? "município"})? O anexo também sai.`
-      : `Excluir a convenção de ${c.contrato?.nome ?? "contrato"}? Os anexos também saem.`)) return;
+      : `Excluir a convenção ${[identificacaoCct(c), c.sindicato, c.categoria_profissional].filter(Boolean).join(" · ") || "selecionada"}? Todos os anexos também saem. Não dá para desfazer.`)) return;
     try { await excluir.mutateAsync(c); toast.success(decreto ? "Decreto excluído." : "Convenção excluída."); }
     catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
   };
@@ -131,7 +130,7 @@ export default function ConvencoesColetivas() {
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">Cadastro e consulta das convenções coletivas, decretos municipais e benefícios por contrato.</p>
           </div>
-          {podeIncluir && (
+          <AcessoGate menu={MENU} acao="incluir">
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => setForm({ conv: null, ler: false, tipo: "decreto" })}
                 className="font-semibold text-[#0f3171] dark:text-blue-300">
@@ -141,7 +140,7 @@ export default function ConvencoesColetivas() {
                 <Plus className="mr-1 h-4 w-4" />Nova Convenção
               </Button>
             </div>
-          )}
+          </AcessoGate>
         </div>
       </div>
 
@@ -157,13 +156,6 @@ export default function ConvencoesColetivas() {
       </div>
 
       <Card className="flex flex-wrap items-center gap-2 p-3">
-        <Select value={fEmpresa} onValueChange={(v) => { setFEmpresa(v); setFContrato(TODOS); setPagina(1); }}>
-          <SelectTrigger className="h-9 w-[170px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={TODOS}>Todas as empresas</SelectItem>
-            {empresas.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
-          </SelectContent>
-        </Select>
         <Select value={fContrato} onValueChange={(v) => { setFContrato(v); setPagina(1); }}>
           <SelectTrigger className="h-9 w-[200px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -189,19 +181,18 @@ export default function ConvencoesColetivas() {
         </Select>
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Buscar por contrato, CCT, decreto, município…" className="h-9 pl-9" />
+          <Input value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Buscar por CCT, sindicato, decreto, município, anexo…" className="h-9 pl-9" />
         </div>
         <Button variant="outline" onClick={limpar} className="h-9 font-semibold text-[#0f3171] dark:text-blue-300">Limpar filtros</Button>
       </Card>
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px] text-sm">
+          <table className="w-full min-w-[960px] text-sm">
             <thead>
               <tr className="border-b text-left text-xs font-medium text-muted-foreground">
                 <th className="px-4 py-3">Tipo</th>
                 <th className="px-4 py-3">Contrato / Município</th>
-                <th className="px-4 py-3">Empresa</th>
                 <th className="px-4 py-3">Categoria Profissional</th>
                 <th className="px-4 py-3">Sindicato</th>
                 <th className="px-4 py-3">CCT</th>
@@ -213,11 +204,11 @@ export default function ConvencoesColetivas() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={10} className="p-4"><Skeleton className="h-32 w-full" /></td></tr>
+                <tr><td colSpan={9} className="p-4"><Skeleton className="h-32 w-full" /></td></tr>
               ) : error ? (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground">Não foi possível carregar: {String((error as Error).message ?? error)}</td></tr>
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">Não foi possível carregar: {String((error as Error).message ?? error)}</td></tr>
               ) : visiveis.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground">{total ? "Nada com esses filtros." : "Nenhuma convenção ou decreto cadastrado ainda."}</td></tr>
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">{total ? "Nada com esses filtros." : "Nenhuma convenção ou decreto cadastrado ainda."}</td></tr>
               ) : visiveis.map((c) => {
                 const ehDecreto = c.tipo === "decreto";
                 const ident = !ehDecreto && (c.cct_arquivo_path || c.vigencia_inicio) ? identificacaoCct(c) : null;
@@ -234,11 +225,15 @@ export default function ConvencoesColetivas() {
                     <td className="px-4 py-3 font-semibold uppercase text-foreground">
                       {ehDecreto ? [c.municipio, c.uf].filter(Boolean).join(" / ") || "—" : c.contrato?.nome ?? "—"}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{nomeEmpresa(c.empresa)}</td>
                     <td className="max-w-[160px] px-4 py-3 text-muted-foreground">{c.categoria_profissional || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{c.sindicato || "—"}</td>
                     <td className="px-4 py-3">
                       {ident ? <span className="whitespace-nowrap rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">{ident}</span> : <span className="text-muted-foreground">—</span>}
+                      {!ehDecreto && (c.anexos?.length ?? 0) > 1 && (
+                        <span className="ml-1.5 whitespace-nowrap text-[11px] text-muted-foreground" title={c.anexos!.map((a) => a.descricao || a.nome).join("\n")}>
+                          {c.anexos!.length} anexos
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {c.decreto_numero ? <span className="whitespace-nowrap rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{c.decreto_numero}</span> : <span className="text-muted-foreground">—</span>}
@@ -256,14 +251,14 @@ export default function ConvencoesColetivas() {
                       <div className="flex items-center justify-center gap-1.5">
                         <button onClick={() => abrir(c, true)} title="Visualizar"
                           className="flex h-8 w-8 items-center justify-center rounded-md border text-[#0f3171] hover:bg-muted dark:text-blue-300"><Eye className="h-4 w-4" /></button>
-                        {podeAlterar && (
-                          <button onClick={() => abrir(c, false)} title="Editar"
+                        <AcessoGate menu={MENU} acao="alterar">
+                          <button onClick={() => abrir(c, false)} title="Editar" aria-label="Editar"
                             className="flex h-8 w-8 items-center justify-center rounded-md border text-[#0f3171] hover:bg-muted dark:text-blue-300"><Pencil className="h-4 w-4" /></button>
-                        )}
-                        {podeExcluir && (
-                          <button onClick={() => apagar(c)} title="Excluir"
-                            className="flex h-8 w-8 items-center justify-center rounded-md border text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"><Trash2 className="h-4 w-4" /></button>
-                        )}
+                        </AcessoGate>
+                        <AcessoGate menu={MENU} acao="excluir">
+                          <button onClick={() => apagar(c)} title="Excluir" aria-label="Excluir" disabled={excluir.isPending}
+                            className="flex h-8 w-8 items-center justify-center rounded-md border text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/40"><Trash2 className="h-4 w-4" /></button>
+                        </AcessoGate>
                       </div>
                     </td>
                   </tr>
