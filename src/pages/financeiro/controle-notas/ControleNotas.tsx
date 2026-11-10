@@ -32,6 +32,7 @@ import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
 import { contratoCombinaComEmpresa, contratosDasNotasDaEmpresa, notaCombinaComStatus } from "./filtros";
 import { NfseIntegracaoPainel } from "./NfseIntegracaoPainel";
+import { NavegacaoControleNotas } from "../nf-emissao/NavegacaoControleNotas";
 
 // "concluida" no banco cobre tanto a validação normal quanto notas do
 // relatório legado que na origem já constavam SUBSTITUIDA/CANCELADA (o
@@ -114,6 +115,7 @@ export default function ControleNotas() {
 
   return (
     <div className="space-y-6 p-6">
+      <NavegacaoControleNotas />
       <PageHeader
         title="Validação de Notas"
         subtitle="Validação do Financeiro: confirme e corrija os dados, lance ajustes pós-emissão, e conclua ou cancele cada NF enviada pelo Analista."
