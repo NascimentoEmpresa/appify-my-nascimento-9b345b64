@@ -113,10 +113,12 @@ export function useCustosContratoAno(ano: number, habilitado: boolean, base: Bas
 }
 
 // SIS-2026-0642: despesas administrativas do ano (saídas sem contrato), realizadas e já programadas no Fluxo.
-export function useDespesasAdmAno(ano: number, base: BaseDespesa = "competencia") {
+// `habilitado` (09/11/2026): Operacional › Indicadores só busca quando a tela precisa.
+export function useDespesasAdmAno(ano: number, base: BaseDespesa = "competencia", habilitado = true) {
   return useQuery({
     queryKey: ["fechamento_adm_ano", ano, base],
     staleTime: 120_000,
+    enabled: habilitado,
     queryFn: () => buscarPeriodo(`${ano}-01-01`, `${ano + 1}-01-01`, true, base),
   });
 }
