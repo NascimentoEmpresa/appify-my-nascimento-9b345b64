@@ -34,7 +34,10 @@ export type TipoRateio =
   | "bsf"
   | "gratificacao_pcd"
   | "mensalidade_seeac"
-  | "vale_transporte";
+  | "vale_transporte"
+  // Comprovante de pedido da SWAP/Prospera, um por empresa (10/11/2026, mig
+  // 20261110190000): CPF + valor por linha — a leitura genérica já lê.
+  | "auxilio_farmacia_pcd";
 
 export type CriterioRateio = "faturamento" | "consultas" | "colaboradores" | "pdf";
 
@@ -48,6 +51,7 @@ export const TIPOS_RATEIO: { tipo: TipoRateio; rotulo: string; criterio: Criteri
   { tipo: "gratificacao_pcd", rotulo: "Gratificação PCD", criterio: "pdf" },
   { tipo: "mensalidade_seeac", rotulo: "Mensalidade SEEAC", criterio: "pdf" },
   { tipo: "vale_transporte", rotulo: "Vale Transporte", criterio: "pdf" },
+  { tipo: "auxilio_farmacia_pcd", rotulo: "Auxílio Farmácia PCD", criterio: "pdf" },
 ];
 
 export const rotuloTipo = (t: string) => TIPOS_RATEIO.find((x) => x.tipo === t)?.rotulo ?? t;
