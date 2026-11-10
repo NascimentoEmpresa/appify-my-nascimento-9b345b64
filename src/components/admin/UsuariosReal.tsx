@@ -21,6 +21,19 @@ import {
   type PessoaBusca, type PosicaoForm,
 } from "@/lib/organograma/pessoas";
 import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound, Copy, AlertTriangle, Upload, Trash2, Link2, Link2Off, Loader2, IdCard } from "lucide-react";
+import { CargoCampo, useCargoCatalogo } from "@/components/admin/CargoCampo";
+import { AplicarModeloNovoUsuario } from "@/pages/admin/tabs/AcessoPorSetorCargoPanel";
+import { limparNomeCargo } from "@/lib/acessoPorSetorCargo";
+
+// Cargo saiu de texto livre para a lista de Configurações do ERP › Cargos
+// (SIS-2026-0851, 10/11/2026). Com a lista no ar, só passa cargo que está
+// nela — o banco recusaria o resto (profiles.cargo é FK do catálogo), e no
+// "criar" a recusa viria depois de o login já existir. Sem a lista no banco
+// (migration pendente), o campo volta a ser texto e nada é cobrado.
+function cargoForaDaLista(cargo: string, catalogo: ReturnType<typeof useCargoCatalogo>): boolean {
+  const limpo = limparNomeCargo(cargo);
+  return catalogo.disponivel && !!limpo && !catalogo.cargos.some((c) => c.nome === limpo);
+}
 
 // O types.ts gerado está atrasado: não conhece setor_catalogo, user_setor nem
 // profiles.telefone/bio. Um ponto só sem tipos, em vez de um cast por chamada.
@@ -317,6 +330,7 @@ function EditarUsuarioDialog({
   const [oQueFaz, setOQueFaz] = useState("");
   const [posicao, setPosicao] = useState<PosicaoForm | null>(null);
   const [posicaoBase, setPosicaoBase] = useState("");
+  const catalogoCargos = useCargoCatalogo();
   const catalogoExibido = useMemo(() => {
     const set = new Set([...setoresCatalogo, ...selectedSetores]);
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -373,6 +387,10 @@ function EditarUsuarioDialog({
     const faltaPosicao = posicaoMudou && posicao ? posicaoFaltando(posicao) : null;
     if (faltaPosicao) {
       toast({ title: "Organograma incompleto", description: faltaPosicao, variant: "destructive" });
+      return;
+    }
+    if (cargo !== (profile.cargo ?? "") && cargoForaDaLista(cargo, catalogoCargos)) {
+      toast({ title: "Cargo fora da lista", description: "Escolha um cargo da lista ou cadastre o novo ali mesmo.", variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -488,7 +506,7 @@ function EditarUsuarioDialog({
           </div>
           <div>
             <Label>Cargo</Label>
-            <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
+            <CargoCampo value={cargo} onChange={setCargo} podeCriar />
           </div>
           <div>
             <Label>O que faz na empresa</Label>
@@ -557,7 +575,7 @@ function EditarUsuarioDialog({
           <div>
             <Label>Setor</Label>
             <p className="text-[11px] text-muted-foreground mb-2">
-              Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Pra criar, renomear ou excluir um setor, use Administração → Setores.
+              Departamento da pessoa — sozinho não concede acesso, mas é por ele (e pelo nível do cargo) que se libera acesso em massa em Módulos &amp; Menus → Por Setor / Cargo. Pra criar, renomear ou excluir um setor, use Administração → Setores.
             </p>
             {catalogoExibido.length === 0 ? (
               <p className="text-xs text-muted-foreground">Nenhum setor cadastrado ainda — crie um em Administração → Setores.</p>
@@ -809,6 +827,7 @@ function NovoUsuarioDialog({
   const [colaborador, setColaborador] = useState<PessoaBusca | null>(null);
   const [oQueFaz, setOQueFaz] = useState("");
   const [posicao, setPosicao] = useState<PosicaoForm>(posicaoVazia());
+  const catalogoCargos = useCargoCatalogo();
   const catalogoExibido = useMemo(() => {
     const set = new Set([...setoresCatalogo, ...selectedSetores]);
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -830,9 +849,11 @@ function NovoUsuarioDialog({
     }
   };
 
-  // Credenciais geradas após criação (mostrado em modal flutuante)
+  // Credenciais geradas após criação (mostrado em modal flutuante). Leva
+  // também o grupo (setores + cargo), para oferecer o acesso do modelo.
   const [credenciaisCriadas, setCredenciaisCriadas] = useState<{
     email: string; password: string; display_name: string | null;
+    user_id: string | null; setores: string[]; cargo: string | null;
   } | null>(null);
 
   const reset = () => {
@@ -869,6 +890,10 @@ function NovoUsuarioDialog({
     const faltaPosicao = posicaoFaltando(posicao);
     if (faltaPosicao) {
       toast({ title: "Falta o lugar no organograma", description: faltaPosicao, variant: "destructive" });
+      return;
+    }
+    if (cargoForaDaLista(cargo, catalogoCargos)) {
+      toast({ title: "Cargo fora da lista", description: "Escolha um cargo da lista ou cadastre o novo ali mesmo.", variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -924,6 +949,9 @@ function NovoUsuarioDialog({
         email: email.trim(),
         password,
         display_name: displayName.trim() || null,
+        user_id: newUserId ?? null,
+        setores: selectedSetores,
+        cargo: cargo.trim() || null,
       });
       reset();
       setOpen(false);
@@ -979,7 +1007,7 @@ function NovoUsuarioDialog({
             </div>
             <div>
               <Label>Cargo *</Label>
-              <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Ex.: Analista Financeiro II" />
+              <CargoCampo value={cargo} onChange={setCargo} podeCriar />
             </div>
             <div>
               <Label>O que faz na empresa *</Label>
@@ -1033,7 +1061,7 @@ function NovoUsuarioDialog({
             <div>
               <Label>Setor</Label>
               <p className="text-[11px] text-muted-foreground mb-2">
-                Só um rótulo informativo (departamento da pessoa) — não concede nenhum acesso. Pra criar, renomear ou excluir um setor, use Administração → Setores.
+                Departamento da pessoa — sozinho não concede acesso, mas é por ele (e pelo nível do cargo) que se libera acesso em massa em Módulos &amp; Menus → Por Setor / Cargo. Pra criar, renomear ou excluir um setor, use Administração → Setores.
               </p>
               {catalogoExibido.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Nenhum setor cadastrado ainda — crie um em Administração → Setores.</p>
@@ -1069,7 +1097,10 @@ function NovoUsuarioDialog({
 function CredenciaisDialog({
   creds, onClose,
 }: {
-  creds: { email: string; password: string; display_name: string | null } | null;
+  creds: {
+    email: string; password: string; display_name: string | null;
+    user_id: string | null; setores: string[]; cargo: string | null;
+  } | null;
   onClose: () => void;
 }) {
   const textoCompleto = creds
@@ -1145,6 +1176,10 @@ function CredenciaisDialog({
                 </span>
               </p>
             </div>
+
+            {creds.user_id && (
+              <AplicarModeloNovoUsuario userId={creds.user_id} setores={creds.setores} cargo={limparNomeCargo(creds.cargo)} />
+            )}
           </div>
         )}
 

@@ -35,6 +35,8 @@ export interface MovimentoContaGarantida {
   motivo_cancelamento: string | null;
   // Veio do Fluxo de Caixa já existente (carga do passado): conta na Conta Garantida, mas não gera linha nova no Fluxo.
   historico?: boolean;
+  // Veio do Débito Automático (migration 20261105009000): acumula no saldo, mas a RPC conta_garantida_validar_saldo não o confere. Nulo = lançado na tela.
+  origem_debito_id?: string | null;
   created_at: string;
 }
 
@@ -113,8 +115,10 @@ export function simularLancamento(
   let max = 0;
   for (const m of linha) {
     corrente = arred(corrente + deltaDoMovimento(m));
-    // O histórico (carga do Fluxo) acumula no saldo mas não entra na conferência, igual à RPC: o passado pode ter passado do limite.
-    if (m.historico) continue;
+    // O histórico (carga do Fluxo) e o que veio do Débito Automático acumulam no saldo mas não entram na conferência, igual à RPC
+    // (WHERE NOT historico AND origem_debito_id IS NULL): o passado pode ter passado do limite ou do zero. Conferir a mais aqui bloqueava na tela
+    // o que o servidor aceitaria (CG-2026-0003, 10/11/2026: amortização de R$ 609.299,99 barrada por saldo "negativo" em 25/09 e 09/10).
+    if (m.historico || m.origem_debito_id) continue;
     min = Math.min(min, corrente);
     max = Math.max(max, corrente);
   }
