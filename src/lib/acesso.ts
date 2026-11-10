@@ -84,6 +84,8 @@ export const ROTAS_LIBERADAS_EXATAS = ["/app"];
  * RH para o Operacional, com os MESMOS códigos de menu (quem tinha, continua).
  */
 export const ROTAS_MOVIDAS: Record<string, string> = {
+  // SIS-2026-0841: a entrada antiga das notas passa a abrir a escolha das etapas.
+  "/app/financeiro/nf-emissao": "/app/financeiro/emissao-nf",
   "/app/rh/colaboradores": "/app/operacional/colaboradores",
   "/app/rh/ativos-contratos": "/app/operacional/ativos-contratos",
   // 03/11/2026: Saídas por Contrato saiu de "relatórios" (mig 20261103009200).

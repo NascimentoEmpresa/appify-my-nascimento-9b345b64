@@ -138,7 +138,9 @@ export function rotaVisivelNoMenu(
   if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
   if (rotaSempreLiberada(to)) return true;
   if (!access) return false;
-  const code = matchMenuCode(to, access.routes);
+  // Favoritos e entradas salvas com o endereço antigo seguem a mesma
+  // resolução do RouteGuard, mantendo a permissão do destino.
+  const code = matchMenuCode(rotaMovida(to) ?? to, access.routes);
   if (!code || access.inactiveCodes.has(code)) return false;
   return access.codes.has(code);
 }

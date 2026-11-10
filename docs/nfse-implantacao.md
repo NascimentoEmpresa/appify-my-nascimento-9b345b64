@@ -1,13 +1,13 @@
 # NFS-e de Triunfo — implantação do piloto SIS-2026-0841
 
-O piloto integra **Financeiro → Emissão de NF → Controle de Notas** ao
+O piloto integra **Financeiro → Controle de Notas → Validação de Notas** ao
 processamento no worker. Somente homologação é aceita. O resultado fiscal de
 teste não altera número, valores ou estado de `nf_emissao`.
 
 ## Instância preparada para teste local — 10/11/2026
 
 - ERP local: `http://127.0.0.1:5184/`. Entrar com a conta habitual do ERP.
-- Caminho: **Financeiro → Emissão de NF → Controle de Notas**; abrir uma
+- Caminho: **Financeiro → Controle de Notas → Validação de Notas**; abrir uma
   preparação **enviada** da HAAG e localizar **Emissão de NFS-e na prefeitura**.
 - O banco do cluster recebeu as migrations da fila e das ações do painel.
   O acesso foi habilitado somente para o usuário Eduardo nesta implantação.
@@ -18,8 +18,8 @@ teste não altera número, valores ou estado de `nf_emissao`.
 - O processador exclusivo de homologação está em execução nesta máquina,
   consultando a fila a cada 60 segundos. **Atualizar** na tela apenas consulta
   o resultado; uma solicitação nova exige a confirmação fiscal do formulário.
-- O endereço online habitual receberá o frontend após revisão e merge da PR
-  desta integração, seguindo o fluxo `eduardo` → `main`.
+- A integração foi publicada pela PR #1188 em `https://app.grpnascimento.com.br`.
+  A correção complementar de navegação precisa de publicação própria.
 
 A instância local usa o banco real do ERP e envia documentos somente à API
 de testes GOVBR. Preparações internas continuam sendo registros reais do ERP;
@@ -41,6 +41,8 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
    O complemento `20261110150000_sis_2026_0841_nfse_acoes_painel.sql` cadastra
    visualizar/incluir/alterar/exportar no Gerenciamento de Acesso.
    Ela entra pelo aplicador do cluster após merge, conforme `CLAUDE.md`.
+   O complemento `20261110190000_sis_2026_0841_controle_notas_navegacao.sql`
+   alinha os nomes e a entrada das telas, preservando permissões existentes.
 2. Publicar o frontend e instalar as dependências do worker com `npm ci` na
    pasta `worker`. O ciclo existente chama o novo processador; não há serviço
    HTTP adicional nem polling no navegador.
@@ -88,6 +90,15 @@ o worker nem libera emissão real em Triunfo.
   de compatibilidade do pattern da série está em `worker/src/nfse/esquemas`.
 
 ## Uso
+
+Após publicar a correção de navegação, abrir
+`https://app.grpnascimento.com.br/app/financeiro/emissao-nf/` apresenta as opções
+**Emissão de NF** e **Validação de Notas** autorizadas para o usuário. As duas
+telas também oferecem botões no topo para alternar entre as etapas.
+Na sidebar, ficam no grupo **Financeiro → Controle de Notas**. No Gerenciamento
+de Acesso, procurar **Controle de Notas**, **Emissão de NF** e **Validação de Notas**
+no módulo Financeiro. O endereço da validação continua sendo
+`/app/financeiro/emissao-nf/controle-notas`.
 
 O administrador controla a permissão `NFS-e — integração e homologação` no
 Financeiro. Visualização, inclusão, alteração e exportação são verificadas
