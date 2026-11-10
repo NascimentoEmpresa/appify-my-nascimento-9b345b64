@@ -30,7 +30,16 @@ async function carregarPrimeiraAba(buffer) {
     const valores = [];
     for (let i = 1; i <= aba.columnCount; i++) {
       const cell = row.getCell(i);
-      valores.push(cell.value == null ? null : String(cell.value.text ?? cell.value).trim());
+      // Célula de data de verdade (Excel) vira "dd/mm/aaaa" — String(Date) dava
+      // "Mon Aug 04 2025 …" e a Data de Admissão saía ilegível (10/11/2026).
+      // ExcelJS entrega a data em UTC.
+      const v = cell.value;
+      if (v instanceof Date && !Number.isNaN(v.getTime())) {
+        const p = (n) => String(n).padStart(2, "0");
+        valores.push(`${p(v.getUTCDate())}/${p(v.getUTCMonth() + 1)}/${v.getUTCFullYear()}`);
+        continue;
+      }
+      valores.push(v == null ? null : String(v.text ?? v).trim());
     }
     linhas.push(valores);
   });
