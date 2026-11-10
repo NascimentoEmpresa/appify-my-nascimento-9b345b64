@@ -212,7 +212,9 @@ export default function ExecutarChamado() {
   const finalizarGestao = async () => {
     if (agindo) return;
     setAgindo("finalizar");
-    const { error } = await (supabase as any).rpc("chamado_finalizar_gestao", { p_chamado_id: id });
+    // RPC ainda fora dos tipos gerados; cast sem `any` (catraca do lint).
+    const cliente = supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }> };
+    const { error } = await cliente.rpc("chamado_finalizar_gestao", { p_chamado_id: id });
     setAgindo(null);
     if (error) { toast({ title: "Erro ao finalizar", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Chamado finalizado", description: "Agora ele está de fato concluído." });
