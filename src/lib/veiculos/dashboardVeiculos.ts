@@ -39,6 +39,16 @@ export interface AgendamentoDash {
   km_inicial: number | null; km_inicial_em: string | null; km_final: number | null; km_final_em: string | null;
   controle_km?: boolean | null;
   contratos: ContratoDash[];
+  // Dia, prestação e KM sem registro (mig 20261110200000) — ver rotaDoDia.ts.
+  km_inicial_foto?: string | null;
+  finalizada_em?: string | null;
+  nao_utilizado_em?: string | null;
+  sem_abastecimento?: boolean | null;
+  prestacao_exigida?: boolean | null;
+  km_anterior?: number | null;
+  km_anterior_em?: string | null;
+  km_anterior_numero?: number | null;
+  km_anterior_condutor?: string | null;
 }
 
 export const LABEL_TURNO_DASH: Record<AgendamentoDash["turno"], string> = { manha: "Manhã", tarde: "Tarde", dia_todo: "Dia todo" };

@@ -104,6 +104,15 @@ export interface Agendamento {
   checklist_exigido?: boolean | null;
   /** "FULANO NÃO PREENCHEU A SAÍDA E A CHEGADA do agendamento nº…", gravado pelo banco ao agendar. */
   checklist_pendente_ao_agendar?: string | null;
+  // KM e prestação da viagem (mig 20261110200000).
+  km_inicial?: number | null;
+  km_final?: number | null;
+  sem_abastecimento?: boolean | null;
+  /** false = viagem anterior a 10/11/2026: prestação não cobrada. */
+  prestacao_exigida?: boolean | null;
+  km_anterior?: number | null;
+  km_anterior_numero?: number | null;
+  km_anterior_condutor?: string | null;
 }
 
 export interface NovoAgendamento {

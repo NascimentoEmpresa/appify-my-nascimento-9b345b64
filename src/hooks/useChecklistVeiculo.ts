@@ -73,7 +73,13 @@ export interface SalvarChecklist {
   interiorNovas: File[];
   defeitoMantidas: string[];
   defeitoNovas: File[];
+  /** Prestação da viagem (chegada, mig 20261110200000). */
+  videoNovo?: File | null;
+  extra?: { agua_verificada?: boolean; oleo_verificado?: boolean; avaria?: boolean | null; avaria_descricao?: string; sem_abastecimento?: boolean };
 }
+
+/** Vídeo do veículo: até 200 MB (limite do bucket). */
+export const VIDEO_MAX_MB = 200;
 
 export function useSalvarChecklist() {
   const qc = useQueryClient();
@@ -92,6 +98,13 @@ export function useSalvarChecklist() {
       const defeito: string[] = [];
       for (const f of v.defeitoNovas) defeito.push(await subirFoto(v.agendamentoId, v.tipo, "defeito", f));
       fotos.fotos_defeito = [...v.defeitoMantidas, ...defeito];
+      if (v.videoNovo) {
+        if (v.videoNovo.size > VIDEO_MAX_MB * 1024 * 1024) throw new Error(`O vídeo tem mais de ${VIDEO_MAX_MB} MB. Grave em resolução menor (720p) e tente de novo.`);
+        fotos.video_veiculo = await subirFoto(v.agendamentoId, v.tipo, "video", v.videoNovo);
+      }
+      // avaria null = não respondido: não manda a chave (não apaga o que já estava).
+      const extra: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v.extra ?? {})) if (val !== undefined && val !== null) extra[k] = val;
       const { data, error } = await sb.rpc("cs_veiculo_checklist_salvar", {
         p_agendamento: v.agendamentoId,
         p_tipo: v.tipo,
@@ -99,6 +112,7 @@ export function useSalvarChecklist() {
         p_km: v.km,
         p_fotos: fotos,
         p_observacao: v.observacao,
+        p_extra: Object.keys(extra).length ? extra : null,
       });
       if (error) throw error;
       return data as ChecklistVeiculo;
@@ -110,8 +124,67 @@ export function useSalvarChecklist() {
       qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento_log", v.agendamentoId] });
       qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
       qc.invalidateQueries({ queryKey: ["cs_veiculo_minhas_pendencias"] });
+      qc.invalidateQueries({ queryKey: ["cs_veiculo_prestacoes"] });
+      qc.invalidateQueries({ queryKey: ["cs_veiculo_ultimo_km"] });
+      qc.invalidateQueries({ queryKey: ["cs_veiculo_dashboard"] });
       toast.success(c?.completo ? "Checklist preenchido." : "Checklist salvo — ainda faltam fotos.");
     },
     onError: (e: { message?: string }) => toast.error(e?.message || "Não foi possível salvar o checklist."),
+  });
+}
+
+// ── Prestação da viagem e último KM (mig 20261110200000) ─────────────────
+
+export interface PrestacaoPendente {
+  agendamento_id: string; numero: number; veiculo: string; placa: string | null;
+  data_inicio: string; data_fim: string; iniciada: boolean; faltando: string[];
+}
+
+/**
+ * Viagens de quem agendou (ou de `solicitanteId`, para o gestor) que ainda não
+ * têm a prestação completa. Enquanto houver, o banco não deixa iniciar outra.
+ */
+export function usePrestacoesPendentes(solicitanteId?: string | null, excetoId?: string | null, ativo = true) {
+  return useQuery({
+    queryKey: ["cs_veiculo_prestacoes", solicitanteId ?? "eu", excetoId ?? null],
+    enabled: ativo,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async (): Promise<PrestacaoPendente[]> => {
+      const { data, error } = await sb.rpc("cs_veiculo_prestacoes_pendentes", { p_solicitante: solicitanteId ?? null, p_exceto: excetoId ?? null });
+      if (error) { console.warn("[prestação veículo]", error.message); return []; }
+      return (data ?? []) as PrestacaoPendente[];
+    },
+  });
+}
+
+export interface UltimoKm { km: number; em: string; numero: number; condutor: string | null; momento: "saida" | "retorno"; patrimonio_id?: string }
+
+/** O último KM informado deste veículo (de outra viagem). */
+export function useUltimoKm(patrimonioId: string | null | undefined, excetoId?: string | null) {
+  return useQuery({
+    queryKey: ["cs_veiculo_ultimo_km", patrimonioId, excetoId ?? null],
+    enabled: !!patrimonioId,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async (): Promise<UltimoKm | null> => {
+      const { data, error } = await sb.rpc("cs_veiculo_ultimo_km", { p_patrimonio: patrimonioId, p_exceto: excetoId ?? null });
+      if (error) { console.warn("[último km]", error.message); return null; }
+      return (data ?? null) as UltimoKm | null;
+    },
+  });
+}
+
+/** O último KM de todos os veículos (cards da frota). */
+export function useUltimosKm() {
+  return useQuery({
+    queryKey: ["cs_veiculo_ultimo_km", "todos"],
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Map<string, UltimoKm>> => {
+      const { data, error } = await sb.rpc("cs_veiculo_ultimos_km");
+      if (error) { console.warn("[últimos km]", error.message); return new Map(); }
+      return new Map(((data ?? []) as UltimoKm[]).map((u) => [u.patrimonio_id!, u]));
+    },
   });
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, CalendarRange, Car, CheckCircle2, ClipboardCheck, Clock, FileText, Fuel, Gauge, MapPin } from "lucide-react";
+import { Ban, CalendarRange, Car, CheckCircle2, ClipboardCheck, Clock, FileText, Fuel, Gauge, Lock, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +20,7 @@ import { LABEL_STATUS_AGENDAMENTO } from "@/lib/veiculos/concluirAgendamento";
 import { ViagemDialog } from "./ViagemDialog";
 import { NaoUseiDialog } from "./NaoUseiDialog";
 import { ChecklistDialog } from "./ChecklistDialog";
+import { usePrestacoesPendentes } from "@/hooks/useChecklistVeiculo";
 import {
   LABEL_TIPO_CHECKLIST, situacaoChecklist,
   type ChecklistVeiculo, type SituacaoChecklist, type TipoChecklist,
@@ -61,6 +62,8 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
   const [naoUsei, setNaoUsei] = useState<Agendamento | null>(null);
   const cancelar = useCancelarAgendamento();
   const hoje = hojeISO();
+  // Prestação pendente (mig 20261110200000): enquanto houver, a próxima viagem não sai.
+  const pendentes = usePrestacoesPendentes(null, null);
 
   // Mais recente primeiro: quem abre esta aba quer ver o que acabou de marcar.
   const lista = [...agendamentos].sort((a, b) => b.data_inicio.localeCompare(a.data_inicio));
@@ -87,6 +90,33 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
   return (
     <>
       <div className="space-y-3">
+        {(pendentes.data?.length ?? 0) > 0 && (
+          <Card className="space-y-2 border-destructive/40 bg-destructive/5 p-4">
+            <p className="flex items-center gap-2 font-bold text-destructive">
+              <Lock className="h-4 w-4" /> Complete a prestação da viagem para poder sair com outro carro
+            </p>
+            <ul className="space-y-1.5 text-sm">
+              {pendentes.data!.map((p) => {
+                const ag = agendamentos.find((x) => x.id === p.agendamento_id);
+                return (
+                  <li key={p.agendamento_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-background/80 px-3 py-2">
+                    <span className="min-w-0">
+                      <b>nº {p.numero}</b> · {p.veiculo}{p.placa ? ` ${p.placa}` : ""} · {p.data_inicio.split("-").reverse().join("/")}
+                      {!p.iniciada && <span className="text-amber-700 dark:text-amber-300"> · não iniciada (se não usou, marque "Não usei o carro")</span>}
+                      <span className="block text-xs text-destructive">Falta: {p.faltando.join(", ")}</span>
+                    </span>
+                    {ag && p.iniciada && (
+                      <span className="flex shrink-0 gap-1.5">
+                        <Button size="sm" variant="outline" className="h-8" onClick={() => setChecklistAberto({ agendamento: ag, tipo: "chegada" })}>Checklist de chegada</Button>
+                        <Button size="sm" variant="outline" className="h-8" onClick={() => setViagem(ag)}>Viagem (KM e nota)</Button>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+        )}
         {lista.map((a, i) => {
           const meu = a.solicitante_id === usuarioId;
           const futuro = a.data_fim >= hoje;
