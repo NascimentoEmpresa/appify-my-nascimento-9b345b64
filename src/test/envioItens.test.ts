@@ -56,3 +56,36 @@ describe("despachadoSemRegistroDeSaida (SIS-2026-0799)", () => {
     expect(despachadoSemRegistroDeSaida("RETIRADO PARA ENTREGA", [])).toBe(false);
   });
 });
+
+/**
+ * SIS-2026-0824 — a outra ponta da MESMA conta.
+ *
+ * O Dashboard de Compras e Estoque repete esta pendência em SQL
+ * (`pendente_por_item`, migration 20261110000100) para somar todos os pedidos
+ * de uma vez, porque aqui ela é calculada um pedido por vez no navegador. Os
+ * dois lados têm de dar o mesmo número — senão o gerente vê 2 numa tela e 3 na
+ * outra. Este teste fixa o cenário descrito pelo solicitante; o espelho está
+ * em `src/test/dashboard-posicao-por-item.test.ts`.
+ */
+describe("pendência por item, somada entre pedidos (espelho do dashboard)", () => {
+  it("3 pedidos de calça sarja M deixam 2 pendentes no total", () => {
+    // P1: pediu 3, saíram 2 pelo ledger.
+    const p1 = calcularEnvioItens([item("p1-calca", 3)], [{ pedido_item_id: "p1-calca", quantidade: 2 }]);
+    // P2: pediu 2, saiu 1 por etiqueta única.
+    const p2 = calcularEnvioItens([item("p2-calca", 2)], [{ pedido_item_id: "p2-calca", quantidade: 1 }]);
+    // P3: pediu 2, saíram 2 — nada pendente.
+    const p3 = calcularEnvioItens([item("p3-calca", 2)], [{ pedido_item_id: "p3-calca", quantidade: 2 }]);
+
+    const total = [...p1, ...p2, ...p3].reduce((soma, l) => soma + l.pendente, 0);
+    expect(total).toBe(2);
+  });
+
+  it("pedido despachado sem baixa nenhuma não entra na soma, mesmo tendo quantidade", () => {
+    const linhas = calcularEnvioItens([item("p4-calca", 5)], []);
+    // A linha diz 5 pendentes...
+    expect(linhas[0].pendente).toBe(5);
+    // ...mas o pedido inteiro é descartado antes de somar, porque não há
+    // registro por peça. É a mesma exclusão que o SQL faz.
+    expect(despachadoSemRegistroDeSaida("DESPACHADO", [])).toBe(true);
+  });
+});

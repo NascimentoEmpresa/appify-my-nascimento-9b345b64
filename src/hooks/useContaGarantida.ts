@@ -33,7 +33,7 @@ export function useMovimentosContaGarantida() {
     queryFn: async (): Promise<MovimentoContaGarantida[]> => {
       const { data, error } = await (supabase as any)
         .from("financeiro_conta_garantida_movimento")
-        .select("id, seq, numero, conta_garantida_id, tipo, data_movimento, valor, classificacao_id, observacao, cancelado_em, motivo_cancelamento, historico, created_at")
+        .select("id, seq, numero, conta_garantida_id, tipo, data_movimento, valor, classificacao_id, observacao, cancelado_em, motivo_cancelamento, historico, origem_debito_id, created_at")
         .order("data_movimento", { ascending: false })
         .order("seq", { ascending: false });
       if (error) throw error;

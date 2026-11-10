@@ -4,7 +4,7 @@
 //   · Centro de Custo → fluxo_caixa_trocar_contrato(), que grava na ORIGEM (e no Malote repassa o valor no Orçamento).
 // "Centro de Custo" é o nome que a tela passou a usar para o Contrato (SIS-2026-0780); o dado continua sendo contratos.id.
 
-export type TipoMassa = "centro_custo" | "classificacao" | "conta_banco";
+export type TipoMassa = "centro_custo" | "classificacao" | "conta_banco" | "integrante";
 
 export interface LinhaMassa {
   origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
@@ -23,6 +23,9 @@ export interface LinhaMassa {
   classificacoesIds?: string[];
   fatura_cartao_id?: string | null;
   rateioDetalhe?: { id: string }[];
+  /** SIS-2026-0823: integrante da linha de rateio (nulo = sem integrante ou mais de um) e quantas linhas de rateio a despesa tem. */
+  integrante_empregado_id?: number | null;
+  qtdLinhasRateio?: number;
 }
 
 export interface IgnoradaMassa {
@@ -80,6 +83,28 @@ export function planejarTrocaDeClassificacao(linhas: LinhaMassa[], novaClassific
     if (!ORIGENS_COM_AJUSTE.includes(l.origem)) { ignora("Este tipo de lançamento não permite trocar a classificação pelo Fluxo"); continue; }
     if (rateadaEmClassificacoes(l)) { ignora("Rateada em várias classificações: trocar em massa apagaria a divisão"); continue; }
     if (l.classificacao_id === novaClassificacaoId) { ignora("Já está nesta classificação"); continue; }
+    aplicar.push(l);
+  }
+  return { aplicar, ignoradas };
+}
+
+// SIS-2026-0823: troca o integrante da despesa do Malote. Só o Malote tem integrante (linha de rateio); despesa rateada em várias linhas fica de fora
+// (o integrante é de cada linha: ajuste na grade de rateio do Malote). Fornecedor e Integrante podem coexistir na mesma linha, então nada é limpo.
+export function planejarTrocaDeIntegrante(linhas: LinhaMassa[], novoEmpregadoId: number): PlanoMassa {
+  const aplicar: LinhaMassa[] = [];
+  const ignoradas: IgnoradaMassa[] = [];
+  const jaVistas = new Set<string>();
+  for (const l of linhas) {
+    const ignora = (motivo: string) => ignoradas.push({ linha: l, motivo });
+    if (l.origem !== "malote") { ignora("Só despesa do Malote tem integrante"); continue; }
+    if (l.fatura_cartao_id) { ignora("Fatura de cartão: o integrante é de cada despesa, no Malote"); continue; }
+    if ((l.qtdLinhasRateio ?? 1) > 1) { ignora("Rateada em várias linhas: ajuste o integrante de cada uma na grade de rateio do Malote"); continue; }
+    if ((l.qtdLinhasRateio ?? 1) === 0) { ignora("Despesa sem linha de rateio: ajuste direto no Malote"); continue; }
+    if (l.integrante_empregado_id === novoEmpregadoId) { ignora("Já está com este integrante"); continue; }
+    // O integrante vale para a despesa inteira: as outras parcelas marcadas já são cobertas pela primeira.
+    const chave = `${l.origem}:${l.despesa_id}`;
+    if (jaVistas.has(chave)) { ignora("Outra parcela da mesma despesa: a troca já vale para ela"); continue; }
+    jaVistas.add(chave);
     aplicar.push(l);
   }
   return { aplicar, ignoradas };
