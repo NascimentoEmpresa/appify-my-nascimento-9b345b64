@@ -3,6 +3,18 @@
 // detecta no próximo ciclo, processa, grava o resultado de volta).
 
 const { gerarPlanilhaTj, gerarPlanilhaSamu, gerarPlanilhaSms, gerarPlanilhaUfrgs } = require("./planilhas");
+const { carregarAdmissoes } = require("./admissoes");
+
+// Data de Admissão que a base não trouxer vem do EMPREGADOS (10/11/2026).
+// Falha ao ler não derruba o job: a planilha sai com o que a base tiver.
+async function admissoesOuVazio(supabase) {
+  try {
+    return await carregarAdmissoes(supabase);
+  } catch (e) {
+    console.warn("[extrator-beneficios] sem admissões do EMPREGADOS:", e.message);
+    return new Map();
+  }
+}
 
 const BUCKET = "extrator-beneficios";
 
@@ -31,6 +43,7 @@ async function processarPorTomador(supabase, job) {
         bufferPonto,
         valorUnitario24h: parametros.valorUnitario24h,
         tipoBeneficio: parametros.tipoBeneficio,
+        admissaoPorNome: await admissoesOuVazio(supabase),
       });
     }
     case "sms": {
@@ -40,6 +53,7 @@ async function processarPorTomador(supabase, job) {
         bufferPonto,
         valorUnitario24h: parametros.valorUnitario24h,
         tipoBeneficio: parametros.tipoBeneficio,
+        admissaoPorNome: await admissoesOuVazio(supabase),
       });
     }
     case "tj": {
@@ -50,6 +64,7 @@ async function processarPorTomador(supabase, job) {
         periodo: parametros.periodo,
         valorUnitario: parametros.valorUnitario,
         tipoBeneficio: parametros.tipoBeneficio,
+        admissaoPorNome: await admissoesOuVazio(supabase),
       });
     }
     default:

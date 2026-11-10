@@ -341,12 +341,16 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+          # 10/11/2026: a PR #1185 caiu aqui com "curl: (56) Failure when
+          # receiving data from the peer" — queda de rede do runner, não da PR.
+          # Tenta de novo sozinho em vez de reprovar a PR.
+          sudo curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-18
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-client-18
 
       - name: Aplicar cada migration e separar erro de sintaxe de erro de schema
         if: steps.novas.outputs.tem
