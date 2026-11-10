@@ -431,7 +431,7 @@ const RE_TOTAL_DE_RELATORIO = /\bTOTAL\s+DE\s+(COLABORADORES|FUNCION|TRABALHADOR
 
 export interface LayoutPdf {
   /** Layout reconhecido; "generico" quando nenhum bate. */
-  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "vale_transporte" | "bsf_listagem" | "generico";
+  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "vale_transporte" | "bsf_listagem" | "bullla_txt" | "generico";
   rotulo: string;
 }
 
@@ -590,7 +590,67 @@ export function totalBsfListagem(linhas: string[]): number | null {
 export const qtdEsperadaBsf = (linhas: string[]) => faixasBsf(linhas).filter((f) => f.unitario > 0).reduce((a, f) => a + f.qtd, 0);
 
 /** Layouts sem CPF em que a MATRÍCULA (empresa + cadastro) leva ao colaborador e ao contrato. */
-export const layoutPorMatricula = (l: LayoutPdf["layout"]) => l === "relacao_eventos" || l === "vale_transporte";
+export const layoutPorMatricula = (l: LayoutPdf["layout"]) => l === "relacao_eventos" || l === "vale_transporte" || l === "bullla_txt";
+
+/**
+ * BULLLA — "DEMONSTRATIVO ANALITICO DE COMPRAS E ANUIDADES" em TXT (10/11/2026,
+ * arquivos reais 60625010A/60625110A/60625210A.txt de 21/10/2026): um arquivo
+ * por empresa ("Cliente : 606250 SN…", 606251 NH, 606252 NASCIMENTO), colunas
+ * de largura fixa. Cada colaborador: "Registro" (= matrícula da Senior) e
+ * Funcionário na 1ª linha, uma linha por lançamento, e o subtotal
+ * "COMPRAS : … <valor compra> <VALOR FATURADO>". Vale o FATURADO — é o que a
+ * Bullla cobra (compra no cartão depois da data de corte entra com faturado
+ * 0,00; "Desconto por Antecipação" já sai descontado). O rodapé "TOTAL
+ * FATURAD" fecha a soma do arquivo. Os três arquivos podem vir juntos (um
+ * depois do outro): a empresa muda a cada "Cliente :".
+ */
+const EMPRESA_DO_CLIENTE_BULLLA: Record<string, number> = { "606252": 1, "606250": 2, "606251": 5 };
+
+function empresaDoClienteBullla(linha: string): number | null {
+  const m = linha.match(/Cliente\s*:\s*(\d+)\s+(.*?)\s{2,}/i);
+  if (!m) return null;
+  if (EMPRESA_DO_CLIENTE_BULLLA[m[1]] != null) return EMPRESA_DO_CLIENTE_BULLLA[m[1]];
+  const nome = normNome(m[2]);
+  if (nome.startsWith("NHPRESTACAO")) return 5;
+  if (nome.startsWith("SNSERVICOS")) return 2;
+  if (nome.startsWith("NASCIMENTOSERVICOS")) return 1;
+  return null;
+}
+
+export function extrairLinhasBulllaTxt(linhas: string[]): LinhaPdf[] {
+  const out: LinhaPdf[] = [];
+  let empresa: number | null = null;
+  let atual: { n: number; cadastro: string; nome: string } | null = null;
+  linhas.forEach((l, n) => {
+    if (/^\s*Cliente\s*:/i.test(l)) { empresa = empresaDoClienteBullla(l); atual = null; return; }
+    // Início de colaborador: Registro na coluna 0, nome nas colunas 12–51.
+    const reg = l.match(/^(\d{1,9})\s/);
+    if (reg) {
+      atual = { n, cadastro: reg[1], nome: l.slice(12, 52).trim() };
+      return;
+    }
+    // Subtotal do colaborador (recuado); o rodapé do arquivo começa na coluna 0.
+    if (atual && /^\s+COMPRAS\s*:/i.test(l)) {
+      const vals = valoresDaLinha(l);
+      const faturado = vals.length ? vals[vals.length - 1] : 0;
+      out.push({
+        n: atual.n, texto: `${atual.cadastro} ${atual.nome} — faturado ${faturado.toFixed(2).replace(".", ",")}`,
+        cpf: null, valor: faturado, cadastro: atual.cadastro, empresa, nomePdf: atual.nome,
+      });
+      atual = null;
+    }
+  });
+  return out.filter((x) => x.valor !== 0);
+}
+
+/** Soma dos "TOTAL FATURAD" (um por arquivo); null se não houver. */
+export function totalBulllaTxt(linhas: string[]): number | null {
+  const tot = linhas
+    .map((l) => l.match(/TOTAL\s+FATURAD\w*\s+(-?[\d.]+,\d{2})/i))
+    .filter((m): m is RegExpMatchArray => !!m)
+    .map((m) => lerMoeda(m[1]) ?? 0);
+  return tot.length ? Math.round(tot.reduce((a, b) => a + b, 0) * 100) / 100 : null;
+}
 
 /** Soma dos "Total de Colaboradores" da Relação de Eventos (um por empresa); null se não houver. */
 export function totalRelacaoEventos(linhas: string[]): number | null {
@@ -629,6 +689,9 @@ export function valorDoBoleto(linhas: string[]): number | null {
  */
 export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
   const topo = normNome(linhas.slice(0, 40).join(" "));
+  if (topo.includes("BULLLA") && topo.includes("DEMONSTRATIVOANALITICODECOMPRAS")) {
+    return { layout: "bullla_txt", rotulo: "Bullla — Demonstrativo Analítico (TXT): Valor Faturado por matrícula (o contrato vem do cadastro)" };
+  }
   if (topo.includes("GUIADOFGTSDIGITAL") || (topo.includes("FGTSDIGITAL") && topo.includes("TOTALFGTS"))) {
     return { layout: "fgts_digital", rotulo: "Guia do FGTS Digital (GFD) — FGTS por trabalhador, sem o consignado" };
   }
@@ -785,6 +848,7 @@ export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]
   if (layout === "relacao_eventos") return extrairLinhasRelacaoEventos(linhas);
   if (layout === "vale_transporte") return extrairLinhasValeTransporte(linhas);
   if (layout === "bsf_listagem") return extrairLinhasBsfListagem(linhas);
+  if (layout === "bullla_txt") return extrairLinhasBulllaTxt(linhas);
   return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
 }
 
@@ -803,6 +867,7 @@ export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): numbe
   if (layout === "relacao_eventos") return totalRelacaoEventos(linhas) ?? valorDoBoleto(linhas);
   if (layout === "vale_transporte") return totalValeTransporte(linhas);
   if (layout === "bsf_listagem") return totalBsfListagem(linhas);
+  if (layout === "bullla_txt") return totalBulllaTxt(linhas);
   // Sem linha de TOTAL, vale o valor do boleto (documento que é só o boleto).
   return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout)) ?? valorDoBoleto(linhas);
 }
