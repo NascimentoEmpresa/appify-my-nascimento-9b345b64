@@ -1,6 +1,6 @@
 // SIS-2026-0725: os filtros do Fluxo de Caixa aceitam mais de um item.
 import { describe, expect, it } from "vitest";
-import { FILTRO_SEM_VALOR, casaSelecao, nomesSelecionados, opcoesDe } from "@/pages/financeiro/fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe } from "@/pages/financeiro/fluxo-caixa/filtrosMultiplos";
 import { filtrarPorSituacaoFluxo } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { linhasDoExport } from "@/pages/financeiro/fluxo-caixa/exportRateio";
 
@@ -72,5 +72,30 @@ describe("resumo e opções", () => {
   it("a opção 'Sem' vem antes das demais", () => {
     expect(opcoesDe(lista, "Sem contrato (—)")[0]).toEqual({ value: FILTRO_SEM_VALOR, label: "Sem contrato (—)" });
     expect(opcoesDe(lista)).toHaveLength(2);
+  });
+});
+
+describe("classificação acompanha o filtro Tipo", () => {
+  const linhas = [
+    { tipo: "entrada", classificacao_id: "rec", classificacao_nome: "RECEBIMENTO DE NOTA" },
+    { tipo: "entrada", classificacao_id: "transf", classificacao_nome: "TRANSFERÊNCIA ENTRE CONTAS" },
+    { tipo: "saida", classificacao_id: "assid", classificacao_nome: "ADD ASSIDUIDADE" },
+    { tipo: "saida", classificacao_id: "transf", classificacao_nome: "TRANSFERÊNCIA ENTRE CONTAS" },
+    { tipo: "saida", classificacao_id: null, classificacao_nome: null },
+  ];
+
+  it("com Entrada, só lista classificações usadas em entradas", () => {
+    expect(classificacoesDoTipo(linhas, ["entrada"]).map(([id]) => id)).toEqual(["rec", "transf"]);
+  });
+
+  it("com Saída, só as de saída; sem tipo, todas", () => {
+    expect(classificacoesDoTipo(linhas, ["saida"]).map(([id]) => id)).toEqual(["assid", "transf"]);
+    expect(classificacoesDoTipo(linhas, []).map(([id]) => id)).toEqual(["assid", "rec", "transf"]);
+    expect(classificacoesDoTipo(linhas, ["entrada", "saida"])).toHaveLength(3);
+  });
+
+  it("ao trocar o tipo, tira da seleção o que não existe mais e mantém 'Sem …'", () => {
+    const entrada = classificacoesDoTipo(linhas, ["entrada"]);
+    expect(manterSelecionadasDisponiveis(["assid", "transf", FILTRO_SEM_VALOR], entrada)).toEqual(["transf", FILTRO_SEM_VALOR]);
   });
 });

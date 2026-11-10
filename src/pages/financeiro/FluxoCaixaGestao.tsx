@@ -51,7 +51,7 @@ import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
-import { FILTRO_SEM_VALOR, casaSelecao, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
 import { AlteracaoEmMassaBar } from "./fluxo-caixa/AlteracaoEmMassaBar";
@@ -572,11 +572,10 @@ export default function FluxoCaixaGestao() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhasBrutas]);
 
-  const classificacoesDisponiveis = useMemo(() => {
-    const map = new Map<string, string>();
-    linhas.forEach((l) => l.classificacao_id && l.classificacao_nome && map.set(l.classificacao_id, l.classificacao_nome));
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [linhas]);
+  // Todas as classificações (entrada e saída) — usada para os nomes no resumo da planilha.
+  const classificacoesDisponiveis = useMemo(() => classificacoesDoTipo(linhas, []), [linhas]);
+  // O filtro Classificação acompanha o filtro Tipo: com "Entrada" só lista classificações de entrada (e vice-versa).
+  const classificacoesDoTipoFiltro = useMemo(() => classificacoesDoTipo(linhas, tiposFiltro), [linhas, tiposFiltro]);
 
   // SIS-2026-0307: mesmo padrão dos filtros acima — deriva direto das
   // linhas já carregadas (a view já entrega banco_nome pronto), sem
@@ -872,7 +871,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tipo</Label>
-              <Select value={fx.tipo} onValueChange={(v) => setFx((f) => ({ ...f, tipo: v as FiltrosExport["tipo"] }))}>
+              <Select value={fx.tipo} onValueChange={(v) => setFx((f) => ({ ...f, tipo: v as FiltrosExport["tipo"], classificacaoIds: manterSelecionadasDisponiveis(f.classificacaoIds, classificacoesDoTipo(linhas, v === "todos" ? [] : [v])) }))}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Entradas e saídas</SelectItem>
@@ -899,7 +898,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Classificação</Label>
-              <SearchableMultiSelect value={fx.classificacaoIds} onChange={(v) => setFx((f) => ({ ...f, classificacaoIds: v }))} options={opcoesDe(classificacoesDisponiveis, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect value={fx.classificacaoIds} onChange={(v) => setFx((f) => ({ ...f, classificacaoIds: v }))} options={opcoesDe(classificacoesDoTipo(linhas, fx.tipo === "todos" ? [] : [fx.tipo]), "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Forma de pagamento</Label>
@@ -1147,7 +1146,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div>
               <Label className="text-xs">Tipo</Label>
-              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoTipo(linhas, v))); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
@@ -1169,7 +1168,7 @@ export default function FluxoCaixaGestao() {
             )}
             <div>
               <Label className="text-xs">Classificação</Label>
-              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesDe(classificacoesDisponiveis, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesDe(classificacoesDoTipoFiltro, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Forma de Pagamento</Label>

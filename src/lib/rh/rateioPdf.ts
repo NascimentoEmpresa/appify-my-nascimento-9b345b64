@@ -137,3 +137,27 @@ export function montarLinhas(itens: ItemTexto[]): string[] {
     return s.trim();
   });
 }
+
+// ── TXT (Bullla — Demonstrativo Analítico, 10/11/2026) ─────────────────────
+// Os TXT da Bullla vêm em Windows-1252 (acentos viram lixo em UTF-8): tenta
+// UTF-8 estrito e, se não for, lê como Windows-1252.
+export const ehArquivoTxt = (f: File) => /\.txt$/i.test(f.name) || f.type === "text/plain";
+
+export async function lerLinhasTxt(file: File): Promise<string[]> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let texto: string;
+  try { texto = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { texto = new TextDecoder("windows-1252").decode(bytes); }
+  return texto.replace(/\r\n?/g, "\n").split("\n");
+}
+
+/** Vários TXT de uma vez (um por empresa) → um arquivo só, para ler e anexar junto. */
+export async function juntarTxts(files: File[]): Promise<File> {
+  if (files.length === 1) return files[0];
+  const partes = await Promise.all(files.map((f) => f.arrayBuffer()));
+  const quebra = new Uint8Array([13, 10]);
+  const blobs: BlobPart[] = [];
+  partes.forEach((p, i) => { if (i) blobs.push(quebra); blobs.push(p); });
+  const nome = `${files.map((f) => f.name.replace(/\.txt$/i, "")).join("+")}.txt`;
+  return new File(blobs, nome, { type: "text/plain" });
+}
