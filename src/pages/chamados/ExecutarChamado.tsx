@@ -16,8 +16,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
-import { fmtHorasGastas, lerHorasGastas } from "@/lib/chamados/horasGastas";
+import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil } from "lucide-react";
+import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
@@ -63,6 +63,8 @@ export default function ExecutarChamado() {
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
   // Horas gastas pendentes (concluído pelo merge da PR — mig 20261029002400).
   const [horasDepois, setHorasDepois] = useState("");
+  // Corrigir horas já informadas (mig 20261110004000) — refaz o parecer da I.A.
+  const [editandoHoras, setEditandoHoras] = useState(false);
   // Iniciar desenvolvimento / alterar prazo (mig 20261028001400).
   const [iniciarOpen, setIniciarOpen] = useState(false);
   // Definir / redefinir o prazo em dias (mig 20261028001410).
@@ -194,8 +196,13 @@ export default function ExecutarChamado() {
     const { error } = await (supabase as any).rpc("chamado_informar_horas_gastas", { p_chamado_id: id, p_horas: h });
     setAgindo(null);
     if (error) { toast({ title: "Erro ao gravar as horas", description: error.message, variant: "destructive" }); return; }
-    toast({ title: `Horas gastas registradas: ${fmtHorasGastas(h)} h` });
+    toast({
+      title: `Horas gastas registradas: ${fmtHorasGastas(h)} h`,
+      description: editandoHoras ? "O parecer da I.A vai ser refeito com as horas novas." : undefined,
+    });
     setHorasDepois("");
+    setEditandoHoras(false);
+    qc.invalidateQueries({ queryKey: ["chamado-parecer-ia"] });
     invalidar();
   };
 
@@ -446,7 +453,29 @@ export default function ExecutarChamado() {
                       responsável (ou a gestão) informa aqui. */}
                   <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
                     <Clock className="h-3.5 w-3.5" /> Horas gastas: <b className="text-foreground">{chamado.horas_gastas != null ? `${fmtHorasGastas(chamado.horas_gastas)} h` : "—"}</b>
+                    {chamado.horas_gastas_estimadas && <span title="Supostas pela complexidade do parecer da I.A, não informadas pelo desenvolvedor">(estimadas)</span>}
+                    {/* Corrigir horas já informadas (mig 20261110004000, pedido
+                        do Pablo em 10/11/2026): o responsável ou a gestão troca o
+                        número e o parecer da I.A é refeito com ele. */}
+                    {chamado.horas_gastas != null && !editandoHoras && podeEditarHorasGastas(chamado, user?.id, gestor) && (
+                      <button type="button" className="ml-auto inline-flex items-center gap-1 font-semibold text-primary hover:underline"
+                        onClick={() => { setHorasDepois(fmtHorasGastas(chamado.horas_gastas)); setEditandoHoras(true); }}>
+                        <Pencil className="h-3 w-3" /> Editar
+                      </button>
+                    )}
                   </p>
+                  {editandoHoras && (
+                    <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
+                      <p className="text-xs text-muted-foreground">Corrigir as horas gastas. O parecer da I.A e os valores são refeitos com o número novo.</p>
+                      <div className="flex gap-1.5">
+                        <Input inputMode="decimal" placeholder="Ex.: 12,5" className="h-8 text-right text-xs" autoFocus
+                          value={horasDepois} onChange={(e) => setHorasDepois(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") informarHorasDepois(); if (e.key === "Escape") { setEditandoHoras(false); setHorasDepois(""); } }} />
+                        <Button size="sm" className="h-8" disabled={agindo === "horas"} onClick={informarHorasDepois}>Gravar</Button>
+                        <Button size="sm" variant="ghost" className="h-8" onClick={() => { setEditandoHoras(false); setHorasDepois(""); }}>Cancelar</Button>
+                      </div>
+                    </div>
+                  )}
                   {chamado.horas_gastas == null && !!chamado.concluido_em && new Date(chamado.concluido_em) >= new Date(HORAS_GASTAS_DESDE)
                     && (gestor || chamado.responsavel_id === user?.id) && (
                     <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/10 p-2">
