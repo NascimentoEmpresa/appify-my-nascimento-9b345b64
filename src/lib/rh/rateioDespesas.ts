@@ -44,7 +44,7 @@ export const TIPOS_RATEIO: { tipo: TipoRateio; rotulo: string; criterio: Criteri
   { tipo: "fgts", rotulo: "FGTS", criterio: "pdf" },
   { tipo: "bullla", rotulo: "Bullla", criterio: "pdf" },
   { tipo: "seguro", rotulo: "Seguro", criterio: "pdf" },
-  { tipo: "bsf", rotulo: "BSF", criterio: "pdf" },
+  { tipo: "bsf", rotulo: "Benefício Assistencial", criterio: "pdf" },
   { tipo: "gratificacao_pcd", rotulo: "Gratificação PCD", criterio: "pdf" },
   { tipo: "mensalidade_seeac", rotulo: "Mensalidade SEEAC", criterio: "pdf" },
   { tipo: "vale_transporte", rotulo: "Vale Transporte", criterio: "pdf" },
