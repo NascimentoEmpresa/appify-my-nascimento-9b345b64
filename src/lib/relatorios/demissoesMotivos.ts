@@ -12,7 +12,7 @@
 //   · motivo_solicitacao — "Qual motivo da solicitação" (lista)
 //   · motivo_pedido      — "Qual motivo do pedido de demissão" (lista)
 //   · justificativa      — "Justificativa do desligamento" (lista, obrigatória
-//                          desde 10/11/2026, mig 20261110190000; as antigas
+//                          desde 10/11/2026, mig 20261110210000; as antigas
 //                          contam como "(não informado)")
 //   · categoria_ia       — o relato livre, agrupado pela I.A (Edge
 //                          demissao-relato-ia). NULL = ainda não classificado

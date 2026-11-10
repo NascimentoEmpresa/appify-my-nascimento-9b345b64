@@ -66,7 +66,7 @@ export const MOTIVOS_SOLICITACAO = [
 ] as const;
 
 /**
- * Justificativa do desligamento (chamado de 10/11/2026, mig 20261110190000):
+ * Justificativa do desligamento (chamado de 10/11/2026, mig 20261110210000):
  * obrigatória na abertura, logo depois dos motivos, para a estatística dos
  * desligamentos. Lista FECHADA — é ela que o relatório conta. A mesma lista
  * está no banco (demissao_justificativas_validas); mudou aqui, muda lá.
