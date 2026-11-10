@@ -24,6 +24,8 @@ import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 import { useJustificativas } from "@/hooks/useJustificativasValor";
+// SIS-2026-0769: coluna informativa "Consumo de Estoque" — ver faturamento/consumoEstoque.ts.
+import { useConsumoEstoqueContrato } from "./faturamento/useConsumoEstoqueContrato";
 import { resumoPorContrato } from "./justificativas/regras";
 import { SolicitarJustificativaDialog, type AlvoJustificativa } from "./justificativas/SolicitarJustificativaDialog";
 
@@ -94,6 +96,7 @@ export default function LucratividadeContratos() {
   const resumoJustificativas = useMemo(() => resumoPorContrato(justificativas, mes), [justificativas, mes]);
   const [alvoJustificativa, setAlvoJustificativa] = useState<AlvoJustificativa | null>(null);
   const custos = useMemo(() => custosPorContratoMes(fluxo, ligacoes), [fluxo, ligacoes]);
+  const { data: consumoEstoque } = useConsumoEstoqueContrato(mes);
   // Contratos ADMINISTRATIVO - ... ficam fora da tela (linhas, totais, exportação e aviso de lançamento sem classificação).
   const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
   const semClass = useMemo(() => semClassificacao(fluxo.filter((l) => !l.contrato_id || !idsAdministrativos.has(l.contrato_id))), [fluxo, idsAdministrativos]);
@@ -130,6 +133,13 @@ export default function LucratividadeContratos() {
     return { ...t, ...lucroBruto(t.liquido, t.totalCusto) };
   }, [linhas]);
 
+  // Só das linhas visíveis: o mapa da RPC traz todos os contratos, e a tabela filtra.
+  const totalConsumoEstoque = useMemo(() => {
+    let t = 0;
+    for (const l of linhas) t += consumoEstoque?.porContrato.get(l.id)?.valor ?? 0;
+    return t;
+  }, [linhas, consumoEstoque]);
+
   useEffect(() => { setPagina(0); }, [mes, empresaId, cliente, situacao, busca]);
   const totalPaginas = Math.max(1, Math.ceil(linhas.length / porPagina));
   const paginaAtual = Math.min(pagina, totalPaginas - 1);
@@ -141,9 +151,9 @@ export default function LucratividadeContratos() {
   const negativos = linhas.filter((l) => l.lucro < 0).length;
 
   function exportarCsv() {
-    const cab = ["Mês", "Contrato", "Cliente", "Valor Exec.", "Valor Bruto", "Valor Líquido", "Desc. Contrato", ...RUBRICAS.map((r) => r.label), "Total de Custos", "Lucro Bruto", "Margem %", "Situação"];
+    const cab = ["Mês", "Contrato", "Cliente", "Valor Exec.", "Valor Bruto", "Valor Líquido", "Desc. Contrato", ...RUBRICAS.map((r) => r.label), "Total de Custos", "Lucro Bruto", "Margem %", "Consumo de Estoque (R$) - nao somado", "Situação"];
     const num = (v: number) => v.toFixed(2).replace(".", ",");
-    const corpo = linhas.map((l) => [rotuloMes(mes), l.contrato, l.cliente, num(l.exec), num(l.bruto), num(l.liquido), num(l.descontos), ...RUBRICAS.map((r) => num(l.custos[r.id])), num(l.totalCusto), num(l.lucro), l.margem === null ? "" : (l.margem * 100).toFixed(2).replace(".", ","), l.status]);
+    const corpo = linhas.map((l) => [rotuloMes(mes), l.contrato, l.cliente, num(l.exec), num(l.bruto), num(l.liquido), num(l.descontos), ...RUBRICAS.map((r) => num(l.custos[r.id])), num(l.totalCusto), num(l.lucro), l.margem === null ? "" : (l.margem * 100).toFixed(2).replace(".", ","), num(consumoEstoque?.porContrato.get(l.id)?.valor ?? 0), l.status]);
     const csv = [cab, ...corpo].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
@@ -277,6 +287,7 @@ export default function LucratividadeContratos() {
                       formula={<><p>Lucro Bruto ÷ Valor Líquido × 100. Fica em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor segue a faixa:</p><FaixasTexto /></>}
                     />
                   </TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Consumo de Estoque (R$)" formula="Material que saiu do estoque para o contrato no mês, a preço de custo. NÃO entra no Total de Custos nem no Lucro Bruto: hoje a compra do material já é lançada direto no contrato (a maior parte das compras de material, uniforme e EPI do malote desde setembro/2026), então somar a saída por cima cobraria o mesmo material duas vezes. Serve para a análise de contratos ver quanto cada contrato consumiu e sinalizar excesso. Conta só saída ligada a pedido do ERP." /></TableHead>
                   <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." /></TableHead>
                   {podeVerJustificativas && (
                     <TableHead className={`${CAB} text-center print:hidden`}><TituloComFormula alinhar="center" titulo="Justificativa de valor" formula="A Controladoria pede a um gerente que justifique um valor de qualquer coluna desta linha. Mostra quantas cobranças estão aguardando resposta, respondidas ou encerradas neste mês; clique para ver todas." /></TableHead>
@@ -300,6 +311,7 @@ export default function LucratividadeContratos() {
                     <TableCell className={`${CEL} text-right`}>
                       <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(l.margem)}`}>{pctTxt(l.margem)}</span>
                     </TableCell>
+                    <TableCell className={`${CEL_NUM} text-muted-foreground`} title="Informativo: não entra no Total de Custos nem no Lucro Bruto.">{consumoEstoque?.porContrato.get(l.id)?.valor ? num2(consumoEstoque.porContrato.get(l.id)!.valor) : "—"}</TableCell>
                     <TableCell className={`${CEL} text-center`}>
                       <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${l.status === "ativo" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{l.status}</span>
                     </TableCell>
@@ -328,7 +340,7 @@ export default function LucratividadeContratos() {
                     )}
                   </TableRow>
                 ))}
-                {linhas.length === 0 && <TableRow><TableCell colSpan={(detalhar ? 17 : 9) + (podeVerJustificativas ? 1 : 0)} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
+                {linhas.length === 0 && <TableRow><TableCell colSpan={(detalhar ? 18 : 10) + (podeVerJustificativas ? 1 : 0)} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
               </TableBody>
               <TableFooter>
                 <TableRow>
@@ -343,6 +355,7 @@ export default function LucratividadeContratos() {
                   <TableCell className={`${CEL} text-right`}>
                     <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(total.margem)}`}>{pctTxt(total.margem)}</span>
                   </TableCell>
+                  <TableCell className={`${CEL_NUM} font-semibold text-muted-foreground`}>{num2(totalConsumoEstoque)}</TableCell>
                   <TableCell />
                   {podeVerJustificativas && <TableCell className="print:hidden" />}
                 </TableRow>
@@ -355,6 +368,17 @@ export default function LucratividadeContratos() {
           {semClass.linhas > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
               {semClass.linhas} lançamento(s) de contrato sem classificação ({fmtMoney(semClass.valor)}) em {rotuloMes(mes)} ficam fora das colunas de custo. Classifique-os no Fluxo de Caixa para entrarem na conta.
+            </p>
+          )}
+          {/* SIS-2026-0769: a coluna é informativa enquanto a compra do material
+              continuar sendo lançada direto no contrato. Quando o setor passar a
+              lançar como estoque, ela pode virar custo — a conta já está pronta. */}
+          <p className="text-[11px] text-muted-foreground">
+            <strong>Consumo de Estoque</strong> é informativo e <strong>não</strong> entra no Total de Custos nem no Lucro Bruto. Hoje a compra do material já é lançada direto no contrato, então somar a saída do estoque por cima cobraria o mesmo material duas vezes. A coluna mostra quanto cada contrato consumiu, para sinalizar excesso. Conta só saída ligada a pedido do ERP.
+          </p>
+          {(consumoEstoque?.unidadesSemPreco ?? 0) > 0 && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              {consumoEstoque!.unidadesSemPreco} unidade(s) saíram do estoque em {rotuloMes(mes)} <strong>sem preço de custo</strong> e valem zero na coluna Consumo de Estoque — o contrato aparece recebendo material de graça. Preencha o valor do item em Suprimentos para a coluna fechar.
             </p>
           )}
         </>
