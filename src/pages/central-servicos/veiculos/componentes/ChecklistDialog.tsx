@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Camera, CheckCircle2, ClipboardCheck, ImagePlus, Loader2, Save, X } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, ClipboardCheck, Gauge, ImagePlus, Loader2, Lock, Save, Video, X } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +12,10 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { Agendamento } from "@/hooks/useAgendamentoVeiculos";
-import { abrirFotoChecklist, linkFotoChecklist, useSalvarChecklist } from "@/hooks/useChecklistVeiculo";
+import {
+  VIDEO_MAX_MB, abrirFotoChecklist, linkFotoChecklist, usePrestacoesPendentes, useSalvarChecklist, useUltimoKm,
+} from "@/hooks/useChecklistVeiculo";
+import { faltandoPrestacao } from "@/lib/veiculos/rotaDoDia";
 import {
   FOTOS_INTERIOR_EXIGIDAS, FOTOS_UNICAS, LABEL_TIPO_CHECKLIST, camposFaltando,
   type ChecklistVeiculo, type TipoChecklist,
@@ -25,6 +30,16 @@ import {
 // pela metade — cada foto já enviada fica —, e o card mostra "incompleto"
 // até chegar a última. O KM daqui alimenta o KM da viagem (inicial na saída,
 // final na chegada) quando ele ainda estiver vazio.
+//
+// 10/11/2026 (mig 20261110220000, pedido do Senilton):
+//   · SAÍDA = início da viagem. Só sai com a viagem anterior do responsável
+//     com a prestação completa (o banco barra; aqui a tela mostra o que falta
+//     e não deixa salvar). O KM passa a ser obrigatório, e a tela mostra o
+//     último KM informado do carro — se não bate, fica registrado como KM
+//     rodado sem agendamento/checklist.
+//   · CHEGADA ganha a prestação: vídeo completo do veículo, água e óleo
+//     verificados, avaria (sim/não + descrição) e "não abasteci" (quando não
+//     há nota de combustível).
 // =====================================================================
 
 const agoraLocal = () => {
@@ -60,6 +75,13 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
   const [interiorNovas, setInteriorNovas] = useState<File[]>([]);
   const [defeitoMantidas, setDefeitoMantidas] = useState<string[]>([]);
   const [defeitoNovas, setDefeitoNovas] = useState<File[]>([]);
+  // Prestação (chegada)
+  const [videoNovo, setVideoNovo] = useState<File | null>(null);
+  const [agua, setAgua] = useState(false);
+  const [oleo, setOleo] = useState(false);
+  const [avaria, setAvaria] = useState<boolean | null>(null);
+  const [avariaDesc, setAvariaDesc] = useState("");
+  const [semAbastecimento, setSemAbastecimento] = useState(false);
 
   // Ao abrir, parte do que já foi salvo.
   useEffect(() => {
@@ -72,7 +94,32 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
     setInteriorNovas([]);
     setDefeitoMantidas(checklist?.fotos_defeito ?? []);
     setDefeitoNovas([]);
-  }, [aberto, checklist]);
+    setVideoNovo(null);
+    setAgua(!!checklist?.agua_verificada);
+    setOleo(!!checklist?.oleo_verificado);
+    setAvaria(checklist?.avaria ?? null);
+    setAvariaDesc(checklist?.avaria_descricao ?? "");
+    setSemAbastecimento(!!agendamento?.sem_abastecimento);
+  }, [aberto, checklist, agendamento]);
+
+  const ehSaidaAqui = tipo === "saida";
+  const exige = agendamento?.prestacao_exigida !== false;
+  // Início da viagem: a anterior do responsável tem que estar completa.
+  const iniciando = ehSaidaAqui && !checklist && agendamento?.km_inicial == null && exige;
+  const pend = usePrestacoesPendentes(agendamento?.solicitante_id, agendamento?.id, aberto && iniciando);
+  const bloqueado = iniciando && (pend.data?.length ?? 0) > 0;
+  const ultimoKm = useUltimoKm(aberto && ehSaidaAqui ? agendamento?.patrimonio_id : null, agendamento?.id);
+  // Nota de combustível da viagem (a prestação aceita nota OU "não abasteci").
+  const notas = useQuery({
+    queryKey: ["cs_veiculo_abastecimento_qtd", agendamento?.id],
+    enabled: aberto && !ehSaidaAqui && !!agendamento,
+    staleTime: 30_000,
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { count } = await (supabase as any).from("cs_veiculo_abastecimento").select("id", { count: "exact", head: true }).eq("agendamento_id", agendamento!.id);
+      return count ?? 0;
+    },
+  });
 
   // O que vai ficar depois de salvar — é sobre isso que "o que falta" fala.
   const previsto: ChecklistVeiculo | null = useMemo(() => {
@@ -91,6 +138,14 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
     };
   }, [agendamento, tipo, checklist, novasUnicas, interiorMantidas, interiorNovas]);
   const falta = camposFaltando(previsto);
+  const kmNum = km ? Number(km) : null;
+  const kmDif = ehSaidaAqui && kmNum != null && ultimoKm.data ? kmNum - ultimoKm.data.km : null;
+  const faltaPrestacao = !ehSaidaAqui && agendamento && exige
+    ? faltandoPrestacao(
+        { km_inicial: agendamento.km_inicial ?? null, km_final: agendamento.km_final ?? (kmNum ?? null), sem_abastecimento: semAbastecimento },
+        { video_veiculo: videoNovo ? "novo" : checklist?.video_veiculo ?? null, agua_verificada: agua, oleo_verificado: oleo, avaria, avaria_descricao: avariaDesc },
+        (notas.data ?? 0) > 0)
+    : [];
 
   const mudou =
     Object.keys(novasUnicas).length > 0 || interiorNovas.length > 0 || defeitoNovas.length > 0 ||
@@ -99,7 +154,11 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
     km !== (checklist?.km != null ? String(checklist.km) : "") ||
     observacao !== (checklist?.observacao ?? "") ||
     // Só a data não cria checklist novo (viraria um "incompleto" vazio).
-    (!!checklist && realizadoEm !== isoParaLocal(checklist.realizado_em));
+    (!!checklist && realizadoEm !== isoParaLocal(checklist.realizado_em)) ||
+    !!videoNovo || agua !== !!checklist?.agua_verificada || oleo !== !!checklist?.oleo_verificado ||
+    avaria !== (checklist?.avaria ?? null) || avariaDesc !== (checklist?.avaria_descricao ?? "") ||
+    semAbastecimento !== !!agendamento?.sem_abastecimento;
+  const kmObrigatorioFaltando = iniciando && !km;
 
   const enviar = async () => {
     if (!agendamento) return;
@@ -114,6 +173,12 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
       interiorNovas,
       defeitoMantidas,
       defeitoNovas,
+      videoNovo,
+      extra: ehSaidaAqui ? undefined : {
+        agua_verificada: agua, oleo_verificado: oleo,
+        ...(avaria !== null ? { avaria, avaria_descricao: avariaDesc } : {}),
+        sem_abastecimento: semAbastecimento,
+      },
     });
     onFechar();
   };
@@ -137,8 +202,27 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
           </DialogDescription>
         </DialogHeader>
 
+        {agendamento && bloqueado && (
+          <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm">
+            <p className="flex items-center gap-2 font-bold text-destructive"><Lock className="h-4 w-4" /> Não dá para iniciar esta viagem ainda</p>
+            <p className="text-muted-foreground">
+              {agendamento.solicitante_nome ?? "O responsável"} tem viagem anterior sem a prestação completa. Complete em Meus Agendamentos
+              (checklist de chegada e Viagem) — ou marque "Não usei o carro no dia", se não usou.
+            </p>
+            <ul className="space-y-1">
+              {pend.data!.map((p) => (
+                <li key={p.agendamento_id} className="rounded-lg bg-background/80 px-2.5 py-1.5">
+                  <b>nº {p.numero}</b> · {p.veiculo}{p.placa ? ` ${p.placa}` : ""} · {p.data_inicio.split("-").reverse().join("/")}
+                  {!p.iniciada && <span className="text-amber-700 dark:text-amber-300"> · não iniciada</span>}
+                  <span className="block text-xs text-destructive">Falta: {p.faltando.join(", ")}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {agendamento && (
-          <div className="space-y-5">
+          <div className={cn("space-y-5", bloqueado && "pointer-events-none opacity-50")}>
             {/* Condutor e veículo vêm do agendamento — não são perguntas. */}
             <div className="grid gap-3 sm:grid-cols-3">
               <Info rotulo="Condutor" valor={checklist?.condutor_nome ?? agendamento.solicitante_nome ?? "—"} />
@@ -192,7 +276,20 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
             </section>
 
             <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50/60 p-3 dark:bg-amber-500/10">
-              <h4 className="text-sm font-bold">{ehSaida ? "KM inicial" : "KM final"} (painel)</h4>
+              <h4 className="text-sm font-bold">{ehSaida ? "KM inicial" : "KM final"} (painel){iniciando && <span className="text-destructive"> *</span>}</h4>
+              {ehSaida && (
+                <p className="flex items-start gap-2 rounded-lg bg-background/70 px-2.5 py-2 text-xs">
+                  <Gauge className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                  {ultimoKm.isLoading ? "Buscando o último KM do carro…" : ultimoKm.data ? (
+                    <span>
+                      Último KM informado deste carro: <b>{ultimoKm.data.km.toLocaleString("pt-BR")} km</b>
+                      {" "}({ultimoKm.data.momento === "retorno" ? "retorno" : "saída"} da viagem nº {ultimoKm.data.numero}
+                      {ultimoKm.data.condutor ? `, ${ultimoKm.data.condutor}` : ""}, {new Date(ultimoKm.data.em).toLocaleDateString("pt-BR")}).
+                      {" "}Digite o KM que está no painel agora.
+                    </span>
+                  ) : <span>Sem KM anterior registrado para este carro.</span>}
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <SlotFoto
                   id={`ck-${tipo}-foto_km`}
@@ -209,6 +306,14 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
                   <p className="text-[11px] text-muted-foreground">
                     Vai também para o {ehSaida ? "KM inicial" : "KM final"} da viagem, se ainda não estiver lá.
                   </p>
+                  {kmDif != null && kmDif > 0 && (
+                    <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                      {kmDif.toLocaleString("pt-BR")} km a mais que o último registro: fica anotado como KM rodado sem agendamento/checklist.
+                    </p>
+                  )}
+                  {kmDif != null && kmDif < 0 && (
+                    <p className="text-[11px] font-semibold text-destructive">Menor que o último KM registrado — confira o número.</p>
+                  )}
                 </div>
               </div>
             </section>
@@ -234,6 +339,47 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
                         placeholder="Descreva o defeito ou algo que a frota precise saber."
                         onChange={(e) => setObservacao(e.target.value)} />
             </section>
+
+            {!ehSaida && (
+              <section className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
+                <h4 className="text-sm font-bold">Prestação da viagem {exige && <span className="font-normal text-muted-foreground">(obrigatória para o próximo agendamento sair)</span>}</h4>
+                <SlotVideo id={`ck-${tipo}-video`} salvo={checklist?.video_veiculo ?? null} novo={videoNovo} podeEditar={podeEditar}
+                  onEscolher={(f) => setVideoNovo(f)} />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                    <Checkbox checked={agua} disabled={!podeEditar} onCheckedChange={(v) => setAgua(v === true)} aria-label="Água verificada" /> Verifiquei a água
+                  </label>
+                  <label className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                    <Checkbox checked={oleo} disabled={!podeEditar} onCheckedChange={(v) => setOleo(v === true)} aria-label="Óleo verificado" /> Verifiquei o óleo
+                  </label>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium">O veículo tem alguma possível avaria?</p>
+                  <div className="flex gap-2" role="radiogroup" aria-label="Possível avaria">
+                    {([[false, "Não"], [true, "Sim"]] as const).map(([v, r]) => (
+                      <button key={r} type="button" role="radio" aria-checked={avaria === v} disabled={!podeEditar} onClick={() => setAvaria(v)}
+                        className={cn("h-9 rounded-lg border px-4 text-sm font-semibold", avaria === v ? (v ? "border-destructive bg-destructive/10 text-destructive" : "border-emerald-600 bg-emerald-600/10 text-emerald-700") : "border-border bg-background")}>
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                  {avaria && (
+                    <Textarea rows={2} value={avariaDesc} disabled={!podeEditar} placeholder="Descreva a avaria (o que, onde). Fotos em 'Defeito não listado'."
+                      onChange={(e) => setAvariaDesc(e.target.value)} aria-label="Descrição da avaria" />
+                  )}
+                </div>
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox checked={semAbastecimento} disabled={!podeEditar} onCheckedChange={(v) => setSemAbastecimento(v === true)} className="mt-0.5" aria-label="Não abasteci nesta viagem" />
+                  <span>Não abasteci nesta viagem <span className="block text-xs text-muted-foreground">
+                    {(notas.data ?? 0) > 0 ? `${notas.data} nota(s) de combustível anexada(s).` : "Se abasteceu, anexe a foto da nota em Viagem › Abastecimento."}</span></span>
+                </label>
+                {exige && (faltaPrestacao.length > 0 ? (
+                  <p className="text-xs text-amber-800 dark:text-amber-300"><b>Falta na prestação:</b> {faltaPrestacao.join(", ")}.</p>
+                ) : (
+                  <p className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Prestação completa.</p>
+                ))}
+              </section>
+            )}
 
             {falta.length > 0 ? (
               <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
@@ -261,7 +407,8 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
         {podeEditar && (
           <DialogFooter>
             <Button variant="outline" onClick={onFechar}>Fechar</Button>
-            <Button className="gap-1.5" disabled={!mudou || salvar.isPending} onClick={enviar}>
+            {kmObrigatorioFaltando && !bloqueado && <span className="mr-auto self-center text-xs text-destructive">Informe o KM do painel para iniciar.</span>}
+            <Button className="gap-1.5" disabled={!mudou || salvar.isPending || bloqueado || kmObrigatorioFaltando} onClick={enviar}>
               {salvar.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {salvar.isPending ? "Enviando fotos…" : "Salvar checklist"}
             </Button>
@@ -320,6 +467,36 @@ function SlotFoto({ id, rotulo, salvo, novo, podeEditar, onEscolher }: {
             {ok ? "Trocar" : "Tirar foto"}
           </label>
           <input id={id} type="file" accept="image/*" capture="environment" className="hidden"
+                 onChange={(e) => { const f = e.target.files?.[0]; if (f) onEscolher(f); e.target.value = ""; }} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function SlotVideo({ id, salvo, novo, podeEditar, onEscolher }: {
+  id: string; salvo: string | null; novo: File | null; podeEditar: boolean; onEscolher: (f: File) => void;
+}) {
+  const ok = !!(salvo || novo);
+  return (
+    <div className={cn("flex items-center gap-3 rounded-lg border p-2.5", ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-dashed border-border bg-background")}>
+      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-muted">
+        {ok ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <Video className="h-5 w-5 text-muted-foreground" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">Vídeo completo do veículo</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {novo ? `${novo.name} (${(novo.size / 1048576).toFixed(0)} MB, a enviar)` : salvo ? (
+            <button type="button" className="font-semibold text-primary underline" onClick={() => abrirFotoChecklist(salvo)}>Enviado — assistir</button>
+          ) : `Dê a volta no carro filmando (até ${VIDEO_MAX_MB} MB).`}
+        </p>
+      </div>
+      {podeEditar && (
+        <>
+          <label htmlFor={id} className="cursor-pointer rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-semibold hover:bg-muted/50">
+            {ok ? "Trocar" : "Gravar vídeo"}
+          </label>
+          <input id={id} type="file" accept="video/*" capture="environment" className="hidden"
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onEscolher(f); e.target.value = ""; }} />
         </>
       )}
