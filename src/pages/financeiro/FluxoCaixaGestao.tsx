@@ -31,6 +31,7 @@ import {
   useFluxoCaixaPrevisto,
   useAjustarLinhaFluxoCaixa,
   useTrocarContratoFluxoCaixa,
+  useTrocarIntegranteFluxoCaixa,
   useSemContratoImportado,
   useReverterAjusteFluxoCaixa,
   type FluxoCaixaMaloteLinha,
@@ -60,6 +61,7 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
+import { IntegranteTrocaCampo } from "@/pages/financeiro/fluxo-caixa/IntegranteTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
 import { totaisPorNatureza } from "@/pages/financeiro/fluxo-caixa/naturezaFluxo";
 import { CardsPorNatureza } from "@/pages/financeiro/fluxo-caixa/CardsPorNatureza";
@@ -342,6 +344,9 @@ export default function FluxoCaixaGestao() {
   const trocarContrato = useTrocarContratoFluxoCaixa();
   const semContrato = useSemContratoImportado();
   const [editNovoContratoId, setEditNovoContratoId] = useState("");
+  // Troca de integrante dentro da edição — mesma ideia do contrato: grava na ORIGEM (linha de rateio do Malote) via RPC.
+  const trocarIntegrante = useTrocarIntegranteFluxoCaixa();
+  const [editNovoIntegranteId, setEditNovoIntegranteId] = useState("");
   const [editCienteEstouro, setEditCienteEstouro] = useState(false);
   const [editExigeCiencia, setEditExigeCiencia] = useState(false);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
@@ -397,6 +402,7 @@ export default function FluxoCaixaGestao() {
     setEditBancoId(l.banco_id ?? "");
     setEditContaId(l.conta_banco_id ?? "");
     setEditNovoContratoId("");
+    setEditNovoIntegranteId("");
     setEditCienteEstouro(false);
     setEditExigeCiencia(false);
   }
@@ -415,6 +421,9 @@ export default function FluxoCaixaGestao() {
         await semContrato.mutateAsync({ linhaId: itemEditar.despesa_id });
       } else if (editNovoContratoId) {
         await trocarContrato.mutateAsync({ origem: itemEditar.origem, despesaId: itemEditar.despesa_id, contratoId: editNovoContratoId });
+      }
+      if (editNovoIntegranteId) {
+        await trocarIntegrante.mutateAsync({ origem: itemEditar.origem, despesaId: itemEditar.despesa_id, empregadoId: Number(editNovoIntegranteId) });
       }
       await ajustarLinha.mutateAsync({
         origem: itemEditar.origem,
@@ -445,7 +454,9 @@ export default function FluxoCaixaGestao() {
         editNovoContratoId === SEM_CONTRATO
           ? "Confirmado: lançamento sem contrato (administrativo); os demais campos valem só neste Fluxo de Caixa."
           : editNovoContratoId
-          ?"Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + "; os demais campos valem só neste Fluxo de Caixa."
+          ?"Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + (editNovoIntegranteId ? "; integrante alterado na origem" : "") + "; os demais campos valem só neste Fluxo de Caixa."
+          : editNovoIntegranteId
+          ? "Integrante alterado na origem (Malote); os demais campos valem só neste Fluxo de Caixa."
           : "Atualizado só neste Fluxo de Caixa — o lançamento original não muda."
       );
       setItemEditar(null);
@@ -1852,6 +1863,9 @@ export default function FluxoCaixaGestao() {
                   onExigeCiencia={setEditExigeCiencia}
                 />
               </div>
+            )}
+            {itemEditar && (
+              <IntegranteTrocaCampo linha={itemEditar} novoId={editNovoIntegranteId} onNovoId={setEditNovoIntegranteId} />
             )}
           </div>
           <HistoricoAjusteFluxo linha={itemEditar} />
