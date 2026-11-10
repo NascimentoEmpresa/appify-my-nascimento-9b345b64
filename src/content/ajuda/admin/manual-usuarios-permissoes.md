@@ -145,6 +145,30 @@ Para cada tela do módulo, marque as ações que o cargo pode executar:
 
 ---
 
+## Liberação em massa por Setor / Cargo
+
+**Onde:** Configurações do ERP → **Módulos & Menus** → **Por Setor / Cargo**. Os cargos ficam em Configurações do ERP → **Cargos**.
+
+**Use quando:** várias pessoas do mesmo setor (ou do mesmo nível de cargo dentro dele) devem ter as mesmas telas.
+
+**Como fazer:**
+1. Escolha o **Setor** e, se quiser, o **Nível do cargo** (Presidente, Diretor, Gerente, Supervisor, ADM, Aprendiz). "Todos os níveis" pega o setor inteiro.
+2. Marque as telas do grupo — ou use **Copiar de…** (outro grupo, ou as telas que uma pessoa vê hoje) — e clique em **Salvar modelo**. Salvar não muda o acesso de ninguém.
+3. Clique em **Aplicar às N pessoas**. A prévia mostra quem ganha cada tela, quem já tinha e as telas **fora do modelo** — só saem as que você marcar.
+4. Confirme. A gravação é tudo ou nada e fica em **Últimas aplicações**.
+
+**O que esperar:**
+- O grupo de um nível recebe também as telas de "Setor · Todos os níveis" (as duas listas **somam**).
+- Grava o mesmo que o switch de "Acesso por Usuário", pessoa a pessoa: depois de aplicar, ajustes individuais continuam valendo e podem ser feitos normalmente.
+- Quem já via a tela não é tocado (as ações finas dela ficam como estão).
+- **Administrador Geral** recebe liberações, mas nunca remoção em massa.
+- Quem **entrar no setor depois não ganha sozinho**: ao criar o usuário, a tela de credenciais oferece **Aplicar o acesso do grupo**.
+- Telas com ajuste por pessoa (setores do Malote, papéis de Formulários, Reembolso, Troca de Função) têm a tela liberada pelo modelo; o ajuste fino continua em "Acesso por Usuário".
+
+**Cargos:** o cargo do usuário é escolhido da lista (não se digita mais). Cada cargo tem um **nível**, que é o que agrupa as pessoas acima. Só a administração troca o cargo de alguém. Os cargos marcados **usado pelo Malote** decidem quem aprova despesas pelo nome — renomear ou juntar um deles muda quem aprova.
+
+---
+
 ## Etapa 9 — Validar e Auditar
 
 **Onde:**
