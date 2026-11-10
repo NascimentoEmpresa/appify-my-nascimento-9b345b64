@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error módulo CommonJS do worker, sem tipos
+// Módulo CommonJS do worker (o TS lê o .js via allowJs).
 import { admissaoParaBr, montarMapaAdmissoes } from "../../worker/src/extratorBeneficios/admissoes.js";
 
 // Pedido do Pablo (10/11/2026): a planilha do SAMU saía sem Data de Admissão.
