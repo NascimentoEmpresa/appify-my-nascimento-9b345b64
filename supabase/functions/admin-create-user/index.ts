@@ -194,6 +194,26 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Cargo sai da lista de Configurações do ERP › Cargos (SIS-2026-0851,
+    // 10/11/2026): profiles.cargo virou FK de "CARGO_CATALOGO". Confere AQUI,
+    // antes de criar o login — se a FK recusasse só no upsert de profiles, o
+    // usuário já existiria no auth (a mesma origem dos perfis órfãos de 07/2026).
+    if (cargo) {
+      const { data: cargoOk, error: cargoErr } = await admin
+        .from("CARGO_CATALOGO")
+        .select("nome")
+        .eq("nome", cargo)
+        .maybeSingle();
+      // Sem a tabela (migration ainda pendente) também não há FK: segue como antes.
+      const semCatalogo = !!cargoErr && (cargoErr.code === "42P01" || cargoErr.code === "PGRST205");
+      if (cargoErr && !semCatalogo) {
+        return jsonResponse({ error: `Erro ao validar cargo: ${cargoErr.message}` }, 500);
+      }
+      if (!semCatalogo && !cargoOk) {
+        return jsonResponse({ error: `O cargo "${cargo}" não está na lista. Escolha um da lista ou cadastre em Configurações do ERP › Cargos.` }, 400);
+      }
+    }
+
     const { data: created, error: createErr } = await admin.auth.admin.createUser({
       email,
       password,
