@@ -29,12 +29,14 @@ import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useContratoImplantacaoSalvar } from "@/hooks/useContratoImplantacao";
+import { errosImplantacao, paraPayload, type LinhaForm } from "@/lib/licitacoes/implantacao";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
-  ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send, Stethoscope,
+  ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send, Stethoscope, Pencil,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
@@ -499,6 +501,7 @@ function DetalheContrato({ c, conf, podeVincular }: { c: ContratoAtivos; conf: C
     <div className="space-y-4">
       <ObservacoesContrato c={c} />
       {conf.pendentes.length > 0 && <DefinirPostos c={c} conf={conf} podeVincular={podeVincular} />}
+      {podeVincular && <AjustarImplantado c={c} conf={conf} />}
       <TabelaPostos c={c} conf={conf} podeVincular={podeVincular} />
       {conf.fora.length > 0 && <ForaDaConta c={c} pessoas={conf.fora} podeVincular={podeVincular} />}
     </div>
@@ -1314,5 +1317,87 @@ function DialogAtestadosPorDia({ aberto, contratoId, linhas, onContrato, onClose
         </p>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---- Ajustar o IMPLANTADO pelo operacional (10/11/2026, mig 20261110011000) ----
+// Pablo: "o operacional está atualizando as informações aqui mas tá voltando
+// tudo de novo". O implantado só muda com um registro em
+// CONTRATO_POSTO_IMPLANTADO, e a única porta era a aba Implantação da
+// Licitação — o operacional não tinha a permissão, nada era gravado e o
+// número ficava sempre igual ao previsto da planilha. Agora quem vincula
+// postos aqui registra o implantado aqui mesmo, pela MESMA RPC
+// (contrato_implantacao_salvar): fica gravado até alguém registrar outro, e
+// nenhuma integração (Senior incluída) escreve nessa tabela.
+function AjustarImplantado({ c, conf }: { c: ContratoAtivos; conf: ConferenciaContrato }) {
+  const [aberto, setAberto] = useState(false);
+  const [linhas, setLinhas] = useState<LinhaForm[]>([]);
+  const salvar = useContratoImplantacaoSalvar();
+  const abrir = () => {
+    setLinhas(conf.postos.map((p) => ({ posto: p.nome, previsto: p.previsto, implantado: String(p.implantado), justificativa: "" })));
+    setAberto(true);
+  };
+  // Só vai o que mudou: registrar de novo um posto igual criaria histórico à toa.
+  const atual = new Map(conf.postos.map((p) => [p.nome, p.implantado]));
+  const alteradas = linhas.filter((l) => l.implantado.trim() !== String(atual.get(l.posto) ?? ""));
+  const erros = errosImplantacao(alteradas);
+  const muda = (posto: string, campo: "implantado" | "justificativa", v: string) =>
+    setLinhas((ls) => ls.map((l) => (l.posto === posto ? { ...l, [campo]: v } : l)));
+  const hoje = new Date();
+  const hojeIso = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-${String(hoje.getDate()).padStart(2, "0")}`;
+  const enviar = () => {
+    if (!alteradas.length || Object.keys(erros).length) return;
+    salvar.mutate({ contratoId: c.id, valeAPartirDe: hojeIso, postos: paraPayload(alteradas) }, {
+      onSuccess: () => setAberto(false),
+    });
+  };
+  return (
+    <>
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={abrir}>
+          <Pencil className="h-3.5 w-3.5" /> Ajustar implantado
+        </Button>
+      </div>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Ajustar implantado — {c.nome}</DialogTitle>
+            <DialogDescription>
+              Quantas pessoas cada posto tem de fato implantado. Fica gravado a partir de hoje até alguém registrar outro número.
+              Diferente do previsto na Planilha de Custo pede justificativa.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+            {linhas.map((l) => {
+              const mudou = l.implantado.trim() !== String(atual.get(l.posto) ?? "");
+              const n = Number(l.implantado.trim());
+              const pedeJust = mudou && Number.isInteger(n) && n !== l.previsto;
+              return (
+                <div key={l.posto} className="rounded-md border border-border p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 text-xs font-medium">{l.posto}</span>
+                    <span className="text-[11px] text-muted-foreground">previsto {l.previsto}</span>
+                    <Input type="number" min={0} step={1} value={l.implantado} className="h-8 w-20 text-right text-xs"
+                      onChange={(e) => muda(l.posto, "implantado", e.target.value)} />
+                  </div>
+                  {pedeJust && (
+                    <Textarea rows={2} value={l.justificativa} maxLength={2000} className="mt-2 text-xs"
+                      placeholder="Por que difere do previsto? Ex.: 1 coletor passou para o quadro de motorista (transbordo)."
+                      onChange={(e) => muda(l.posto, "justificativa", e.target.value)} />
+                  )}
+                  {mudou && erros[l.posto] && <p className="mt-1 text-[11px] text-destructive">{erros[l.posto]}</p>}
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAberto(false)}>Cancelar</Button>
+            <Button size="sm" className="gap-1.5" disabled={salvar.isPending || !alteradas.length || Object.keys(erros).length > 0} onClick={enviar}>
+              {salvar.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Salvar {alteradas.length > 0 && `(${alteradas.length})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
