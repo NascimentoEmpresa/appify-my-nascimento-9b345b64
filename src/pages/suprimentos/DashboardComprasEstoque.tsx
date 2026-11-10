@@ -59,6 +59,7 @@ import {
   TooltipMoeda,
   formatarEixoMoeda,
 } from "@/components/suprimentos/dashboard/PainelBase";
+import { PosicaoPorItem } from "@/components/suprimentos/dashboard/PosicaoPorItem";
 import { RotatividadeEstoque } from "@/components/suprimentos/dashboard/RotatividadeEstoque";
 import { EstoqueSaudavel } from "@/components/suprimentos/dashboard/EstoqueSaudavel";
 import { EntregasMensais } from "@/components/suprimentos/dashboard/EntregasMensais";
@@ -93,6 +94,34 @@ function dataIso(data: Date): string {
   const mes = String(data.getMonth() + 1).padStart(2, "0");
   const dia = String(data.getDate()).padStart(2, "0");
   return `${ano}-${mes}-${dia}`;
+}
+
+/**
+ * SIS-2026-0824: o solicitante pediu "uma opção que dê para filtrar pelo
+ * período escolhido", com os últimos 30 dias à mão. Os campos de data já
+ * existiam; o que faltava era não ter de digitar duas datas para a pergunta
+ * mais comum.
+ */
+const PERIODOS_RAPIDOS = [
+  { dias: 7, rotulo: "7 dias" },
+  { dias: 30, rotulo: "30 dias" },
+  { dias: 90, rotulo: "90 dias" },
+] as const;
+
+function periodoDeDias(dias: number): { inicio: string; fim: string } {
+  const fim = new Date();
+  const inicio = new Date(fim);
+  // Inclui hoje na contagem: "7 dias" é hoje e os seis anteriores.
+  inicio.setDate(inicio.getDate() - (dias - 1));
+  return { inicio: dataIso(inicio), fim: dataIso(fim) };
+}
+
+function periodoDoMes(): { inicio: string; fim: string } {
+  const hoje = new Date();
+  return {
+    inicio: dataIso(new Date(hoje.getFullYear(), hoje.getMonth(), 1)),
+    fim: dataIso(hoje),
+  };
 }
 
 function filtrosIniciais(): FiltroDashboardCompras {
@@ -415,11 +444,31 @@ function TabelaMovimentacao({ titulo, linhas }: { titulo: string; linhas: ItemMo
   );
 }
 
-function TelaEstoqueSaving({ dados }: { dados: DashboardComprasEstoqueDados }) {
+function TelaEstoqueSaving({ dados, inicio, fim }: { dados: DashboardComprasEstoqueDados; inicio: string; fim: string }) {
   const e = dados.estoque_resumo;
   const s = dados.saving_resumo;
+  const pendente = Number(e.quantidade_pendente_entrega ?? 0);
+  const semVinculo = Number(e.quantidade_pendente_sem_vinculo ?? 0);
+  const emCotacao = Number(e.quantidade_aguardando_compra ?? 0);
+  const aReceber = Number(e.quantidade_em_transito ?? 0);
   return (
     <div className="space-y-3">
+      {/* SIS-2026-0824: pendência e compra em andamento são posição de agora,
+          e por isso o detalhe de cada cartão diz de onde o número vem. */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <CartaoIndicador titulo="Pendente de entrega" tom="amber"
+          valor={formatarNumero(pendente)} icone={<Clock3 className="h-6 w-6" />}
+          detalhe={semVinculo > 0
+            ? `unidades pedidas e não entregues · mais ${formatarNumero(semVinculo)} sem item de catálogo`
+            : `unidades pedidas e não entregues · ${formatarNumero(e.itens_com_pendencia ?? 0)} itens`} />
+        <CartaoIndicador titulo="Em cotação (Malote)" tom="violet"
+          valor={formatarNumero(emCotacao)} icone={<FileCheck2 className="h-6 w-6" />}
+          detalhe="solicitação de compra ainda não enviada ao fornecedor" />
+        <CartaoIndicador titulo="Comprado, a receber" tom="blue"
+          valor={formatarNumero(aReceber)} icone={<Truck className="h-6 w-6" />}
+          detalhe="pedido enviado, menos o que já foi conferido" />
+      </div>
+      <PosicaoPorItem dados={dados} inicio={inicio} fim={fim} />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <CartaoIndicador titulo="Valor físico do estoque" valor={formatarMoeda(e.valor_total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" detalhe={`${formatarNumero(e.itens_distintos)} itens distintos · mesma base de Estoque & Etiquetas`} />
         <CartaoIndicador titulo="Quantidade física" valor={formatarNumero(e.quantidade_fisica)} icone={<Boxes className="h-6 w-6" />} detalhe="todas as unidades na prateleira" />
@@ -517,6 +566,33 @@ export default function DashboardComprasEstoque() {
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Categoria</label><Select value={filtros.categoria ?? "todas"} onValueChange={(v) => trocar("categoria", v === "todas" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todas">Todas</SelectItem>{dados?.filtros.categorias.map((c) => <SelectItem key={c.valor} value={c.valor}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Comprador responsável</label><Select value={filtros.comprador ?? "todos"} onValueChange={(v) => trocar("comprador", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.compradores.map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}</SelectContent></Select></div>
           <div className="flex items-end"><Button variant="outline" className="w-full" onClick={() => consulta.refetch()} disabled={consulta.isFetching}><RefreshCw className={cn("mr-2 h-4 w-4", consulta.isFetching && "animate-spin")} />Atualizar</Button></div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+          <span className="text-xs font-semibold text-slate-700">Período rápido:</span>
+          {PERIODOS_RAPIDOS.map((p) => {
+            const alvo = periodoDeDias(p.dias);
+            const ativo = filtros.inicio === alvo.inicio && filtros.fim === alvo.fim;
+            return (
+              <Button key={p.dias} variant={ativo ? "default" : "outline"} size="sm" className="h-7 text-xs"
+                onClick={() => { setPeriodoAutomatico(false); setFiltros((f) => ({ ...f, ...alvo })); }}>
+                {p.rotulo}
+              </Button>
+            );
+          })}
+          {(() => {
+            const alvo = periodoDoMes();
+            const ativo = filtros.inicio === alvo.inicio && filtros.fim === alvo.fim;
+            return (
+              <Button variant={ativo ? "default" : "outline"} size="sm" className="h-7 text-xs"
+                onClick={() => { setPeriodoAutomatico(false); setFiltros((f) => ({ ...f, ...alvo })); }}>
+                Mês atual
+              </Button>
+            );
+          })()}
+          <Button variant="outline" size="sm" className="h-7 text-xs"
+            onClick={() => { setPeriodoAutomatico(false); setFiltros((f) => ({ ...f, ...periodoDeDias(1), inicio: `${new Date().getFullYear()}-01-01` })); }}>
+            Ano todo
+          </Button>
         </div></CardContent></Card>
 
         {dados?.periodo_disponivel?.inicio && (
@@ -551,7 +627,7 @@ export default function DashboardComprasEstoque() {
           </p>
           <TabsContent value="geral" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><CartaoIndicador titulo="Pedidos cadastrados" valor={formatarNumero(dados.resumo.solicitacoes_total_geral)} detalhe={`${formatarNumero(dados.resumo.solicitacoes)} no período`} icone={<FileText className="h-6 w-6" />} /><CartaoIndicador titulo="Pendentes" valor={formatarNumero(dados.resumo.pendentes)} detalhe="pedidos únicos; parcial entra aqui" icone={<Clock3 className="h-6 w-6" />} tom="amber" /><CartaoIndicador titulo="Despachadas" valor={formatarNumero(dados.resumo.despachadas)} detalhe="entregues ou aguardando confirmação" icone={<PackageCheck className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Tempo médio" valor={`${formatarNumero(dados.resumo.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} /><CartaoIndicador titulo="Cotações" valor={formatarNumero(dados.resumo.cotacoes)} icone={<FileCheck2 className="h-6 w-6" />} tom="violet" /><CartaoIndicador titulo="Saving" valor={formatarMoeda(dados.saving_resumo.total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Saving %" valor={`${formatarNumero(percentual(dados.saving_resumo.total, dados.saving_por_contrato.reduce((s, x) => s + Number(x.valor_inicial), 0)), 1)}%`} icone={<TrendingUp className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Estoque físico" valor={formatarMoeda(dados.estoque_resumo.valor_total)} detalhe={`${formatarNumero(dados.estoque_resumo.quantidade_fisica)} unidades físicas`} icone={<Boxes className="h-6 w-6" />} /></div><div className="grid gap-3 xl:grid-cols-3"><PainelGrafico titulo="Solicitações por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="nome" interval={0} height={96} tick={<TickCategoriaInclinado maximo={24} />} /><YAxis /><Tooltip /><Legend /><Bar dataKey="quantidade" name="Solicitações" fill="#0969da" /><Bar dataKey="despachadas" name="Despachadas" fill="#60a5fa" /><Bar dataKey="pendentes" name="Pendentes" fill="#94a3b8" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Saving por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.saving_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="contrato" interval={0} height={96} tick={<TickCategoriaInclinado maximo={24} />} /><YAxis tickFormatter={formatarEixoMoeda} /><Tooltip content={<TooltipMoeda />} /><Bar dataKey="saving" name="Saving" fill="#0969da" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Motivos das Pendências"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={dados.motivos_pendencias} dataKey="quantidade" nameKey="nome" innerRadius={60} outerRadius={90}>{dados.motivos_pendencias.map((_, i) => <Cell key={i} fill={AZUIS[i % AZUIS.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div></PainelGrafico></div><div className="grid gap-3 xl:grid-cols-[1.3fr_0.7fr]"><PainelGrafico titulo="Movimentação de Estoque (Entradas x Saídas)"><div className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" /><YAxis /><Tooltip /><Legend /><Bar dataKey="entradas" name="Entradas" fill="#0969da" /><Bar dataKey="saidas" name="Saídas" fill="#60a5fa" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Resumo do Estoque"><div className="grid h-[250px] grid-cols-3 items-center gap-3"><div className="rounded-xl border bg-blue-50 p-3 text-center"><Boxes className="mx-auto h-7 w-7 text-blue-600" /><p className="mt-2 text-xs text-slate-500">Físico</p><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.estoque_resumo.quantidade_fisica)}</p></div><div className="rounded-xl border bg-amber-50 p-3 text-center"><PackageCheck className="mx-auto h-7 w-7 text-amber-600" /><p className="mt-2 text-xs text-slate-500">Reservado</p><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.estoque_resumo.quantidade_reservada)}</p></div><div className="rounded-xl border bg-emerald-50 p-3 text-center"><PiggyBank className="mx-auto h-7 w-7 text-emerald-600" /><p className="mt-2 text-xs text-slate-500">Valor físico</p><p className="text-lg font-extrabold text-blue-950">{formatarMoeda(dados.estoque_resumo.valor_total)}</p></div></div></PainelGrafico></div></TabsContent>
           <TabsContent value="solicitacoes" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><CardsSolicitacoes dados={dados} /><CardsCotacoes dados={dados} /></div><GraficosSolicitacoes dados={dados} /><div className="grid gap-3 xl:grid-cols-2"><TabelaSolicitacoes dados={dados} /><TabelaCotacoes dados={dados} /></div></TabsContent>
-          <TabsContent value="estoque"><TelaEstoqueSaving dados={dados} /></TabsContent>
+          <TabsContent value="estoque"><TelaEstoqueSaving dados={dados} inicio={filtros.inicio} fim={filtros.fim} /></TabsContent>
           {/* A aba de Rotatividade tem RPC própria (sup_dashboard_rotatividade_estoque)
               e recebe só período/empresa/contrato do filtro acima; a categoria é
               escolhida dentro dela. Montar só quando a aba abre evita disparar a
