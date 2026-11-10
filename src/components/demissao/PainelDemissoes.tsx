@@ -721,6 +721,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
           ["Solicitante", s.solicitante_nome], ["E-mail do solicitante", s.solicitante_email],
           ["Data da solicitação", fmtData(s.data_solicitacao)],
           ["Motivo da solicitação", s.motivo_solicitacao], ["Motivo do pedido", s.motivo_pedido],
+          ["Justificativa do desligamento", s.justificativa_desligamento
+            ? s.justificativa_desligamento + (s.justificativa_complemento ? ` — ${s.justificativa_complemento}` : "")
+            : "Não informada (aberta antes de 10/11/2026)"],
         ]} />
 
         <div className="rounded-lg border p-4">
