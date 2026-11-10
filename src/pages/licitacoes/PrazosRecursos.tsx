@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Download, Plus, Trash2, Trophy } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Download, Plus, RotateCcw, Trash2, Trophy } from "lucide-react";
 import * as XLSX from "xlsx";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -13,13 +13,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useUsuariosLicitacao } from "@/hooks/useUsuariosLicitacao";
+import { supabase } from "@/integrations/supabase/client";
 
 type Modalidade = "recurso" | "contrarrazao" | "impugnacao" | "mandado_seguranca" | "denuncia_tce" | "repactuacao";
 type Status = "aberto" | "em_andamento" | "protocolado" | "concluido" | "cancelado";
 type Resultado = "favoravel" | "desfavoravel";
+type FiltroResumo = "todos" | "abertos" | "exitos" | "nao_exitos";
 type Demanda = {
   id: string; modalidade: Modalidade; processo: string; orgao: string | null; objeto: string | null;
   prazo: string | null; protocolo_em: string | null; status: Status; resultado: Resultado | null;
@@ -39,7 +41,7 @@ const modalidades: Record<Modalidade, string> = {
   recurso: "Recurso", contrarrazao: "Contrarrazão", impugnacao: "Impugnação",
   mandado_seguranca: "Mandado de segurança", denuncia_tce: "Denúncia ao TCE", repactuacao: "Cobrança / repactuação",
 };
-const vazio = { modalidade: "recurso" as Modalidade, processo: "", orgao: "", objeto: "", prazo: "", responsavel_id: "", observacoes: "" };
+const vazio = { modalidade: "recurso" as Modalidade, processo: "", orgao: "", objeto: "", prazo: "", observacoes: "" };
 const textoStatus: Record<Status, string> = { aberto: "Aberto", em_andamento: "Em andamento", protocolado: "Protocolado", concluido: "Concluído", cancelado: "Cancelado" };
 const OTNIEL = "Otniel Souza Moreira";
 const hoje = () => new Date().toISOString().slice(0, 10);
@@ -60,8 +62,13 @@ function textoResultado(resultado: Resultado | null) {
   return "—";
 }
 
+function ehNomeOtniel(nome: string | null | undefined) {
+  return nome?.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().includes("OTNIEL") ?? false;
+}
+
 export default function PrazosRecursos() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const { data: usuarios = [] } = useUsuariosLicitacao({ todasEmpresas: true });
   const { data: podeExcluir = false } = useScreenAccess("licitacoes_prazos_recursos_excluir", "excluir");
@@ -69,8 +76,23 @@ export default function PrazosRecursos() {
   const [modal, setModal] = useState(false);
   const [edicao, setEdicao] = useState<Demanda | null>(null);
   const [filtro, setFiltro] = useState<"todos" | Modalidade>("todos");
+  const [filtroResumo, setFiltroResumo] = useState<FiltroResumo>("todos");
   const [form, setForm] = useState(vazio);
   const [excluirAlvo, setExcluirAlvo] = useState<Demanda | null>(null);
+
+  const perfilAtual = useQuery({
+    queryKey: ["perfil-atual-prazos-recursos", user?.id],
+    enabled: !!user?.id,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("display_name").eq("id", user!.id).maybeSingle();
+      if (error) throw error;
+      return data as { display_name: string | null } | null;
+    },
+  });
+  const souOtniel = ehNomeOtniel(perfilAtual.data?.display_name) || ehNomeOtniel(user?.email);
+  const podeControlarPronto = souOtniel || podeMarcarPronto;
+  const podeRemover = souOtniel || podeExcluir;
 
   const consulta = useQuery({
     queryKey: ["lic-prazos-recursos"],
@@ -85,7 +107,7 @@ export default function PrazosRecursos() {
     mutationFn: async () => {
       const payload: Record<string, unknown> = {
         ...form, orgao: form.orgao || null, objeto: form.objeto || null, prazo: form.prazo || null,
-        responsavel_id: form.responsavel_id || null, observacoes: form.observacoes || null,
+        observacoes: form.observacoes || null,
       };
       const resposta = edicao ? await tabelaPrazos().update(payload).eq("id", edicao.id) : await tabelaPrazos().insert(payload);
       if (resposta.error) throw resposta.error;
@@ -93,7 +115,7 @@ export default function PrazosRecursos() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["lic-prazos-recursos"] });
       setModal(false);
-      toast({ title: edicao ? "Demanda atualizada" : "Demanda criada", description: "Os alertas foram enviados aos envolvidos." });
+      toast({ title: edicao ? "Demanda atualizada" : "Demanda criada", description: edicao ? "Os dados da demanda foram atualizados." : "Otniel recebeu uma notificação da nova demanda." });
     },
     onError: (erro: Error) => toast({ title: "Não foi possível salvar", description: erro.message, variant: "destructive" }),
   });
@@ -105,9 +127,21 @@ export default function PrazosRecursos() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["lic-prazos-recursos"] });
-      toast({ title: "Material marcado como pronto", description: "O responsável recebeu uma notificação." });
+      toast({ title: "Material marcado como pronto", description: "O criador da demanda recebeu uma notificação." });
     },
     onError: (erro: Error) => toast({ title: "Não foi possível concluir", description: erro.message, variant: "destructive" }),
+  });
+
+  const reabrir = useMutation({
+    mutationFn: async (demanda: Demanda) => {
+      const { error } = await tabelaPrazos().update({ status: "aberto", protocolo_em: null, resultado: null }).eq("id", demanda.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["lic-prazos-recursos"] });
+      toast({ title: "Demanda reaberta", description: "Ela voltou a ficar disponível para acompanhamento." });
+    },
+    onError: (erro: Error) => toast({ title: "Não foi possível reabrir", description: erro.message, variant: "destructive" }),
   });
 
   const excluir = useMutation({
@@ -123,17 +157,24 @@ export default function PrazosRecursos() {
     onError: (erro: Error) => toast({ title: "Não foi possível excluir", description: erro.message, variant: "destructive" }),
   });
 
-  const linhas = useMemo(() => (consulta.data ?? []).filter((item) => filtro === "todos" || item.modalidade === filtro), [consulta.data, filtro]);
-  const total = linhas.length;
-  const abertos = linhas.filter((item) => item.status !== "concluido" && item.status !== "cancelado" && (diasAte(item.prazo) ?? 999) >= 0).length;
-  const exitos = linhas.filter((item) => item.resultado === "favoravel").length;
-  const naoExitos = linhas.filter((item) => item.resultado === "desfavoravel").length;
+  const demandasDaModalidade = useMemo(() => (consulta.data ?? []).filter((item) => filtro === "todos" || item.modalidade === filtro), [consulta.data, filtro]);
+  const estaEmAbertoAVencer = (demanda: Demanda) => demanda.status !== "concluido" && demanda.status !== "cancelado" && (diasAte(demanda.prazo) ?? 999) >= 0;
+  const linhas = useMemo(() => demandasDaModalidade.filter((item) => {
+    if (filtroResumo === "abertos") return estaEmAbertoAVencer(item);
+    if (filtroResumo === "exitos") return item.resultado === "favoravel";
+    if (filtroResumo === "nao_exitos") return item.resultado === "desfavoravel";
+    return true;
+  }), [demandasDaModalidade, filtroResumo]);
+  const total = demandasDaModalidade.length;
+  const abertos = demandasDaModalidade.filter(estaEmAbertoAVencer).length;
+  const exitos = demandasDaModalidade.filter((item) => item.resultado === "favoravel").length;
+  const naoExitos = demandasDaModalidade.filter((item) => item.resultado === "desfavoravel").length;
 
   function abrir(demanda?: Demanda) {
     setEdicao(demanda ?? null);
     setForm(demanda ? {
       modalidade: demanda.modalidade, processo: demanda.processo, orgao: demanda.orgao ?? "", objeto: demanda.objeto ?? "",
-      prazo: demanda.prazo ?? "", responsavel_id: demanda.responsavel_id ?? "", observacoes: demanda.observacoes ?? "",
+      prazo: demanda.prazo ?? "", observacoes: demanda.observacoes ?? "",
     } : vazio);
     setModal(true);
   }
@@ -147,6 +188,11 @@ export default function PrazosRecursos() {
     }
     setEdicao({ ...edicao, resultado });
     qc.invalidateQueries({ queryKey: ["lic-prazos-recursos"] });
+  }
+
+  function selecionarModalidade(proximoFiltro: "todos" | Modalidade) {
+    setFiltro(proximoFiltro);
+    setFiltroResumo("todos");
   }
 
   function exportarExcel() {
@@ -174,15 +220,15 @@ export default function PrazosRecursos() {
     </>} />
 
     <div className="flex flex-wrap gap-2">
-      <Button variant={filtro === "todos" ? "default" : "outline"} size="sm" onClick={() => setFiltro("todos")}>Todas</Button>
-      {Object.entries(modalidades).map(([codigo, nome]) => <Button key={codigo} variant={filtro === codigo ? "default" : "outline"} size="sm" onClick={() => setFiltro(codigo as Modalidade)}>{nome}</Button>)}
+      <Button variant={filtro === "todos" ? "default" : "outline"} size="sm" onClick={() => selecionarModalidade("todos")}>Todas</Button>
+      {Object.entries(modalidades).map(([codigo, nome]) => <Button key={codigo} variant={filtro === codigo ? "default" : "outline"} size="sm" onClick={() => selecionarModalidade(codigo as Modalidade)}>{nome}</Button>)}
     </div>
 
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <Kpi icon={<ClipboardList />} titulo="Processos totais" valor={total} cor="text-blue-600" />
-      <Kpi icon={<CalendarClock />} titulo="Em aberto a vencer" valor={abertos} cor="text-amber-600" />
-      <Kpi icon={<Trophy />} titulo="Êxitos" valor={exitos} cor="text-emerald-600" />
-      <Kpi icon={<AlertTriangle />} titulo="Não êxito" valor={naoExitos} cor="text-rose-600" />
+      <Kpi icon={<ClipboardList />} titulo="Processos totais" valor={total} cor="text-blue-600" ativo={filtroResumo === "todos"} onClick={() => setFiltroResumo("todos")} />
+      <Kpi icon={<CalendarClock />} titulo="Em aberto a vencer" valor={abertos} cor="text-amber-600" ativo={filtroResumo === "abertos"} onClick={() => setFiltroResumo("abertos")} />
+      <Kpi icon={<Trophy />} titulo="Êxitos" valor={exitos} cor="text-emerald-600" ativo={filtroResumo === "exitos"} onClick={() => setFiltroResumo("exitos")} />
+      <Kpi icon={<AlertTriangle />} titulo="Não êxito" valor={naoExitos} cor="text-rose-600" ativo={filtroResumo === "nao_exitos"} onClick={() => setFiltroResumo("nao_exitos")} />
     </div>
 
     <Card><CardContent className="p-0"><Table>
@@ -198,12 +244,13 @@ export default function PrazosRecursos() {
             <TableCell>{textoStatus[demanda.status]}</TableCell>
             <TableCell>{demanda.status === "concluido" ? textoResultado(demanda.resultado) : "—"}</TableCell>
             <TableCell className="text-right"><div className="flex justify-end gap-2">
-              {demanda.status !== "concluido" && podeMarcarPronto && <Button size="sm" variant="outline" onClick={(evento) => { evento.stopPropagation(); concluir.mutate(demanda); }}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Pronto</Button>}
-              {podeExcluir && <Button size="icon" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground" aria-label={`Excluir demanda ${demanda.processo}`} onClick={(evento) => { evento.stopPropagation(); setExcluirAlvo(demanda); }}><Trash2 className="h-4 w-4" /></Button>}
+              {demanda.status !== "concluido" && podeControlarPronto && <Button size="sm" variant="outline" onClick={(evento) => { evento.stopPropagation(); concluir.mutate(demanda); }}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Pronto</Button>}
+              {demanda.status === "concluido" && podeControlarPronto && <Button size="sm" variant="outline" onClick={(evento) => { evento.stopPropagation(); reabrir.mutate(demanda); }}><RotateCcw className="mr-1 h-3.5 w-3.5" />Voltar</Button>}
+              {podeRemover && <Button size="icon" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground" aria-label={`Excluir demanda ${demanda.processo}`} onClick={(evento) => { evento.stopPropagation(); setExcluirAlvo(demanda); }}><Trash2 className="h-4 w-4" /></Button>}
             </div></TableCell>
           </TableRow>;
         })}
-        {!linhas.length && <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground">Nenhuma demanda encontrada.</TableCell></TableRow>}
+        {!linhas.length && <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground">Nenhuma demanda encontrada para este filtro.</TableCell></TableRow>}
       </TableBody>
     </Table></CardContent></Card>
 
@@ -213,7 +260,6 @@ export default function PrazosRecursos() {
         <Campo label="Prazo"><Input type="date" value={form.prazo} onChange={(evento) => setForm({ ...form, prazo: evento.target.value })} /></Campo>
         <Campo label="Processo / pregão"><Input value={form.processo} onChange={(evento) => setForm({ ...form, processo: evento.target.value })} /></Campo>
         <Campo label="Órgão / cidade"><Input value={form.orgao} onChange={(evento) => setForm({ ...form, orgao: evento.target.value })} /></Campo>
-        <Campo label="Responsável"><Select value={form.responsavel_id || "nenhum"} onValueChange={(valor) => setForm({ ...form, responsavel_id: valor === "nenhum" ? "" : valor })}><SelectTrigger><SelectValue placeholder="Não atribuído" /></SelectTrigger><SelectContent><SelectItem value="nenhum">Não atribuído</SelectItem>{usuarios.map((usuario) => <SelectItem key={usuario.id} value={usuario.id}>{usuario.display_name || usuario.email}</SelectItem>)}</SelectContent></Select></Campo>
         {edicao?.status === "concluido" && <Campo label="Resultado do processo"><Select value={edicao.resultado ?? undefined} onValueChange={(valor) => atualizarResultado(valor as Resultado)}><SelectTrigger><SelectValue placeholder="Selecione o resultado" /></SelectTrigger><SelectContent><SelectItem value="favoravel">Deferido</SelectItem><SelectItem value="desfavoravel">Indeferido</SelectItem></SelectContent></Select></Campo>}
         <div className="sm:col-span-2"><Campo label="Objeto / descrição"><Textarea value={form.objeto} onChange={(evento) => setForm({ ...form, objeto: evento.target.value })} /></Campo></div>
         <div className="sm:col-span-2"><Campo label="Observações"><Textarea value={form.observacoes} onChange={(evento) => setForm({ ...form, observacoes: evento.target.value })} /></Campo></div>
@@ -225,8 +271,8 @@ export default function PrazosRecursos() {
   </div>;
 }
 
-function Kpi({ icon, titulo, valor, cor }: { icon: React.ReactNode; titulo: string; valor: number; cor: string }) {
-  return <Card><CardContent className="flex items-center justify-between p-5"><div><p className="text-sm text-muted-foreground">{titulo}</p><p className={`mt-1 text-3xl font-bold ${cor}`}>{valor}</p></div><div className={`${cor} rounded-full bg-muted p-3`}>{icon}</div></CardContent></Card>;
+function Kpi({ icon, titulo, valor, cor, ativo, onClick }: { icon: React.ReactNode; titulo: string; valor: number; cor: string; ativo: boolean; onClick: () => void }) {
+  return <Card role="button" tabIndex={0} aria-pressed={ativo} onClick={onClick} onKeyDown={(evento) => { if (evento.key === "Enter" || evento.key === " ") { evento.preventDefault(); onClick(); } }} className={`cursor-pointer transition-colors hover:bg-muted/50 ${ativo ? "ring-2 ring-primary ring-offset-2" : ""}`}><CardContent className="flex items-center justify-between p-5"><div><p className="text-sm text-muted-foreground">{titulo}</p><p className={`mt-1 text-3xl font-bold ${cor}`}>{valor}</p></div><div className={`${cor} rounded-full bg-muted p-3`}>{icon}</div></CardContent></Card>;
 }
 
 function Campo({ label, children }: { label: string; children: React.ReactNode }) {
