@@ -228,7 +228,7 @@ function DetalheDialog({ linhas, filtro, onClose }: { linhas: LinhaDemissao[]; f
     const base = filtrarDetalhe(linhas, filtro);
     const t = busca.trim().toLowerCase();
     if (!t) return base;
-    return base.filter((l) => [l.colaborador, l.cargo, l.contrato, l.relato, l.motivo_solicitacao, l.motivo_pedido, l.categoria_ia]
+    return base.filter((l) => [l.colaborador, l.cargo, l.contrato, l.relato, l.motivo_solicitacao, l.motivo_pedido, l.justificativa, l.justificativa_complemento, l.categoria_ia]
       .some((v) => String(v ?? "").toLowerCase().includes(t)));
   }, [linhas, filtro, busca]);
 
@@ -260,6 +260,7 @@ function DetalheDialog({ linhas, filtro, onClose }: { linhas: LinhaDemissao[]; f
                   <td className="px-2 py-1.5">
                     <div>{l.motivo_solicitacao || NAO_INFORMADO}</div>
                     <div className="text-muted-foreground">{l.motivo_pedido || NAO_INFORMADO}</div>
+                    <div className="font-medium" title="Justificativa do desligamento">{l.justificativa || NAO_INFORMADO}{l.justificativa_complemento ? <span className="font-normal text-muted-foreground"> — {l.justificativa_complemento}</span> : null}</div>
                     <div className="mt-0.5 inline-flex items-center gap-1 rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-700 dark:text-violet-300">
                       <Sparkles className="h-3 w-3" />{l.categoria_ia || AGUARDANDO_IA}
                     </div>

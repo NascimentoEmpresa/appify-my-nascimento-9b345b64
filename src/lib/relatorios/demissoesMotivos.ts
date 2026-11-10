@@ -11,6 +11,9 @@
 // Três "dimensões" de motivo, as do passo 2 do Solicitar Demissão:
 //   · motivo_solicitacao — "Qual motivo da solicitação" (lista)
 //   · motivo_pedido      — "Qual motivo do pedido de demissão" (lista)
+//   · justificativa      — "Justificativa do desligamento" (lista, obrigatória
+//                          desde 10/11/2026, mig 20261110210000; as antigas
+//                          contam como "(não informado)")
 //   · categoria_ia       — o relato livre, agrupado pela I.A (Edge
 //                          demissao-relato-ia). NULL = ainda não classificado
 //                          (ou relato editado depois) → "(aguardando I.A)".
@@ -26,15 +29,18 @@ export interface LinhaDemissao {
   grupo: "aberto" | "concluido" | "recusado" | string | null;
   motivo_solicitacao: string | null;
   motivo_pedido: string | null;
+  justificativa?: string | null;
+  justificativa_complemento?: string | null;
   relato: string | null;
   categoria_ia: string | null;
 }
 
-export type DimensaoMotivo = "motivo_solicitacao" | "motivo_pedido" | "categoria_ia";
+export type DimensaoMotivo = "motivo_solicitacao" | "motivo_pedido" | "justificativa" | "categoria_ia";
 
 export const DIMENSOES: { chave: DimensaoMotivo; rotulo: string; curto: string }[] = [
   { chave: "motivo_solicitacao", rotulo: "Motivo da solicitação", curto: "Solicitação" },
   { chave: "motivo_pedido", rotulo: "Motivo do pedido de demissão", curto: "Pedido" },
+  { chave: "justificativa", rotulo: "Justificativa do desligamento", curto: "Justificativa" },
   { chave: "categoria_ia", rotulo: "Motivo do relato (agrupado pela I.A)", curto: "Relato (I.A)" },
 ];
 
