@@ -47,7 +47,9 @@ function classificarComplexidade(chamado) {
     `uma palavra: "simples", "normal" ou "complexo". Responda só a palavra, ` +
     `nada mais.\n\nAssunto: ${chamado.assunto}\n` +
     `Tipo: ${chamado.tipo_solicitacao || "não informado"}\n` +
-    `Descrição: ${chamado.descricao || "não informada"}\n` +
+    // Descrição sem limite na abertura desde 10/11/2026: para classificar basta
+    // o começo, e a linha de comando do Windows tem teto (~32 mil caracteres).
+    `Descrição: ${String(chamado.descricao || "não informada").slice(0, 8000)}\n` +
     `Módulo: ${chamado.modulo_sistema || "não informado"}`;
 
   const r = spawnSync(
