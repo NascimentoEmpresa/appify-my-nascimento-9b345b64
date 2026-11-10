@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -65,6 +66,9 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
   const { podeAlterar, foraDaColuna } = composicao;
   const salvar = useSalvarAjusteReceitaExtra();
   const [busca, setBusca] = useState("");
+  // SIS-2026-0836: marca várias classificações e adiciona de uma vez (chave = nome da linha).
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+  const alternarMarca = (nome: string) => setMarcadas((a) => { const n = new Set(a); if (n.has(nome)) n.delete(nome); else n.add(nome); return n; });
   const filtrada = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return foraDaColuna.filter((i) => !t || i.classificacao.toLowerCase().includes(t));
@@ -79,6 +83,19 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
     }
   }
 
+  async function adicionarMarcadas() {
+    const itens = foraDaColuna.filter((i) => marcadas.has(i.classificacao) && i.classificacaoIds.length > 0);
+    if (itens.length === 0) return;
+    try {
+      for (const item of itens) for (const id of item.classificacaoIds) await salvar.mutateAsync({ classificacaoId: id, conta: true });
+      toast.success(`${itens.length} ${itens.length === 1 ? "classificação passou" : "classificações passaram"} a contar como receita extra, só no Fechamento.`);
+      setMarcadas(new Set());
+    } catch (e: unknown) {
+      const msg = (e as { message?: unknown } | null)?.message; // erro do Supabase é objeto simples, não Error
+      toast.error(typeof msg === "string" && msg ? msg : "Erro ao salvar.");
+    }
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-end justify-between gap-3">
@@ -86,7 +103,7 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
         <Input className="h-7 w-48 text-xs" placeholder="Buscar classificação…" value={busca} onChange={(e) => setBusca(e.target.value)} />
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Entradas dos administrativos neste período que não contam como receita extra (padrão ou ajuste).{" "}
+        Todas as classificações que ainda não contam como receita extra (padrão ou ajuste): as com entrada neste período aparecem com o valor; as demais, sem movimento no período, também podem ser adicionadas (vale em todos os meses).{" "}
         {podeAlterar ? "Use “Adicionar” para trazer uma classificação para a coluna: vale só no Fechamento." : "Quem tem a ação Alterar em “Fechamento: ajustar o Total Desp. Adm” pode adicionar uma classificação."}
       </p>
       <div className="max-h-56 overflow-y-auto rounded-md border">
@@ -94,7 +111,12 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
           <TableBody>
             {filtrada.slice(0, LIMITE_FORA).map((i) => (
               <TableRow key={i.classificacao}>
-                <TableCell className="break-words">{i.classificacao}<span className="ml-2 text-muted-foreground">{i.lancamentos} {i.lancamentos === 1 ? "lançamento" : "lançamentos"}</span></TableCell>
+                {podeAlterar && (
+                  <TableCell className="w-px pr-0">
+                    {i.classificacaoIds.length > 0 && <Checkbox checked={marcadas.has(i.classificacao)} onCheckedChange={() => alternarMarca(i.classificacao)} aria-label={`Marcar ${i.classificacao}`} />}
+                  </TableCell>
+                )}
+                <TableCell className="break-words">{i.classificacao}<span className="ml-2 text-muted-foreground">{i.lancamentos === 0 ? "sem movimento no período" : `${i.lancamentos} ${i.lancamentos === 1 ? "lançamento" : "lançamentos"}`}</span></TableCell>
                 <TableCell className="whitespace-nowrap text-right">{fmtMoney(i.valor)}</TableCell>
                 <TableCell className="w-px whitespace-nowrap text-right">
                   {podeAlterar && i.classificacaoIds.length > 0 && (
@@ -108,6 +130,13 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
           </TableBody>
         </Table>
       </div>
+      {podeAlterar && marcadas.size > 0 && (
+        <div className="flex justify-end">
+          <Button size="sm" className="h-7 text-xs" disabled={salvar.isPending} onClick={() => void adicionarMarcadas()}>
+            Adicionar {marcadas.size} {marcadas.size === 1 ? "marcada" : "marcadas"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
