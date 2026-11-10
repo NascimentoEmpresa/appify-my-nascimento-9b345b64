@@ -1,6 +1,6 @@
 import { dataPagamentoEfetiva } from "@/lib/dataPagamentoEfetiva";
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { diasAguardandoComprovante, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
+import { destinoAposAprovar } from "./retornoAprovacao";
 import { classificacaoPorRateio } from "./classificacaoRateio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { AvisoPontoIndisponivel, CardPontoDiaria } from "./PontoDiariaMalote";
@@ -320,6 +321,7 @@ function TileComprovante({ label, onClick }: { label: string; onClick: () => voi
 export default function DespesaVisualizar() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { data, isLoading } = useDespesa(id);
   const { data: eventos = [] } = useDespesaEventos(id);
@@ -1080,6 +1082,10 @@ export default function DespesaVisualizar() {
             ? `Todas as ${despesa!.numero_parcelas} parcelas aprovadas — aguardando pagamento.`
             : "Aprovado — aguardando pagamento."
       );
+      // SIS-2026-0840: aberta a partir de Aprovações do Malote, volta para a lista (aprovação em sequência). Só em caso de sucesso:
+      // erro ou validação cai no catch e a pessoa continua na despesa, com o motivo no aviso.
+      const voltarPara = destinoAposAprovar(location.state);
+      if (voltarPara) navigate(voltarPara, { replace: true });
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao aprovar despesa.");
     } finally {
