@@ -6,7 +6,7 @@ import {
   aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga, podeCancelarDemissao,
   STATUS_CANCELAMENTO_SOLICITADO, temPedidoDeCancelamento,
   podeCancelarDemissaoRH, caminhoAnexoCancelamento, erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
-  STATUS_AJUSTE_SOLICITADO, podePedirAjuste, podeAjustarDemissao, erroDoAjuste, type FormAjuste,
+  STATUS_AJUSTE_SOLICITADO, podePedirAjuste, podeAjustarDemissao, erroDoAjuste, erroJustificativa, JUSTIFICATIVAS_DESLIGAMENTO, type FormAjuste,
 } from "@/lib/demissao/solicitacao";
 
 // O ASO demissional marca data/hora/local do exame — os MESMOS campos do ASO
@@ -290,6 +290,7 @@ describe("última data trabalhada — janela de 60 dias à frente", () => {
 describe("ajuste pedido pelo RH", () => {
   const form: FormAjuste = {
     data_solicitacao: "2026-11-05", colaborador_posto: "Posto A", motivo_solicitacao: "Pedido", motivo_pedido: "Outro",
+    justificativa_desligamento: "Faltas ou excesso de ausências", justificativa_complemento: "",
     relato: "Relato com mais de vinte caracteres.", termino_experiencia: "Não se aplica", data_aviso: "2026-11-06",
     modelo_aviso: "Trabalhado", colaborador_telefone: "(51) 99999-0000", colaborador_email: "a@exemplo.com",
   };
@@ -319,5 +320,13 @@ describe("ajuste pedido pelo RH", () => {
     expect(erroDoAjuste({ ...form, colaborador_telefone: "123" }, 1)).toContain("telefone");
     expect(erroDoAjuste({ ...form, colaborador_email: "x" }, 1)).toContain("e-mail");
     expect(erroDoAjuste(form, 0)).toContain("documento");
+  });
+  it("justificativa do desligamento é obrigatória; Outros motivos pede descrição", () => {
+    expect(erroDoAjuste({ ...form, justificativa_desligamento: "" }, 1)).toContain("justificativa");
+    expect(erroDoAjuste({ ...form, justificativa_desligamento: "Inventada" }, 1)).toContain("inválida");
+    expect(erroDoAjuste({ ...form, justificativa_desligamento: "Outros motivos", justificativa_complemento: "curto" }, 1)).toContain("descreva");
+    expect(erroDoAjuste({ ...form, justificativa_desligamento: "Outros motivos", justificativa_complemento: "Contrato do cliente encerrado" }, 1)).toBeNull();
+    expect(erroJustificativa("Solicitação do fiscal responsável", null)).toBeNull();
+    expect(JUSTIFICATIVAS_DESLIGAMENTO).toContain("Apresentação recorrente de atestados médicos");
   });
 });

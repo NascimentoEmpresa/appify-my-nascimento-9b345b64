@@ -34,6 +34,22 @@ describe("demissões › motivo por contrato", () => {
     expect(soma).toBe(cz.total);
   });
 
+  it("justificativa do desligamento é uma dimensão: antigas sem ela contam como 'não informado'", () => {
+    const ls = [
+      linha({ contrato: "A", justificativa: "Faltas ou excesso de ausências" }),
+      linha({ contrato: "A", justificativa: "Faltas ou excesso de ausências" }),
+      linha({ contrato: "B", justificativa: "Solicitação do fiscal responsável" }),
+      linha({ contrato: "B" }),
+    ];
+    expect(contarMotivos(ls, "justificativa")).toEqual([
+      { nome: "Faltas ou excesso de ausências", n: 2 },
+      { nome: NAO_INFORMADO, n: 1 },
+      { nome: "Solicitação do fiscal responsável", n: 1 },
+    ]);
+    const cz = cruzarContratoMotivo(ls, "justificativa");
+    expect(cz.linhas.find((l) => l.contrato === "B")?.porMotivo).toEqual({ "Solicitação do fiscal responsável": 1, [NAO_INFORMADO]: 1 });
+  });
+
   it("categoria da I.A vazia conta como aguardando, e não como 'não informado'", () => {
     const ls = [linha({ categoria_ia: null }), linha({ categoria_ia: "Faltas e atrasos" })];
     expect(contarMotivos(ls, "categoria_ia").map((x) => x.nome).sort()).toEqual([AGUARDANDO_IA, "Faltas e atrasos"].sort());
