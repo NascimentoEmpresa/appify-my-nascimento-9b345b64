@@ -65,6 +65,37 @@ export const MOTIVOS_SOLICITACAO = [
   "Outro",
 ] as const;
 
+/**
+ * Justificativa do desligamento (chamado de 10/11/2026, mig 20261110190000):
+ * obrigatória na abertura, logo depois dos motivos, para a estatística dos
+ * desligamentos. Lista FECHADA — é ela que o relatório conta. A mesma lista
+ * está no banco (demissao_justificativas_validas); mudou aqui, muda lá.
+ * "Outros motivos" exige a descrição complementar.
+ */
+export const JUSTIFICATIVAS_DESLIGAMENTO = [
+  "Solicitação do fiscal responsável",
+  "Faltas ou excesso de ausências",
+  "Apresentação recorrente de atestados médicos",
+  "Má conduta ou comportamento inadequado",
+  "Baixo desempenho na função",
+  "Redução de quadro ou encerramento do posto",
+  "Pedido do próprio colaborador",
+  "Outros motivos",
+] as const;
+export const JUSTIFICATIVA_OUTROS = "Outros motivos";
+export const JUSTIFICATIVA_COMPLEMENTO_MIN = 10;
+
+/** A régua da justificativa — a mesma do banco (demissao_erro_justificativa). */
+export function erroJustificativa(just: string | null | undefined, complemento: string | null | undefined): string | null {
+  const j = (just ?? "").trim();
+  if (!j) return "Selecione a justificativa do desligamento.";
+  if (!(JUSTIFICATIVAS_DESLIGAMENTO as readonly string[]).includes(j)) return "Justificativa do desligamento inválida.";
+  if (j === JUSTIFICATIVA_OUTROS && (complemento ?? "").trim().length < JUSTIFICATIVA_COMPLEMENTO_MIN) {
+    return `Em "Outros motivos", descreva a justificativa (pelo menos ${JUSTIFICATIVA_COMPLEMENTO_MIN} caracteres).`;
+  }
+  return null;
+}
+
 export const MOTIVOS_PEDIDO = [
   "Insatisfação salarial",
   "Proposta de outro emprego",
@@ -297,6 +328,9 @@ export interface SolicitacaoDemissao {
 
   motivo_solicitacao: string | null;
   motivo_pedido: string | null;
+  /** Justificativa do desligamento (NULL só nas abertas antes de 10/11/2026). */
+  justificativa_desligamento?: string | null;
+  justificativa_complemento?: string | null;
   relato: string | null;
 
   termino_experiencia: string | null;
@@ -485,6 +519,8 @@ export interface FormAjuste {
   colaborador_posto: string;
   motivo_solicitacao: string;
   motivo_pedido: string;
+  justificativa_desligamento: string;
+  justificativa_complemento: string;
   relato: string;
   termino_experiencia: string;
   data_aviso: string;
@@ -498,6 +534,8 @@ export function erroDoAjuste(f: FormAjuste, qtdAnexos: number): string | null {
   if (!f.data_solicitacao) return "Informe a data da solicitação.";
   if (!f.motivo_solicitacao) return "Selecione o motivo da solicitação.";
   if (!f.motivo_pedido) return "Selecione o motivo do pedido de demissão.";
+  const just = erroJustificativa(f.justificativa_desligamento, f.justificativa_complemento);
+  if (just) return just;
   if (f.relato.trim().length < 20) return "Relate o motivo com pelo menos 20 caracteres.";
   if (!f.termino_experiencia) return "Informe o término de contrato de experiência.";
   if (!f.data_aviso) return "Informe a data do aviso.";

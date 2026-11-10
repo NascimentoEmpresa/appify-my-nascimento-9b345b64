@@ -92,6 +92,7 @@ const ROTULO: Record<string, string> = {
   tempo_de_empresa: "Tempo de empresa",
   colaborador_telefone: "Telefone", colaborador_email: "E-mail do colaborador",
   motivo_solicitacao: "Motivo da solicitação", motivo_pedido: "Motivo do pedido",
+  justificativa_desligamento: "Justificativa do desligamento", justificativa_complemento: "Complemento da justificativa",
   relato: "Relato", termino_experiencia: "Término de experiência",
   data_aviso: "Data do aviso", modelo_aviso: "Modelo de aviso",
   operacional_motivo: "Retorno do Operacional", rh_observacao: "Observação do RH",
