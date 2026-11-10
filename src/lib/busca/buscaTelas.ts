@@ -180,10 +180,14 @@ export function buscarTelas(busca: string, telas: TelaBusca[], recentes: string[
 
   const achados: ResultadoBusca[] = [];
   for (const tela of telas) {
-    const nome = palavras(tela.label);
+    // "e", "de"… do nome não casam com nada (09/11/2026): "HE" vira "e" pelo som
+    // e trazia toda tela "X e Y" (as de Indicadores) à frente de Hora Extra.
+    const nomeCompleto = palavras(tela.label);
+    const nomeUtil = normalizar(tela.label).split(" ").filter((p) => p && !PALAVRAS_VAZIAS.has(p)).map(sonora);
+    const nome = nomeUtil.length ? nomeUtil : nomeCompleto;
     const grupo = tela.grupo ? palavras(tela.grupo) : [];
     const modulo = palavras(tela.modulo);
-    const nomeInteiro = nome.join(" ");
+    const nomeInteiro = nomeCompleto.join(" ");
 
     let soma = 0;
     let faltou = false;

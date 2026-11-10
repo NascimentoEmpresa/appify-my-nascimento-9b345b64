@@ -34,6 +34,15 @@ export interface DadosPainelExecutivo {
   /** Mig 20261109003100; ausente enquanto a migration não entrou. */
   situacao_detalhe?: DetalheSituacao | null;
   critico_anterior: number | null;
+  /** Checklist de Faturamento (painelPeloFaturamento); null = nada a medir. */
+  no_prazo?: FaturadoNoPrazo | null;
+  no_prazo_anterior?: FaturadoNoPrazo | null;
+}
+
+export interface FaturadoNoPrazo {
+  no_prazo: number;
+  total: number;
+  pct: number;
 }
 
 export interface ContratoSituacao {
@@ -145,9 +154,11 @@ export function avisoSemDre(d: Pick<DadosPainelExecutivo, "ultima_dre">): string
 
 export function montarCards(d: DadosPainelExecutivo): CardIndicador[] {
   const semDre = d.dre ? null : avisoSemDre(d);
+  // 10/11/2026: notas DA competência, a mesma conta de Controladoria ›
+  // Faturamento da Empresa (ver painelPeloFaturamento).
   const temNf = d.nf.qtd > 0;
-  const semNf = temNf ? null : "Nenhuma NF concluída até esta competência";
-  const estimado = "Só vê o que foi baixado na NF";
+  const semNf = temNf ? null : "Nenhuma nota nesta competência";
+  const np = d.no_prazo ?? null;
 
   return [
     {
@@ -166,24 +177,29 @@ export function montarCards(d: DadosPainelExecutivo): CardIndicador[] {
       variacao: variacaoPP(d.dre?.margem, d.dre_anterior?.margem),
     },
     {
-      // Não existe data-limite de faturamento no ERP: o checklist só tem
-      // limite de entrega de documentos, que é outra coisa.
-      chave: "no_prazo", titulo: "% Faturado no Prazo", medida: "sem_fonte",
-      valor: null, aviso: "O ERP não registra o prazo de faturamento", variacao: null,
+      // 10/11/2026: o prazo que existe é o do Checklist de Faturamento
+      // (dia-limite do contrato × "Concluir e baixar"). Sem contrato com
+      // prazo vencido ou envio na competência, fica sem número.
+      chave: "no_prazo", titulo: "% Faturado no Prazo", medida: np ? "parcial" : "sem_fonte",
+      valor: np ? fmtPct(np.pct, 1) : null,
+      aviso: np
+        ? `${np.no_prazo} de ${np.total} contratos enviados até o dia-limite do Checklist de Faturamento`
+        : "Checklist de Faturamento sem prazo vencido ou envio nesta competência",
+      variacao: np ? variacaoPP(np.pct, d.no_prazo_anterior?.pct) : null,
     },
     {
-      chave: "recebido", titulo: "Valor Recebido", medida: "parcial",
-      valor: temNf ? fmtBRL(d.nf.recebido) : null, aviso: semNf ?? estimado,
+      chave: "recebido", titulo: "Valor Recebido", medida: "real",
+      valor: temNf ? fmtBRL(d.nf.recebido) : null, aviso: semNf ?? "Pago das notas desta competência",
       variacao: temNf ? variacaoPct(d.nf.recebido, d.nf.recebido_ant, true) : null,
     },
     {
-      chave: "saldo", titulo: "Saldo a Receber", medida: "parcial",
-      valor: temNf ? fmtBRL(d.nf.saldo) : null, aviso: semNf ?? "NFs sem baixa no fim da competência",
+      chave: "saldo", titulo: "Saldo a Receber", medida: "real",
+      valor: temNf ? fmtBRL(d.nf.saldo) : null, aviso: semNf ?? "Falta entrar das notas desta competência",
       variacao: temNf ? variacaoPct(d.nf.saldo, d.nf.saldo_ant, false) : null,
     },
     {
       chave: "vencido", titulo: "Saldo Vencido > 90 dias", medida: "parcial",
-      valor: temNf ? fmtBRL(d.nf.vencido_90) : null, aviso: semNf ?? "Vencimento estimado: emissão + 30 dias",
+      valor: temNf ? fmtBRL(d.nf.vencido_90) : null, aviso: semNf ?? "Do saldo a receber, hoje; vencimento estimado: emissão + 30 dias",
       variacao: temNf ? variacaoPct(d.nf.vencido_90, d.nf.vencido_90_ant, false) : null,
     },
     {

@@ -285,6 +285,10 @@ import ConferenciaPontoPainel from "./pages/rh/ConferenciaPontoPainel";
 import OperacionalConferenciaPonto from "./pages/operacional/ConferenciaPonto";
 import EfetividadePainelDia from "./pages/operacional/efetividade/PainelDia";
 import IndicadoresPainelExecutivo from "./pages/operacional/indicadores/PainelExecutivo";
+import IndicadoresFaturamento from "./pages/operacional/indicadores/FaturamentoRecebimentos";
+import IndicadoresLucratividade from "./pages/operacional/indicadores/LucratividadeOrcamento";
+import IndicadoresPessoas from "./pages/operacional/indicadores/PessoasCapacidade";
+import IndicadoresKaizen from "./pages/operacional/indicadores/KaizenEfetividade";
 import EfetividadeControlePostos from "./pages/operacional/efetividade/ControlePostos";
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
@@ -1045,6 +1049,10 @@ const App = () => (
             {/* Efetividade e Coberturas (branch local efetividade, mig 20261008000030): 5 telas sob
                 um menu só (ope_efetividade), casadas pelo prefixo da rota. */}
             <Route path="operacional/indicadores/painel-executivo" element={<IndicadoresPainelExecutivo />} />
+            <Route path="operacional/indicadores/faturamento-recebimentos" element={<IndicadoresFaturamento />} />
+            <Route path="operacional/indicadores/lucratividade-orcamento" element={<IndicadoresLucratividade />} />
+            <Route path="operacional/indicadores/pessoas-capacidade" element={<IndicadoresPessoas />} />
+            <Route path="operacional/indicadores/kaizen-efetividade" element={<IndicadoresKaizen />} />
             <Route path="operacional/efetividade" element={<EfetividadePainelDia />} />
             <Route path="operacional/efetividade/postos" element={<EfetividadeControlePostos />} />
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />

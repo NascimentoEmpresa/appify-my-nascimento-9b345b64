@@ -16,6 +16,7 @@ import {
   useCancelarAgendamento,
   type Agendamento,
 } from "@/hooks/useAgendamentoVeiculos";
+import { LABEL_STATUS_AGENDAMENTO } from "@/lib/veiculos/concluirAgendamento";
 import { ViagemDialog } from "./ViagemDialog";
 import { NaoUseiDialog } from "./NaoUseiDialog";
 import { ChecklistDialog } from "./ChecklistDialog";
@@ -220,7 +221,8 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
                   >
                     {a.status === "confirmado" && <CheckCircle2 className="h-3 w-3" />}
                     {a.status === "cancelado" && <Ban className="h-3 w-3" />}
-                    {a.status}
+                    {a.status === "concluido" && <CheckCircle2 className="h-3 w-3" />}
+                    {LABEL_STATUS_AGENDAMENTO[a.status] ?? a.status}
                   </span>
                   {podeCancelar && (
                     <Button

@@ -228,7 +228,7 @@
 
 @layer utilities {
   /* Wrapper para tabelas densas em mobile (scroll horizontal limpo) */
-  .table-scroll { @apply -mx-4 sm:mx-0 overflow-x-auto; }
+  .table-scroll { @apply -mx-3 sm:mx-0 overflow-x-auto; }
   /* Grid padrão para formulários */
   .grid-form { @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4; }
   /* Padding responsivo para Cards densos */
@@ -473,3 +473,44 @@
    Painel Executivo e o seletor de mapa do SST).
 --------------------------------------------------------------------- */
 .leaflet-container { position: relative; z-index: 0; }
+
+/* ---------------------------------------------------------------------
+   Celular (06/11/2026). --topo-mobile e --nav-mobile são a altura da barra
+   de cima e da de baixo, para quem precisa ocupar exatamente o que sobra (a
+   caixa de entrada do WhatsApp) ou não ficar embaixo delas (o conteúdo, o botão
+   de chamado). A partir do `lg` a barra inferior não existe e --nav-mobile é 0.
+--------------------------------------------------------------------- */
+:root {
+  --topo-mobile: calc(3.5rem + env(safe-area-inset-top, 0px));
+  --nav-mobile: 0px;
+}
+@media (max-width: 1023.98px) {
+  :root { --nav-mobile: calc(3.75rem + env(safe-area-inset-bottom, 0px)); }
+  html { -webkit-tap-highlight-color: transparent; }
+  /* `overflow-x: hidden` em body e #root os transforma em contêineres de
+     rolagem que nunca rolam, e o `sticky` da barra de cima subia com a página.
+     `clip` corta do mesmo jeito sem criar contêiner. */
+  body, #root { overflow-x: clip; }
+  /* Item de grid e campo não podem alargar a tela pelo tamanho mínimo do próprio
+     conteúdo. É a causa de quase todo formulário estourado: um input de data
+     empurra a coluna inteira, e o Abrir Chamado ficava com 390 px em tela de 375. */
+  main .grid > * { min-width: 0; }
+  main input, main select, main textarea { min-width: 0; max-width: 100%; }
+  /* Alvo de toque do menu lateral: no mouse 30 px bastam, no dedo não. */
+  .sb-item { padding-top: .625rem; padding-bottom: .625rem; }
+  /* Início: o hero ocupava a primeira tela inteira. */
+  main .ini-hero { margin-bottom: 14px; padding: 18px 18px 16px; border-radius: 16px; }
+  main .ini-hero-title { font-size: 1.25rem; }
+  main .ini-hero-verse { font-size: .8rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  main .ini-aspas, main .ini-hero-badge { display: none; }
+}
+@media (max-width: 1023.98px) and (pointer: coarse) {
+  /* Campo abaixo de 16 px faz o iPhone dar zoom na página ao focar. */
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  textarea, select { font-size: 16px; }
+  /* Teclado aberto: a barra inferior e os botões flutuantes só tirariam espaço do campo. */
+  body:has(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"]):focus, textarea:focus, [contenteditable="true"]:focus) .some-com-teclado { display: none; }
+}
+/* Fileira de chips que corre de lado sem mostrar barra de rolagem. */
+.rolagem-chips { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.rolagem-chips::-webkit-scrollbar { display: none; }

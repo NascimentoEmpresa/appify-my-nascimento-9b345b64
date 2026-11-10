@@ -11,9 +11,10 @@ import {
 } from "@/components/ui/dialog";
 import {
   LABEL_TURNO, abrirArquivoVeiculo, formatarData, hojeISO,
-  useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useViagem,
+  useConcluirAgendamento, useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useViagem,
   type ContratoSimples,
 } from "@/hooks/useAgendamentoVeiculos";
+import { podeConcluirAgendamento } from "@/lib/veiculos/concluirAgendamento";
 
 // =====================================================================
 // A VIAGEM (22/09/2026) — o que o chamado dos abastecimentos pediu.
@@ -34,6 +35,7 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
 }) {
   const q = useViagem(aberto ? agendamentoId : null);
   const fecharKm = useFecharKm();
+  const concluir = useConcluirAgendamento();
   const registrarKmInicial = useRegistrarKmInicial();
   const salvarContratos = useDefinirContratosDaViagem();
   const registrar = useRegistrarAbastecimento();
@@ -138,6 +140,28 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
 
         {v && (
           <div className="space-y-5">
+            {/* ── Concluir (10/11/2026) ──────────────────────────────
+                Antes não havia NADA para concluir: o status 'concluido'
+                existia no banco mas nenhuma tela o gravava. */}
+            {v.status === "concluido" && (
+              <p className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4" /> Agendamento concluído.
+              </p>
+            )}
+            {souDono && podeConcluirAgendamento(v) && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3">
+                <div>
+                  <p className="text-sm font-semibold">Viagem finalizada</p>
+                  <p className="text-xs text-muted-foreground">Confira contratos e notas e conclua o agendamento. Dá para anexar nota depois.</p>
+                </div>
+                <Button size="sm" className="gap-1.5" disabled={concluir.isPending}
+                        onClick={() => agendamentoId && concluir.mutate({ id: agendamentoId })}>
+                  {concluir.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Concluir agendamento
+                </Button>
+              </div>
+            )}
+
             {/* ── KM ─────────────────────────────────────────────── */}
             <section className="rounded-xl border border-border p-4">
               <h4 className="mb-3 flex items-center gap-2 text-sm font-bold"><Gauge className="h-4 w-4 text-primary" /> Quilometragem</h4>

@@ -49,9 +49,10 @@ describe("Painel Executivo pelo Faturamento da Empresa", () => {
     expect(d.critico_anterior).toBe(0);
   });
 
-  it("evolução: só meses com dado, e os cards de nota da RPC ficam", () => {
+  it("evolução: só meses com dado; os cards de nota NÃO vêm mais da RPC (10/11/2026)", () => {
     expect(d.serie.map((s) => s.competencia)).toEqual(["2025-12", "2026-01"]);
-    expect(d.nf.recebido).toBe(5);
+    expect(d.nf.recebido).toBe(0);
+    expect(d.nf.saldo).toBe(1_005_000);
     expect(d.ultima_dre).toBe("2026-01");
   });
 

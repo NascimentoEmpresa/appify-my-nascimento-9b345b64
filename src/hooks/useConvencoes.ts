@@ -2,8 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  normalizarBeneficios, situacaoConvencao,
-  type ChaveBeneficio, type MapaBeneficios, type RespostaReferencia, type TipoCadastro,
+  normalizarBeneficios, planoAnexos, situacaoConvencao,
+  type AnexoLista, type ChaveBeneficio, type MapaBeneficios, type RespostaReferencia, type TipoCadastro,
 } from "@/lib/licitacoes/convencoes";
 
 // Convenções Coletivas e Decretos Municipais (mig 20261027000930): cadastro,
@@ -41,9 +41,22 @@ export interface Convencao {
   updated_at: string;
   contrato?: { id: string; nome: string; cliente: string | null } | null;
   empresa?: { id: string; razao_social: string | null; nome_fantasia: string | null } | null;
+  /** Vários anexos da CCT (mig 20261109004500), na ordem em que entraram. */
+  anexos?: AnexoConvencaoLinha[];
 }
 
-export type ConvencaoInput = Omit<Convencao, "id" | "situacao" | "versao" | "created_at" | "updated_at" | "contrato" | "empresa">;
+/** Linha de LIC_CONVENCAO_ANEXO. */
+export interface AnexoConvencaoLinha {
+  id: string;
+  convencao_id: string;
+  path: string;
+  nome: string | null;
+  tamanho: number | null;
+  descricao: string | null;
+  criado_em: string;
+}
+
+export type ConvencaoInput = Omit<Convencao, "id" | "situacao" | "versao" | "created_at" | "updated_at" | "contrato" | "empresa" | "anexos">;
 
 export const nomeEmpresa = (e: Convencao["empresa"]) => e?.nome_fantasia || e?.razao_social || "—";
 
@@ -51,14 +64,49 @@ export function useConvencoes() {
   return useQuery({
     queryKey: ["lic_convencoes"],
     queryFn: async (): Promise<Convencao[]> => {
-      const { data, error } = await sb
-        .from("LIC_CONVENCAO_COLETIVA")
-        .select("*, contrato:contratos(id, nome, cliente), empresa:empresas(id, razao_social, nome_fantasia)")
-        .order("updated_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as Convencao[];
+      // Anexos numa consulta à parte (e não embutidos): banco ainda sem a
+      // tabela nova não derruba a lista — a tela cai no anexo único antigo.
+      const [conv, anx] = await Promise.all([
+        sb.from("LIC_CONVENCAO_COLETIVA")
+          .select("*, contrato:contratos(id, nome, cliente), empresa:empresas(id, razao_social, nome_fantasia)")
+          .order("updated_at", { ascending: false }),
+        sb.from("LIC_CONVENCAO_ANEXO")
+          .select("id, convencao_id, path, nome, tamanho, descricao, criado_em")
+          .order("criado_em", { ascending: true }),
+      ]);
+      if (conv.error) throw conv.error;
+      const porConvencao = new Map<string, AnexoConvencaoLinha[]>();
+      for (const a of (anx.error ? [] : anx.data ?? []) as AnexoConvencaoLinha[]) {
+        porConvencao.set(a.convencao_id, [...(porConvencao.get(a.convencao_id) ?? []), a]);
+      }
+      return ((conv.data ?? []) as Convencao[]).map((c) => ({ ...c, anexos: porConvencao.get(c.id) ?? [] }));
     },
   });
+}
+
+/**
+ * Grava a lista de anexos da convenção (depois de a convenção estar salva):
+ * insere os novos, troca descrições, tira as linhas que saíram e, por último,
+ * apaga do storage os arquivos que saíram.
+ */
+export async function salvarAnexosConvencao(convencaoId: string, antes: AnexoLista[], depois: AnexoLista[]) {
+  const plano = planoAnexos(antes, depois);
+  if (plano.inserir.length) {
+    const { error } = await sb.from("LIC_CONVENCAO_ANEXO")
+      .insert(plano.inserir.map((a) => ({ convencao_id: convencaoId, ...a })));
+    if (error) throw error;
+  }
+  for (const a of plano.atualizar) {
+    const { error } = await sb.from("LIC_CONVENCAO_ANEXO").update({ descricao: a.descricao }).eq("id", a.id);
+    if (error) throw error;
+  }
+  if (plano.removerLinhas.length) {
+    const { error } = await sb.from("LIC_CONVENCAO_ANEXO").delete().in("id", plano.removerLinhas);
+    if (error) throw error;
+  }
+  if (plano.removerArquivos.length) {
+    await sb.storage.from(BUCKET_CONVENCOES).remove(plano.removerArquivos).catch(() => undefined);
+  }
 }
 
 /** Grava a convenção; a situação vem da mesma regra que desenha os avisos. */
@@ -87,14 +135,16 @@ export function useSalvarConvencao() {
 export function useExcluirConvencao() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (c: Pick<Convencao, "id" | "cct_arquivo_path" | "decreto_arquivo_path">) => {
+    mutationFn: async (c: Pick<Convencao, "id" | "cct_arquivo_path" | "decreto_arquivo_path" | "anexos">) => {
       const { error } = await sb.from("LIC_CONVENCAO_COLETIVA").delete().eq("id", c.id);
       if (error) {
         // FK RESTRICT do vínculo do posto (23503): diz onde está em uso.
         if (error.code === "23503") throw new Error("Esta convenção está vinculada a posto(s) na Planilha de Custo. Troque o vínculo lá antes de excluir.");
         throw error;
       }
-      const arquivos = [c.cct_arquivo_path, c.decreto_arquivo_path].filter(Boolean) as string[];
+      // As linhas de anexo saem pelo CASCADE; os arquivos, aqui (todos).
+      const arquivos = [...new Set([c.cct_arquivo_path, c.decreto_arquivo_path, ...(c.anexos ?? []).map((a) => a.path)]
+        .filter(Boolean) as string[])];
       if (arquivos.length) await sb.storage.from(BUCKET_CONVENCOES).remove(arquivos);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["lic_convencoes"] }),
@@ -105,7 +155,8 @@ export function useExcluirConvencao() {
 export async function enviarAnexoConvencao(contratoId: string | null, tipo: "cct" | "decreto", arquivo: File) {
   const ext = (arquivo.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
   // Sem contrato (decreto próprio e, desde 03/11/2026, a CCT): pasta pelo tipo.
-  const path = `${contratoId ?? (tipo === "decreto" ? "decretos" : "convencoes")}/${tipo}-${Date.now()}.${ext}`;
+  // Sufixo aleatório: vários anexos enviados no mesmo save caem no mesmo milissegundo.
+  const path = `${contratoId ?? (tipo === "decreto" ? "decretos" : "convencoes")}/${tipo}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error } = await sb.storage.from(BUCKET_CONVENCOES).upload(path, arquivo, { upsert: false, contentType: arquivo.type || undefined });
   if (error) throw error;
   return { path, nome: arquivo.name, tamanho: arquivo.size };

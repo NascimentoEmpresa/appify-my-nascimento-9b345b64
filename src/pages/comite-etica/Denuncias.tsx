@@ -29,7 +29,7 @@ import {
 import FichaDenuncia from "./FichaDenuncia";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ExportarLista } from "./ExportarDenuncia";
-import { TIPO_ALERTA, TIPOS_ALERTA_NO_BANNER } from "./vocabulario";
+import { TIPO_ALERTA, TIPOS_ALERTA_NO_BANNER, atalhosVisiveis } from "./vocabulario";
 
 // =====================================================================
 // COMITÊ DE ÉTICA — Denúncias recebidas pelo canal próprio
@@ -80,6 +80,8 @@ export default function DenunciasComiteEtica() {
   const { can } = usePermissoes();
   /** Sem isto, a lista vem recortada pelas empresas vinculadas ao usuario. */
   const veTodasEmpresas = can("visualizar", undefined, "comite_etica_todas_empresas");
+  /** Botão só para quem passa no RouteGuard da tela de destino. */
+  const atalhos = atalhosVisiveis((menu) => can("visualizar", undefined, menu));
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("todos");
   const [fGravidade, setFGravidade] = useState("todas");
@@ -234,13 +236,17 @@ export default function DenunciasComiteEtica() {
         breadcrumb={["Comitê de Ética", "Denúncias"]}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/comite-etica/indicadores")}>
-              <BarChart3 className="h-4 w-4" /> Indicadores
-            </Button>
+            {atalhos.indicadores && (
+              <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/comite-etica/indicadores")}>
+                <BarChart3 className="h-4 w-4" /> Indicadores
+              </Button>
+            )}
             <ExportarLista denuncias={filtradas} />
-            <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/comite-etica/configuracao")}>
-              <Settings2 className="h-4 w-4" /> Configuração
-            </Button>
+            {atalhos.configuracao && (
+              <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/comite-etica/configuracao")}>
+                <Settings2 className="h-4 w-4" /> Configuração
+              </Button>
+            )}
             <Button variant="outline" className="gap-1.5" onClick={copiarLink}>
               {copiou ? <Check className="h-4 w-4 text-success" /> : <Link2 className="h-4 w-4" />}
               {copiou ? "Link copiado" : "Copiar link da denúncia"}

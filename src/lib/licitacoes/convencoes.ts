@@ -220,7 +220,8 @@ export function pendenciasConvencao(c: CadastroConvencao): string[] {
   if (c.tipo === "decreto") return pendenciasDecreto(c);
   const p: string[] = [];
   // Contrato e posto saíram da CCT (03/11/2026): o vínculo é na Planilha de Custo.
-  if (vazio(c.empresa_id)) p.push("Empresa não informada");
+  // Empresa saiu em 09/11/2026 (mig 20261109004500): a CCT é cadastrada uma
+  // vez e vale para todas as empresas a que se aplica — não é pendência.
   if (vazio(c.categoria_profissional)) p.push("Categoria profissional não informada");
   if (vazio(c.sindicato)) p.push("Sindicato não informado");
   if (vazio(c.vigencia_inicio) || vazio(c.vigencia_fim)) p.push("Vigência da CCT incompleta");
@@ -360,4 +361,85 @@ export function montarQuadro(r: RespostaReferencia | null | undefined): Quadro {
 export function quadroEmTexto(q: Quadro): string {
   if (q.status !== "ok" && q.status !== "pendente") return "";
   return q.itens.map((i) => `${i.def.nome}: ${i.texto ?? "PENDENTE"}`).join("\n");
+}
+
+// ── Percentual digitado ───────────────────────────────────────────────────
+
+/**
+ * "7,5" / "7.5" / "7,5%" → 7.5; vazio ou inválido → null. O campo virou
+ * texto em 09/11/2026: o input numérico do navegador, com a seta, ocupava o
+ * pouco espaço que sobrava ao lado de "Porcentagem" e parecia desabilitado.
+ */
+export function lerPercentual(texto: string | null | undefined): number | null {
+  const t = String(texto ?? "").replace(/%/g, "").replace(/\s/g, "").replace(",", ".");
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** 7.5 → "7,5" (o que o campo mostra). */
+export const percentualTexto = (n: number | null | undefined) =>
+  n == null || !Number.isFinite(Number(n)) ? "" : String(n).replace(".", ",");
+
+// ── Vários anexos na CCT (09/11/2026, mig 20261109004500) ─────────────────
+//
+// O SEEAC publica mais de uma CCT: a convenção guarda N arquivos, cada um com
+// a descrição da abrangência. Anexo novo NÃO substitui o anterior.
+// `cct_arquivo_*` da convenção é o espelho do PRIMEIRO anexo (é o que a vaga,
+// os KPIs e a pendência "não anexada" leem).
+
+export interface AnexoLista {
+  /** Linha em LIC_CONVENCAO_ANEXO; sem id = ainda não gravado. */
+  id?: string | null;
+  path: string | null;
+  nome: string | null;
+  tamanho: number | null;
+  descricao: string | null;
+}
+
+/**
+ * Lista de anexos de um cadastro: as linhas da tabela, na ordem em que
+ * entraram; cadastro de antes da tabela (ou banco ainda sem ela) cai no anexo
+ * único antigo, sem id — ao salvar ele vira linha.
+ */
+export function anexosDoCadastro(
+  c: { cct_arquivo_path?: string | null; cct_arquivo_nome?: string | null; cct_arquivo_tamanho?: number | null } | null | undefined,
+  linhas: (AnexoLista & { criado_em?: string | null })[] | null | undefined,
+): AnexoLista[] {
+  if (linhas?.length) {
+    return [...linhas]
+      .sort((a, b) => String(a.criado_em ?? "").localeCompare(String(b.criado_em ?? "")))
+      .map((l) => ({ id: l.id ?? null, path: l.path, nome: l.nome, tamanho: l.tamanho, descricao: l.descricao ?? null }));
+  }
+  if (c?.cct_arquivo_path) {
+    return [{ id: null, path: c.cct_arquivo_path, nome: c.cct_arquivo_nome ?? null, tamanho: c.cct_arquivo_tamanho ?? null, descricao: null }];
+  }
+  return [];
+}
+
+const descricaoLimpa = (s: string | null | undefined) => (s ?? "").trim() || null;
+
+/** O que gravar para ir de `antes` (o banco) para `depois` (a tela, com os arquivos novos já enviados). */
+export function planoAnexos(antes: AnexoLista[], depois: AnexoLista[]) {
+  const ficam = new Set(depois.map((a) => a.path).filter(Boolean) as string[]);
+  const gravados = new Map(antes.filter((a) => a.id && a.path).map((a) => [a.path as string, a]));
+  return {
+    /** Linhas novas: arquivo novo, ou o anexo antigo que ainda não era linha. */
+    inserir: depois.filter((a) => a.path && !gravados.has(a.path))
+      .map((a) => ({ path: a.path as string, nome: a.nome, tamanho: a.tamanho, descricao: descricaoLimpa(a.descricao) })),
+    /** Descrição trocada. */
+    atualizar: depois
+      .filter((a) => a.path && gravados.has(a.path) && descricaoLimpa(gravados.get(a.path)!.descricao) !== descricaoLimpa(a.descricao))
+      .map((a) => ({ id: gravados.get(a.path as string)!.id as string, descricao: descricaoLimpa(a.descricao) })),
+    /** Linhas que saem (sem id não há linha). */
+    removerLinhas: antes.filter((a) => a.id && a.path && !ficam.has(a.path)).map((a) => a.id as string),
+    /** Arquivos que saem do storage. */
+    removerArquivos: [...new Set(antes.filter((a) => a.path && !ficam.has(a.path)).map((a) => a.path as string))],
+  };
+}
+
+/** Espelho do primeiro anexo nas colunas cct_arquivo_* da convenção. */
+export function espelhoAnexoPrincipal(lista: AnexoLista[]) {
+  const p = lista.find((a) => a.path);
+  return { cct_arquivo_path: p?.path ?? null, cct_arquivo_nome: p?.nome ?? null, cct_arquivo_tamanho: p?.tamanho ?? null };
 }
