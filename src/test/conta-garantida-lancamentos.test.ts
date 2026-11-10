@@ -65,6 +65,22 @@ describe("simular um lançamento novo", () => {
   });
 });
 
+describe("o que veio do Débito Automático não trava a conferência (igual à RPC)", () => {
+  // Saldo negativo no meio do caminho só por lançamentos de origem Débito Automático (ou histórico): o servidor ignora, a tela também.
+  const ms = [
+    mov("resgate", 100, "2026-01-02", { historico: true }),
+    mov("amortizacao", 500, "2026-02-01", { origem_debito_id: "d1" }), // deixa o acumulado em -400, mas não é conferido
+    mov("resgate", 900, "2026-03-01", { origem_debito_id: "d2" }),
+  ];
+  it("amortizar com saldo acumulado hoje positivo passa, mesmo com negativo antigo vindo do Débito Automático", () => {
+    const r = simularLancamento(1000, ms, { tipo: "amortizacao", data: "2026-04-01", valor: 300 });
+    expect(r).toMatchObject({ saldoAtual: 500, saldoDepois: 200, erro: null });
+  });
+  it("mas o próprio lançamento da tela continua conferido: não pode deixar o saldo negativo", () => {
+    expect(simularLancamento(1000, ms, { tipo: "amortizacao", data: "2026-04-01", valor: 600 }).erro).toMatch(/saldo devedor/);
+  });
+});
+
 describe("carteira, KPIs e gráficos", () => {
   const c1 = conta();
   const c2 = conta({ id: "c2", numero: "CG-2026-0002", banco_id: "sicredi", limite: 3000 });
