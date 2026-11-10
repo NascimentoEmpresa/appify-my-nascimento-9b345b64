@@ -56,6 +56,7 @@ import {
   CATEGORIAS_ITEM,
   ROTULO_CATEGORIA,
   type CategoriaItem,
+  type ContratoPorCategoria,
   coberturaPreocupante,
   filtrarPorNome,
   gerarCsvPorCategoria,
@@ -89,6 +90,17 @@ function baixarCsv(conteudo: string, nome: string) {
 const dinheiro = (v: number) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const inteiro = (v: number) => v.toLocaleString("pt-BR");
+/**
+ * Valor sem o "R$" repetido em cada célula. Com cinco categorias o quadro tem
+ * treze colunas, e o prefixo em todas elas é o que fazia a tabela não caber a
+ * 100% de zoom — o símbolo fica no cabeçalho, onde basta dizê-lo uma vez.
+ */
+const valorTabela = (v: number) =>
+  v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Categorias em que o contrato teve movimento — as outras não viram linha no cartão. */
+const comMovimento = (r: ContratoPorCategoria, cats: CategoriaItem[]) =>
+  cats.filter((c) => r.porCategoria[c].quantidade || r.porCategoria[c].valor);
 
 export function SaidasPorContrato({ empresaId, inicio, fim, contratoId }: Props) {
   const [categoria, setCategoria] = useState<string>(TODAS);
@@ -251,83 +263,161 @@ export function SaidasPorContrato({ empresaId, inicio, fim, contratoId }: Props)
               </p>
             </div>
           )}
+          {/* Em tela larga, o quadro aprovado. Abaixo disso ele não cabe, e aí
+              cada contrato vira um cartão: é a única forma de não cortar nada
+              sem empurrar o usuário para a barra de rolagem lateral.
+              (SIS-2026-0769, reclamação de 10/11/2026: a 100% de zoom a tela
+              cortava e só cabia a 80%.)
+
+              O 1500 é MEDIDO, não chutado. A tabela encolhe no máximo até
+              1067px (min-content, medido no Chrome), e a moldura do ERP come
+              376px: sidebar de 268 + painel online recolhido de 60 + respiro
+              da página. 1500 - 376 = 1124, com 57px de folga.
+
+              O corte é por largura de VIEWPORT porque o projeto não tem o
+              plugin de container queries; o zoom do navegador muda exatamente
+              essa largura, que é o que o usuário mexe. Com o painel online
+              ABERTO (264px em vez de 60) numa tela de 1500 ainda sobra barra
+              de rolagem — por isso o overflow-x-auto fica, como rede: degrada
+              em rolagem, nunca em corte. */}
           {!isLoading && visiveis.length > 0 && (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead rowSpan={2} className="sticky left-0 bg-background min-w-[260px]">
-                      Contrato
-                    </TableHead>
-                    {cats.map((c) => (
-                      <TableHead key={c} colSpan={2} className="text-center border-l">
-                        {ROTULO_CATEGORIA[c]}
+            <>
+              <div className="hidden overflow-x-auto min-[1500px]:block">
+                <Table className="text-xs">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead
+                        rowSpan={2}
+                        className="sticky left-0 z-10 min-w-[180px] max-w-[300px] bg-background px-2"
+                      >
+                        Contrato
                       </TableHead>
+                      {cats.map((c) => (
+                        <TableHead key={c} colSpan={2} className="border-l px-2 text-center">
+                          {ROTULO_CATEGORIA[c]}
+                        </TableHead>
+                      ))}
+                      <TableHead colSpan={2} className="border-l bg-muted/50 px-2 text-center">
+                        Total
+                      </TableHead>
+                    </TableRow>
+                    <TableRow>
+                      {cats.map((c) => [
+                        <TableHead key={`${c}-q`} className="border-l px-2 text-right">
+                          Qtd
+                        </TableHead>,
+                        <TableHead key={`${c}-v`} className="px-2 text-right">
+                          Valor (R$)
+                        </TableHead>,
+                      ])}
+                      <TableHead className="border-l bg-muted/50 px-2 text-right">
+                        Qtd total
+                      </TableHead>
+                      <TableHead className="bg-muted/50 px-2 text-right">
+                        Valor total (R$)
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visiveis.map((r) => (
+                      <TableRow key={r.contrato_id ?? "sem"}>
+                        <TableCell
+                          className="sticky left-0 z-10 max-w-[300px] truncate bg-background px-2 py-2"
+                          title={r.contrato_nome}
+                        >
+                          {r.contrato_nome}
+                          {!r.contrato_id && (
+                            <Badge variant="outline" className="ml-2">
+                              sem contrato
+                            </Badge>
+                          )}
+                        </TableCell>
+                        {cats.map((c) => [
+                          <TableCell key={`${c}-q`} className="border-l px-2 py-2 text-right">
+                            {inteiro(r.porCategoria[c].quantidade)}
+                          </TableCell>,
+                          <TableCell key={`${c}-v`} className="px-2 py-2 text-right">
+                            {valorTabela(r.porCategoria[c].valor)}
+                          </TableCell>,
+                        ])}
+                        <TableCell className="border-l bg-muted/30 px-2 py-2 text-right font-medium">
+                          {inteiro(r.quantidade)}
+                        </TableCell>
+                        <TableCell className="bg-muted/30 px-2 py-2 text-right font-semibold">
+                          {valorTabela(r.valor)}
+                        </TableCell>
+                      </TableRow>
                     ))}
-                    <TableHead colSpan={2} className="text-center border-l bg-muted/50">
-                      Total
-                    </TableHead>
-                  </TableRow>
-                  <TableRow>
-                    {cats.map((c) => [
-                      <TableHead key={`${c}-q`} className="text-right border-l">
-                        Quantidade
-                      </TableHead>,
-                      <TableHead key={`${c}-v`} className="text-right">
-                        Valor
-                      </TableHead>,
-                    ])}
-                    <TableHead className="text-right border-l bg-muted/50">
-                      Quantidade total
-                    </TableHead>
-                    <TableHead className="text-right bg-muted/50">Valor total</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visiveis.map((r) => (
-                    <TableRow key={r.contrato_id ?? "sem"}>
-                      <TableCell className="sticky left-0 bg-background">
+                    <TableRow className="bg-muted/50 font-semibold">
+                      <TableCell className="sticky left-0 z-10 bg-muted/50 px-2 py-2">
+                        Total geral
+                      </TableCell>
+                      {cats.map((c) => [
+                        <TableCell key={`${c}-q`} className="border-l px-2 py-2 text-right">
+                          {inteiro(totais.totalPorCategoria[c].quantidade)}
+                        </TableCell>,
+                        <TableCell key={`${c}-v`} className="px-2 py-2 text-right">
+                          {valorTabela(totais.totalPorCategoria[c].valor)}
+                        </TableCell>,
+                      ])}
+                      <TableCell className="border-l px-2 py-2 text-right">
+                        {inteiro(totais.quantidade)}
+                      </TableCell>
+                      <TableCell className="px-2 py-2 text-right">
+                        {valorTabela(totais.valor)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="space-y-3 min-[1500px]:hidden">
+                {visiveis.map((r) => (
+                  <div key={r.contrato_id ?? "sem"} className="rounded-md border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-medium">
                         {r.contrato_nome}
                         {!r.contrato_id && (
                           <Badge variant="outline" className="ml-2">
                             sem contrato
                           </Badge>
                         )}
-                      </TableCell>
-                      {cats.map((c) => [
-                        <TableCell key={`${c}-q`} className="text-right border-l">
-                          {inteiro(r.porCategoria[c].quantidade)}
-                        </TableCell>,
-                        <TableCell key={`${c}-v`} className="text-right">
-                          {dinheiro(r.porCategoria[c].valor)}
-                        </TableCell>,
-                      ])}
-                      <TableCell className="text-right font-medium border-l bg-muted/30">
-                        {inteiro(r.quantidade)}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold bg-muted/30">
-                        {dinheiro(r.valor)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="bg-muted/50 font-semibold">
-                    <TableCell className="sticky left-0 bg-muted/50">Total geral</TableCell>
-                    {cats.map((c) => [
-                      <TableCell key={`${c}-q`} className="text-right border-l">
-                        {inteiro(totais.totalPorCategoria[c].quantidade)}
-                      </TableCell>,
-                      <TableCell key={`${c}-v`} className="text-right">
-                        {dinheiro(totais.totalPorCategoria[c].valor)}
-                      </TableCell>,
-                    ])}
-                    <TableCell className="text-right border-l">
-                      {inteiro(totais.quantidade)}
-                    </TableCell>
-                    <TableCell className="text-right">{dinheiro(totais.valor)}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
+                      </p>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold">{dinheiro(r.valor)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {inteiro(r.quantidade)} un
+                        </p>
+                      </div>
+                    </div>
+                    <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 border-t pt-2 sm:grid-cols-2">
+                      {comMovimento(r, cats).map((c) => (
+                        <div key={c} className="flex items-baseline justify-between gap-2 text-xs">
+                          <dt className="truncate text-muted-foreground">
+                            {ROTULO_CATEGORIA[c]}
+                          </dt>
+                          <dd className="shrink-0">
+                            {dinheiro(r.porCategoria[c].valor)}{" "}
+                            <span className="text-muted-foreground">
+                              ({inteiro(r.porCategoria[c].quantidade)} un)
+                            </span>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/50 p-3 font-semibold">
+                  <span className="text-sm">Total geral</span>
+                  <span className="text-right">
+                    <span className="block text-sm">{dinheiro(totais.valor)}</span>
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {inteiro(totais.quantidade)} un
+                    </span>
+                  </span>
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
