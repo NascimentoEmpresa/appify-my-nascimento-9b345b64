@@ -2,7 +2,9 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover libera as áreas seguras do iPhone (env(safe-area-inset-*));
+         interactive-widget=resizes-content faz o teclado do Android encolher a página. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <!-- Impede o navegador (especialmente browsers de smart TV, que fazem cache
          agressivo e não têm hard-reload) de reutilizar um index.html antigo após
          um deploy. Sem isso, a TV tenta carregar chunks .js com hash antigo que o
@@ -34,6 +36,8 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <meta name="theme-color" content="#15316a">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Nascimento">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
 

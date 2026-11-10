@@ -1,4 +1,5 @@
-import { Bell, ClipboardCheck, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact, RefreshCw } from "lucide-react";
+import { Bell, ClipboardCheck, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact, RefreshCw, Download, Megaphone } from "lucide-react";
+import logoCompleto from "@/assets/logo-nascimento-completo.webp";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ import { resolverLinkNotificacao } from "@/lib/notificacaoLink";
 import { NovidadesSino } from "@/components/novidades/NovidadesSino";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { useSessaoExterna } from "@/hooks/useSupPedidos";
+import { useInstalarApp } from "@/hooks/useInstalarApp";
 
 type Notif = {
   id: string;
@@ -39,6 +41,12 @@ type Sessao = {
   ativa: boolean;
 };
 
+// Abaixo do `lg` os painéis do topo ocupam a largura da tela (a 375 px o de 384
+// saía dela). `fixed` aqui é relativo ao <header>, cujo backdrop-blur vira
+// containing block, e o header está sempre colado no alto.
+const PAINEL_NO_CELULAR =
+  "max-lg:fixed max-lg:inset-x-2 max-lg:top-[var(--topo-mobile)] max-lg:mt-1 max-lg:w-auto max-lg:max-h-[calc(100dvh_-_var(--topo-mobile)_-_var(--nav-mobile)_-_1rem)] max-lg:overflow-y-auto";
+
 export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () => void; onOpenMobile?: () => void }) {
   // SIS-2026-0309: `empresa` continua sendo lida (label de perfil/role), mas
   // o botão de TROCAR empresa saiu do topo — deixou de proteger algo (acesso
@@ -50,6 +58,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   const [openSettings, setOpenSettings] = useState(false);
   const [openProfile, setOpenProfile] = useState(false);
   const [openAgenda, setOpenAgenda] = useState(false);
+  const { podeInstalar, instalar } = useInstalarApp();
   const navigate = useNavigate();
   const { disableDemo } = useDemoMode();
   const { user, signOut } = useAuth();
@@ -197,20 +206,18 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
   }, [algumMenuAberto]);
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-border/70 bg-surface/80 px-3 backdrop-blur-md sm:gap-4 sm:px-4 lg:px-6">
-      {/* Hambúrguer: abre drawer no mobile, alterna colapso no desktop */}
+    <header className="sticky top-0 z-20 flex h-[var(--topo-mobile)] items-center gap-1 border-b border-border/70 bg-surface/95 px-3 pt-[env(safe-area-inset-top)] backdrop-blur-md sm:gap-2 sm:px-4 lg:h-16 lg:gap-4 lg:bg-surface/80 lg:px-6 lg:pt-0">
+      {/* Abaixo do lg o menu abre pela barra inferior; aqui fica a marca, que
+          leva ao Início. */}
       <button
-        onClick={() => {
-          if (typeof window !== "undefined" && window.innerWidth < 1024 && onOpenMobile) {
-            onOpenMobile();
-          } else {
-            onToggleSidebar();
-          }
-        }}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+        onClick={onToggleSidebar}
+        className="hidden h-9 w-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground lg:grid"
         aria-label="Alternar menu"
       >
         <PanelLeft className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={() => navigate("/app")} aria-label="Ir para o Início" className="flex h-10 shrink-0 items-center lg:hidden">
+        <img src={logoCompleto} alt="" className="h-7 w-auto object-contain" />
       </button>
 
       {/* Externo não escolhe empresa (não tem linha em user_empresa) e a
@@ -223,14 +230,14 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         </>
       )}
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className={cn("flex items-center gap-0.5 lg:gap-1.5", externo ? "ml-auto" : "md:ml-auto")}>
         {/* Tudo daqui até o separador some no acesso externo: nenhuma
             dessas telas existe para ele, e a engrenagem/seletor levavam
             direto pro "Acesso negado". Sobra o menu de perfil e o Sair. */}
         {!externo && (
           <>
         {/* Ajuda */}
-        <div className="relative" data-topbar-menu>
+        <div className="relative hidden lg:block" data-topbar-menu>
           <IconBtn aria-label="Ajuda" onClick={() => { fecharTodos(); setOpenHelp((o) => !o); }}><HelpCircle className="h-4 w-4" /></IconBtn>
           {openHelp && (
             <>
@@ -247,7 +254,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         </div>
 
         {/* Configurações */}
-        <div className="relative" data-topbar-menu>
+        <div className="relative hidden lg:block" data-topbar-menu>
           <IconBtn aria-label="Configurações" onClick={() => { fecharTodos(); setOpenSettings((o) => !o); }}><Settings className="h-4 w-4" /></IconBtn>
           {openSettings && (
             <>
@@ -266,7 +273,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         {/* Novidades do Sistema — changelog interno, com a bolinha do que
             a pessoa ainda não leu. Fica ANTES do sino: notificação é sobre o
             trabalho dela, novidade é sobre o ERP. */}
-        <NovidadesSino aoAbrir={fecharTodos} />
+        <div className="hidden lg:block"><NovidadesSino aoAbrir={fecharTodos} /></div>
 
         {/* Atualizar — a única busca de dado novo sem navegar (03/11/2026,
             src/lib/atualizarTela.ts). Nenhuma tela busca sozinha. */}
@@ -281,12 +288,14 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
 
         {/* Minhas Tarefas: o número é o que vence hoje mais o que está vencido. */}
         {tarefasPendentes > 0 && (
-          <IconBtn aria-label={`Minhas tarefas: ${tarefasPendentes} para hoje ou vencidas`} title="Minhas tarefas" onClick={() => navigate("/app/minhas-tarefas")}>
-            <ClipboardCheck className="h-4 w-4" />
-            <span className="absolute right-0.5 top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white">
-              {tarefasPendentes > 9 ? "9+" : tarefasPendentes}
-            </span>
-          </IconBtn>
+          <div className="hidden lg:block">
+            <IconBtn aria-label={`Minhas tarefas: ${tarefasPendentes} para hoje ou vencidas`} title="Minhas tarefas" onClick={() => navigate("/app/minhas-tarefas")}>
+              <ClipboardCheck className="h-4 w-4" />
+              <span className="absolute right-0.5 top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white">
+                {tarefasPendentes > 9 ? "9+" : tarefasPendentes}
+              </span>
+            </IconBtn>
+          </div>
         )}
 
         {/* Notificações */}
@@ -301,7 +310,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           </IconBtn>
           {openNotif && (
             <>
-              <div className="absolute right-0 top-full z-20 mt-2 w-96 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
+              <div className={cn("absolute right-0 top-full z-20 mt-2 w-96 overflow-hidden rounded-xl border border-border bg-popover shadow-xl", PAINEL_NO_CELULAR)}>
                 <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2">
                   <p className="text-xs font-semibold">Notificações</p>
                   {naoLidas > 0 && (
@@ -359,11 +368,13 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         </div>
 
         {/* Agenda Corporativa */}
-        <IconBtn aria-label="Agenda Corporativa" onClick={() => { fecharTodos(); setOpenAgenda((o) => !o); }}>
-          <Contact className="h-4 w-4" />
-        </IconBtn>
+        <div className="hidden lg:block">
+          <IconBtn aria-label="Agenda Corporativa" onClick={() => { fecharTodos(); setOpenAgenda((o) => !o); }}>
+            <Contact className="h-4 w-4" />
+          </IconBtn>
+        </div>
 
-        <div className="mx-1 h-8 w-px bg-border" />
+        <div className="mx-1 hidden h-8 w-px bg-border lg:block" />
           </>
         )}
 
@@ -371,7 +382,8 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
         <div className="relative" data-topbar-menu>
           <button
             onClick={() => { fecharTodos(); setOpenProfile((o) => !o); }}
-            className="flex items-center gap-2.5 rounded-lg px-2 py-1 hover:bg-secondary" title={user?.email ?? ""}
+            aria-label="Abrir meu perfil e opções"
+            className="flex items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-secondary lg:px-2" title={user?.email ?? ""}
           >
             {/* A foto do perfil, quando existe. Sem ela ficam as iniciais, que
                 era o único estado possível antes — o chip nunca chegou a
@@ -393,7 +405,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
           </button>
           {openProfile && (
             <>
-              <div className="absolute right-0 top-full z-20 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
+              <div className={cn("absolute right-0 top-full z-20 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-popover shadow-xl", PAINEL_NO_CELULAR)}>
                 <div className="border-b border-border bg-muted/40 px-3 py-3">
                   <p className="text-sm font-semibold">{nomeExibido}</p>
                   <p className="truncate text-[11px] text-muted-foreground">{user?.email}</p>
@@ -412,7 +424,23 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
                     <MenuItem onClick={() => { setOpenProfile(false); navigate("/app/administracao"); }} icon={<ShieldCheck className="h-3.5 w-3.5" />}>Administração / Usuários</MenuItem>
                   )}
                 </ul>
-                <div className="border-t border-border bg-muted/20 px-3 py-2">
+                {/* Celular: o que saiu da barra de cima mora aqui. */}
+                <ul className="border-t border-border text-sm lg:hidden">
+                  {!externo && (
+                    <>
+                      <MenuItem onClick={() => { setOpenProfile(false); navigate("/app/novidades"); }} icon={<Megaphone className="h-4 w-4" />}>Novidades do sistema</MenuItem>
+                      <MenuItem onClick={() => { setOpenProfile(false); setOpenAgenda(true); }} icon={<Contact className="h-4 w-4" />}>Agenda corporativa</MenuItem>
+                      <MenuItem onClick={() => window.open("mailto:suporte@cheetahconsultores.com", "_blank")} icon={<HelpCircle className="h-4 w-4" />}>Falar com suporte</MenuItem>
+                    </>
+                  )}
+                  {podeInstalar && (
+                    <MenuItem onClick={() => { setOpenProfile(false); void instalar(); }} icon={<Download className="h-4 w-4" />}>Instalar o app no celular</MenuItem>
+                  )}
+                  <MenuItem onClick={async () => { await signOut(); disableDemo(); navigate("/login"); }} icon={<LogOut className="h-4 w-4 text-destructive" />}>
+                    <span className="text-destructive">Sair</span>
+                  </MenuItem>
+                </ul>
+                <div className="hidden border-t border-border bg-muted/20 px-3 py-2 lg:block">
                   <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <Monitor className="h-3 w-3" /> Sessões ativas
                   </p>
@@ -441,7 +469,7 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
 
         <button
           onClick={async () => { await signOut(); disableDemo(); navigate("/login"); }}
-          className="ml-1 flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground shadow-sm transition-colors hover:border-destructive/40 hover:bg-destructive-soft hover:text-destructive"
+          className="ml-1 hidden items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground shadow-sm transition-colors hover:border-destructive/40 hover:bg-destructive-soft hover:text-destructive lg:flex"
           aria-label="Sair"
           title="Sair da plataforma"
         >
@@ -459,7 +487,7 @@ function IconBtn({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonEl
   return (
     <button
       {...props}
-      className="relative grid h-9 w-9 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+      className="relative grid h-10 w-10 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground lg:h-9 lg:w-9"
     >
       {children}
     </button>
@@ -469,7 +497,7 @@ function IconBtn({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonEl
 function MenuItem({ children, icon, onClick }: { children: React.ReactNode; icon?: React.ReactNode; onClick?: () => void }) {
   return (
     <li>
-      <button onClick={onClick} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary">
+      <button onClick={onClick} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-secondary max-lg:gap-3 max-lg:py-3">
         {icon}
         <span className="flex-1">{children}</span>
       </button>

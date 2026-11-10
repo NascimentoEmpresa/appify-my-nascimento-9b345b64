@@ -14,6 +14,8 @@ const TabsList = React.forwardRef<
     className={cn(
       "inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
       className,
+      // Celular: fileira de abas maior que a tela corre de lado, em vez de cortar.
+      "rolagem-chips max-lg:max-w-full max-lg:justify-start max-lg:overflow-x-auto",
     )}
     {...props}
   />
