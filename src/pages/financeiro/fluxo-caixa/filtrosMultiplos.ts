@@ -46,3 +46,17 @@ export function manterSelecionadasDisponiveis(selecionados: string[], disponivei
   const ids = new Set(disponiveis.map(([id]) => id));
   return selecionados.filter((id) => id === FILTRO_SEM_VALOR || ids.has(id));
 }
+
+// Centros de custo (contratos) que aparecem nas linhas da(s) empresa(s) escolhida(s). Lista vazia = todas as empresas.
+// Com o filtro Empresa marcado, o filtro Centro de Custo só oferece os contratos daquela empresa (antes listava todos).
+export function contratosDasEmpresas(
+  linhas: { empresa_id?: string | null; contrato_id?: string | null; contrato_nome?: string | null }[],
+  empresaIds: string[],
+): [string, string][] {
+  const map = new Map<string, string>();
+  linhas.forEach((l) => {
+    if (empresaIds.length > 0 && !empresaIds.includes(l.empresa_id ?? "")) return;
+    if (l.contrato_id && l.contrato_nome) map.set(l.contrato_id, l.contrato_nome);
+  });
+  return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+}
