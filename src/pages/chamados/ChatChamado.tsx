@@ -33,11 +33,13 @@ import { BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Eve
 import { useAnexoChamado, useImagensAnexo } from "./useAnexoChamado";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { TextoComLinks } from "@/components/notificacoes/ConteudoAviso";
+import { cn } from "@/lib/utils";
 
 export interface Participante {
   user_id: string;
   nome: string;
-  papel: "solicitante" | "responsavel" | "gestao" | "participante";
+  /** "visualizou" (mig 20261111200000): abriu a conversa sem estar no grupo. */
+  papel: "solicitante" | "responsavel" | "gestao" | "participante" | "visualizou";
   ve_interno: boolean;
   /** Solicitante e responsável — de quem se espera resposta. Ver PAPEL_LABEL. */
   principal: boolean;
@@ -49,6 +51,7 @@ const PAPEL_LABEL: Record<string, string> = {
   responsavel: "responsável",
   gestao: "gestão",
   participante: "participante",
+  visualizou: "visualizou",
 };
 
 /** Estado de leitura de uma mensagem, no vocabulário do WhatsApp. */
@@ -625,14 +628,19 @@ export function ChatChamado({
                           )}
                           {gestao.length > 0 && (
                             <div className="mt-2 border-t border-border pt-2">
+                              {/* 11/11/2026: gestão, participantes e quem só abriu a conversa
+                                  (papel "visualizou"), com a hora da última leitura. Quem é
+                                  de fora do grupo e não viu esta mensagem não aparece. */}
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                Gestão (não conta no selo)
+                                Gestão e quem mais abriu (não conta no selo)
                               </p>
-                              {gestao.map((p) => (
+                              {gestao.filter((p) => p.papel !== "visualizou" || leu(p, enviadoEm)).map((p) => (
                                 <p key={p.user_id} className="flex items-center justify-between gap-2 text-[11px]">
-                                  <span className="truncate">{p.nome}</span>
-                                  <span className="shrink-0 text-muted-foreground">
-                                    {leu(p, enviadoEm) ? "leu" : "não leu"}
+                                  <span className="truncate">{p.nome}{p.papel === "visualizou" && <span className="text-muted-foreground"> · de fora do grupo</span>}</span>
+                                  <span className={cn("shrink-0", leu(p, enviadoEm) ? "text-sky-600" : "text-muted-foreground")}>
+                                    {leu(p, enviadoEm) && p.lido_em
+                                      ? `viu ${new Date(p.lido_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+                                      : "não viu"}
                                   </span>
                                 </p>
                               ))}

@@ -67,3 +67,27 @@ describe("TV Indicadores por Contrato", () => {
     expect(paginasDoRelatorio({ ...d, tipo: "ope-contratos", contrato: null })).toHaveLength(1);
   });
 });
+
+// 11/11/2026: o layout "TV da Gerência Operacional" — totais somando as bases e o alerta principal.
+import { alertaPrincipal, glosasPorCausa, totaisOpe } from "@/lib/tv/opeContratosTv";
+
+describe("TV da Gerência Operacional — totais", () => {
+  it("postos e lucratividade somam as bases, não fazem média de %", () => {
+    const t = totaisOpe(d);
+    expect(t.postos).toMatchObject({ contratados: 60, cobertos: 55, pct: 91.7, status: "critico" });
+    // receita 300 mil, custo 280 mil → 6,7%
+    expect(t.lucratividade.margem).toBe(6.7);
+    expect(t.lucratividade.status).toBe("atencao");
+  });
+
+  it("alerta principal: crítico primeiro; prejuízo tem nome próprio", () => {
+    const linhas = linhasDaTv(d);
+    expect(alertaPrincipal(linhas.find((l) => l.id === "prejuizo")!)?.texto).toBe("Prejuízo no contrato");
+    expect(alertaPrincipal(linhas.find((l) => l.id === "ruim")!)?.texto).toBe("Postos descobertos");
+  });
+
+  it("glosas agrupadas pela causa", () => {
+    const g = { ...d, contratos: [contrato("x", "X", { glosas: { valor: 100, qtd: 1, causa: "Falta" } }), contrato("y", "Y", { glosas: { valor: 50, qtd: 1, causa: "Falta" } }), contrato("z", "Z", { glosas: { valor: 30, qtd: 1, causa: null } })] };
+    expect(glosasPorCausa(g)).toEqual([{ causa: "Falta", valor: 150 }, { causa: "Sem causa informada", valor: 30 }]);
+  });
+});

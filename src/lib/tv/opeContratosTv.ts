@@ -15,6 +15,10 @@
 import {
   montarLinhas, ordenar, type DadosContratosRpc, type EntradaFinanceira, type Financeiro, type LinhaContrato,
 } from "@/lib/operacional/indicadoresContratos";
+import {
+  COBERTURA_CRITICA, CUSTO_ATENCAO, CUSTO_CRITICO, EFETIVO_MIN_FALTAS, EFETIVO_MIN_TURNOVER, FALTAS_ATENCAO, FALTAS_CRITICO,
+  MARGEM_PADRAO, PISO_RECEITA, TURNOVER_META_MES, type ChaveInd, type StatusInd,
+} from "@/lib/operacional/indicadoresContratos";
 
 export interface FinanceiroTv {
   competencia: string;
@@ -65,3 +69,98 @@ export function paginasOpeContratos(linhas: LinhaContrato[]): PaginaOpe[] {
 
 /** Os N primeiros com algo fora do esperado (a lista já vem do pior para o melhor). */
 export const topImpacto = (linhas: LinhaContrato[], n = TOP_IMPACTO) => linhas.filter((l) => l.gravidade > 0).slice(0, n);
+
+// ── Layout "TV da Gerência Operacional" (11/11/2026) ────────────────────
+// Pablo, com o modelo: os 7 totais no topo, a tabela "Contratos que precisam
+// de ação" (a ÚNICA coisa que troca: 5 contratos a cada 10 s, do pior para o
+// melhor), "Onde agir agora" e 4 gráficos fixos. Os totais somam as MESMAS
+// bases dos indicadores por contrato (nada de média de percentuais).
+
+
+export const CONTRATOS_POR_TELA = 5;
+
+export interface TotaisOpe {
+  postos: { contratados: number; cobertos: number; pct: number | null; status: StatusInd };
+  lucratividade: { margem: number | null; abaixo: number; status: StatusInd };
+  custo: { desvio: number | null; acima: number; status: StatusInd };
+  glosas: { valor: number; contratos: number; status: StatusInd };
+  faltas: { pct: number | null; status: StatusInd };
+  turnover: { pct: number | null; status: StatusInd };
+  reclamacoes: { qtd: number; contratos: number; status: StatusInd };
+}
+
+const r1t = (v: number) => Math.round(v * 10) / 10;
+const fora = (s: StatusInd) => s === "critico" || s === "atencao";
+
+export function totaisOpe(d: DadosOpeContratosTv, linhas: LinhaContrato[] = linhasDaTv(d)): TotaisOpe {
+  const ids = new Set(linhas.map((l) => l.id));
+  const cs = d.contratos.filter((c) => ids.has(c.id));
+  const fin = entradaFinanceiraTv(d.financeiro);
+
+  const comPosto = cs.filter((c) => (c.postos?.contratados ?? 0) > 0);
+  const contratados = comPosto.reduce((a, c) => a + (c.postos?.contratados ?? 0), 0);
+  const cobertos = comPosto.reduce((a, c) => a + Math.min(c.postos?.cobertos ?? 0, c.postos?.contratados ?? 0), 0);
+  const pPostos = contratados > 0 ? r1t((cobertos / contratados) * 100) : null;
+
+  let rec = 0, cus = 0;
+  cs.forEach((c) => { const f = fin.doMes?.get(c.id); if (f && f.receita >= PISO_RECEITA && f.custo > 0) { rec += f.receita; cus += f.custo; } });
+  const margem = rec > 0 ? r1t(((rec - cus) / rec) * 100) : null;
+
+  let orc = 0, real = 0;
+  const ano = d.competencia.slice(0, 4);
+  cs.forEach((c) => Object.entries(c.orcado?.custo_direto_por_mes ?? {}).forEach(([mes, o]) => {
+    if (!mes.startsWith(ano) || mes > d.competencia || !(o > 0)) return;
+    const r = fin.custoPorMes?.get(`${c.id}|${mes}`) ?? 0;
+    if (r > 0) { orc += o; real += r; }
+  }));
+  const desvio = orc > 0 ? r1t(((real - orc) / orc) * 100) : null;
+
+  const glosaValor = cs.reduce((a, c) => a + (c.glosas?.valor ?? 0), 0);
+  const fal = cs.filter((c) => c.efetivo >= EFETIVO_MIN_FALTAS);
+  const diasBase = fal.reduce((a, c) => a + c.efetivo * d.dias, 0);
+  const pFaltas = diasBase > 0 ? r1t((fal.reduce((a, c) => a + c.atestados.dias_pessoa, 0) / diasBase) * 100) : null;
+  const tur = cs.filter((c) => c.efetivo >= EFETIVO_MIN_TURNOVER);
+  const ef = tur.reduce((a, c) => a + c.efetivo, 0);
+  const pTurn = ef > 0 ? r1t((tur.reduce((a, c) => a + c.demissoes, 0) / ef) * 100) : null;
+  const recl = cs.reduce((a, c) => a + (c.reclamacoes?.qtd ?? 0), 0);
+  const conta = (k: ChaveInd) => linhas.filter((l) => fora(l.ind[k].status)).length;
+
+  return {
+    postos: { contratados, cobertos, pct: pPostos, status: pPostos == null ? "sem_fonte" : pPostos >= 100 ? "ok" : pPostos >= COBERTURA_CRITICA ? "atencao" : "critico" },
+    lucratividade: { margem, abaixo: conta("lucratividade"), status: margem == null ? "sem_dado" : margem < 0 ? "critico" : margem < MARGEM_PADRAO ? "atencao" : "ok" },
+    custo: { desvio, acima: conta("custo"), status: desvio == null ? "sem_dado" : desvio > CUSTO_CRITICO ? "critico" : desvio > CUSTO_ATENCAO ? "atencao" : "ok" },
+    glosas: { valor: glosaValor, contratos: cs.filter((c) => (c.glosas?.qtd ?? 0) > 0).length, status: glosaValor > 0 ? "atencao" : "ok" },
+    faltas: { pct: pFaltas, status: pFaltas == null ? "sem_dado" : pFaltas > FALTAS_CRITICO ? "critico" : pFaltas > FALTAS_ATENCAO ? "atencao" : "ok" },
+    turnover: { pct: pTurn, status: pTurn == null ? "sem_dado" : pTurn > TURNOVER_META_MES * 2 ? "critico" : pTurn > TURNOVER_META_MES ? "atencao" : "ok" },
+    reclamacoes: { qtd: recl, contratos: conta("reclamacoes"), status: recl === 0 ? "ok" : linhas.some((l) => l.ind.reclamacoes.status === "critico") ? "critico" : "atencao" },
+  };
+}
+
+const ALERTA: Record<ChaveInd, string> = {
+  postos: "Postos descobertos", lucratividade: "Margem abaixo da prevista", custo: "Custo acima do orçado",
+  glosas: "Glosas no contrato", faltas: "Faltas recorrentes", turnover: "Equipe instável", reclamacoes: "Reclamações do cliente",
+};
+
+/** O alerta mais grave do contrato (crítico antes de atenção, na ordem dos indicadores); null se está tudo bem. */
+export function alertaPrincipal(l: LinhaContrato): { texto: string; status: StatusInd } | null {
+  const ordem: ChaveInd[] = ["postos", "lucratividade", "custo", "glosas", "faltas", "turnover", "reclamacoes"];
+  for (const s of ["critico", "atencao"] as StatusInd[]) {
+    const k = ordem.find((x) => l.ind[x].status === s);
+    if (k) {
+      const texto = k === "lucratividade" && (l.ind.lucratividade.valor ?? 0) < 0 ? "Prejuízo no contrato" : ALERTA[k];
+      return { texto, status: s };
+    }
+  }
+  return null;
+}
+
+/** Glosas por causa (a causa principal de cada contrato, somando o valor). */
+export function glosasPorCausa(d: DadosOpeContratosTv): { causa: string; valor: number }[] {
+  const m = new Map<string, number>();
+  d.contratos.filter((c) => !c.encerrado && (c.glosas?.valor ?? 0) > 0)
+    .forEach((c) => { const k = (c.glosas.causa ?? "").trim() || "Sem causa informada"; m.set(k, (m.get(k) ?? 0) + c.glosas.valor); });
+  const lista = [...m.entries()].map(([causa, valor]) => ({ causa, valor })).sort((a, b) => b.valor - a.valor);
+  if (lista.length <= 4) return lista;
+  const outros = lista.slice(3).reduce((a, x) => a + x.valor, 0);
+  return [...lista.slice(0, 3), { causa: "Outras", valor: outros }];
+}
