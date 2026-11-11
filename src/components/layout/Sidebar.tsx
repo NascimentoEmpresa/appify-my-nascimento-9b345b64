@@ -406,6 +406,7 @@ const financeiroModule: ModuleDef = {
       label: "Controle de Notas",
       defaultOpen: true,
       items: [
+        { label: "Controle de Notas", to: "/app/financeiro/emissao-nf", icon: FileText },
         { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
         { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
         { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },

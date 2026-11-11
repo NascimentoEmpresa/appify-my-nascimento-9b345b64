@@ -18,6 +18,7 @@ import {
 } from "@/lib/veiculos/dashboardVeiculos";
 import { carregarHistorico, gerarExcel, gerarHtml, nomeArquivo, useDadosDashboardVeiculos } from "./relatorioAgendamentos";
 import { ViagemDialog } from "./ViagemDialog";
+import { PainelDoDia } from "./PainelDoDia";
 import { toast } from "sonner";
 
 // =====================================================================
@@ -154,6 +155,9 @@ export function DashboardVeiculos() {
 
   return (
     <div className="space-y-4">
+      {/* Hoje (10/11/2026): em rota, não saiu, retornou, e o KM sem registro. Fora dos filtros. */}
+      <PainelDoDia agendamentos={todos} onAbrir={setViagem} />
+
       {/* Filtros numa linha, acima de tudo; exportar leva o MESMO recorte. */}
       <Card className="flex flex-wrap items-end gap-3 p-3">
         <label className="space-y-1">

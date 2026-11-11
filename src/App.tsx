@@ -208,6 +208,7 @@ import ValidacaoPosPagamento from "./pages/financeiro/ValidacaoPosPagamento";
 import ConciliacaoBancaria from "./pages/financeiro/ConciliacaoBancaria";
 import EmissaoNF from "./pages/financeiro/nf-emissao/EmissaoNF";
 import ControleNotas from "./pages/financeiro/controle-notas/ControleNotas";
+import InicioControleNotas from "./pages/financeiro/nf-emissao/InicioControleNotas";
 import Lancamentos from "./pages/contabil/Lancamentos";
 import PlanoContas from "./pages/contabil/PlanoContas";
 import AprovacaoContas from "./pages/contabil/AprovacaoContas";
@@ -989,6 +990,7 @@ const App = () => (
             <Route path="financeiro/programacao-pagamentos" element={<ProgramacaoPagamentos />} />
             <Route path="financeiro/validacao-pos-pagamento" element={<ValidacaoPosPagamento />} />
             <Route path="financeiro/conciliacao-bancaria" element={<ConciliacaoBancaria />} />
+            <Route path="financeiro/emissao-nf" element={<InicioControleNotas />} />
             <Route path="financeiro/emissao-nf/cadastro" element={<EmissaoNF />} />
             <Route path="financeiro/emissao-nf/controle-notas" element={<ControleNotas />} />
             {/* Fiscal */}

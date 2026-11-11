@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { NavegacaoControleNotas } from "./NavegacaoControleNotas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -255,6 +256,7 @@ export default function EmissaoNF() {
 
   return (
     <div className="space-y-6 p-6">
+      <NavegacaoControleNotas />
       <PageHeader
         title="Emissão de NF"
         subtitle="Cadastro de notas fiscais por contrato, com cálculo automático de retenções."

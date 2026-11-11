@@ -20,6 +20,7 @@ import { AvisoCancelada, AvisoPedidoCancelamento, BotaoCancelarDemissao } from "
 import { AvisoAjusteDemissao, BotaoAjustarDemissao } from "@/components/demissao/AjustarDemissao";
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
+  JUSTIFICATIVAS_DESLIGAMENTO, JUSTIFICATIVA_OUTROS, erroJustificativa,
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
   corDoStatus, emailValido, erroDoArquivo, explicaStatus, faltaVagaDeReposicao, fmtData, fmtTamanho,
   hojeISO, mascaraTelefone, statusInicialDemissao, telefoneCompleto, type SolicitacaoDemissao,
@@ -66,6 +67,9 @@ const VAZIO = {
   data_solicitacao: hojeISO(),
   motivo_solicitacao: "",
   motivo_pedido: "",
+  // Justificativa do desligamento (10/11/2026): obrigatória, para a estatística.
+  justificativa_desligamento: "",
+  justificativa_complemento: "",
   relato: "",
   termino_experiencia: "",
   data_aviso: "",
@@ -326,6 +330,8 @@ export default function SolicitarDemissao() {
     if (p === 1) {
       if (!form.motivo_solicitacao) return "Selecione o motivo da solicitação.";
       if (!form.motivo_pedido) return "Selecione o motivo do pedido de demissão.";
+      const just = erroJustificativa(form.justificativa_desligamento, form.justificativa_complemento);
+      if (just) return just;
       if (form.relato.trim().length < 20) return "Relate o motivo com pelo menos 20 caracteres.";
       return null;
     }
@@ -378,6 +384,8 @@ export default function SolicitarDemissao() {
       escala: colaborador!.escala || null,
       motivo_solicitacao: form.motivo_solicitacao,
       motivo_pedido: form.motivo_pedido,
+      justificativa_desligamento: form.justificativa_desligamento,
+      justificativa_complemento: form.justificativa_complemento.trim() || null,
       relato: form.relato.trim(),
       termino_experiencia: form.termino_experiencia,
       data_aviso: form.data_aviso,
@@ -672,6 +680,27 @@ export default function SolicitarDemissao() {
                   </SelectContent>
                 </Select>
               </div>
+              {/* Justificativa do desligamento (10/11/2026): obrigatória — sem ela não avança. */}
+              <div>
+                <Label>Justificativa do desligamento *</Label>
+                <Select value={form.justificativa_desligamento} onValueChange={(v) => setCampo("justificativa_desligamento", v)}>
+                  <SelectTrigger className="mt-1" aria-label="Justificativa do desligamento"><SelectValue placeholder="Selecione a justificativa" /></SelectTrigger>
+                  <SelectContent>
+                    {JUSTIFICATIVAS_DESLIGAMENTO.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">Por que o desligamento está sendo pedido — usada nas estatísticas de desligamento.</p>
+              </div>
+              {form.justificativa_desligamento && (
+                <div>
+                  <Label htmlFor="justificativa-complemento">
+                    {form.justificativa_desligamento === JUSTIFICATIVA_OUTROS ? "Descreva a justificativa *" : "Complemento da justificativa (opcional)"}
+                  </Label>
+                  <Textarea id="justificativa-complemento" className="mt-1 min-h-20" maxLength={1000}
+                    placeholder={form.justificativa_desligamento === JUSTIFICATIVA_OUTROS ? "Qual é o motivo?" : "Algum detalhe a mais (opcional)"}
+                    value={form.justificativa_complemento} onChange={(e) => setCampo("justificativa_complemento", e.target.value)} />
+                </div>
+              )}
               <div>
                 <Label htmlFor="relato">Relate abaixo o motivo da solicitação de demissão *</Label>
                 <Textarea id="relato" className="mt-1 min-h-32" placeholder="Descreva detalhadamente o motivo…"
@@ -793,6 +822,8 @@ export default function SolicitarDemissao() {
               <Bloco titulo="Motivos" itens={[
                 ["Motivo da solicitação", form.motivo_solicitacao],
                 ["Motivo do pedido", form.motivo_pedido],
+                ["Justificativa do desligamento", form.justificativa_desligamento
+                  + (form.justificativa_complemento.trim() ? ` — ${form.justificativa_complemento.trim()}` : "")],
                 ["Relato", form.relato],
               ]} />
               <Bloco titulo="Aviso e contato" itens={[

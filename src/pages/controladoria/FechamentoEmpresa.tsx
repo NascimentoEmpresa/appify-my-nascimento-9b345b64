@@ -22,12 +22,13 @@ import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialo
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useAjustesAdmClassificacao, useAjustesReceitaExtra, useContratosAdmTirados } from "./fechamento/useAjustesAdm";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import type { ComposicaoAdmAberta } from "./fechamento/ComposicaoAdm";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { linkFluxoDoRecorte } from "./fechamento/linkFluxo";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheReceitasExtras, receitasExtrasPorMes, receitasForaDaColuna, detalheAdmForaDaColuna, despesaAdmPorContrato, ligacoesDoFechamento, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheReceitasExtras, receitasExtrasPorMes, receitasForaDaColunaComCatalogo, detalheAdmForaDaColuna, despesaAdmPorContrato, ligacoesDoFechamento, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   ROTULO_SEM_CLASSIFICACAO, type ItemDetalheClassificacao, type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -96,6 +97,8 @@ export default function FechamentoEmpresa() {
   // SIS-2026-0793: entradas do ano (Receitas Extras) e o ajuste das classificações que contam, só no Fechamento.
   const { data: entradasAno = [] } = useEntradasAdmAno(ano, base);
   const { data: ajustesReceita } = useAjustesReceitaExtra();
+  // SIS-2026-0836: catálogo de classificações, para a lista de baixo das Receitas Extras trazer também as que ainda não tiveram entrada no período.
+  const { data: catalogoClassificacoes = [] } = useClassificacoesOrcamentoAdmin();
   // Ajustes do Total Desp. Adm que valem só aqui (migration 20261103005200): a ligação do Fechamento se sobrepõe à global só na despesa administrativa.
   const { data: ajustesAdmClassificacao } = useAjustesAdmClassificacao();
   const { data: contratosAdmTirados } = useContratosAdmTirados();
@@ -288,7 +291,7 @@ export default function FechamentoEmpresa() {
         receitaExtra: {
           podeAlterar: !!podeAjustarAdm,
           ajustes: ajustesReceita,
-          foraDaColuna: receitasForaDaColuna(entradasAdm, mesesSet, ligacoes, ajustesReceita, empresaAdm),
+          foraDaColuna: receitasForaDaColunaComCatalogo(entradasAdm, mesesSet, ligacoes, ajustesReceita, empresaAdm, catalogoClassificacoes),
         },
       };
     }

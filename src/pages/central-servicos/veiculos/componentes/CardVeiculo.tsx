@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Car, Check, Wrench, CalendarClock } from "lucide-react";
+import { Car, Check, Wrench, CalendarClock, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFotoVeiculo, type Disponibilidade, type VeiculoFrota } from "@/hooks/useAgendamentoVeiculos";
+import type { UltimoKm } from "@/hooks/useChecklistVeiculo";
 
 interface Props {
   veiculo: VeiculoFrota;
@@ -10,6 +11,8 @@ interface Props {
   /** Posição na grade — só para escalonar a entrada dos cards. */
   indice: number;
   onSelecionar: (v: VeiculoFrota) => void;
+  /** Último KM informado deste carro (mig 20261110220000). */
+  ultimoKm?: UltimoKm | null;
 }
 
 /**
@@ -25,7 +28,7 @@ interface Props {
  * (rise-in, pop, check-pop, shake, float-soft, ring-pulse) — nenhuma
  * biblioteca de animação entrou no bundle por causa desta tela.
  */
-export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onSelecionar }: Props) {
+export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onSelecionar, ultimoKm }: Props) {
   const [recusando, setRecusando] = useState(false);
   const [fotoQuebrada, setFotoQuebrada] = useState(false);
   const livre = disponibilidade.disponivel;
@@ -126,6 +129,15 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
             {(veiculo.contrato_nome || veiculo.lotacao) && (
               <div className="mt-1.5 truncate text-xs text-muted-foreground">
                 {veiculo.contrato_nome ?? veiculo.lotacao}
+              </div>
+            )}
+            {ultimoKm && (
+              <div className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground" title="Último KM informado pelo último condutor">
+                <Gauge className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>
+                  Último KM: <b className="text-foreground">{ultimoKm.km.toLocaleString("pt-BR")}</b>
+                  {ultimoKm.condutor ? ` · ${ultimoKm.condutor.split(" ")[0]}` : ""} · {new Date(ultimoKm.em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
+                </span>
               </div>
             )}
             {disponibilidade.detalhe && (

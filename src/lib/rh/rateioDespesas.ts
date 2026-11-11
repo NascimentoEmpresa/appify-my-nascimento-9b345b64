@@ -36,7 +36,7 @@ export type TipoRateio =
   | "mensalidade_seeac"
   | "vale_transporte"
   // Comprovante de pedido da SWAP/Prospera, um por empresa (10/11/2026, mig
-  // 20261110190000): CPF + valor por linha — a leitura genérica já lê.
+  // 20261110190100): CPF + valor por linha — a leitura genérica já lê.
   | "auxilio_farmacia_pcd";
 
 export type CriterioRateio = "faturamento" | "consultas" | "colaboradores" | "pdf";

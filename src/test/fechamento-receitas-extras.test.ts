@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { custosVazios, type LigacoesRubrica, type LinhaFluxoCusto } from "@/pages/controladoria/faturamento/regras";
-import { detalheReceitasExtras, montarFechamento, receitaExtraConta, receitasExtrasPorMes, receitasForaDaColuna, totalDoFechamento } from "@/pages/controladoria/fechamento/regras";
+import { detalheReceitasExtras, montarFechamento, receitaExtraConta, receitasExtrasPorMes, receitasForaDaColuna, receitasForaDaColunaComCatalogo, totalDoFechamento } from "@/pages/controladoria/fechamento/regras";
 import { linkFluxoDoRecorte } from "@/pages/controladoria/fechamento/linkFluxo";
 
 // SIS-2026-0793: Receitas Extras = entradas dos administrativos; Resultado após Outras Receitas = Resultado Operacional + Receitas Extras.
@@ -116,5 +116,33 @@ describe("Ver todos das receitas abre o Fluxo nas entradas", () => {
     const r = { base: "competencia" as const, meses: ["2026-01"], classificacaoIds: ["c1"], contratoIds: [], semContrato: true };
     expect(linkFluxoDoRecorte({ ...r, tipo: "entrada" })).toContain("tipo=entrada");
     expect(linkFluxoDoRecorte(r)).toContain("tipo=saida");
+  });
+});
+
+// SIS-2026-0836: a lista de baixo traz todas as classificações que ainda não contam, não só as com entrada no período.
+describe("entradas fora da coluna com o catálogo", () => {
+  const catalogo = [
+    { id: "c-cash", nome: "CASHBACK", ativo: true },
+    { id: "c-transf", nome: "TRANSFERÊNCIA ENTRE CONTAS", ativo: true },
+    { id: "c-velha", nome: "RESGATE ANTIGO", ativo: false },
+    { id: "c-aluguel", nome: "ALUGUEL", ativo: true },
+  ];
+  const lig: LigacoesRubrica = new Map([["c-cash", "nao_custo"], ["c-transf", "nao_custo"], ["c-velha", "nao_custo"]]);
+  const linhas = [e({ classificacao_id: "c-transf", classificacao_nome: "TRANSFERÊNCIA ENTRE CONTAS", valor: 9000 })];
+
+  it("o que tem entrada no período vem com valor e o resto do catálogo vem zerado, para poder adicionar", () => {
+    const r = receitasForaDaColunaComCatalogo(linhas, JAN, lig, undefined, undefined, catalogo);
+    expect(r.map((i) => [i.classificacao, i.valor])).toEqual([["TRANSFERÊNCIA ENTRE CONTAS", 9000], ["CASHBACK", 0]]);
+    expect(r[1].classificacaoIds).toEqual(["c-cash"]);
+  });
+  it("não repete a que já aparece com movimento, nem traz inativa, nem a que já conta", () => {
+    const r = receitasForaDaColunaComCatalogo(linhas, JAN, lig, undefined, undefined, catalogo);
+    expect(r.filter((i) => i.classificacao === "TRANSFERÊNCIA ENTRE CONTAS")).toHaveLength(1);
+    expect(r.some((i) => i.classificacao === "RESGATE ANTIGO")).toBe(false);
+    expect(r.some((i) => i.classificacao === "ALUGUEL")).toBe(false);
+  });
+  it("depois de adicionada (ajuste = conta), a classificação sai da lista de baixo", () => {
+    const r = receitasForaDaColunaComCatalogo(linhas, JAN, lig, new Map([["c-cash", true]]), undefined, catalogo);
+    expect(r.some((i) => i.classificacao === "CASHBACK")).toBe(false);
   });
 });

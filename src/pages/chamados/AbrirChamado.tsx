@@ -372,14 +372,17 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                 ))}
               </div>
               <Textarea
-                id="ch-descricao" rows={8} maxLength={4000}
-                className="text-sm leading-relaxed"
+                // Sem limite de caracteres (10/11/2026, chamado do Yuri): o texto revisado
+                // fora do ERP (ex.: escrito com a I.A) é colado inteiro aqui, em vez de
+                // virar PDF anexo que alguém tem que reconferir. Antes: maxLength 4000.
+                id="ch-descricao" rows={8}
+                className="max-h-[70vh] min-h-[12rem] resize-y text-sm leading-relaxed"
                 placeholder="O que aconteceu, em qual tela, o passo a passo até o problema e o que você esperava que acontecesse."
                 value={descricao} onChange={(e) => setDescricao(e.target.value)}
               />
               <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1"><ClipboardPaste className="h-3.5 w-3.5" /> Tirou print? Cole aqui com <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">Ctrl</kbd>+<kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">V</kbd> — vira anexo.</span>
-                <span className="shrink-0">{descricao.length}/4000</span>
+                <span className="shrink-0">{descricao.length.toLocaleString("pt-BR")} caracteres</span>
               </div>
             </div>
 
