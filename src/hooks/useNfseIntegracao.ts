@@ -12,6 +12,7 @@ export interface ParametrosNfse {
   local_prestacao: string;
   codigo_tributacao: string;
   codigo_municipal: string;
+  codigo_integracao_municipal?: string;
   codigo_nbs: string;
   descricao: string;
   iss_retido: string;
