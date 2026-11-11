@@ -93,11 +93,16 @@ async function buscarPeriodo(de: string, ate: string, semContrato = false, base:
   return fora.size === 0 ? linhas : linhas.filter((l) => !l.contrato_id || !fora.has(l.contrato_id));
 }
 
-export function useCustosContratoMes(mes: string, base: BaseDespesa = "competencia", opcoes?: OpcoesCustos) {
+// SIS-2026-0769 (11/11/2026): a Lucratividade passou a filtrar por intervalo de
+// meses (mes inicial e mes final), entao a busca vai de [inicio-01, mes seguinte
+// ao fim). Com os dois iguais, e exatamente a busca de um mes de antes. Quem
+// chama manda os dois ja ordenados (ordenarMeses, em periodoMeses.ts).
+export function useCustosContratoPeriodo(mesInicio: string, mesFim: string, base: BaseDespesa = "competencia", opcoes?: OpcoesCustos) {
   return useQuery({
-    queryKey: ["lucratividade_custos_mes", mes, base, !!opcoes?.manterInvestimentos, !!opcoes?.manterAdministrativos],
+    queryKey: ["lucratividade_custos_periodo", mesInicio, mesFim, base, !!opcoes?.manterInvestimentos, !!opcoes?.manterAdministrativos],
     staleTime: 120_000,
-    queryFn: () => buscarPeriodo(`${mes}-01`, proximoMes(mes), false, base, opcoes),
+    enabled: Boolean(mesInicio && mesFim),
+    queryFn: () => buscarPeriodo(`${mesInicio}-01`, proximoMes(mesFim), false, base, opcoes),
   });
 }
 

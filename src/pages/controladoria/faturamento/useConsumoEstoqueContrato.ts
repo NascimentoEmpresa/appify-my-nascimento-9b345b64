@@ -33,11 +33,15 @@ export interface ConsumoEstoqueMes {
   unidadesSemPreco: number;
 }
 
-export function useConsumoEstoqueContrato(mes: string) {
+// SIS-2026-0769 (11/11/2026): intervalo de meses. O primeiro dia do mes inicial
+// ate o ultimo dia do mes final — com os dois iguais, e o mesmo mes de antes.
+// A RPC ja soma por contrato, entao nao importa quantos meses entram.
+export function useConsumoEstoqueContrato(mesInicio: string, mesFim: string) {
   return useQuery({
-    queryKey: ["consumo-estoque-contrato", mes],
+    queryKey: ["consumo-estoque-contrato", mesInicio, mesFim],
     queryFn: async (): Promise<ConsumoEstoqueMes> => {
-      const { inicio, fim } = intervaloDoMes(mes);
+      const inicio = intervaloDoMes(mesInicio).inicio;
+      const fim = intervaloDoMes(mesFim).fim;
       const { data, error } = await sb.rpc("sup_rel_consumo_custo_por_contrato", {
         p_inicio: inicio,
         p_fim: fim,
@@ -46,6 +50,6 @@ export function useConsumoEstoqueContrato(mes: string) {
       const linhas = (data ?? []) as LinhaConsumoEstoque[];
       return { porContrato: consumoPorContrato(linhas), unidadesSemPreco: unidadesSemPreco(linhas) };
     },
-    enabled: Boolean(mes),
+    enabled: Boolean(mesInicio && mesFim),
   });
 }

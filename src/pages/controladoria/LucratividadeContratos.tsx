@@ -11,7 +11,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useCustosContratoMes } from "./faturamento/useCustosContratoMes";
+import { useCustosContratoPeriodo } from "./faturamento/useCustosContratoMes";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, ehContratoAdministrativo, lucroBruto, RUBRICAS, semClassificacao, totaisVazios, totalCustos } from "./faturamento/regras";
 import { RubricasCusto } from "./faturamento/RubricasCusto";
@@ -22,11 +22,12 @@ import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
 import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
+import { mesesNoIntervalo, mesNoIntervalo, rotuloPeriodo, sufixoArquivo } from "./faturamento/periodoMeses";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 import { useJustificativas } from "@/hooks/useJustificativasValor";
 // SIS-2026-0769: coluna informativa "Consumo de Estoque" — ver faturamento/consumoEstoque.ts.
 import { useConsumoEstoqueContrato } from "./faturamento/useConsumoEstoqueContrato";
-import { resumoPorContrato } from "./justificativas/regras";
+import { resumoPorContratoPeriodo } from "./justificativas/regras";
 import { SolicitarJustificativaDialog, type AlvoJustificativa } from "./justificativas/SolicitarJustificativaDialog";
 
 // SIS-2026-0556: Lucratividade de Contratos (Controladoria). Faturamento vem
@@ -57,6 +58,19 @@ interface Linha {
   margem: number | null;
 }
 
+// SIS-2026-0769 (11/11/2026): o mapa de custos continua sendo por contrato|mes
+// (a Rubricas de custo e o Fechamento precisam do mes). A tela, que agora
+// filtra por intervalo, soma os meses do intervalo aqui.
+function somarCustosDosMeses(custos: Map<string, CustosPorRubrica>, contratoId: string, meses: string[]): CustosPorRubrica {
+  const total = custosVazios();
+  for (const m of meses) {
+    const c = custos.get(`${contratoId}|${m}`);
+    if (!c) continue;
+    for (const r of RUBRICAS) total[r.id] += c[r.id];
+  }
+  return total;
+}
+
 export default function LucratividadeContratos() {
   // Filtro Código (tipo da nota): padrão N, como sempre foi.
   // SIS-2026-0721: base, código e empresa vêm da leitura compartilhada com o Faturamento e o Fechamento.
@@ -64,8 +78,18 @@ export default function LucratividadeContratos() {
   const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
   const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
   const hoje = new Date();
-  const [mes, setMes] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
-  const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoMes(mes, base);
+  // SIS-2026-0769 (11/11/2026): intervalo de meses, pedido da Controladoria para
+  // olhar trimestre/semestre sem somar planilha na mao. Os dois nascem no mes
+  // corrente, entao quem abre a tela ve exatamente o que via antes.
+  const mesCorrente = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+  const [mesInicio, setMesInicio] = useState(mesCorrente);
+  const [mesFim, setMesFim] = useState(mesCorrente);
+  const meses = useMemo(() => mesesNoIntervalo(mesInicio, mesFim), [mesInicio, mesFim]);
+  const periodo = rotuloPeriodo(mesInicio, mesFim, rotuloMes);
+  // O seletor nunca deixa o intervalo invertido: escolher um lado puxa o outro.
+  const escolherInicio = (m: string) => { setMesInicio(m); if (m > mesFim) setMesFim(m); };
+  const escolherFim = (m: string) => { setMesFim(m); if (m < mesInicio) setMesInicio(m); };
+  const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoPeriodo(mesInicio, mesFim, base);
   const [cliente, setCliente] = useState(TODOS);
   const [situacao, setSituacao] = useState(TODOS);
   const [busca, setBusca] = useState("");
@@ -73,12 +97,12 @@ export default function LucratividadeContratos() {
   const [pagina, setPagina] = useState(0);
   const [porPagina, setPorPagina] = useState(10);
 
-  // Meses com nota emitida (mais o mês atual) — o custo é buscado do mês escolhido.
+  // Meses com nota emitida (mais os dois escolhidos, para o seletor nunca ficar sem o valor atual).
   const mesesDisponiveis = useMemo(() => {
-    const s = new Set<string>([mes]);
+    const s = new Set<string>([mesInicio, mesFim, mesCorrente]);
     for (const n of nfs) s.add(n.competencia.slice(0, 7));
     return [...s].sort().reverse();
-  }, [nfs, mes]);
+  }, [nfs, mesInicio, mesFim, mesCorrente]);
 
   // Painel "Rubricas de custo": ligações manuais Classificação × coluna de custo.
   const { data: ligacoes } = useLigacoesRubrica();
@@ -93,14 +117,14 @@ export default function LucratividadeContratos() {
   const podeVerJustificativas = verPropria || verGestao;
   const podeCobrarJustificativa = cobrarPropria || cobrarGestao;
   const { data: justificativas = [] } = useJustificativas(podeVerJustificativas);
-  const resumoJustificativas = useMemo(() => resumoPorContrato(justificativas, mes), [justificativas, mes]);
+  const resumoJustificativas = useMemo(() => resumoPorContratoPeriodo(justificativas, meses), [justificativas, meses]);
   const [alvoJustificativa, setAlvoJustificativa] = useState<AlvoJustificativa | null>(null);
   const custos = useMemo(() => custosPorContratoMes(fluxo, ligacoes), [fluxo, ligacoes]);
-  const { data: consumoEstoque } = useConsumoEstoqueContrato(mes);
+  const { data: consumoEstoque } = useConsumoEstoqueContrato(mesInicio, mesFim);
   // Contratos ADMINISTRATIVO - ... ficam fora da tela (linhas, totais, exportação e aviso de lançamento sem classificação).
   const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
   const semClass = useMemo(() => semClassificacao(fluxo.filter((l) => !l.contrato_id || !idsAdministrativos.has(l.contrato_id))), [fluxo, idsAdministrativos]);
-  const fat = useMemo(() => agruparFaturamento(nfs.filter((n) => n.competencia.startsWith(mes)), (n) => n.contrato_id), [nfs, mes]);
+  const fat = useMemo(() => agruparFaturamento(nfs.filter((n) => mesNoIntervalo(n.competencia.slice(0, 7), mesInicio, mesFim)), (n) => n.contrato_id), [nfs, mesInicio, mesFim]);
   const clientes = useMemo(() => [...new Set(contratos.filter((c) => !idsAdministrativos.has(c.id)).map((c) => c.cliente).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")), [contratos, idsAdministrativos]);
 
   const linhas = useMemo<Linha[]>(() => {
@@ -113,16 +137,17 @@ export default function LucratividadeContratos() {
       if (situacao !== TODOS && c.status !== situacao) continue;
       if (termo && !`${c.nome} ${c.cliente}`.toLowerCase().includes(termo)) continue;
       const f = fat.get(c.id) ?? totaisVazios();
-      const cu = custos.get(`${c.id}|${mes}`) ?? custosVazios();
-      const exec = executavelDoContrato(c, mes);
+      const cu = somarCustosDosMeses(custos, c.id, meses);
+      // O valor executavel e mensal: no intervalo, soma mes a mes.
+      const exec = meses.reduce((s, m) => s + executavelDoContrato(c, m), 0);
       const totalCusto = totalCustos(cu);
-      // Contrato sem nada no mês não polui a tabela.
+      // Contrato sem nada no período não polui a tabela.
       if (!exec && !f.notas && !totalCusto) continue;
       const { lucro, margem } = lucroBruto(f.liquido, totalCusto);
       out.push({ id: c.id, contrato: c.nome, cliente: c.cliente, status: c.status, exec, bruto: f.bruto, liquido: f.liquido, descontos: f.descontos, custos: cu, totalCusto, lucro, margem });
     }
     return out.sort((a, b) => a.contrato.localeCompare(b.contrato, "pt-BR"));
-  }, [contratos, idsAdministrativos, empresaId, cliente, situacao, busca, fat, custos, mes, executavelDoContrato]);
+  }, [contratos, idsAdministrativos, empresaId, cliente, situacao, busca, fat, custos, meses, executavelDoContrato]);
 
   const total = useMemo(() => {
     const t = { exec: 0, bruto: 0, liquido: 0, descontos: 0, totalCusto: 0, custos: custosVazios() };
@@ -140,25 +165,25 @@ export default function LucratividadeContratos() {
     return t;
   }, [linhas, consumoEstoque]);
 
-  useEffect(() => { setPagina(0); }, [mes, empresaId, cliente, situacao, busca]);
+  useEffect(() => { setPagina(0); }, [mesInicio, mesFim, empresaId, cliente, situacao, busca]);
   const totalPaginas = Math.max(1, Math.ceil(linhas.length / porPagina));
   const paginaAtual = Math.min(pagina, totalPaginas - 1);
   const inicio = paginaAtual * porPagina;
   const paginaLinhas = linhas.slice(inicio, inicio + porPagina);
 
-  // Custo pago no mês em contrato que não tem nada além disso é comum (ex.:
+  // Custo pago no período em contrato que não tem nada além disso é comum (ex.:
   // pagamento adiantado); mostra quantos contratos estão no prejuízo.
   const negativos = linhas.filter((l) => l.lucro < 0).length;
 
   function exportarCsv() {
-    const cab = ["Mês", "Contrato", "Cliente", "Valor Exec.", "Valor Bruto", "Valor Líquido", "Desc. Contrato", ...RUBRICAS.map((r) => r.label), "Total de Custos", "Lucro Bruto", "Margem %", "Consumo de Estoque (R$) - nao somado", "Situação"];
+    const cab = ["Período", "Contrato", "Cliente", "Valor Exec.", "Valor Bruto", "Valor Líquido", "Desc. Contrato", ...RUBRICAS.map((r) => r.label), "Total de Custos", "Lucro Bruto", "Margem %", "Consumo de Estoque (R$) - nao somado", "Situação"];
     const num = (v: number) => v.toFixed(2).replace(".", ",");
-    const corpo = linhas.map((l) => [rotuloMes(mes), l.contrato, l.cliente, num(l.exec), num(l.bruto), num(l.liquido), num(l.descontos), ...RUBRICAS.map((r) => num(l.custos[r.id])), num(l.totalCusto), num(l.lucro), l.margem === null ? "" : (l.margem * 100).toFixed(2).replace(".", ","), num(consumoEstoque?.porContrato.get(l.id)?.valor ?? 0), l.status]);
+    const corpo = linhas.map((l) => [periodo, l.contrato, l.cliente, num(l.exec), num(l.bruto), num(l.liquido), num(l.descontos), ...RUBRICAS.map((r) => num(l.custos[r.id])), num(l.totalCusto), num(l.lucro), l.margem === null ? "" : (l.margem * 100).toFixed(2).replace(".", ","), num(consumoEstoque?.porContrato.get(l.id)?.valor ?? 0), l.status]);
     const csv = [cab, ...corpo].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `lucratividade-contratos-${mes}.csv`;
+    a.download = `lucratividade-contratos-${sufixoArquivo(mesInicio, mesFim)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success("Planilha gerada.");
@@ -183,8 +208,13 @@ export default function LucratividadeContratos() {
         }
       />
 
-      {/* SIS-2026-0553: checkpoint da Controladoria (alerta, sem bloquear). */}
-      <BannerAuditoria mes={mes} empresaId={empresaId === TODOS ? null : empresaId} />
+      {/* SIS-2026-0553: checkpoint da Controladoria (alerta, sem bloquear).
+          SIS-2026-0769 (11/11/2026): a validação é de UM mês no banco — não
+          existe validar "o trimestre". Com intervalo, sai um aviso por mês, para
+          ninguém achar que um mês validado carimba os outros. */}
+      {meses.map((m) => (
+        <BannerAuditoria key={m} mes={m} empresaId={empresaId === TODOS ? null : empresaId} />
+      ))}
 
       <Tabs defaultValue="lucratividade" className="space-y-4">
         {podeVerRubricas && (
@@ -195,8 +225,14 @@ export default function LucratividadeContratos() {
         )}
         <TabsContent value="lucratividade" className="space-y-6 mt-0">
       <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs print:hidden">
-        <Select value={mes} onValueChange={setMes}>
-          <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
+        <span className="text-muted-foreground">De</span>
+        <Select value={mesInicio} onValueChange={escolherInicio}>
+          <SelectTrigger className="h-8 w-[110px] text-xs" title="Mês inicial do período"><SelectValue /></SelectTrigger>
+          <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
+        </Select>
+        <span className="text-muted-foreground">até</span>
+        <Select value={mesFim} onValueChange={escolherFim}>
+          <SelectTrigger className="h-8 w-[110px] text-xs" title="Mês final do período"><SelectValue /></SelectTrigger>
           <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
         </Select>
         <SeletorBaseLeitura base={base} onChange={setBase} />
@@ -228,7 +264,7 @@ export default function LucratividadeContratos() {
       </div>
 
       {erro ? (
-        <p className="text-sm text-red-600 py-10 text-center">Não foi possível carregar os custos do mês: {erro.message ?? "erro desconhecido"}</p>
+        <p className="text-sm text-red-600 py-10 text-center">Não foi possível carregar os custos do período: {erro.message ?? "erro desconhecido"}</p>
       ) : carregandoTudo ? (
         <p className="text-sm text-muted-foreground py-10 text-center">Carregando...</p>
       ) : (
@@ -270,13 +306,13 @@ export default function LucratividadeContratos() {
               <TableHeader>
                 <TableRow>
                   <TableHead className={`${CAB} text-left sticky left-0 z-10 bg-background min-w-[150px]`}>Contrato / Cliente</TableHead>
-                  <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável do contrato no mês, segundo a planilha de custo vigente (sem planilha, o Valor Executado Mensal do cadastro do contrato). Zero depois do fim do contrato." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável do contrato, segundo a planilha de custo vigente (sem planilha, o Valor Executado Mensal do cadastro do contrato). Zero depois do fim do contrato. Com mais de um mês no filtro, é a soma mês a mês." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Bruto (R$)" formula="Soma do valor bruto das NFs Código N da competência (já validadas; fora de canceladas e substituídas)." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Líquido (R$)" formula="Soma do valor líquido das mesmas NFs: o bruto depois dos descontos." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Desc. Contrato (R$)" formula="Valor Bruto − Valor Líquido: as retenções das notas da competência (ISSQN, INSS, IR, COFINS, PIS e CSLL). Faltas, glosas e multas não entram aqui: elas já reduziram o Valor Bruto (veja o item 7 da Auditoria)." /></TableHead>
                   {detalhar && RUBRICAS.map((r) => (
                     <TableHead key={r.id} className={CAB}>
-                      <TituloComFormula titulo={`${r.label} (R$)`} formula={`Saídas do Fluxo de Caixa com contrato, da competência do mês, cuja classificação está ligada a “${r.label}”. A ligação é feita na aba “Rubricas de custo”${r.id === "outras" ? "; o que não casa com nenhuma outra coluna cai aqui" : ""}.`} />
+                      <TituloComFormula titulo={`${r.label} (R$)`} formula={`Saídas do Fluxo de Caixa com contrato, da competência dos meses filtrados, cuja classificação está ligada a “${r.label}”. A ligação é feita na aba “Rubricas de custo”${r.id === "outras" ? "; o que não casa com nenhuma outra coluna cai aqui" : ""}.`} />
                     </TableHead>
                   ))}
                   <TableHead className={CAB}><TituloComFormula titulo="Total de Custos (R$)" formula="Soma de todas as colunas de custo (Salários … Outras Despesas), mesmo com o detalhe escondido." /></TableHead>
@@ -284,13 +320,13 @@ export default function LucratividadeContratos() {
                   <TableHead className={CAB}>
                     <TituloComFormula
                       titulo="Margem (%)"
-                      formula={<><p>Lucro Bruto ÷ Valor Líquido × 100. Fica em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor segue a faixa:</p><FaixasTexto /></>}
+                      formula={<><p>Lucro Bruto ÷ Valor Líquido × 100. Fica em branco quando não há faturamento no período.</p><p className="font-medium pt-1">A cor segue a faixa:</p><FaixasTexto /></>}
                     />
                   </TableHead>
-                  <TableHead className={CAB}><TituloComFormula titulo="Consumo de Estoque (R$)" formula="Material que saiu do estoque para o contrato no mês, a preço de custo. NÃO entra no Total de Custos nem no Lucro Bruto: hoje a compra do material já é lançada direto no contrato (a maior parte das compras de material, uniforme e EPI do malote desde setembro/2026), então somar a saída por cima cobraria o mesmo material duas vezes. Serve para a análise de contratos ver quanto cada contrato consumiu e sinalizar excesso. É o mesmo valor do quadro por contrato em Suprimentos → Saídas por Contrato, no mesmo período." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Consumo de Estoque (R$)" formula="Material que saiu do estoque para o contrato no período filtrado, a preço de custo. NÃO entra no Total de Custos nem no Lucro Bruto: hoje a compra do material já é lançada direto no contrato (a maior parte das compras de material, uniforme e EPI do malote desde setembro/2026), então somar a saída por cima cobraria o mesmo material duas vezes. Serve para a análise de contratos ver quanto cada contrato consumiu e sinalizar excesso. É o mesmo valor do quadro por contrato em Suprimentos → Saídas por Contrato, no mesmo período." /></TableHead>
                   <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." /></TableHead>
                   {podeVerJustificativas && (
-                    <TableHead className={`${CAB} text-center print:hidden`}><TituloComFormula alinhar="center" titulo="Justificativa de valor" formula="A Controladoria pede a um gerente que justifique um valor de qualquer coluna desta linha. Mostra quantas cobranças estão aguardando resposta, respondidas ou encerradas neste mês; clique para ver todas." /></TableHead>
+                    <TableHead className={`${CAB} text-center print:hidden`}><TituloComFormula alinhar="center" titulo="Justificativa de valor" formula="A Controladoria pede a um gerente que justifique um valor de qualquer coluna desta linha. Mostra quantas cobranças estão aguardando resposta, respondidas ou encerradas nos meses filtrados; clique para ver todas. A cobrança nova nasce no mês final do filtro." /></TableHead>
                   )}
                 </TableRow>
               </TableHeader>
@@ -340,7 +376,7 @@ export default function LucratividadeContratos() {
                     )}
                   </TableRow>
                 ))}
-                {linhas.length === 0 && <TableRow><TableCell colSpan={(detalhar ? 18 : 10) + (podeVerJustificativas ? 1 : 0)} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
+                {linhas.length === 0 && <TableRow><TableCell colSpan={(detalhar ? 18 : 10) + (podeVerJustificativas ? 1 : 0)} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {periodo}.</TableCell></TableRow>}
               </TableBody>
               <TableFooter>
                 <TableRow>
@@ -363,11 +399,11 @@ export default function LucratividadeContratos() {
             </Table>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Custos {base === "pagamento" ? "pela data de pagamento: saídas do Fluxo de Caixa pagas em" : "pela competência: saídas do Fluxo de Caixa com competência em"} {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
+            Custos {base === "pagamento" ? "pela data de pagamento: saídas do Fluxo de Caixa pagas em" : "pela competência: saídas do Fluxo de Caixa com competência em"} {periodo} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
           </p>
           {semClass.linhas > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
-              {semClass.linhas} lançamento(s) de contrato sem classificação ({fmtMoney(semClass.valor)}) em {rotuloMes(mes)} ficam fora das colunas de custo. Classifique-os no Fluxo de Caixa para entrarem na conta.
+              {semClass.linhas} lançamento(s) de contrato sem classificação ({fmtMoney(semClass.valor)}) em {periodo} ficam fora das colunas de custo. Classifique-os no Fluxo de Caixa para entrarem na conta.
             </p>
           )}
           {/* SIS-2026-0769: a coluna é informativa enquanto a compra do material
@@ -378,7 +414,7 @@ export default function LucratividadeContratos() {
           </p>
           {(consumoEstoque?.unidadesSemPreco ?? 0) > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
-              {consumoEstoque!.unidadesSemPreco} unidade(s) saíram do estoque em {rotuloMes(mes)} <strong>sem preço de custo</strong> e valem zero na coluna Consumo de Estoque — o contrato aparece recebendo material de graça. Preencha o valor do item em Suprimentos para a coluna fechar.
+              {consumoEstoque!.unidadesSemPreco} unidade(s) saíram do estoque em {periodo} <strong>sem preço de custo</strong> e valem zero na coluna Consumo de Estoque — o contrato aparece recebendo material de graça. Preencha o valor do item em Suprimentos para a coluna fechar.
             </p>
           )}
         </>
@@ -387,17 +423,24 @@ export default function LucratividadeContratos() {
         {podeVerRubricas && (
           <TabsContent value="rubricas" className="space-y-4 mt-0">
             <div className="card-elevated p-3 flex items-center gap-2 text-xs">
-              <Select value={mes} onValueChange={setMes}>
-                <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
+              <span className="text-muted-foreground">De</span>
+              <Select value={mesInicio} onValueChange={escolherInicio}>
+                <SelectTrigger className="h-8 w-[110px] text-xs" title="Mês inicial do período"><SelectValue /></SelectTrigger>
                 <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
               </Select>
-              <span className="text-muted-foreground">Mês usado para mostrar o gasto de cada classificação.</span>
+              <span className="text-muted-foreground">até</span>
+              <Select value={mesFim} onValueChange={escolherFim}>
+                <SelectTrigger className="h-8 w-[110px] text-xs" title="Mês final do período"><SelectValue /></SelectTrigger>
+                <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
+              </Select>
+              <span className="text-muted-foreground">Período usado para mostrar o gasto de cada classificação.</span>
             </div>
-            <RubricasCusto linhasMes={fluxo} ligacoes={ligacoes ?? new Map()} podeEditar={!!podeAlterarRubricas} rotuloMes={rotuloMes(mes)} />
+            <RubricasCusto linhasMes={fluxo} ligacoes={ligacoes ?? new Map()} podeEditar={!!podeAlterarRubricas} rotuloMes={periodo} />
           </TabsContent>
         )}
       </Tabs>
-      <SolicitarJustificativaDialog alvo={alvoJustificativa} onClose={() => setAlvoJustificativa(null)} mes={mes} base={base} fluxo={fluxo} ligacoes={ligacoes} />
+      {/* SIS-2026-0769: a cobrança nasce com UM mês; num intervalo, vale o mês final. */}
+      <SolicitarJustificativaDialog alvo={alvoJustificativa} onClose={() => setAlvoJustificativa(null)} mes={mesFim} base={base} fluxo={fluxo} ligacoes={ligacoes} />
     </div>
   );
 }
