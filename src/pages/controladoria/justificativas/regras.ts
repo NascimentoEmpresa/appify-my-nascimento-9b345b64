@@ -139,9 +139,17 @@ export const resumoVazio = (): ResumoJustificativas => ({ abertas: 0, respondida
 
 /** Contadores por contrato, só do mês pedido (canceladas não contam). */
 export function resumoPorContrato(justificativas: Justificativa[], mes: string, hoje = new Date()): Map<string, ResumoJustificativas> {
+  return resumoPorContratoPeriodo(justificativas, [mes], hoje);
+}
+
+// SIS-2026-0769 (11/11/2026): a Lucratividade filtra por intervalo de meses. A
+// cobranca continua sendo de UM mes (a justificativa nasce com o mes dela); o
+// que muda aqui e so a contagem, que passa a juntar os meses visiveis na tela.
+export function resumoPorContratoPeriodo(justificativas: Justificativa[], meses: string[], hoje = new Date()): Map<string, ResumoJustificativas> {
+  const doPeriodo = new Set(meses);
   const mapa = new Map<string, ResumoJustificativas>();
   for (const j of justificativas) {
-    if (j.mes.slice(0, 7) !== mes || j.status === "cancelada") continue;
+    if (!doPeriodo.has(j.mes.slice(0, 7)) || j.status === "cancelada") continue;
     const r = mapa.get(j.contrato_id) ?? resumoVazio();
     if (j.status === "aberta") r.abertas += 1;
     else if (j.status === "respondida") r.respondidas += 1;
