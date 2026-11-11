@@ -925,6 +925,10 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     // preenchimento pulada, apesar de aparecerem como campos normais na tela.
     if (!dataEmissao) return "Informe a Data de Emissão.";
     if (!descricao.trim()) return "Informe a Descrição.";
+    // Pedido do Ruan (Financeiro): Código de Serviço, CNAE e Código NBS são obrigatórios na nota.
+    if (!codigoServico.trim()) return "Informe o Código de Serviço.";
+    if (!cnae.trim()) return "Informe o CNAE.";
+    if (!nbs.trim()) return "Informe o Código NBS.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
     // SIS-2026-0633: linha de faltas por dias precisa de item (local) e de valor do posto.
     if (faltasPorDias) {
@@ -1196,15 +1200,15 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
               <Textarea ref={descricaoRef} rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
             </div>
             <div>
-              <Label>Código de Serviço</Label>
+              <Label>Código de Serviço <span className="text-destructive">*</span></Label>
               <Input value={codigoServico} onChange={(e) => setCodigoServico(e.target.value)} placeholder="Ex: 17.05" />
             </div>
             <div>
-              <Label>CNAE</Label>
+              <Label>CNAE <span className="text-destructive">*</span></Label>
               <Input value={cnae} onChange={(e) => setCnae(e.target.value)} />
             </div>
             <div>
-              <Label>Código NBS</Label>
+              <Label>Código NBS <span className="text-destructive">*</span></Label>
               <Input value={nbs} onChange={(e) => setNbs(e.target.value)} />
             </div>
           </div>
