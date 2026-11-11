@@ -888,6 +888,9 @@ const App = () => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}
             <Route path="diretoria/relatorios" element={<Navigate to="/app/relatorios" replace />} />
+            {/* 11/11/2026: o relatório Colaboradores saiu do sistema — o link antigo cai no Relatório Geral. */}
+            <Route path="relatorios/colaboradores" element={<Navigate to="/app/relatorios" replace />} />
+            <Route path="diretoria/relatorios/colaboradores" element={<Navigate to="/app/relatorios" replace />} />
             {RELATORIOS.map((s) => (
               <Route key={`antiga-${s.slug}`} path={`diretoria/relatorios/${s.slug}`} element={<Navigate to={`/app/relatorios/${s.slug}`} replace />} />
             ))}

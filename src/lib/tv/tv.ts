@@ -52,7 +52,6 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   { slug: "mudanca-funcao", titulo: "Mudança de Função", paginas: 2 },
   { slug: "chamados", titulo: "Chamados", paginas: 2 },
   { slug: "orientacoes", titulo: "Orientações Jurídicas", paginas: 2 },
-  { slug: "colaboradores", titulo: "Colaboradores", paginas: 2 },
   { slug: "turnover", titulo: "Turn-over", paginas: 3 },
   { slug: "licitacoes", titulo: "Licitações — Painel Executivo", paginas: 4, semFiltros: true },
   { slug: "treinamentos", titulo: "Treinamentos — Dashboard", paginas: 3, semFiltros: true },
