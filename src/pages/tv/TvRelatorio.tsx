@@ -16,6 +16,8 @@ import { TelaPainelGerencial, fundoDoPainel } from "./relatorio/paginasGerencial
 import { TelaDocumento } from "./relatorio/paginasGerencialDocumento";
 import { TelaDashboardGerencial, TelaIndicadorGerencial } from "./relatorio/paginasGerencialDashboard";
 import { TelaBiTv, type PainelBiTv, type WidgetBiTv } from "./relatorio/paginasBi";
+import { TelaOpeContratos } from "./relatorio/paginasOpeContratos";
+import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
 import { codigoDoIndicador, ehDashboard, ehIndicadorAvulso, ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 
 // =====================================================================
@@ -99,6 +101,9 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
     }));
     const d: PainelBiTv = { painel: { id: painel.id, nome: painel.nome, descricao: painel.descricao, tema: painel.config?.tema ?? null }, widgets };
     return { tipo: "bi", contrato: null, ...d };
+  }
+  if (item.relatorio === "ope-contratos") {
+    return { tipo: "ope-contratos", contrato: null, ...(ok(await rpc("tv_ope_contratos_previa")) as DadosOpeContratosTv) };
   }
   if (item.relatorio === "geral") {
     const g = ok(await rpc("dir_rel_geral", args)) as RelatorioGeralDados;
@@ -223,6 +228,15 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
         {dados.indicador
           ? <TelaIndicadorGerencial painel={dados.painel} i={dados.indicador} cor={cor} visual={visual} atualizado={atualizado} />
           : <Aviso cor={cor} titulo="Indicador desativado" sub="Ele saiu do catálogo em TV's › Indicadores gerenciais — tire o item da playlist." girando={false} />}
+      </Palco>
+    );
+  }
+  // 11/11/2026 (mig 20261111130000): um contrato a cada 10 s, com tempo próprio
+  // (o item fica 1 h na playlist; a troca de contrato é dentro dele).
+  if (dados?.tipo === "ope-contratos") {
+    return (
+      <Palco>
+        <TelaOpeContratos d={dados} cor={cor} atualizado={atualizado} />
       </Palco>
     );
   }

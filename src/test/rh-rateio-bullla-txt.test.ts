@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extrairLinhasBulllaTxt, identificarLayoutPdf, layoutPorMatricula, totalBulllaTxt } from "@/lib/rh/rateioDespesas";
+import { extrairLinhasBulllaTxt, identificarLayoutPdf, layoutPorMatricula, totalBulllaTxt, valorCobradoBullla } from "@/lib/rh/rateioDespesas";
 
 // Pedido do Pablo (10/11/2026): ratear também o TXT da Bullla ("Demonstrativo
 // Analítico de Compras e Anuidades"). Mesmo layout de colunas fixas dos
@@ -54,5 +54,18 @@ describe("Bullla — Demonstrativo Analítico em TXT", () => {
     const juntos = [...nh, ...sn];
     expect(extrairLinhasBulllaTxt(juntos).map((x) => x.empresa)).toEqual([5, 2]);
     expect(totalBulllaTxt(juntos)).toBe(548.44);
+  });
+});
+
+// 11/11/2026: o boleto cobra a soma das linhas MENOS os abatimentos que só
+// ele traz; o rateio é pelo TXT e distribui o cobrado. Valores inventados.
+describe("valor cobrado da Bullla", () => {
+  it("documento (soma das linhas) − abatimentos do boleto", () => {
+    expect(valorCobradoBullla(1000, 112.25)).toBe(887.75);
+  });
+  it("sem abatimento, ou abatimento maior que o documento, não muda nada", () => {
+    expect(valorCobradoBullla(1000, 0)).toBeNull();
+    expect(valorCobradoBullla(1000, 1000)).toBeNull();
+    expect(valorCobradoBullla(0, 10)).toBeNull();
   });
 });

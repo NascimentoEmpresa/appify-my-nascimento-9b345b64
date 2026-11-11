@@ -23,6 +23,7 @@ import type { Dashboard as DashboardTreinamentos } from "@/pages/treinamentos/pl
 import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
 import { painelGerencial, paginasPainel, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 import type { PainelBiTv } from "@/pages/tv/relatorio/paginasBi";
+import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
 
 /** A cor da faixa de cada relatório: a dos Relatórios; Geral, Vagas, Licitações e Treinamentos têm a sua. */
 export function corDoRelatorioTv(slug: string | null | undefined): string {
@@ -31,6 +32,7 @@ export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "licitacoes") return "#0e7490";
   if (slug === "treinamentos") return "#f26522"; // o laranja do módulo
   if (slug?.startsWith("bi:")) return "#2a78d6"; // a cor do Estúdio de BI
+  if (slug === "ope-contratos") return "#0f3171"; // o azul do Operacional
   const ger = painelGerencial(slug);
   if (ger) return ger.cor; // TVs gerenciais (mig 20261012000001)
 
@@ -83,7 +85,9 @@ export type DadosRelTv =
   /** Um indicador gerencial sozinho (item "ind:<codigo>", mig 20261014000012). */
   | { tipo: "indicador"; painel: PainelGerencial["painel"]; indicador: IndicadorGerencial | null; contrato: null; gerado_em?: string }
   /** Um painel do Estúdio de BI (item "bi:<id>", mig 20261014000012). */
-  | ({ tipo: "bi"; contrato: null; gerado_em?: string } & PainelBiTv);
+  | ({ tipo: "bi"; contrato: null; gerado_em?: string } & PainelBiTv)
+  /** Operacional › Indicadores por Contrato (item "ope-contratos", mig 20261111130000). */
+  | ({ tipo: "ope-contratos"; contrato: null } & DadosOpeContratosTv);
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
@@ -115,6 +119,10 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
       return [{ chave: "indicador", titulo: "Indicador" }];
     case "bi":
       return [{ chave: "bi", titulo: "B.I" }];
+    case "ope-contratos":
+      // Uma página para o item: a troca de contrato (10 s) é da própria tela
+      // (TelaOpeContratos), que não depende da duração do item.
+      return [{ chave: "ope-contratos", titulo: "Indicadores por Contrato" }];
     case "turnover": {
       const ps = [{ chave: "turnover-resumo", titulo: "Resumo do ano" }];
       if (d.painel.por_contrato.some((c) => c.demissoes > 0)) ps.push({ chave: "turnover-contratos", titulo: "Por contrato" });
