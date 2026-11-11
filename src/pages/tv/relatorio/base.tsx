@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Line, ComposedChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import type { LucideIcon } from "lucide-react";
 import { PALCO, escalaDoPalco, misturarCor } from "@/lib/tv/relatorioTv";
+import logoCompleto from "@/assets/logo-nascimento-completo.webp";
 
 // =====================================================================
 // Relatórios na TV — os blocos visuais (08/10/2026)
@@ -105,9 +106,7 @@ export function Moldura({ cor, Icone, titulo, selos, paginas, pagina, duracaoMs,
           <p className="font-black leading-none tabular-nums" style={{ fontSize: 76 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
           <p className="mt-2 font-semibold opacity-90" style={{ fontSize: 22 }}>{inicialMaiuscula(agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }))}</p>
         </div>
-        <div className="relative shrink-0 rounded-2xl px-5 py-3 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 20, background: LARANJA, color: "#fff", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.2)" }}>
-          Grupo<br />Nascimento
-        </div>
+        <LogoTv />
       </div>
 
       {/* Conteúdo — entra com um leve deslize a cada página. SÓ deslize, sem
@@ -334,6 +333,18 @@ export function Aviso({ cor, titulo, sub, girando = true }: { cor: string; titul
       {girando && <div className="h-20 w-20 animate-spin rounded-full border-[8px] border-zinc-200" style={{ borderTopColor: cor }} />}
       <p className="font-extrabold" style={{ fontSize: 44 }}>{titulo}</p>
       {sub && <p className="max-w-[1200px] font-semibold" style={{ fontSize: 26, color: TINTA_SUAVE }}>{sub}</p>}
+    </div>
+  );
+}
+
+/**
+ * A logo padrão do Grupo Nascimento nas TVs (11/11/2026, pedido do Pablo: "a logo do início lá do ERP"):
+ * a mesma do topo do sistema (Topbar), num selo branco para aparecer sobre as faixas coloridas.
+ */
+export function LogoTv({ altura = 64 }: { altura?: number }) {
+  return (
+    <div className="shrink-0 rounded-2xl bg-white px-4 py-2" style={{ boxShadow: "0 10px 15px -3px rgba(0,0,0,0.2)" }}>
+      <img src={logoCompleto} alt="Grupo Nascimento" draggable={false} className="block w-auto object-contain" style={{ height: altura }} />
     </div>
   );
 }
