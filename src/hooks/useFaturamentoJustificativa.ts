@@ -80,8 +80,11 @@ export function useEnviarMensagemFaturamento() {
           if (error) throw new Error(`Não foi possível anexar "${f.name}": ${error.message}`);
           anexos.push({ nome: f.name, path, tipo: f.type || null, tamanho: f.size });
         }
+        // _anexos só vai quando há arquivo: mensagem de texto continua chamando a RPC como antes, então a tela
+        // segue funcionando se o frontend for publicado antes da migration 20261111235000 rodar no banco.
         const { error } = await db.rpc("faturamento_justificativa_enviar", {
-          _contrato_id: i.contratoId, _competencia: i.competencia, _texto: i.texto, _destinatario_id: i.destinatarioId, _anexos: anexos,
+          _contrato_id: i.contratoId, _competencia: i.competencia, _texto: i.texto, _destinatario_id: i.destinatarioId,
+          ...(anexos.length ? { _anexos: anexos } : {}),
         });
         if (error) throw new Error(error.message);
       } catch (e) {
