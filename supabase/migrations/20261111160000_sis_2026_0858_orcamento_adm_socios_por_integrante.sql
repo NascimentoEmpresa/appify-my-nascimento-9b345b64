@@ -9,6 +9,7 @@
 --     Parte do USUÁRIO, e não do colaborador (EMPREGADOS.auth_user_id), porque nem todo usuário tem colaborador vinculado (ex.: sócio Antonio Vianei, e 18
 --     usuários ativos em 11/11/2026). Fica de fora quem só está no setor "Encarregados" (campo, não escritório). SECURITY DEFINER para ler user_setor;
 --     devolve só id, nome e setores, para quem pode visualizar a tela.
+-- Policies com (SELECT can_access((SELECT auth.uid()), ...)): o Postgres avalia uma vez, não por linha (guardião de desempenho).
 -- Acesso: can_access no menu já existente 'malote_orcamento_adm_socios' (visualizar/incluir/alterar/excluir). Idempotente. NOTIFY no fim.
 --
 -- ROLLBACK:
@@ -65,23 +66,23 @@ ALTER TABLE public.orcamento_adm_socios_integrante ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS orcamento_adm_socios_integrante_select ON public.orcamento_adm_socios_integrante;
 CREATE POLICY orcamento_adm_socios_integrante_select ON public.orcamento_adm_socios_integrante
   FOR SELECT TO authenticated
-  USING (public.can_access(auth.uid(), 'malote_orcamento_adm_socios', 'visualizar'::public.app_acao));
+  USING ((SELECT public.can_access((SELECT auth.uid()), 'malote_orcamento_adm_socios', 'visualizar'::public.app_acao)));
 
 DROP POLICY IF EXISTS orcamento_adm_socios_integrante_insert ON public.orcamento_adm_socios_integrante;
 CREATE POLICY orcamento_adm_socios_integrante_insert ON public.orcamento_adm_socios_integrante
   FOR INSERT TO authenticated
-  WITH CHECK (public.can_access(auth.uid(), 'malote_orcamento_adm_socios', 'incluir'::public.app_acao));
+  WITH CHECK ((SELECT public.can_access((SELECT auth.uid()), 'malote_orcamento_adm_socios', 'incluir'::public.app_acao)));
 
 DROP POLICY IF EXISTS orcamento_adm_socios_integrante_update ON public.orcamento_adm_socios_integrante;
 CREATE POLICY orcamento_adm_socios_integrante_update ON public.orcamento_adm_socios_integrante
   FOR UPDATE TO authenticated
-  USING (public.can_access(auth.uid(), 'malote_orcamento_adm_socios', 'alterar'::public.app_acao))
-  WITH CHECK (public.can_access(auth.uid(), 'malote_orcamento_adm_socios', 'alterar'::public.app_acao));
+  USING ((SELECT public.can_access((SELECT auth.uid()), 'malote_orcamento_adm_socios', 'alterar'::public.app_acao)))
+  WITH CHECK ((SELECT public.can_access((SELECT auth.uid()), 'malote_orcamento_adm_socios', 'alterar'::public.app_acao)));
 
 DROP POLICY IF EXISTS orcamento_adm_socios_integrante_delete ON public.orcamento_adm_socios_integrante;
 CREATE POLICY orcamento_adm_socios_integrante_delete ON public.orcamento_adm_socios_integrante
   FOR DELETE TO authenticated
-  USING (public.can_access(auth.uid(), 'malote_orcamento_adm_socios', 'excluir'::public.app_acao));
+  USING ((SELECT public.can_access((SELECT auth.uid()), 'malote_orcamento_adm_socios', 'excluir'::public.app_acao)));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.orcamento_adm_socios_integrante TO authenticated;
 
