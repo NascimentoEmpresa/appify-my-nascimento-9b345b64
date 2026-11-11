@@ -56,6 +56,10 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   { slug: "turnover", titulo: "Turn-over", paginas: 3 },
   { slug: "licitacoes", titulo: "Licitações — Painel Executivo", paginas: 4, semFiltros: true },
   { slug: "treinamentos", titulo: "Treinamentos — Dashboard", paginas: 3, semFiltros: true },
+  // 11/11/2026 (mig 20261111130000): os 7 indicadores da Gerência Operacional,
+  // um contrato a cada 10 s (src/lib/tv/opeContratosTv.ts). Competência: a
+  // última com o faturamento fechado — sem período nem contrato no item.
+  { slug: "ope-contratos", titulo: "Operacional — Indicadores por Contrato", paginas: 1, semFiltros: true },
   // 12/10/2026 (mig 20261012000001, SIS-2026-0635): as 13 TVs gerenciais por
   // diretoria do documento "Indicadores das TVs" — indicadores com meta e
   // semáforo (src/lib/tv/gerencial.ts). Sem período nem contrato: cada

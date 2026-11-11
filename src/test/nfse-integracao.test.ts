@@ -33,7 +33,7 @@ function solicitacao() {
         local_prestacao: "4314902", codigo_tributacao: "071002", codigo_municipal: "", codigo_nbs: "118031000", descricao: "Limpeza & conservação <teste>",
         iss_retido: "2", aliquota_iss: "2.00", cst_pis_cofins: "01", retencao_pis_cofins: "3", ibs_cst: "000", ibs_classificacao: "000001", ibs_indicador_operacao: "100301",
         consumidor_final: "0", tipo_operacao: "", tipo_ente_governamental: "", tributos_aproximados_federais: "0", tributos_aproximados_estaduais: "0", tributos_aproximados_municipais: "2",
-        confirmacao_fiscal: true,
+        confirmacao_fiscal: true, confirmacao_producao: false,
         informar_imovel: false, imovel: { cep: "", logradouro: "", numero: "", bairro: "", complemento: "", inscricao: "" },
         tomador: { documento: "98765432000198", nome: "TOMADOR DE TESTES", municipio: "4314902", cep: "90000000", logradouro: "Rua de teste", numero: "1", bairro: "Centro", complemento: "", email: "" },
       },
@@ -53,7 +53,7 @@ function dependencias() {
 }
 function retornoXml(s = solicitacao(), alteracoes: { cnpj?: string; liquido?: string; ambiente?: string } = {}) {
   const chave = "4".repeat(50);
-  const dps = documento.gerarDps(s).replace(/<\?xml[^>]*>/, "").replace("<tpAmb>2</tpAmb>", `<tpAmb>${alteracoes.ambiente ?? "2"}</tpAmb>`);
+  const dps = documento.gerarDps(s).replace(/<\?xml[^>]*>/, "").replace(/<tpAmb>[12]<\/tpAmb>/, `<tpAmb>${alteracoes.ambiente ?? (s.ambiente === "producao" ? "1" : "2")}</tpAmb>`);
   return {
     chave,
     xmlGZipB64: gzipSync(Buffer.from(`<NFSe xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infNFSe Id="NFS${chave}"><nNFSe>900</nNFSe><emit><CNPJ>${alteracoes.cnpj ?? CNPJ}</CNPJ></emit><valores><vLiq>${alteracoes.liquido ?? "82.20"}</vLiq></valores>${dps}</infNFSe></NFSe>`)).toString("base64"),
@@ -77,6 +77,19 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it("gera e confere produção separadamente, recusando retorno de homologação", async () => {
+    const s = solicitacao(); s.ambiente = "producao";
+    expect(() => documento.gerarDps(s)).toThrow(/nota fiscal real/);
+    s.dados.parametros.confirmacao_producao = true;
+    const xml = documento.gerarDps(s);
+    expect(xml).toContain("<tpAmb>1</tpAmb>");
+    await documento.validarEsquema(documento.assinarDps(xml, documento.identificadorDps(s), cert, "sha1"));
+    const nota = retornoXml(s);
+    expect(documento.conferirNota(documento.descompactar(nota.xmlGZipB64).toString(), s, nota.chave).numero).toBe("900");
+    const outro = retornoXml(s, { ambiente: "2" });
+    expect(() => documento.conferirNota(documento.descompactar(outro.xmlGZipB64).toString(), s, outro.chave)).toThrow(/outro ambiente/);
+    await expect(tratarLote(s, { tipoAmbiente: "HOMOLOGACAO", processado: false }, dependencias())).rejects.toThrow(/produção/);
+  });
   it("monta a identificação da DPS e passa no XSD oficial antes e depois da assinatura", async () => {
     const s = solicitacao();
     const xml = documento.gerarDps(s);

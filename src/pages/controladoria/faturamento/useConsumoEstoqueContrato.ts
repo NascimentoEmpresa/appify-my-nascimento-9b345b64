@@ -6,8 +6,13 @@
  * 'visualizar') — quem abre a Lucratividade enxerga; quem não abre recebe lista
  * vazia, não erro.
  *
- * Só conta saída com pedido de verdade: o contrato reconstruído dos exports do
- * sistema antigo mede volume, não dinheiro. Ver a migration.
+ * Desde 20261110200000 conta TODA saída com contrato conhecido, inclusive a
+ * cujo contrato foi recuperado dos exports do sistema antigo: o preço sempre
+ * veio do cadastro do item aqui dentro, da planilha vem só o destino. Isso é o
+ * que faz este número ser igual ao "Valor total" do quadro por contrato em
+ * Suprimentos → Saídas por Contrato, no mesmo período — exigência da CEO em
+ * 10/11/2026. As duas consultas somam a mesma expressão; mexer numa sem a
+ * outra quebra a igualdade.
  */
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,11 +33,15 @@ export interface ConsumoEstoqueMes {
   unidadesSemPreco: number;
 }
 
-export function useConsumoEstoqueContrato(mes: string) {
+// SIS-2026-0769 (11/11/2026): intervalo de meses. O primeiro dia do mes inicial
+// ate o ultimo dia do mes final — com os dois iguais, e o mesmo mes de antes.
+// A RPC ja soma por contrato, entao nao importa quantos meses entram.
+export function useConsumoEstoqueContrato(mesInicio: string, mesFim: string) {
   return useQuery({
-    queryKey: ["consumo-estoque-contrato", mes],
+    queryKey: ["consumo-estoque-contrato", mesInicio, mesFim],
     queryFn: async (): Promise<ConsumoEstoqueMes> => {
-      const { inicio, fim } = intervaloDoMes(mes);
+      const inicio = intervaloDoMes(mesInicio).inicio;
+      const fim = intervaloDoMes(mesFim).fim;
       const { data, error } = await sb.rpc("sup_rel_consumo_custo_por_contrato", {
         p_inicio: inicio,
         p_fim: fim,
@@ -41,6 +50,6 @@ export function useConsumoEstoqueContrato(mes: string) {
       const linhas = (data ?? []) as LinhaConsumoEstoque[];
       return { porContrato: consumoPorContrato(linhas), unidadesSemPreco: unidadesSemPreco(linhas) };
     },
-    enabled: Boolean(mes),
+    enabled: Boolean(mesInicio && mesFim),
   });
 }

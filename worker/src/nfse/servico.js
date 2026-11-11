@@ -7,7 +7,7 @@ const { processarFilaNfse } = require('./index');
 
 async function iniciar() {
   if (process.env.NFSE_HABILITADO !== '1' || !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.error('[nfse] Configure e habilite a homologação no ambiente privado do worker.');
+    console.error('[nfse] Configure e habilite a integração no ambiente privado do worker.');
     process.exitCode = 1;
     return;
   }
@@ -18,7 +18,7 @@ async function iniciar() {
     let status = 'ativo';
     try { await processarFilaNfse(supabase); }
     catch { status = 'falha'; console.error('[nfse] Falha no ciclo; consulte a configuração e o estado da solicitação.'); }
-    fs.writeFileSync(path.join(pastaEstado, 'nfse-status.json'), JSON.stringify({ pid: process.pid, ambiente: 'homologacao', atualizadoEm: new Date().toISOString(), status }));
+    fs.writeFileSync(path.join(pastaEstado, 'nfse-status.json'), JSON.stringify({ pid: process.pid, ambiente: process.env.NFSE_AMBIENTE || 'homologacao', atualizadoEm: new Date().toISOString(), status }));
     if (process.argv.includes('--uma-vez')) { process.exitCode = status === 'ativo' ? 0 : 1; break; }
     await new Promise(resolve => setTimeout(resolve, 60_000));
   } while (true);

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, GraduationCap, GripVertical, HardHat, Landmark, Maximize, Megaphone, Minus,
-  Monitor, Package, Plus, Scale, Search, ShieldCheck, UserCog, Users, X,
+  Link2, MapPin, Monitor, Network, Package, Plus, Scale, Search, ShieldCheck, UserCog, Users, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,6 +16,8 @@ import {
   casaContrato, casaSetor, montarEstrutura,
   type ContratoEstrutura, type Estrutura, type SetorEstrutura,
 } from "@/lib/organograma/estruturaSetores";
+import { liderancaDoContrato, liderancas, type TurmaEncarregado } from "@/lib/organograma/liderancaContrato";
+import { DialogLideranca, DialogPostosEncarregado, DialogVincularEncarregado } from "./VinculoEncarregado";
 
 // =====================================================================
 // Organograma › visão ESTRUTURA (06/11/2026) — regra em
@@ -114,6 +116,11 @@ interface Ctx {
   alvo: string | null; setAlvo: (id: string | null) => void;
   atribuir: (c: ContratoEstrutura, no: string | null) => void;
   definirSupervisor: (c: ContratoEstrutura) => void;
+  /** SIS-2026-0770: vincular colaboradores do contrato ao encarregado (grava o "reporta a"). */
+  podeVincular: boolean;
+  vincular: (c: ContratoEstrutura, marcados?: string[]) => void;
+  /** SIS-2026-0770 (11/11): qual encarregado responde por cada posto do contrato. */
+  postos: (c: ContratoEstrutura) => void;
 }
 const C = createContext<Ctx | null>(null);
 const useCtx = () => useContext(C)!;
@@ -222,6 +229,95 @@ function Pessoa({ no, nivel, i, contrato }: { no: NoPessoa; nivel: number; i: nu
   );
 }
 
+// ── SIS-2026-0770: dentro do contrato, a turma de CADA encarregado ─────
+// Regra em lib/organograma/liderancaContrato.ts. Contrato sem encarregado
+// segue como antes (quem responde direto ao supervisor/escritório).
+
+/** Linha simples de quem está na turma (sem equipe própria para abrir). */
+function PessoaTurma({ no, nivel, i, via }: { no: NoPessoa; nivel: number; i: number; via?: NoPessoa | null }) {
+  const ctx = useCtx();
+  return (
+    <li className="est-item" style={{ "--i": i } as CSSProperties}>
+      <button type="button" onClick={() => ctx.onPerfil(no.id)}
+        className={cn("group flex w-full items-center gap-2 rounded-lg py-1 pr-1.5 text-left transition-colors hover:bg-muted/70", ctx.destaque(no) && "bg-amber-100 dark:bg-amber-900/40")}
+        style={{ paddingLeft: 4 + nivel * 16 + 30 }}>
+        <Foto no={no} tamanho={24} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px] leading-tight group-hover:underline">{tituloNome(no.nome)}</span>
+          <span className="block truncate text-[10.5px] text-muted-foreground">{funcaoDe(no) || "—"}{via ? ` · direto: ${curto(via.nome)}` : ""}</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function LinhaTurma({ t, c, nivel, i }: { t: TurmaEncarregado; c: ContratoEstrutura; nivel: number; i: number }) {
+  const ctx = useCtx();
+  const k = `t:${c.chave}:${t.encarregado.id}`;
+  const aberto = ctx.abertos.has(k) || (!!ctx.termo && t.equipe.some(ctx.destaque));
+  const porId = useMemo(() => new Map(c.membros.map((m) => [m.id, m])), [c.membros]);
+  return (
+    <li className="est-item" style={{ "--i": i } as CSSProperties}>
+      <div className={cn("group flex items-center gap-2 rounded-lg py-1.5 pr-1.5 transition-colors hover:bg-muted/70", ctx.destaque(t.encarregado) && "bg-amber-100 dark:bg-amber-900/40")}
+        style={{ paddingLeft: 4 + nivel * 16 }}>
+        {t.equipe.length ? (
+          <button type="button" onClick={() => ctx.alternar(k)} aria-label={aberto ? "Recolher turma" : "Abrir turma"} aria-expanded={aberto}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground">
+            <ChevronRight className={cn("h-4 w-4 transition-transform duration-300", aberto && "rotate-90")} />
+          </button>
+        ) : <span className="w-6 shrink-0" />}
+        <Foto no={t.encarregado} tamanho={30} />
+        <button type="button" onClick={() => ctx.onPerfil(t.encarregado.id)} className="min-w-0 flex-1 text-left">
+          <span className="block truncate text-[13px] font-semibold leading-tight group-hover:underline">{tituloNome(t.encarregado.nome)}</span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            <b className="font-semibold text-sky-700 dark:text-sky-300">Encarregado</b> · {funcaoDe(t.encarregado) || "—"}{t.acima ? ` · responde a ${curto(t.acima.nome)}` : ""}
+          </span>
+        </button>
+        <button type="button" onClick={() => t.equipe.length && ctx.alternar(k)} title={`${t.equipe.length} se reportam a este encarregado`}
+          className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
+          {t.equipe.length}
+        </button>
+      </div>
+      {aberto && t.equipe.length > 0 && (
+        <ul className="est-abre">
+          {t.equipe.map((p, j) => (
+            <PessoaTurma key={p.id} no={p} nivel={nivel} i={j} via={p.parent_id && p.parent_id !== t.encarregado.id ? porId.get(p.parent_id) ?? null : null} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function ConteudoContrato({ c, nivel }: { c: ContratoEstrutura; nivel: number }) {
+  const ctx = useCtx();
+  const lid = useMemo(() => liderancaDoContrato(c), [c]);
+  if (!lid.encarregados.length) {
+    return <>{c.cabecas.map((p, j) => <Pessoa key={p.id} no={p} nivel={nivel} i={j} contrato={c.chave} />)}</>;
+  }
+  return (
+    <>
+      {lid.encarregados.map((t, j) => <LinhaTurma key={t.encarregado.id} t={t} c={c} nivel={nivel} i={j} />)}
+      {lid.semEncarregado.length > 0 && (
+        <li className="est-item mt-1 rounded-lg border border-dashed border-amber-400/70 bg-amber-50/60 p-1 dark:bg-amber-950/20" style={{ "--i": lid.encarregados.length } as CSSProperties}>
+          <div className="flex flex-wrap items-center gap-2 px-1.5 py-1">
+            <p className="flex-1 text-[10.5px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+              Sem encarregado · {lid.semEncarregado.length}
+            </p>
+            {ctx.podeVincular && (
+              <button type="button" onClick={() => ctx.vincular(c, lid.semEncarregado.map((p) => p.id))}
+                className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2 py-0.5 text-[11px] font-semibold text-white transition hover:bg-amber-700">
+                <Link2 className="h-3 w-3" /> Vincular ao encarregado
+              </button>
+            )}
+          </div>
+          <ul>{lid.semEncarregado.map((p, j) => <PessoaTurma key={p.id} no={p} nivel={nivel} i={j} />)}</ul>
+        </li>
+      )}
+    </>
+  );
+}
+
 /** Contrato como "pasta" dentro do supervisor: arrastável, abre o pessoal de campo. */
 function LinhaContrato({ c, nivel, i }: { c: ContratoEstrutura; nivel: number; i: number }) {
   const ctx = useCtx();
@@ -256,11 +352,23 @@ function LinhaContrato({ c, nivel, i }: { c: ContratoEstrutura; nivel: number; i
             <UserCog className="h-3.5 w-3.5" />
           </button>
         )}
+        {ctx.podeVincular && c.chave !== "sem" && (
+          <button type="button" title="Vincular colaboradores ao encarregado" aria-label={`Vincular colaboradores ao encarregado — ${c.nome}`} onClick={() => ctx.vincular(c)}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus:opacity-100 group-hover:opacity-100">
+            <Link2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {ctx.podeVincular && c.chave !== "sem" && (
+          <button type="button" title="Encarregado por posto" aria-label={`Encarregado por posto — ${c.nome}`} onClick={() => ctx.postos(c)}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus:opacity-100 group-hover:opacity-100">
+            <MapPin className="h-3.5 w-3.5" />
+          </button>
+        )}
         {arrasta && <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/50 opacity-0 transition group-hover:opacity-100" />}
       </div>
       {aberto && (
         <ul className="est-abre ml-4 border-l-2 border-amber-300/60 pl-1 dark:border-amber-700/50">
-          {c.cabecas.map((p, j) => <Pessoa key={p.id} no={p} nivel={nivel} i={j} contrato={c.chave} />)}
+          <ConteudoContrato c={c} nivel={nivel} />
         </ul>
       )}
     </li>
@@ -467,11 +575,44 @@ function DialogSupervisor({ c, supervisores, onFechar, onEscolher }: {
   );
 }
 
+/** "2 encarregados · 5 sem encarregado" no card do contrato. */
+function ResumoEncarregados({ c }: { c: ContratoEstrutura }) {
+  const ctx = useCtx();
+  const lid = useMemo(() => liderancaDoContrato(c), [c]);
+  if (!lid.encarregados.length && !ctx.podeVincular) return null;
+  if (!lid.encarregados.length) {
+    return (
+      <div className="flex items-center gap-2 border-t px-2.5 py-1.5 text-[11px]">
+        <MapPin className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">Nenhum encarregado reconhecido</span>
+        <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.postos(c)}>Postos</button>
+      </div>
+    );
+  }
+  const sem = lid.semEncarregado.length;
+  return (
+    <div className="flex items-center gap-2 border-t px-2.5 py-1.5 text-[11px]">
+      <Network className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+      <span className="min-w-0 flex-1 truncate">
+        <b className="font-semibold">{lid.encarregados.length} encarregado{lid.encarregados.length > 1 ? "s" : ""}</b>
+        {sem ? <b className="font-semibold text-amber-700 dark:text-amber-300"> · {sem} sem encarregado</b> : <span className="text-muted-foreground"> · todos vinculados</span>}
+      </span>
+      {ctx.podeVincular && sem > 0 && (
+        <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.vincular(c, lid.semEncarregado.map((p) => p.id))}>Vincular</button>
+      )}
+      {ctx.podeVincular && (
+        <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.postos(c)}>Postos</button>
+      )}
+    </div>
+  );
+}
+
 function CardContrato({ c, i }: { c: ContratoEstrutura; i: number }) {
   const ctx = useCtx();
   return (
     <div className="est-item w-full rounded-2xl border bg-card p-1.5 shadow-sm transition hover:shadow-md" style={{ "--i": i } as CSSProperties}>
       <ul><LinhaContrato c={c} nivel={0} i={0} /></ul>
+      <ResumoEncarregados c={c} />
       <div className="flex items-center gap-2 border-t px-2.5 pb-1 pt-2 text-[11px]">
         {c.supervisor ? (
           <>
@@ -511,6 +652,12 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
   const [arrastando, setArrastando] = useState<string | null>(null);
   const [alvo, setAlvo] = useState<string | null>(null);
   const [escolhendo, setEscolhendo] = useState<ContratoEstrutura | null>(null);
+  const [vinculando, setVinculando] = useState<{ c: ContratoEstrutura; marcados?: string[] } | null>(null);
+  // Pela chave: depois de salvar a árvore recarrega e o diálogo mostra o contrato novo.
+  const [postosDe, setPostosDe] = useState<string | null>(null);
+  const contratoPostos = postosDe ? e.contratos.find((x) => x.chave === postosDe) ?? null : null;
+  const [verLideranca, setVerLideranca] = useState(false);
+  const linhasLideranca = useMemo(() => (verLideranca ? liderancas(nos, e) : []), [verLideranca, nos, e]);
   const alternar = useCallback((k: string) => setAbertos((s) => { const x = new Set(s); if (x.has(k)) x.delete(k); else x.add(k); return x; }), []);
 
   const salvar = useMutation({
@@ -547,6 +694,9 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
     arrastando, setArrastando, alvo, setAlvo,
     atribuir: (c, no) => { if (c.supervisor?.id !== no || c.origem !== "definido") salvar.mutate({ c, no }); },
     definirSupervisor: (c) => setEscolhendo(c),
+    podeVincular: podeMontar,
+    vincular: (c, marcados) => setVinculando({ c, marcados }),
+    postos: (c) => setPostosDe(c.chave),
   };
 
   const idsConselho = new Set(e.conselho.map((c) => c.id));
@@ -594,6 +744,9 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
             )}
           </div>
           {termo && <Button variant="outline" size="sm" className="h-8 text-xs" onClick={abrirAchados}>Abrir onde aparece</Button>}
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setVerLideranca(true)}>
+            <Network className="mr-1.5 h-3.5 w-3.5" /> Liderança por colaborador
+          </Button>
           <span className="ml-auto text-xs text-muted-foreground">
             {e.setores.length} setores · {e.contratos.length} contratos{semSup ? <b className="font-semibold text-amber-700 dark:text-amber-300"> · {semSup} sem supervisor</b> : null}
           </span>
@@ -656,6 +809,13 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
           </div>
         )}
 
+        {vinculando && (
+          <DialogVincularEncarregado c={vinculando.c} marcadosIniciais={vinculando.marcados} onFechar={() => setVinculando(null)} />
+        )}
+        {contratoPostos && <DialogPostosEncarregado c={contratoPostos} nos={nos} onFechar={() => setPostosDe(null)} />}
+        {verLideranca && (
+          <DialogLideranca linhas={linhasLideranca} onPerfil={onPerfil} onFechar={() => setVerLideranca(false)} />
+        )}
         {escolhendo && (
           <DialogSupervisor c={escolhendo} supervisores={e.supervisores}
             onFechar={() => setEscolhendo(null)}

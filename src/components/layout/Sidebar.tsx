@@ -406,6 +406,7 @@ const financeiroModule: ModuleDef = {
       label: "Controle de Notas",
       defaultOpen: true,
       items: [
+        { label: "Controle de Notas", to: "/app/financeiro/emissao-nf", icon: FileText },
         { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
         { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
         { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
@@ -1344,6 +1345,8 @@ const operacionalModule: ModuleDef = {
         { label: "Lucratividade e Orçamento", to: "/app/operacional/indicadores/lucratividade-orcamento", icon: TrendingUp },
         { label: "Pessoas e Capacidade", to: "/app/operacional/indicadores/pessoas-capacidade", icon: Users2 },
         { label: "Kaizen e Efetividade", to: "/app/operacional/indicadores/kaizen-efetividade", icon: ClipboardCheck },
+        // Indicadores por Contrato (11/11/2026, mig 20261111100000): os 7 da Gerência Operacional por contrato.
+        { label: "Indicadores por Contrato", to: "/app/operacional/indicadores/contratos", icon: Building2 },
       ],
     },
     {
