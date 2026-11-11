@@ -60,6 +60,9 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   // um contrato a cada 10 s (src/lib/tv/opeContratosTv.ts). Competência: a
   // última com o faturamento fechado — sem período nem contrato no item.
   { slug: "ope-contratos", titulo: "Operacional — Indicadores por Contrato", paginas: 1, semFiltros: true },
+  // 11/11/2026 (mig 20261111180000): os 6 indicadores de Suprimentos com o
+  // detalhe (src/lib/tv/supPainelTv.ts) — a TV Compras.
+  { slug: "sup-painel", titulo: "Compras — Suprimentos", paginas: 1, semFiltros: true },
   // 12/10/2026 (mig 20261012000001, SIS-2026-0635): as 13 TVs gerenciais por
   // diretoria do documento "Indicadores das TVs" — indicadores com meta e
   // semáforo (src/lib/tv/gerencial.ts). Sem período nem contrato: cada

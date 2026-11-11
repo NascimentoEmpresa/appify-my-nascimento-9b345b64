@@ -24,6 +24,7 @@ import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
 import { painelGerencial, paginasPainel, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 import type { PainelBiTv } from "@/pages/tv/relatorio/paginasBi";
 import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
+import type { DadosSupPainelTv } from "@/lib/tv/supPainelTv";
 
 /** A cor da faixa de cada relatório: a dos Relatórios; Geral, Vagas, Licitações e Treinamentos têm a sua. */
 export function corDoRelatorioTv(slug: string | null | undefined): string {
@@ -33,6 +34,7 @@ export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "treinamentos") return "#f26522"; // o laranja do módulo
   if (slug?.startsWith("bi:")) return "#2a78d6"; // a cor do Estúdio de BI
   if (slug === "ope-contratos") return "#0f3171"; // o azul do Operacional
+  if (slug === "sup-painel") return "#0e7490"; // Suprimentos
   const ger = painelGerencial(slug);
   if (ger) return ger.cor; // TVs gerenciais (mig 20261012000001)
 
@@ -87,7 +89,9 @@ export type DadosRelTv =
   /** Um painel do Estúdio de BI (item "bi:<id>", mig 20261014000012). */
   | ({ tipo: "bi"; contrato: null; gerado_em?: string } & PainelBiTv)
   /** Operacional › Indicadores por Contrato (item "ope-contratos", mig 20261111130000). */
-  | ({ tipo: "ope-contratos"; contrato: null } & DadosOpeContratosTv);
+  | ({ tipo: "ope-contratos"; contrato: null } & DadosOpeContratosTv)
+  /** Compras › Suprimentos (item "sup-painel", mig 20261111180000). */
+  | ({ tipo: "sup-painel"; contrato: null } & DadosSupPainelTv);
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
@@ -123,6 +127,9 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
       // Uma página para o item: a troca de contrato (10 s) é da própria tela
       // (TelaOpeContratos), que não depende da duração do item.
       return [{ chave: "ope-contratos", titulo: "Indicadores por Contrato" }];
+    case "sup-painel":
+      // Idem: as páginas (15 s cada) giram dentro de TelaSupPainel.
+      return [{ chave: "sup-painel", titulo: "Suprimentos" }];
     case "turnover": {
       const ps = [{ chave: "turnover-resumo", titulo: "Resumo do ano" }];
       if (d.painel.por_contrato.some((c) => c.demissoes > 0)) ps.push({ chave: "turnover-contratos", titulo: "Por contrato" });
