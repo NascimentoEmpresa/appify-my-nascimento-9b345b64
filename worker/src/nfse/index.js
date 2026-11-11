@@ -82,15 +82,15 @@ async function executarSolicitacao(s,deps) {
   return tratarLote(s,retorno,deps);
 }
 
-async function processarFilaNfse(supabase) {
-  if(process.env.NFSE_HABILITADO !== '1') return;
+async function processarFilaNfse(supabase, ambiente = process.env) {
+  if(ambiente.NFSE_HABILITADO !== '1') return;
   const trabalhos=await rpc(supabase,'nfse_reservar_trabalho');
   const s=trabalhos?.[0];
   if(!s) return;
   let config;
   let resultado;
   try {
-    config=carregarConfiguracao(s.dados.empresa.cnpj,s.serie);
+    config=carregarConfiguracao(s.dados.empresa.cnpj,s.serie,ambiente);
     const prefixo=`${s.empresa_id}/${s.id}`;
     resultado=await executarSolicitacao(s,{
       cert:config.cert,algoritmo:config.algoritmo_assinatura,cliente:criarCliente(config),validarEsquema,

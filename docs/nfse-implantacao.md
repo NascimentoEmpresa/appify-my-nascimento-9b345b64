@@ -4,7 +4,7 @@ O piloto integra **Financeiro → Controle de Notas → Validação de Notas** a
 processamento no worker. Somente homologação é aceita. O resultado fiscal de
 teste não altera número, valores ou estado de `nf_emissao`.
 
-## Instância preparada para teste local — 10/11/2026
+## Instâncias preparadas para teste — 10/11/2026
 
 - ERP local: `http://127.0.0.1:5184/`. Entrar com a conta habitual do ERP.
 - Caminho: **Financeiro → Controle de Notas → Validação de Notas**; abrir uma
@@ -18,8 +18,9 @@ teste não altera número, valores ou estado de `nf_emissao`.
 - O processador exclusivo de homologação está em execução nesta máquina,
   consultando a fila a cada 60 segundos. **Atualizar** na tela apenas consulta
   o resultado; uma solicitação nova exige a confirmação fiscal do formulário.
-- A integração foi publicada pela PR #1188 em `https://app.grpnascimento.com.br`.
-  A correção complementar de navegação precisa de publicação própria.
+- ERP online: `https://app.grpnascimento.com.br`. A integração foi publicada
+  pela PR #1188 e a navegação pela PR #1191; os nomes dos menus já foram
+  conferidos no cluster. A renumeração da migration está nesta atualização.
 
 A instância local usa o banco real do ERP e envia documentos somente à API
 de testes GOVBR. Preparações internas continuam sendo registros reais do ERP;
@@ -41,7 +42,7 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
    O complemento `20261110150000_sis_2026_0841_nfse_acoes_painel.sql` cadastra
    visualizar/incluir/alterar/exportar no Gerenciamento de Acesso.
    Ela entra pelo aplicador do cluster após merge, conforme `CLAUDE.md`.
-   O complemento `20261110190000_sis_2026_0841_controle_notas_navegacao.sql`
+   O complemento `20261110203100_sis_2026_0841_controle_notas_navegacao.sql`
    alinha os nomes e a entrada das telas, preservando permissões existentes.
 2. Publicar o frontend e instalar as dependências do worker com `npm ci` na
    pasta `worker`. O ciclo existente chama o novo processador; não há serviço
@@ -54,6 +55,75 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
    `NFSE_HABILITADO=1`. A referência é `worker/nfse.env.example`.
 5. Reiniciar o worker. Sem `NFSE_HABILITADO=1`, o módulo permanece inativo e
    não consulta a fila. Não copiar certificado ou senha para `VITE_*`/banco/Git.
+
+## Processamento temporário pelo GitHub Actions
+
+O workflow **NFS-e - fila de homologação** (`nfse_homologacao.yml`) executa
+um trabalho da fila a cada cinco minutos, exclusivamente na `main` do
+repositório oficial. Usa o mesmo processamento, reservas e proteção contra
+duplicidade do worker local. Não inicia WhatsApp, e-mail ou os outros workers.
+O estado e os documentos persistem no banco/storage do ERP; o runner é descartável.
+
+O ambiente GitHub `nfse-homologacao` deve permitir implantação somente da
+branch `main`. A variável de repositório `NFSE_ACTIONS_HABILITADO=1` habilita
+o job. Os secrets desse ambiente são:
+
+| Secret | Conteúdo |
+| --- | --- |
+| `NFSE_SUPABASE_URL` | Endereço da API do cluster. |
+| `NFSE_SUPABASE_SERVICE_ROLE_KEY` | Credencial de servidor usada pelo processador. |
+| `NFSE_CONFIG_JSON` | Configuração da única empresa habilitada, série, algoritmo e URL de homologação. |
+| `NFSE_CERTIFICADO_PFX_B64` | PFX codificado em base64, armazenado como secret. |
+| `NFSE_CERTIFICADO_SENHA` | Senha do PFX. |
+
+O processador substitui caminhos locais por arquivos privados no `RUNNER_TEMP`
+e os remove ao terminar, inclusive em caso de erro. Certificado e senha não
+entram no repositório, cache npm ou artefatos. A configuração e o próprio
+conector recusam a API de produção.
+
+Depois do merge, conferir em **Actions → NFS-e - fila de homologação**.
+**Run workflow** executa um ciclo manualmente na `main`; o cron dispensa essa
+ação no uso normal. Uma execução verde confirma que o ciclo rodou; o resultado
+fiscal de cada pedido deve ser conferido no painel do ERP.
+
+O envio e a consulta podem precisar de execuções diferentes: com fila vazia
+antes do pedido, normalmente há um ciclo para envio e outro para consulta,
+cerca de 5–10 minutos, além de atrasos do agendador ou espera por outros pedidos.
+**Atualizar** no ERP apenas relê o resultado salvo; não dispara o Actions.
+O [GitHub documenta intervalo mínimo de cinco minutos e possíveis atrasos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+Após a primeira execução bem-sucedida no GitHub, encerrar o processo NFS-e
+local para concluir a transferência. A reserva no banco continua protegendo
+contra disputa caso as duas instâncias se sobreponham durante essa passagem.
+Para migrar depois ao servidor do ERP: configurar os mesmos arquivos privados,
+iniciar somente o processador NFS-e como serviço, verificar o ciclo e definir
+`NFSE_ACTIONS_HABILITADO=0`. A migração de hospedagem não habilita emissão real.
+
+## ERP online e ambiente fiscal de produção
+
+O ERP online já é o sistema de uso da empresa. O ambiente fiscal selecionado
+pelo piloto continua sendo a homologação GOVBR; publicar uma PR não transforma
+os documentos de teste em notas reais de Triunfo.
+
+O fluxo definitivo de emissão real será: operador revisa no ERP → processador
+transmite à API de produção → consulta protocolo/DPS → ERP mostra autorização
+ou rejeição, número/chave e XML/PDF oficiais. Receber um lote ou HTTP 200 não
+equivale a autorizar a nota. A resposta fiscal vem da API oficial, sem automação
+do login do portal. Hoje esse fluxo está implementado somente para homologação.
+
+Para liberar produção, ainda é necessário confirmar credenciamento da HAAG
+na API de Triunfo, série exclusiva e configuração fiscal de produção com o
+Financeiro/provedor; implementar ambiente separado no banco, geração XML,
+cliente HTTP e interface; e validar a primeira emissão real de um serviço
+efetivo, conferindo a mesma chave/documento no ERP e na consulta da prefeitura.
+O certificado já permitiu consultar documentos antigos em produção, mas
+nenhuma DPS foi enviada em produção. Não reutilizar automaticamente o município
+emissor genérico 3542404 nem a série de teste como configuração de Triunfo.
+
+O acompanhamento implementado cobre o processamento da emissão e a recuperação
+dos documentos. Ainda não monitora cancelamento/substituição realizados no
+portal, nem importa todo o histórico externo. O resultado fiscal de homologação
+permanece separado do número e da conclusão interna da preparação do ERP.
 
 O arquivo atualizado da HAAG já passou na validação de titular/chave/validade,
 na consulta autenticada de XML/PDF em produção e no envio assíncrono de DPS
@@ -91,7 +161,7 @@ o worker nem libera emissão real em Triunfo.
 
 ## Uso
 
-Após publicar a correção de navegação, abrir
+Abrir
 `https://app.grpnascimento.com.br/app/financeiro/emissao-nf/` apresenta as opções
 **Emissão de NF** e **Validação de Notas** autorizadas para o usuário. As duas
 telas também oferecem botões no topo para alternar entre as etapas.
@@ -114,8 +184,9 @@ No diálogo de conferência de uma preparação enviada ao Financeiro:
    salva no banco, não de totais enviados pelo navegador.
 2. Confirmar a revisão fiscal e solicitar. Se houve alterações locais nos
    valores da conferência, salvar a preparação na tela de Emissão antes.
-3. Usar **Atualizar** para acompanhar. O worker processa uma solicitação por
-   ciclo de 60 segundos e consulta o resultado no ciclo seguinte.
+3. Usar **Atualizar** para acompanhar. No Actions, o agendamento é a cada
+   cinco minutos; no processador contínuo local, a cada 60 segundos. O envio
+   e a consulta de resultado podem ocorrer em ciclos diferentes.
 4. Baixar XML/PDF oficiais quando disponíveis, mediante permissão de exportar.
 
 O piloto cobre emissão regular de serviços nacionais para tomador identificado,
