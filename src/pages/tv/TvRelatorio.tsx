@@ -20,6 +20,8 @@ import { TelaOpeContratos } from "./relatorio/paginasOpeContratos";
 import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
 import { TelaSupPainel } from "./relatorio/paginasSupPainel";
 import type { DadosSupPainelTv } from "@/lib/tv/supPainelTv";
+import { TelaRecPainel } from "./relatorio/paginasRecPainel";
+import type { DadosRecPainelTv } from "@/lib/tv/recPainelTv";
 import { codigoDoIndicador, ehDashboard, ehIndicadorAvulso, ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 
 // =====================================================================
@@ -103,6 +105,9 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
     }));
     const d: PainelBiTv = { painel: { id: painel.id, nome: painel.nome, descricao: painel.descricao, tema: painel.config?.tema ?? null }, widgets };
     return { tipo: "bi", contrato: null, ...d };
+  }
+  if (item.relatorio === "rec-painel") {
+    return { tipo: "rec-painel", contrato: null, ...(ok(await rpc("tv_recrutamento_previa")) as DadosRecPainelTv) };
   }
   if (item.relatorio === "sup-painel") {
     return { tipo: "sup-painel", contrato: null, ...(ok(await rpc("tv_supply_previa")) as DadosSupPainelTv) };
@@ -242,6 +247,13 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
     return (
       <Palco>
         <TelaOpeContratos d={dados} cor={cor} atualizado={atualizado} />
+      </Palco>
+    );
+  }
+  if (dados?.tipo === "rec-painel") {
+    return (
+      <Palco fundo="#f5f3ff">
+        <TelaRecPainel d={dados} atualizado={atualizado} />
       </Palco>
     );
   }
