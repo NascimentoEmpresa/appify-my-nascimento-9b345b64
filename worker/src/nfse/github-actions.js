@@ -1,7 +1,7 @@
 // Um ciclo da fila NFS-e por execução do Actions, sem iniciar os outros workers.
 const fs = require('node:fs');
 const path = require('node:path');
-const { carregarConfiguracao, validarUrlHomologacao } = require('./cliente');
+const { carregarConfiguracao, validarUrlFiscal } = require('./cliente');
 const { processarFilaNfse } = require('./index');
 
 function prepararArquivos(ambiente) {
@@ -16,13 +16,19 @@ function prepararArquivos(ambiente) {
   try { configuracao = JSON.parse(ambiente.NFSE_CONFIG_JSON); }
   catch { throw new Error('Configuração de homologação inválida.'); }
   const empresa = configuracao?.empresas?.[0];
+  const fiscal = ambiente.NFSE_AMBIENTE || 'homologacao';
+  if (!['homologacao','producao'].includes(fiscal) || (fiscal === 'producao' && ambiente.NFSE_PRODUCAO_HABILITADA !== '1')) {
+    throw new Error('Ambiente fiscal não habilitado no Actions.');
+  }
   if (configuracao?.empresas?.length !== 1 || !/^\d{14}$/.test(empresa?.cnpj) ||
       !Number.isInteger(empresa.serie) || empresa.serie < 1 || empresa.serie > 49999 ||
-      empresa.homologacao_confirmada !== true || empresa.serie_confirmada !== true ||
+      (empresa.ambiente || 'homologacao') !== fiscal ||
+      (fiscal === 'producao' ? empresa.producao_confirmada : empresa.homologacao_confirmada) !== true || empresa.serie_confirmada !== true ||
       !['sha1', 'sha256'].includes(empresa.algoritmo_assinatura)) {
-    throw new Error('Confirme a empresa, a série e a homologação antes de executar.');
+    throw new Error('Confirme a empresa, a série e o ambiente fiscal antes de executar.');
   }
-  const url = validarUrlHomologacao(empresa.url).toString();
+  if (fiscal === 'producao' && (!/^\d{7}$/.test(empresa.municipio_emissor) || !empresa.inscricao_municipal)) throw new Error('Configuração municipal de produção incompleta.');
+  const url = validarUrlFiscal(empresa.url, fiscal).toString();
   const base64 = ambiente.NFSE_CERTIFICADO_PFX_B64;
   if (base64.length > 65536 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
     throw new Error('Certificado de homologação inválido.');
@@ -38,12 +44,15 @@ function prepararArquivos(ambiente) {
     fs.writeFileSync(path.join(pasta, 'certificado.pfx'), Buffer.from(base64, 'base64'), { mode: 0o600 });
     const arquivoConfiguracao = path.join(pasta, 'config.json');
     fs.writeFileSync(arquivoConfiguracao, JSON.stringify({ empresas: [{
-      cnpj: empresa.cnpj, url, serie: empresa.serie, homologacao_confirmada: true,
+      cnpj: empresa.cnpj, url, serie: empresa.serie, ambiente: fiscal,
+      homologacao_confirmada: fiscal === 'homologacao', producao_confirmada: fiscal === 'producao',
+      municipio_emissor: empresa.municipio_emissor, inscricao_municipal: empresa.inscricao_municipal,
       serie_confirmada: true, algoritmo_assinatura: empresa.algoritmo_assinatura,
       certificado_caminho: './certificado.pfx', senha_variavel: 'NFSE_CERTIFICADO_SENHA',
     }] }), { mode: 0o600 });
     return { empresa, pasta, descartar, ambienteWorker: {
       NFSE_HABILITADO: '1', NFSE_CONFIG_ARQUIVO: arquivoConfiguracao,
+      NFSE_AMBIENTE: fiscal, NFSE_PRODUCAO_HABILITADA: fiscal === 'producao' ? '1' : '0',
       NFSE_CERTIFICADO_SENHA: ambiente.NFSE_CERTIFICADO_SENHA,
       SUPABASE_URL: ambiente.NFSE_SUPABASE_URL,
       SUPABASE_SERVICE_ROLE_KEY: ambiente.NFSE_SUPABASE_SERVICE_ROLE_KEY,
@@ -66,9 +75,9 @@ async function executarNoGithub(ambiente = process.env, dependencias = {}) {
 }
 
 if (require.main === module) executarNoGithub()
-  .then(() => console.log('[nfse-actions] Ciclo de homologação concluído. Confira o resultado fiscal no ERP.'))
+  .then(() => console.log('[nfse-actions] Ciclo concluído. Confira o ambiente e o resultado fiscal no ERP.'))
   .catch(() => {
-    console.error('[nfse-actions] Falha no ciclo. Confira os secrets e a configuração do ambiente nfse-homologacao.');
+    console.error('[nfse-actions] Falha no ciclo. Confira os secrets e a configuração do ambiente fiscal selecionado.');
     process.exitCode = 1;
   });
 module.exports = { prepararArquivos, executarNoGithub };
