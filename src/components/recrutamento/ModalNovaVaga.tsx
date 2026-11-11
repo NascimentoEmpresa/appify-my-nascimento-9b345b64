@@ -27,8 +27,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
-import { useLocation, useNavigate } from "react-router-dom";
-import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
@@ -43,7 +41,9 @@ import {
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
-  substituidosComVagaViva, avisoSubstituidoPreso, FILTRO_EMPREGADO_VAGA,
+  substituidosComVagaViva, avisoSubstituidoPreso, filtroEmpregadoDaVaga,
+  bloqueioSubstituicao, quantitativoAcima, textoQuantitativo,
+  type SituacaoSubstituido, type QuantitativoContrato, type DecisaoQuantitativo,
   cargoForaDasFuncoes, escalaDiferenteDoCadastro,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
@@ -79,6 +79,8 @@ const VAGA_RESET = {
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
   req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
   motivos_saida: "", recomendacao: "", observacao_importante: "",
+  // #0845: contrato acima do cotado → motivo e quem autorizou.
+  quantitativo_justificativa: "",
 };
 
 /** Explica o prazo da data escolhida: o que falta ou qual grau saiu dela. */
@@ -162,12 +164,24 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // Cargo/contrato vêm do cadastro do escolhido (o id prova que a pessoa foi
   // escolhida na lista, não só digitada).
   const [substituidoId, setSubstituidoId] = useState<number | null>(null);
-  // A demissão que a vaga de Substituição repõe. `null` com Substituição
-  // escolhida = ainda procurando ou não existe (ver `demissaoBusca`).
+  // A demissão que a vaga de Substituição repõe — quando existe. Desde o
+  // chamado #0845 (11/11/2026) ela não é mais obrigatória: afastamento e
+  // atestado vigente também liberam a substituição (ver `checagem`).
   const [demissaoId, setDemissaoId] = useState<number | null>(null);
-  const [demissaoBusca, setDemissaoBusca] = useState<"ocioso" | "buscando" | "achou" | "nenhuma">("ocioso");
-  const navigate = useNavigate();
-  const rotasSol = rotasSolicitacoes(baseDaUrl(useLocation().pathname));
+  // #0845 — as duas validações da Substituição, respondidas pelo banco
+  // (rec_vaga_substituicao_checar, mig 20261111235000): a situação de quem
+  // sai e o quantitativo do contrato. `erro` = a consulta falhou; a tela
+  // não barra por isso e o gatilho do banco continua sendo o piso.
+  const [checagem, setChecagem] = useState<{
+    estado: "ocioso" | "buscando" | "pronto" | "erro";
+    situacao: SituacaoSubstituido | null;
+    quantitativo: QuantitativoContrato | null;
+  }>({ estado: "ocioso", situacao: null, quantitativo: null });
+  // Contrato acima do cotado: "Deseja prosseguir com a contratação?"
+  const [decisaoQuant, setDecisaoQuant] = useState<DecisaoQuantitativo>("");
+  // O contrato que veio do cadastro do escolhido. Se a vaga trocar de
+  // contrato (RT pode alterar), o quantitativo passa a ser o do novo.
+  const [contratoDoEscolhido, setContratoDoEscolhido] = useState("");
   const [salvando, setSalvando] = useState(false);
 
   const empDebounce = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce busca colaborador
@@ -246,13 +260,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       setSubstituidoId((dados.substituido_id as number | null) ?? null);
       setEmpSearch((dados.nome_substituido as string | null) ?? "");
       setDemissaoId((dados.demissao_id as number | null) ?? null);
-      setDemissaoBusca("ocioso");
     } else if (vinculoDemissao) {
       // Veio da demissão: Substituição, pessoa escolhida, tudo travado.
       setVaga({ ...VAGA_RESET, motivo_vaga: MOTIVO_SUBSTITUICAO });
       setVagaManual(false);
       setDemissaoId(vinculoDemissao.demissaoId);
-      setDemissaoBusca("achou");
       setSubstituidoId(null);
       setEmpSearch(vinculoDemissao.nome);
       (async () => {
@@ -280,7 +292,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       setEmpSearch("");
       setVagaManual(false);
       setDemissaoId(null);
-      setDemissaoBusca("ocioso");
     }
     setVagaStep(1);
     setShowEmpDrop(false);
@@ -319,7 +330,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     const { data, error } = await db
       .from("EMPREGADOS")
       .select('"ID", "Nome", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
-      .or(FILTRO_EMPREGADO_VAGA)
+      .or(filtroEmpregadoDaVaga(vaga.motivo_vaga))
       .ilike("Nome", `%${term}%`)
       .order('"Nome"')
       .limit(50);
@@ -404,6 +415,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     const insalCadastro = insalubridadeDoCusto(null, emp["% Insalubridade"]);
     const contratoRotulo = contratoMatch ? rotuloContrato(contratoMatch) : "";
     setSubstituidoId(emp.ID ?? null);
+    setContratoDoEscolhido(contratoRotulo);
+    setDecisaoQuant("");
     setVaga(v => ({
       ...v,
       // Nos outros motivos o escolhido é só o molde: o nome não entra na vaga.
@@ -427,40 +440,54 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     setCustoPosto(null); setCustoNota(AVISO_SEM_POSTO); setCustoBuscando(false);
   };
 
-  // Substituição sem vínculo vindo da demissão: procura a demissão de quem
-  // foi escolhido (em andamento, ainda sem vaga). Achou → vincula sozinho;
-  // não achou → a tela manda solicitar a demissão primeiro.
+  // Substituição (chamado #0845, 11/11/2026): escolhido quem sai, o banco
+  // responde as DUAS validações — a situação dele (demissão, afastamento e
+  // atestado vigente liberam; trabalhando barra) e o quantitativo do
+  // contrato (ativos × cotado). Antes daqui a tela só procurava a demissão e,
+  // sem ela, mandava solicitá-la primeiro; a falta de demissão não barra mais
+  // sozinha. A demissão em aberto, quando existe, continua sendo vinculada.
+  //
+  // Editando, só checa se a pessoa mudou: a vaga antiga não é revalidada por
+  // abrir o formulário para corrigir um campo.
+  const substituidoGravado = (solicitacao as { substituido_id?: number | null } | null)?.substituido_id ?? null;
+  const checarSubstituicao = aberto && ehSubstituicao(vaga.motivo_vaga) && !!substituidoId
+    && (!editando || substituidoId !== substituidoGravado);
+  // Contrato trocado à mão (RT) → quantitativo do contrato novo, pelo nome.
+  const contratoTrocado = !!vaga.contrato && !!contratoDoEscolhido && vaga.contrato !== contratoDoEscolhido;
+  const contratoConsulta = contratoTrocado ? vaga.contrato : "";
   useEffect(() => {
-    if (!aberto || editando || vinculoDemissao) return;
-    if (!ehSubstituicao(vaga.motivo_vaga) || !substituidoId) {
-      setDemissaoId(null); setDemissaoBusca("ocioso"); return;
+    if (!checarSubstituicao) {
+      setChecagem({ estado: "ocioso", situacao: null, quantitativo: null });
+      if (!editando && !vinculoDemissao) setDemissaoId(null);
+      return;
     }
     let vivo = true;
-    setDemissaoBusca("buscando");
-    (async () => {
-      const { data, error } = await db
-        .from("SISTEMA_SOLICITACOES_DEMISSAO")
-        .select("id, status, vaga_id")
-        .eq("colaborador_id", substituidoId)
-        .not("status", "in", '("Reprovada","Cancelada")')
-        // Sem filtrar vaga_id: a vaga anterior pode ter sido reprovada ou
-        // cancelada. Quem trava quem já está numa vaga viva é `presos`.
-        .order("criado_em", { ascending: false })
-        .limit(1);
+    setChecagem(c => ({ ...c, estado: "buscando" }));
+    const t = setTimeout(async () => {
+      const { data, error } = await db.rpc("rec_vaga_substituicao_checar", {
+        p_empregado_id: substituidoId,
+        p_contrato: contratoConsulta || null,
+      });
       if (!vivo) return;
-      const d = !error && data?.[0];
-      setDemissaoId(d ? Number(d.id) : null);
-      setDemissaoBusca(d ? "achou" : "nenhuma");
-    })();
-    return () => { vivo = false; };
+      if (error || !data) { setChecagem({ estado: "erro", situacao: null, quantitativo: null }); return; }
+      const r = data as { situacao: SituacaoSubstituido | null; quantitativo: QuantitativoContrato | null };
+      setChecagem({ estado: "pronto", situacao: r.situacao, quantitativo: r.quantitativo });
+      if (!vinculoDemissao) setDemissaoId(r.situacao?.demissao_id ?? null);
+    }, contratoConsulta ? 500 : 0);  // contrato digitado: espera parar de digitar
+    return () => { vivo = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aberto, editando, vinculoDemissao?.demissaoId, vaga.motivo_vaga, substituidoId]);
+  }, [checarSubstituicao, substituidoId, contratoConsulta]);
 
-  /** Vai solicitar a demissão de quem foi escolhido; a vaga abre sozinha depois dela. */
-  const irSolicitarDemissao = () => {
-    onFechar();
-    navigate(`${rotasSol.demissao}?colaborador=${substituidoId}`);
-  };
+  // O que ainda prende a etapa 1 de uma Substituição (null = nada).
+  const quantAcima = quantitativoAcima(checagem.quantitativo);
+  const bloqueioSubst = checarSubstituicao
+    ? bloqueioSubstituicao({
+        situacao: checagem.situacao, quantitativo: checagem.quantitativo,
+        decisao: decisaoQuant, justificativa: vaga.quantitativo_justificativa,
+      })
+    : null;
+  // "Avanço bloqueado pela situação do colaborador" — o botão fica cinza.
+  const situacaoBarra = checarSubstituicao && checagem.estado === "pronto" && !!checagem.situacao && !checagem.situacao.permite;
 
   /**
    * Liga e desliga o preenchimento à mão, com a solicitação já aberta.
@@ -533,15 +560,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         return false;
       }
 
-      // Substituição repõe alguém que está saindo: sem a demissão dele, o
-      // banco recusa a vaga (rec_vaga_exige_demissao). Editar vaga antiga
-      // (de antes da regra) continua livre — o gatilho só cobra quando o
-      // vínculo muda.
-      if (!editando && ehSubstituicao(vaga.motivo_vaga) && !demissaoId) {
-        toast(demissaoBusca === "buscando"
-          ? "Um instante — procurando a solicitação de demissão de quem sai."
-          : "Vaga de Substituição precisa da solicitação de demissão de quem sai. Use o botão \"Solicitar a demissão\" acima.", "err");
-        return false;
+      // Substituição (#0845): a situação de quem sai e o quantitativo do
+      // contrato. Sem demissão não barra mais — afastamento e atestado
+      // vigente liberam; só "trabalhando" barra. O gatilho do banco
+      // (rec_vaga_exige_demissao, mig 20261111235000) cobra o mesmo.
+      if (checarSubstituicao) {
+        if (checagem.estado === "buscando") { toast("Um instante — consultando a situação do colaborador e o quantitativo do contrato.", "err"); return false; }
+        if (bloqueioSubst) { toast(bloqueioSubst, "err"); return false; }
       }
       const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       // Editando, a vaga que "prende" a pessoa costuma ser ESTA — recusar aí
@@ -601,6 +626,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
+      // #0845: o retrato do que a tela mostrou ao abrir a vaga.
+      ...(checarSubstituicao && checagem.estado === "pronto" ? {
+        substituido_situacao: checagem.situacao?.situacao ?? null,
+        substituido_situacao_texto: checagem.situacao?.texto ?? null,
+        quantitativo_ativos: checagem.quantitativo?.ativos ?? null,
+        quantitativo_cotado: checagem.quantitativo?.cotado ?? null,
+      } : {}),
+      quantitativo_justificativa: quantAcima && decisaoQuant === "sim" ? vaga.quantitativo_justificativa.trim() : (vaga.quantitativo_justificativa.trim() || null),
       // Catálogo (opcional desde 15/09/2026): as colunas são uuid, e "" não é
       // uuid — vazio tem que ir como NULL ("invalid input syntax for type uuid").
       contrato_id: vaga.contrato_id || null,
@@ -626,7 +659,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     let { error, data } = await gravar(payload);
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp,
+        substituido_situacao, substituido_situacao_texto, quantitativo_ativos, quantitativo_cotado, quantitativo_justificativa, ...semColunasNovas } = payload;
       ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
@@ -737,7 +771,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 onChange={e => setVaga(v => ({ ...v, reserva_tecnica: e.target.value }))}>
                 <option>Não</option><option>Sim</option>
               </select>
-              {ehRT && (
+              {/* #0845: em Substituição a RT não muda quem se escolhe — é
+                  sempre quem será substituído, com RT Sim ou Não. O
+                  "colaborador de exemplo do mesmo posto" ficou só para a RT
+                  dos outros motivos. */}
+              {ehSubstituicao(vaga.motivo_vaga) ? (
+                <div style={{ marginTop: 6, fontSize: 13, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "6px 9px" }}>
+                  Selecione abaixo o colaborador que será substituído. As informações dele virão prontas{ehRT ? " e você pode alterar o que precisar" : ""}.
+                </div>
+              ) : ehRT && (
                 <div style={{ marginTop: 6, fontSize: 13, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "6px 9px" }}>
                   Escolha abaixo um <b>colaborador de exemplo do mesmo posto</b>: os dados dele vêm prontos e você pode alterar o que precisar.
                 </div>
@@ -808,7 +850,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                   })}
                 </div>
               )}
-              <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>{ehRT && !ehSubstituicao(vaga.motivo_vaga) ? "Reserva Técnica: escolha alguém do mesmo posto. Contrato, cargo, escala, salário e insalubridade vêm dele e podem ser alterados." : ajudaReferencia(vaga.motivo_vaga)}</div>
+              {!ehSubstituicao(vaga.motivo_vaga) && (
+                <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>{ehRT ? "Reserva Técnica: escolha alguém do mesmo posto. Contrato, cargo, escala, salário e insalubridade vêm dele e podem ser alterados." : ajudaReferencia(vaga.motivo_vaga)}</div>
+              )}
               {/* Sem nome: nos motivos que não são Substituição o escolhido
                   é só o molde da vaga, e é isso que a tela confirma. */}
               {!!substituidoId && !mostraNomeReferencia(vaga.motivo_vaga) && (
@@ -816,29 +860,32 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                   ✓ Colaborador escolhido — cargo, contrato, escala e salário já vieram do cadastro dele{ehRT ? "; altere o que precisar" : ""}.
                 </div>
               )}
-              {/* Substituição anda junto com a demissão de quem sai: a vaga
-                  é aberta A PARTIR da solicitação de demissão. Vinculada,
-                  mostra qual; sem nenhuma, manda solicitar primeiro. */}
-              {!editando && !vinculoDemissao && ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca !== "ocioso" && (
-                demissaoBusca === "buscando" ? (
-                  <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>Procurando a solicitação de demissão…</div>
-                ) : demissaoId ? (
-                  <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
-                    <Link2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
+              {/* Situação de quem sai (#0845, 11/11/2026). Era "não existe
+                  solicitação de demissão — solicite a demissão primeiro", com
+                  botão obrigatório; agora demissão, afastamento (qualquer
+                  motivo) e atestado vigente liberam, e só quem está
+                  trabalhando barra. A frase vem pronta do banco. */}
+              {checarSubstituicao && !vinculoDemissao && (
+                checagem.estado === "buscando" ? (
+                  <div style={{ marginTop: 8, fontSize: 13, color: "#64748b" }}>Consultando a situação do colaborador…</div>
+                ) : checagem.estado === "erro" ? (
+                  <div style={{ marginTop: 8, fontSize: 13, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+                    Não foi possível consultar a situação do colaborador agora. Você pode seguir; ao enviar, o sistema confere de novo.
                   </div>
-                ) : (
-                  <div style={{ marginTop: 6, fontSize: 13, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
-                    <b>Não existe solicitação de demissão para esta pessoa.</b> Vaga de Substituição
-                    é aberta a partir da demissão de quem sai — solicite a demissão primeiro; ao
-                    enviar, esta vaga abre sozinha, já preenchida.
-                    <div style={{ marginTop: 6 }}>
-                      <button type="button" onClick={irSolicitarDemissao}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                        Solicitar a demissão de {(vaga.nome_substituido || "quem sai").split(" ")[0]} →
-                      </button>
-                    </div>
+                ) : checagem.situacao?.permite ? (
+                  <div style={{ marginTop: 8, display: "flex", gap: 9, alignItems: "flex-start", fontSize: 13.5, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "9px 12px" }}>
+                    <CheckCircle2 size={18} strokeWidth={2} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>{checagem.situacao.texto}</span>
                   </div>
-                )
+                ) : checagem.situacao ? (
+                  <div role="alert" style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 12px" }}>
+                    <AlertTriangle size={20} strokeWidth={2} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>
+                      <b style={{ display: "block", fontSize: 14.5 }}>{checagem.situacao.texto.split(". ")[0]}.</b>
+                      {checagem.situacao.texto.split(". ").slice(1).join(". ")}
+                    </span>
+                  </div>
+                ) : null
               )}
               {!!vinculoDemissao && (
                 <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
@@ -914,6 +961,56 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               </div>
             )}
           </div>
+          {/* Quantitativo do contrato (#0845): ativos × cotado, com RT Sim ou
+              Não. É uma validação À PARTE da situação de quem sai — a
+              substituição pode estar liberada e o contrato acima do cotado.
+              Acima: Sim/Não; "Não" não prossegue, "Sim" pede a justificativa
+              e quem autorizou. */}
+          {checarSubstituicao && checagem.estado === "pronto" && checagem.quantitativo?.contrato_id && (
+            checagem.quantitativo.cotado == null ? (
+              <div className="nvg-fg" style={{ fontSize: 13, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 12px" }}>
+                O contrato consta com {checagem.quantitativo.ativos ?? 0} colaboradores ativos. Não há quantitativo cotado na Planilha de Custo deste contrato para comparar.
+              </div>
+            ) : !quantAcima ? (
+              <div className="nvg-fg" style={{ fontSize: 13.5, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 10, padding: "9px 12px" }}>
+                {textoQuantitativo(checagem.quantitativo)}
+              </div>
+            ) : (<>
+              <div className="nvg-fg" style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 14, color: "#b45309", fontWeight: 600, lineHeight: 1.45 }}>
+                  {textoQuantitativo(checagem.quantitativo)} Deseja prosseguir com a contratação?
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                  {(["nao", "sim"] as const).map(op => {
+                    const marcado = decisaoQuant === op;
+                    return (
+                      <button key={op} type="button" aria-pressed={marcado} onClick={() => setDecisaoQuant(op)}
+                        style={{ minWidth: 120, padding: "9px 18px", borderRadius: 10, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                          border: marcado ? "1.5px solid #0f3171" : "1.5px solid #94a3b8",
+                          background: marcado ? "#0f3171" : "#fff", color: marcado ? "#fff" : "#0f172a",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        {op === "sim" ? "Sim" : "Não"}{marcado && <CheckCircle2 size={15} aria-hidden />}
+                      </button>
+                    );
+                  })}
+                </div>
+                {decisaoQuant === "nao" && (
+                  <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: "#b91c1c" }}>
+                    A contratação não prossegue com o contrato acima do quantitativo cotado.
+                  </div>
+                )}
+              </div>
+              {decisaoQuant === "sim" && (
+                <div className="nvg-fg">
+                  <label>Justificativa e quem autorizou *</label>
+                  <textarea className="nvg-fi" rows={3} style={{ resize: "vertical" }}
+                    placeholder="Informe o motivo e o nome de quem autorizou a contratação."
+                    value={vaga.quantitativo_justificativa}
+                    onChange={e => setVaga(v => ({ ...v, quantitativo_justificativa: e.target.value }))} />
+                </div>
+              )}
+            </>)
+          )}
           {/* Vínculo com o catálogo (15/09/2026): posto e função obrigatórios
               quando o contrato tem posto no catálogo — é do posto que vêm o
               V.A e o V.T. O contrato nunca é escolhido aqui — é o da vaga,
@@ -1159,7 +1256,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
         <div className="nvg-rodape">
           <div style={{ display: "flex", gap: 8 }}>
             {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
-            {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
+            {vagaStep === 1 && situacaoBarra && (
+              <span style={{ marginRight: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>Avanço bloqueado pela situação do colaborador.</span>
+            )}
+            {vagaStep < 3 && (() => {
+              const travado = vagaStep === 1 && situacaoBarra;
+              return <button disabled={travado} onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: travado ? "#cbd5e1" : "#0f3171", color: travado ? "#64748b" : "#fff", fontSize: 13.5, fontWeight: 700, cursor: travado ? "not-allowed" : "pointer" }}>Próximo →</button>;
+            })()}
             {vagaStep === 3 && <button onClick={submitVaga} disabled={salvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: salvando ? "#64748b" : "#16a34a", color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: salvando ? "default" : "pointer" }}>{salvando ? (editando ? "Salvando…" : "Enviando…") : editando ? "✓ Salvar alterações" : "✓ Solicitar Vaga"}</button>}
           </div>
         </div>
