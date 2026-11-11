@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { OrcamentoContratoGrupo } from "@/hooks/useOrcamentoContratos";
 import type { UtilizadoOrcamentoLinha } from "@/hooks/useUtilizadoOrcamento";
 import {
-  contratoDaAba, orcadoPorEmpresa, saldoDaOrigemPorEmpresa, utilizadoPorEmpresa, validarDistribuicao, type LinhaOrcamento,
+  agruparPorSetor, aplicarEmGrupo, alternarContrato, alternarEmpresa, configVazia, equipesDasPessoas, filtrarPessoas, pessoaDaEquipe, resumoContratos, saldoDaClassificacao,
+  ordenarPessoas, setorDaPessoa, type ConfigPessoa, type PessoaOrcamento,
 } from "@/pages/malote/orcamento-adm-socios/regras";
 
-// SIS-2026-0702: regras do novo Orçamento Administrativo / Sócios.
+// SIS-2026-0858: Orçamento ADM e Sócios por integrante (regras do HTML do Iury).
 const grupo = (id: string, nome: string, empresa: string, valores: Record<string, number>): OrcamentoContratoGrupo => ({
   contrato: { id, nome, empresa_id: empresa } as any,
   rubricas: Object.entries(valores).map(([malote, valor]) => ({ campo: malote, label: malote, grupo: "g", valor, classificacaoMaloteId: malote })),
@@ -13,93 +14,127 @@ const grupo = (id: string, nome: string, empresa: string, valores: Record<string
 });
 const gasto = (extra: Partial<UtilizadoOrcamentoLinha>): UtilizadoOrcamentoLinha => ({
   despesa_id: "d", id_malote: "M1", descricao: "", status: "Despesa Paga" as any, competencia: "2026-10-01", data_pagamento: "2026-10-05", forma_pagamento: null,
-  classificacao_id: "origem", classificacao_nome: "", empresa_id: "hagg", empresa_nome: "", contrato_id: "c1", contrato_nome: "UFRGS", valor: 0, ...extra,
+  classificacao_id: "indiretos", classificacao_nome: "", empresa_id: "hagg", empresa_nome: "", contrato_id: "c1", contrato_nome: "UFRGS", valor: 0, ...extra,
 });
-const linha = (extra: Partial<LinhaOrcamento>): LinhaOrcamento => ({
-  classificacaoMaloteId: "a1", descricao: "", modo: "percentual", percentual: 20, origemIds: ["origem"], valorManual: 0, distribuicao: {}, ...extra,
-});
+const pessoa = (id: string, nome: string, setores: string[]): PessoaOrcamento => ({ userId: id, nome, setores });
 
-describe("saldo remanescente da origem (regra 6)", () => {
-  it("origem R$1.000, já usado R$100 → saldo R$900", () => {
-    const saldo = saldoDaOrigemPorEmpresa([grupo("c1", "UFRGS", "hagg", { origem: 1000 })], [gasto({ valor: 100 })], ["origem"], "2026-10");
-    expect(saldo.get("hagg")).toBe(900);
+describe("configuração em grupo (regra 4)", () => {
+  const base = new Map<string, ConfigPessoa>([
+    ["1", { classificacaoId: "velha", contratoIds: ["x"] }],
+    ["2", { classificacaoId: "outra", contratoIds: ["y"] }],
+  ]);
+  it("copia a classificação e os contratos só para as pessoas marcadas, substituindo o que tinham", () => {
+    const r = aplicarEmGrupo(base, new Set(["1", "3"]), "indiretos", ["c1", "c2"]);
+    expect(r.get("1")).toEqual({ classificacaoId: "indiretos", contratoIds: ["c1", "c2"] });
+    expect(r.get("3")).toEqual({ classificacaoId: "indiretos", contratoIds: ["c1", "c2"] });
+    expect(r.get("2")).toEqual({ classificacaoId: "outra", contratoIds: ["y"] });
   });
-  it("soma contratos da mesma empresa e separa empresas", () => {
-    const saldo = saldoDaOrigemPorEmpresa(
-      [grupo("c1", "UFRGS", "hagg", { origem: 1000 }), grupo("c2", "SAMU", "hagg", { origem: 500 }), grupo("c3", "PF", "sn", { origem: 200 })],
-      [gasto({ valor: 100 })], ["origem"], "2026-10");
-    expect(saldo.get("hagg")).toBe(1400);
-    expect(saldo.get("sn")).toBe(200);
-  });
-  it("contrato estourado não come o saldo de outro (fica em zero)", () => {
-    const saldo = saldoDaOrigemPorEmpresa(
-      [grupo("c1", "UFRGS", "hagg", { origem: 100 }), grupo("c2", "SAMU", "hagg", { origem: 500 })],
-      [gasto({ valor: 300 })], ["origem"], "2026-10");
-    expect(saldo.get("hagg")).toBe(500);
-  });
-  it("só conta o mês escolhido, a origem escolhida e ignora contratos ADMINISTRATIVO", () => {
-    const saldo = saldoDaOrigemPorEmpresa(
-      [grupo("c1", "UFRGS", "hagg", { origem: 1000, outra: 50 }), grupo("c9", "ADMINISTRATIVO - HAGG", "hagg", { origem: 777 })],
-      [gasto({ valor: 100, competencia: "2026-09-01" }), gasto({ valor: 30, classificacao_id: "outra" })], ["origem"], "2026-10");
-    expect(saldo.get("hagg")).toBe(1000);
-  });
-  it("várias origens somam", () => {
-    const saldo = saldoDaOrigemPorEmpresa([grupo("c1", "UFRGS", "hagg", { origem: 1000, outra: 50 })], [], ["origem", "outra"], "2026-10");
-    expect(saldo.get("hagg")).toBe(1050);
+  it("não altera o mapa original nem compartilha a lista de contratos entre as pessoas", () => {
+    const contratos = ["c1"];
+    const r = aplicarEmGrupo(base, new Set(["1", "2"]), "indiretos", contratos);
+    expect(base.get("1")?.classificacaoId).toBe("velha");
+    r.get("1")!.contratoIds.push("zzz");
+    expect(r.get("2")!.contratoIds).toEqual(["c1"]);
+    expect(contratos).toEqual(["c1"]);
   });
 });
 
-describe("valor orçado por empresa (regras 5 e 7)", () => {
-  it("percentual sobre o saldo: 20% de 900 = 180", () => {
-    expect(orcadoPorEmpresa(linha({}), new Map([["hagg", 900]]), ["hagg", "sn"]).get("hagg")).toBe(180);
-    expect(orcadoPorEmpresa(linha({}), new Map([["hagg", 900]]), ["hagg", "sn"]).get("sn")).toBe(0);
+describe("contratos por empresa (regra 3)", () => {
+  const empresas = [{ id: "hagg", nome: "HAGG" }, { id: "nh", nome: "NH" }];
+  const contratos = [
+    { id: "uffs", nome: "UFFS - 041/2021", empresaId: "hagg" }, { id: "furg", nome: "FURG - 55/2023", empresaId: "hagg" },
+    { id: "ufrgs", nome: "UFRGS - 047/2022", empresaId: "nh" },
+  ];
+  it("marcar a empresa marca todos os contratos dela sem mexer nos das outras; desmarcar tira só os dela", () => {
+    expect(alternarEmpresa(["ufrgs"], ["uffs", "furg"], true).sort()).toEqual(["furg", "ufrgs", "uffs"].sort());
+    expect(alternarEmpresa(["uffs", "furg", "ufrgs"], ["uffs", "furg"], false)).toEqual(["ufrgs"]);
   });
-  it("modo manual rateia pelo percentual e a soma fecha no valor digitado", () => {
-    const r = orcadoPorEmpresa(linha({ modo: "manual", valorManual: 100, distribuicao: { a: 33.33, b: 33.33, c: 33.34 } }), new Map(), ["a", "b", "c"]);
-    expect([...r.values()].reduce((s, v) => Math.round((s + v) * 100) / 100, 0)).toBe(100);
+  it("contrato individual entra e sai", () => {
+    expect(alternarContrato(["uffs"], "furg", true)).toEqual(["uffs", "furg"]);
+    expect(alternarContrato(["uffs", "furg"], "uffs", false)).toEqual(["furg"]);
   });
-});
-
-describe("centro de custo da aba (regra 4)", () => {
-  it("ADM = ADMINISTRATIVO - EMPRESA; Sócios = ADMINISTRATIVO SÓCIOS - NOME", () => {
-    expect(contratoDaAba("ADMINISTRATIVO - NH", "administrativo")).toBe(true);
-    expect(contratoDaAba("ADMINISTRATIVO - NH", "socios")).toBe(false);
-    expect(contratoDaAba("ADMINISTRATIVO SÓCIOS - GUIOMAR", "socios")).toBe(true);
-    expect(contratoDaAba("ADMINISTRATIVO SÓCIOS - GUIOMAR", "administrativo")).toBe(false);
-    expect(contratoDaAba("UFRGS - LIMPEZA", "administrativo")).toBe(false);
-  });
-});
-
-describe("utilizado da classificação administrativa", () => {
-  it("soma o Malote da classificação ligada, nos contratos da aba, no mês, por empresa", () => {
-    const u = utilizadoPorEmpresa([
-      gasto({ classificacao_id: "m1", contrato_nome: "ADMINISTRATIVO - HAGG", empresa_id: "hagg", valor: 40, data_pagamento: "2026-10-03" }),
-      gasto({ classificacao_id: "m1", contrato_nome: "ADMINISTRATIVO - HAGG", empresa_id: "hagg", valor: 10, data_pagamento: "2026-10-09" }),
-      gasto({ classificacao_id: "m1", contrato_nome: "ADMINISTRATIVO SÓCIOS - GUIOMAR", empresa_id: "hagg", valor: 99 }),
-      gasto({ classificacao_id: "m1", contrato_nome: "UFRGS", empresa_id: "hagg", valor: 77 }),
-      gasto({ classificacao_id: "m1", contrato_nome: "ADMINISTRATIVO - SN", empresa_id: "sn", valor: 5, competencia: "2026-09-01" }),
-    ], "m1", "administrativo", "2026-10");
-    expect(u.get("hagg")).toEqual({ valor: 50, ultima: "2026-10-09" });
-    expect(u.has("sn")).toBe(false);
-    expect(utilizadoPorEmpresa([], null, "administrativo", "2026-10").size).toBe(0);
+  it("o resumo diz 'Todos os contratos' quando marcou a empresa inteira e lista os contratos quando marcou só alguns", () => {
+    expect(resumoContratos(empresas, contratos, ["uffs", "furg", "ufrgs"])).toBe("HAGG — Todos os contratos · NH — Todos os contratos");
+    expect(resumoContratos(empresas, contratos, ["uffs"])).toBe("UFFS - 041/2021");
+    expect(resumoContratos(empresas, contratos, [])).toBe("");
   });
 });
 
-describe("validação do percentual (regra 7)", () => {
-  const nomes = new Map([["a1", "CONSÓRCIOS"], ["a2", "IPTU"]]);
-  it("só salva se os percentuais fecham EXATAMENTE 100%", () => {
-    expect(validarDistribuicao([linha({ percentual: 60 }), linha({ classificacaoMaloteId: "a2", percentual: 40 })], nomes)).toEqual([]);
-    expect(validarDistribuicao([linha({ percentual: 60 }), linha({ classificacaoMaloteId: "a2", percentual: 39.99 })], nomes)[0].mensagem).toMatch(/100%/);
+describe("equipes e busca", () => {
+  const ps = [pessoa("1", "IURY", ["Sistemas"]), pessoa("2", "GUIOMAR", ["Diretor Adm", "Diretor Operacional"]), pessoa("3", "NOVO", [])];
+  it("lista as equipes (setores), com 'Sem setor' para quem não tem", () => {
+    expect(equipesDasPessoas(ps)).toEqual(["Diretor Adm", "Diretor Operacional", "Sem setor", "Sistemas"]);
+    expect(setorDaPessoa(ps[2])).toBe("Sem setor");
+    expect(setorDaPessoa(ps[1])).toBe("Diretor Adm · Diretor Operacional");
   });
-  it("percentual sem origem não salva; modo manual precisa de 100% entre empresas", () => {
-    expect(validarDistribuicao([linha({ percentual: 100, origemIds: [] })], nomes)[0].mensagem).toMatch(/origem/);
-    expect(validarDistribuicao([linha({ modo: "manual", distribuicao: { a: 50, b: 40 } })], nomes)[0].mensagem).toMatch(/distribuição/);
-    expect(validarDistribuicao([linha({ modo: "manual", distribuicao: { a: 50, b: 50 } })], nomes)).toEqual([]);
+  it("a pessoa com mais de um setor entra nas duas equipes", () => {
+    expect(pessoaDaEquipe(ps[1], "Diretor Adm")).toBe(true);
+    expect(pessoaDaEquipe(ps[1], "Diretor Operacional")).toBe(true);
+    expect(pessoaDaEquipe(ps[1], "Sistemas")).toBe(false);
+    expect(pessoaDaEquipe(ps[2], "Sem setor")).toBe(true);
   });
-  it("classificação recém-incluída (0%, sem origem) não trava o salvamento", () => {
-    expect(validarDistribuicao([linha({ percentual: 100 }), linha({ classificacaoMaloteId: "a2", percentual: 0, origemIds: [] })], nomes)).toEqual([]);
+  it("busca por nome ou setor, sem diferenciar maiúscula", () => {
+    expect(filtrarPessoas(ps, "iury").map((p) => p.userId)).toEqual(["1"]);
+    expect(filtrarPessoas(ps, "diretor").map((p) => p.userId)).toEqual(["2"]);
+    expect(filtrarPessoas(ps, "  ")).toHaveLength(3);
   });
-  it("sem classificações percentuais não há o que validar", () => {
-    expect(validarDistribuicao([], nomes)).toEqual([]);
+});
+
+describe("saldo da classificação (regra 5)", () => {
+  it("orçado R$ 1.000 em um contrato, já usado R$ 100 no mês → saldo R$ 900", () => {
+    expect(saldoDaClassificacao([grupo("c1", "UFRGS", "hagg", { indiretos: 1000 })], [gasto({ valor: 100 })], "indiretos", "2026-10")).toBe(900);
+  });
+  it("soma os contratos e um contrato estourado não come o saldo de outro", () => {
+    const g = [grupo("c1", "UFRGS", "hagg", { indiretos: 1000 }), grupo("c2", "SAMU", "nh", { indiretos: 500 })];
+    expect(saldoDaClassificacao(g, [gasto({ valor: 1500 }), gasto({ contrato_id: "c2", valor: 100 })], "indiretos", "2026-10")).toBe(400);
+  });
+  it("só conta o mês escolhido e a própria classificação; contrato ADMINISTRATIVO não entra", () => {
+    const g = [grupo("c1", "UFRGS", "hagg", { indiretos: 1000, outra: 50 }), grupo("c9", "ADMINISTRATIVO NH", "nh", { indiretos: 777 })];
+    expect(saldoDaClassificacao(g, [gasto({ valor: 100, competencia: "2026-09-01" }), gasto({ valor: 30, classificacao_id: "outra" })], "indiretos", "2026-10")).toBe(1000);
+  });
+  it("sem classificação escolhida não há saldo", () => {
+    expect(saldoDaClassificacao([], [], null, "2026-10")).toBeNull();
+  });
+});
+
+describe("o que precisa de linha no banco", () => {
+  it("configuração vazia não precisa; com origem ou contrato precisa", () => {
+    expect(configVazia(undefined)).toBe(true);
+    expect(configVazia({ classificacaoId: null, contratoIds: [] })).toBe(true);
+    expect(configVazia({ classificacaoId: "a", contratoIds: [] })).toBe(false);
+    expect(configVazia({ classificacaoId: null, contratoIds: ["c1"] })).toBe(false);
+  });
+});
+
+describe("ordem da lista: por setor ou pela coluna clicada", () => {
+  const ps = [
+    pessoa("1", "ZÉ", ["Sistemas"]), pessoa("2", "ANA", ["RH"]), pessoa("3", "BIA", ["Sistemas"]), pessoa("4", "CAIO", []), pessoa("5", "DAN", ["RH"]),
+  ];
+  const origem: Record<string, string> = { "1": "SALÁRIO", "2": "", "3": "CUSTOS INDIRETOS", "4": "", "5": "SALÁRIO" };
+  const saldo: Record<string, number | null> = { "1": 500, "2": null, "3": 100, "4": null, "5": 900 };
+  const valores = { origem: (p: PessoaOrcamento) => origem[p.userId], saldo: (p: PessoaOrcamento) => saldo[p.userId] };
+  const nomes = (l: PessoaOrcamento[]) => l.map((p) => p.nome);
+
+  it("por setor: um bloco por setor, nome dentro dele, 'Sem setor' por último", () => {
+    const l = ordenarPessoas(ps, "setor", "asc", valores);
+    expect(nomes(l)).toEqual(["ANA", "DAN", "BIA", "ZÉ", "CAIO"]);
+    expect(agruparPorSetor(l).map((b) => [b.setor, b.pessoas.length])).toEqual([["RH", 2], ["Sistemas", 2], ["Sem setor", 1]]);
+  });
+  it("por nome, nos dois sentidos", () => {
+    expect(nomes(ordenarPessoas(ps, "nome", "asc", valores))).toEqual(["ANA", "BIA", "CAIO", "DAN", "ZÉ"]);
+    expect(nomes(ordenarPessoas(ps, "nome", "desc", valores))).toEqual(["ZÉ", "DAN", "CAIO", "BIA", "ANA"]);
+  });
+  it("por origem: sem origem vai por último, mesmo invertendo", () => {
+    expect(nomes(ordenarPessoas(ps, "origem", "asc", valores))).toEqual(["BIA", "DAN", "ZÉ", "ANA", "CAIO"]);
+    expect(nomes(ordenarPessoas(ps, "origem", "desc", valores))).toEqual(["DAN", "ZÉ", "BIA", "ANA", "CAIO"]);
+  });
+  it("por saldo: sem saldo vai por último, mesmo invertendo", () => {
+    expect(nomes(ordenarPessoas(ps, "saldo", "asc", valores))).toEqual(["BIA", "ZÉ", "DAN", "ANA", "CAIO"]);
+    expect(nomes(ordenarPessoas(ps, "saldo", "desc", valores))).toEqual(["DAN", "ZÉ", "BIA", "ANA", "CAIO"]);
+  });
+  it("não altera a lista original", () => {
+    const antes = nomes(ps);
+    ordenarPessoas(ps, "nome", "desc", valores);
+    expect(nomes(ps)).toEqual(antes);
   });
 });
