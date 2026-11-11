@@ -51,7 +51,7 @@ import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
-import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, contratosDasEmpresas, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoFiltro, classificacoesDoTipo, contratosDasEmpresas, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos, type CotaContratoClassificacao } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
 import { AlteracaoEmMassaBar } from "./fluxo-caixa/AlteracaoEmMassaBar";
@@ -210,13 +210,13 @@ export default function FluxoCaixaGestao() {
   const linhasTodas = useMemo(() => {
     const grupos = new Map<
       string,
-      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao>; partes: Map<string, number>; integrantes: Map<number, string>; qtd: number }
+      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao>; cotasContrato: Map<string, CotaContratoClassificacao>; partes: Map<string, number>; integrantes: Map<number, string>; qtd: number }
     >();
     for (const l of linhasBrutas) {
       const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
       let grupo = grupos.get(chave);
       if (!grupo) {
-        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map(), partes: new Map(), integrantes: new Map(), qtd: 0 };
+        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map(), cotasContrato: new Map(), partes: new Map(), integrantes: new Map(), qtd: 0 };
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
@@ -225,6 +225,13 @@ export default function FluxoCaixaGestao() {
       if (l.integrante_empregado_id != null && !l.fatura_cartao_id) grupo.integrantes.set(Number(l.integrante_empregado_id), l.integrante_nome ?? "—");
       grupo.partes.set(l.classificacao_id ?? "", (grupo.partes.get(l.classificacao_id ?? "") ?? 0) + (Number(l.valor) || 0));
       if (l.classificacao_id) grupo.classes.add(l.classificacao_id);
+      // SIS-2026-0868: contrato + classificação de cada linha de rateio, para o filtro Classificação acompanhar o Centro de Custo.
+      {
+        const contratoCota = l.contrato_id ?? (l.contrato_nome ? `nome:${l.contrato_nome}` : null);
+        grupo.cotasContrato.set(`${contratoCota ?? ""}::${l.classificacao_id ?? ""}`, {
+          contratoId: contratoCota, classificacaoId: l.classificacao_id ?? null, classificacaoNome: l.classificacao_nome ?? null,
+        });
+      }
       if (!l.fatura_cartao_id) {
         const chaveCota = `${l.contrato_id ?? l.contrato_nome ?? ""}::${l.classificacao_id ?? ""}`;
         const cota = grupo.cotasClass.get(chaveCota);
@@ -257,13 +264,14 @@ export default function FluxoCaixaGestao() {
         grupo.contratos.set(chaveContrato, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
       }
     }
-    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass, partes, integrantes, qtd }) => {
+    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass, cotasContrato, partes, integrantes, qtd }) => {
       // SIS-2026-0823: um integrante só mostra o nome; mais de um, "Vários" (despesa rateada entre pessoas).
       const infoIntegrante = {
         integrante_empregado_id: integrantes.size === 1 ? Array.from(integrantes.keys())[0] : null,
         integrante_nome: integrantes.size === 1 ? Array.from(integrantes.values())[0] : integrantes.size > 1 ? "Vários" : null,
         qtdLinhasRateio: qtd,
         integrantesIds: Array.from(integrantes.keys()),
+        cotasClassificacao: Array.from(cotasContrato.values()),
       };
       // SIS-2026-0726: valor por classificação, para os cards separarem por natureza (conta movimento / vinculada / CDB).
       const partesClassificacao = Array.from(partes, ([k, v]) => ({ classificacaoId: k || null, valor: v }));
@@ -573,8 +581,9 @@ export default function FluxoCaixaGestao() {
 
   // Todas as classificações (entrada e saída) — usada para os nomes no resumo da planilha.
   const classificacoesDisponiveis = useMemo(() => classificacoesDoTipo(linhas, []), [linhas]);
-  // O filtro Classificação acompanha o filtro Tipo: com "Entrada" só lista classificações de entrada (e vice-versa).
-  const classificacoesDoTipoFiltro = useMemo(() => classificacoesDoTipo(linhas, tiposFiltro), [linhas, tiposFiltro]);
+  // O filtro Classificação acompanha os filtros Tipo e Centro de Custo (SIS-2026-0868): só lista as classificações
+  // que têm lançamento no(s) tipo(s) e centro(s) escolhidos.
+  const classificacoesDoTipoFiltro = useMemo(() => classificacoesDoFiltro(linhas, tiposFiltro, contratoIds), [linhas, tiposFiltro, contratoIds]);
 
   // SIS-2026-0307: mesmo padrão dos filtros acima — deriva direto das
   // linhas já carregadas (a view já entrega banco_nome pronto), sem
@@ -1145,15 +1154,15 @@ export default function FluxoCaixaGestao() {
             </div>
             <div>
               <Label className="text-xs">Tipo</Label>
-              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoTipo(linhas, v))); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, v, contratoIds))); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
-              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={(v) => { setEmpresaIds(v); setContratoIds((sel) => manterSelecionadasDisponiveis(sel, contratosDasEmpresas(linhas, v))); setPage(1); }} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={(v) => { const contratos = manterSelecionadasDisponiveis(contratoIds, contratosDasEmpresas(linhas, v)); setEmpresaIds(v); setContratoIds(contratos); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, tiposFiltro, contratos))); setPage(1); }} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Centro de Custo</Label>
-              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDaEmpresaFiltro, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={(v) => { setContratoIds(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, tiposFiltro, v))); setPage(1); }} options={opcoesDe(contratosDaEmpresaFiltro, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs" title="Só despesas do Malote e lançamentos importados da planilha têm integrante: ao escolher uma pessoa, as linhas de outras origens saem da lista.">Integrante</Label>

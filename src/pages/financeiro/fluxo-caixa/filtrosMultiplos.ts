@@ -41,6 +41,57 @@ export function classificacoesDoTipo(
   return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
 }
 
+// SIS-2026-0868: cada linha de rateio (contrato + classificação) que formou a linha agrupada do Fluxo.
+// `contratoId` usa a mesma chave do rateioDetalhe (contrato_id, ou "nome:<contrato>" no importado sem cadastro).
+export interface CotaContratoClassificacao {
+  contratoId: string | null;
+  classificacaoId: string | null;
+  classificacaoNome: string | null;
+}
+
+// SIS-2026-0868: o filtro Classificação acompanha Tipo E Centro de Custo — só oferece as classificações que têm
+// lançamento nos centros escolhidos (ex.: Centro = INVESTIMENTOS não lista VT se não houver VT em INVESTIMENTOS).
+// Lançamento rateado entre centros: entram só as classificações das cotas dos centros escolhidos.
+// Também entram as classificações de dentro do "Rateio" (classificacoesIds), que o filtro já casa.
+export function classificacoesDoFiltro(
+  linhas: {
+    tipo: string;
+    classificacao_id?: string | null;
+    classificacao_nome?: string | null;
+    contrato_id?: string | null;
+    contrato_nome?: string | null;
+    fatura_cartao_id?: string | null;
+    cotasClassificacao?: CotaContratoClassificacao[];
+  }[],
+  tipos: string[],
+  contratoIds: string[],
+): [string, string][] {
+  const map = new Map<string, string>();
+  const add = (id?: string | null, nome?: string | null) => {
+    if (id && nome && nome !== "Rateio") map.set(id, nome);
+  };
+  const semCentro = contratoIds.includes(FILTRO_SEM_VALOR);
+  const centros = contratoIds.filter((id) => id !== FILTRO_SEM_VALOR);
+  linhas.forEach((l) => {
+    if (tipos.length > 0 && !tipos.includes(l.tipo)) return;
+    const linhaInteira =
+      contratoIds.length === 0 ||
+      (!!l.contrato_id && centros.includes(l.contrato_id)) ||
+      (semCentro && !l.contrato_nome);
+    if (linhaInteira) {
+      add(l.classificacao_id, l.classificacao_nome);
+      l.cotasClassificacao?.forEach((c) => add(c.classificacaoId, c.classificacaoNome));
+      return;
+    }
+    // Rateio entre centros (a fatura do cartão não entra no filtro por cota — ver linhaTemContrato).
+    if (l.fatura_cartao_id) return;
+    l.cotasClassificacao?.forEach((c) => {
+      if (c.contratoId && centros.includes(c.contratoId)) add(c.classificacaoId, c.classificacaoNome);
+    });
+  });
+  return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+}
+
 // Ao trocar o Tipo, tira da seleção as classificações que não existem no(s) novo(s) tipo(s) ("Sem …" fica).
 export function manterSelecionadasDisponiveis(selecionados: string[], disponiveis: [string, string][]): string[] {
   const ids = new Set(disponiveis.map(([id]) => id));
