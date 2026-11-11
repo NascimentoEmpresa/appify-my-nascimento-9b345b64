@@ -81,9 +81,44 @@ describe('NFS-e no GitHub Actions', () => {
     await executarNoGithub(env, {
       carregarConfiguracao: () => undefined, criarCliente: () => ({}),
       processarFilaNfse: async () => { ordem.push('ciclo'); return { aguardarConsulta: true }; },
-      aguardar: async () => { ordem.push('aguardar'); },
+      aguardar: async ms => { assert.equal(ms,60_000); ordem.push('aguardar'); },
     });
     assert.deepEqual(ordem, ['ciclo','aguardar','ciclo']);
     assert.deepEqual(readdirSync(env.RUNNER_TEMP), []);
+  });
+  it('mantém ciclos de 60 segundos com fila vazia e encerra no prazo, removendo arquivos privados', async () => {
+    const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'3' };
+    let tempo = 0; const instantes = [];
+    await executarNoGithub(env, { carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{instantes.push(tempo);},
+      aguardar:async ms=>{assert.equal(ms,60_000);tempo+=ms;},
+    });
+    assert.deepEqual(instantes,[0,60_000,120_000]);
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('recupera falhas de infraestrutura avulsas e zera a contagem após um ciclo válido', async () => {
+    const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'4' };
+    let tempo = 0; let ciclos = 0;
+    await executarNoGithub(env, { carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{ciclos++;if(ciclos!==3)throw new Error('falha-sintetica');},
+      aguardar:async ms=>{tempo+=ms;},
+    });
+    assert.equal(ciclos,4); assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('encerra após três falhas consecutivas sem expor o erro bruto e remove o certificado', async () => {
+    const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'10' };
+    let tempo = 0; let ciclos = 0;
+    await assert.rejects(executarNoGithub(env, { carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{ciclos++;throw new Error('segredo-sintetico-nao-deve-sair');},
+      aguardar:async ms=>{tempo+=ms;},
+    }),/Três ciclos consecutivos/);
+    assert.equal(ciclos,3); assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('recusa duração maior que o teto do runner ou inválida', async () => {
+    for (const duracao of ['0','341','abc','1.5']) {
+      const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:duracao };
+      await assert.rejects(executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({})}),/Duração/);
+      assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+    }
   });
 });
