@@ -96,4 +96,25 @@ describe("Painel NFS-e: escolha do ambiente fiscal", () => {
     expect(screen.queryByRole("button", { name: "Corrigir dados" })).not.toBeInTheDocument();
     expect(estado.reprocessar).not.toHaveBeenCalled();
   });
+  it("reaproveita o pedido rejeitado e exige código da prefeitura sem selecionar uma opção fiscal", async () => {
+    estado.habilitado = true;
+    estado.solicitacoes = [{ id:"rejeitada",ambiente:"producao",estado:"rejeitada",serie:1041,numero_dps:2,
+      atualizado_em:"2026-11-11T18:06:00Z",envio_iniciado_em:"2026-11-11T18:05:00Z",mensagem:"P5006",dados:{parametros:parametrosNfse()} } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const campo = screen.getByLabelText("Código do serviço na prefeitura");
+    expect(campo).toHaveValue(""); expect(campo).toBeRequired();
+    const revisar = () => {
+      fireEvent.click(screen.getByRole("checkbox",{name:"Revisei os dados fiscais, as retenções e a série liberada."}));
+      fireEvent.click(screen.getByRole("checkbox",{name:"Autorizo a emissão de uma nota fiscal real em produção para esta preparação."}));
+    };
+    const botao=screen.getByRole("button",{name:"Solicitar emissão em produção"});
+    revisar(); fireEvent.submit(botao.closest("form")!);
+    expect(estado.enviar).not.toHaveBeenCalled(); expect(estado.erro).toHaveBeenCalledWith(expect.stringContaining("Código do serviço na prefeitura"));
+    fireEvent.change(campo,{target:{value:"8111700"}}); expect(botao).toBeDisabled();
+    revisar(); fireEvent.submit(botao.closest("form")!);
+    await waitFor(()=>expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({codigo_integracao_municipal:"8111700",codigo_municipal:"",confirmacao_producao:true});
+    expect(estado.reprocessar).not.toHaveBeenCalled();
+  });
 });
