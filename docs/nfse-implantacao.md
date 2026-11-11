@@ -2,8 +2,8 @@
 
 O piloto integra **Financeiro → Controle de Notas → Validação de Notas** ao
 processamento no worker. Homologação e produção têm fila, configuração e
-numeração separadas. Homologação está habilitada; produção depende da série,
-revisão fiscal e primeira preparação real. O resultado fiscal de teste não
+numeração separadas. Homologação está habilitada; produção depende da configuração
+técnica e da revisão fiscal pelo operador. O resultado fiscal de teste não
 altera número, valores ou estado de `nf_emissao`.
 
 ## Instâncias e hospedagem — 11/11/2026
@@ -62,10 +62,14 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
 ## Processamento temporário pelo GitHub Actions
 
 O workflow **NFS-e - fila automática** (`nfse_homologacao.yml`) agenda
-um ciclo da fila a cada cinco minutos, exclusivamente na `main` do
+uma execução por hora, exclusivamente na `main` do
 repositório oficial. Usa o mesmo processamento, reservas e proteção contra
 duplicidade do worker local. Não inicia WhatsApp, e-mail ou os outros workers.
 O estado e os documentos persistem no banco/storage do ERP; o runner é descartável.
+Cada job fica ativo por até 340 minutos, com ciclos a cada 60 segundos, seguindo
+o modelo de `espelho-mysql/rapida-continua.sh`. A próxima execução aguarda no
+grupo; uma publicação substitui o processo anterior. Reservas e marcas de envio
+persistidas preservam a reconciliação após uma interrupção.
 
 O ambiente GitHub `nfse-homologacao` deve permitir implantação somente da
 branch `main`. A variável de repositório `NFSE_ACTIONS_HABILITADO=1` habilita
@@ -85,27 +89,36 @@ entram no repositório, cache npm ou artefatos. A configuração e o próprio
 conector exigem configuração separada para produção.
 
 Depois do merge, conferir em **Actions → NFS-e - fila automática**.
-**Run workflow** executa um ciclo manualmente na `main`. O workflow também
+**Run workflow**, com **continuo** marcado, inicia o processador na `main`.
+Desmarcado, executa um diagnóstico de até dois ciclos quando a execução puder
+entrar no grupo de concorrência. O workflow também
 executa após publicação de alterações no próprio workflow ou no processador.
 Uma execução verde confirma que o ciclo rodou; o resultado
 fiscal de cada pedido deve ser conferido no painel do ERP.
 
-Quando o ciclo deixa um resultado aguardando consulta ou PDF, o runner espera
-60 segundos e executa mais um ciclo, limitado a dois por execução. Outros pedidos
-ou um resultado ainda pendente podem precisar de uma execução posterior.
+Enquanto o job está ativo, novos pedidos, protocolos e PDFs pendentes são
+processados nos ciclos de 60 segundos, respeitando a reserva e o prazo do banco.
+Falhas de infraestrutura avulsas não encerram o serviço; três consecutivas
+encerram com erro. Ao atingir o prazo, o job termina e remove os arquivos privados.
 **Atualizar** no ERP apenas relê o resultado salvo; não dispara o Actions.
 O [GitHub documenta intervalo mínimo de cinco minutos e possíveis atrasos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
-Na conferência de 11/11, os ciclos manuais funcionaram, mas não foram observadas
-execuções do tipo `schedule`. Esta atualização padroniza o cron para `*/5` e
-acrescenta o disparo após publicação. É necessário observar uma execução
-automática após o merge; a execução manual não comprova o agendador.
+Na conferência de 11/11, o disparo após merge autorizou a DPS 2 de homologação,
+mas não foram observadas execuções fiscais do tipo `schedule`, inclusive após
+reativar o workflow. O próprio espelho do ponto já documenta atrasos de horas
+nesse repositório. O modo contínuo reduz a dependência do cron durante o job;
+não garante disponibilidade sem interrupção se não houver outra execução na
+fila quando ele terminar. Conferir os jobs ativos/pendentes em Actions e usar
+**Run workflow** se necessário. A hospedagem definitiva continua sendo o servidor.
 
 O primeiro ciclo remoto já foi conferido; o processador local foi encerrado.
 A reserva no banco protege contra disputa caso duas instâncias se sobreponham.
 Para migrar depois ao servidor do ERP: configurar os mesmos arquivos privados,
 iniciar somente o processador NFS-e como serviço, verificar o ciclo e definir
-`NFSE_ACTIONS_HABILITADO=0`. A migração de hospedagem não habilita emissão real.
+as duas variáveis `NFSE_ACTIONS_HABILITADO=0` e
+`NFSE_ACTIONS_PRODUCAO_HABILITADO=0`, cancelando também execuções ativas do Actions.
+As variáveis impedem novos jobs; não encerram um job contínuo já em andamento.
+A migração de hospedagem não habilita emissão real.
 
 ## ERP online e ambiente fiscal de produção
 
@@ -120,8 +133,10 @@ equivale a autorizar a nota. A resposta fiscal vem da API oficial, sem automaç�
 do login do portal. O código separa os dois ambientes, mas a habilitação real
 depende da configuração fiscal e da validação operacional abaixo.
 
-Para liberar produção, confirmar a série exclusiva e a preparação nova a
-transmitir com o Financeiro. O ambiente GitHub `nfse-producao`, restrito à main,
+Para liberar produção, parametrizar a série reservada ao ERP para a empresa.
+O Financeiro escolhe a preparação e confirma a emissão real diretamente no ERP;
+não precisa informar antecipadamente sua identificação à equipe técnica.
+O ambiente GitHub `nfse-producao`, restrito à main,
 usa os mesmos cinco nomes de secrets, mas a configuração JSON contém
 `ambiente: producao`, `producao_confirmada: true`, a série real e os campos
 `municipio_emissor`/`inscricao_municipal` conferidos. A URL é exclusivamente
@@ -129,16 +144,16 @@ usa os mesmos cinco nomes de secrets, mas a configuração JSON contém
 
 A migration `20261111140000_sis_2026_0841_nfse_producao.sql` cria a configuração
 por empresa/ambiente e mantém produção desabilitada por padrão. A equipe técnica
-deve preencher a série e restringir `nf_piloto_id` à preparação da primeira
-validação antes de habilitar a empresa. A variável GitHub
+deve preencher a série antes de habilitar a empresa. `nf_piloto_id` é opcional;
+nulo permite ao Financeiro escolher qualquer preparação apta da empresa.
+A variável GitHub
 `NFSE_ACTIONS_PRODUCAO_HABILITADO=1` libera o job de produção; esse job também
 exige `NFSE_PRODUCAO_HABILITADA=1` no processo. O usuário revisa os dados e marca
 as duas confirmações no formulário. A produção recusa preparações que já têm
 número de NF informado, prevenindo reenvio inadvertido de documento anterior.
 
 Validar a primeira emissão real de um serviço efetivo, conferindo a mesma
-chave/documento no ERP e na consulta da prefeitura. Somente após essa conferência
-retirar a restrição da preparação piloto para o uso regular autorizado.
+chave/documento no ERP e na consulta da prefeitura.
 O certificado já permitiu consultar documentos antigos em produção, mas
 nenhuma DPS foi enviada em produção. Não reutilizar automaticamente o município
 emissor genérico 3542404 nem a série de teste como configuração de Triunfo.
@@ -171,8 +186,18 @@ e reabre seus campos para revisão; exige alterar e incluir. Após início do
 envio, continua disponível somente a consulta. Rejeição definitiva permite
 preparar outro pedido com nova DPS, preservando o histórico anterior.
 
-Depois da publicação desta correção, repetir a homologação pela tela e conferir
-o retorno fiscal. A rejeição P9022 não comprova autorização nem libera produção.
+Após o merge da PR #1208, a DPS 2 foi autorizada como NFS-e 4 em homologação.
+O job 43059515284 foi disparado automaticamente pelo merge e recuperou XML/PDF,
+com bruto R$ 1.500,00 e líquido R$ 1.188,00 conferidos. O PDF enviado pelo
+Financeiro é idêntico ao arquivo do provedor e identifica homologação, sem
+validade jurídica. A validação real de produção ainda não foi feita.
+
+Em 11/11, o processador de produção foi preparado para HAAG, série 1041,
+município 4322004 e IM 3761. O job 43066664230 passou com a fila vazia, validando
+certificado/configuração e acesso ao banco. A consulta de DPS 1 / série 1041
+em produção não encontrou nota. Isso não é uma auditoria completa de histórico.
+A configuração do ERP permanece desabilitada até publicar o modo contínuo e
+conferir o processador ativo; nenhuma solicitação real foi criada nessa etapa.
 
 O arquivo atualizado da HAAG já passou na validação de titular/chave/validade,
 na consulta autenticada de XML/PDF em produção e no envio assíncrono de DPS
