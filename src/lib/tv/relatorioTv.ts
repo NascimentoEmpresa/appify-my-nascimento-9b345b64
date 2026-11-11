@@ -27,6 +27,7 @@ import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
 import type { DadosSupPainelTv } from "@/lib/tv/supPainelTv";
 import type { DadosRecPainelTv } from "@/lib/tv/recPainelTv";
 import type { DadosRhSalariosTv } from "@/lib/tv/rhSalariosTv";
+import type { DadosCtlPainelTv, DadosFinPainelTv, DadosPrePainelTv } from "@/lib/tv/gestaoTv";
 
 /** A cor da faixa de cada relatório: a dos Relatórios; Geral, Vagas, Licitações e Treinamentos têm a sua. */
 export function corDoRelatorioTv(slug: string | null | undefined): string {
@@ -38,6 +39,9 @@ export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "ope-contratos") return "#0f3171"; // o azul do Operacional
   if (slug === "sup-painel") return "#0e7490"; // Suprimentos
   if (slug === "rec-painel" || slug === "rh-salarios") return "#4f46e5"; // Recrutamento/RH (o roxo do modelo)
+  if (slug === "fin-painel") return "#047857";
+  if (slug === "ctl-painel") return "#1e3a8a";
+  if (slug === "pre-painel") return "#7c2d12";
   const ger = painelGerencial(slug);
   if (ger) return ger.cor; // TVs gerenciais (mig 20261012000001)
 
@@ -98,7 +102,11 @@ export type DadosRelTv =
   /** Recrutamento e Seleção (item "rec-painel", mig 20261111190000). */
   | ({ tipo: "rec-painel"; contrato: null } & DadosRecPainelTv)
   /** RH: salários e benefícios × orçamento (item "rh-salarios", mig 20261111220000). */
-  | ({ tipo: "rh-salarios"; contrato: null } & DadosRhSalariosTv);
+  | ({ tipo: "rh-salarios"; contrato: null } & DadosRhSalariosTv)
+  /** Financeiro, Controladoria e Presidência (mig 20261111230000). */
+  | ({ tipo: "fin-painel"; contrato: null } & DadosFinPainelTv)
+  | ({ tipo: "ctl-painel"; contrato: null } & DadosCtlPainelTv)
+  | ({ tipo: "pre-painel"; contrato: null } & DadosPrePainelTv);
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
@@ -142,6 +150,12 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
       return [{ chave: "rec-painel", titulo: "Recrutamento e Seleção" }];
     case "rh-salarios":
       return [{ chave: "rh-salarios", titulo: "Salários e benefícios × orçamento" }];
+    case "fin-painel":
+      return [{ chave: "fin-painel", titulo: "Controle de Faturamento" }];
+    case "ctl-painel":
+      return [{ chave: "ctl-painel", titulo: "Faturamento da Empresa" }];
+    case "pre-painel":
+      return [{ chave: "pre-painel", titulo: "Presidência" }];
     case "turnover": {
       const ps = [{ chave: "turnover-resumo", titulo: "Resumo do ano" }];
       if (d.painel.por_contrato.some((c) => c.demissoes > 0)) ps.push({ chave: "turnover-contratos", titulo: "Por contrato" });

@@ -24,6 +24,8 @@ import { TelaRecPainel } from "./relatorio/paginasRecPainel";
 import type { DadosRecPainelTv } from "@/lib/tv/recPainelTv";
 import { TelaRhSalarios } from "./relatorio/paginasRhSalarios";
 import type { DadosRhSalariosTv } from "@/lib/tv/rhSalariosTv";
+import { TelaCtlPainel, TelaFinPainel, TelaPrePainel } from "./relatorio/paginasGestao";
+import type { DadosCtlPainelTv, DadosFinPainelTv, DadosPrePainelTv } from "@/lib/tv/gestaoTv";
 import { codigoDoIndicador, ehDashboard, ehIndicadorAvulso, ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 
 // =====================================================================
@@ -107,6 +109,15 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
     }));
     const d: PainelBiTv = { painel: { id: painel.id, nome: painel.nome, descricao: painel.descricao, tema: painel.config?.tema ?? null }, widgets };
     return { tipo: "bi", contrato: null, ...d };
+  }
+  if (item.relatorio === "fin-painel") {
+    return { tipo: "fin-painel", contrato: null, ...(ok(await rpc("tv_financeiro_previa")) as DadosFinPainelTv) };
+  }
+  if (item.relatorio === "ctl-painel") {
+    return { tipo: "ctl-painel", contrato: null, ...(ok(await rpc("tv_controladoria_previa")) as DadosCtlPainelTv) };
+  }
+  if (item.relatorio === "pre-painel") {
+    return { tipo: "pre-painel", contrato: null, ...(ok(await rpc("tv_presidencia_previa")) as DadosPrePainelTv) };
   }
   if (item.relatorio === "rh-salarios") {
     return { tipo: "rh-salarios", contrato: null, ...(ok(await rpc("tv_rh_salarios_previa")) as DadosRhSalariosTv) };
@@ -255,6 +266,9 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
       </Palco>
     );
   }
+  if (dados?.tipo === "fin-painel") return <Palco><TelaFinPainel d={dados} atualizado={atualizado} /></Palco>;
+  if (dados?.tipo === "ctl-painel") return <Palco><TelaCtlPainel d={dados} atualizado={atualizado} /></Palco>;
+  if (dados?.tipo === "pre-painel") return <Palco><TelaPrePainel d={dados} atualizado={atualizado} /></Palco>;
   if (dados?.tipo === "rh-salarios") {
     return (
       <Palco fundo="#f5f3ff">

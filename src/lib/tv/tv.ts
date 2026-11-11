@@ -68,6 +68,10 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   { slug: "rec-painel", titulo: "Recrutamento e Seleção", paginas: 1, semFiltros: true },
   // 11/11/2026 (mig 20261111220000): salários e benefícios × Planilha de Custo, por contrato.
   { slug: "rh-salarios", titulo: "RH — Salários e benefícios × orçamento", paginas: 1, semFiltros: true },
+  // 11/11/2026 (mig 20261111230000): as TVs de gestão (src/lib/tv/gestaoTv.ts).
+  { slug: "fin-painel", titulo: "Financeiro — Controle de Faturamento", paginas: 1, semFiltros: true },
+  { slug: "ctl-painel", titulo: "Controladoria — Faturamento da Empresa", paginas: 1, semFiltros: true },
+  { slug: "pre-painel", titulo: "Presidência — visão da alta liderança", paginas: 1, semFiltros: true },
   // 12/10/2026 (mig 20261012000001, SIS-2026-0635): as 13 TVs gerenciais por
   // diretoria do documento "Indicadores das TVs" — indicadores com meta e
   // semáforo (src/lib/tv/gerencial.ts). Sem período nem contrato: cada
