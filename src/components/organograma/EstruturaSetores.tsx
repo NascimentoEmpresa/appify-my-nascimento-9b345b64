@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, GraduationCap, GripVertical, HardHat, Landmark, Maximize, Megaphone, Minus,
-  Link2, Monitor, Network, Package, Plus, Scale, Search, ShieldCheck, UserCog, Users, X,
+  Link2, MapPin, Monitor, Network, Package, Plus, Scale, Search, ShieldCheck, UserCog, Users, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,7 +17,7 @@ import {
   type ContratoEstrutura, type Estrutura, type SetorEstrutura,
 } from "@/lib/organograma/estruturaSetores";
 import { liderancaDoContrato, liderancas, type TurmaEncarregado } from "@/lib/organograma/liderancaContrato";
-import { DialogLideranca, DialogVincularEncarregado } from "./VinculoEncarregado";
+import { DialogLideranca, DialogPostosEncarregado, DialogVincularEncarregado } from "./VinculoEncarregado";
 
 // =====================================================================
 // Organograma › visão ESTRUTURA (06/11/2026) — regra em
@@ -119,6 +119,8 @@ interface Ctx {
   /** SIS-2026-0770: vincular colaboradores do contrato ao encarregado (grava o "reporta a"). */
   podeVincular: boolean;
   vincular: (c: ContratoEstrutura, marcados?: string[]) => void;
+  /** SIS-2026-0770 (11/11): qual encarregado responde por cada posto do contrato. */
+  postos: (c: ContratoEstrutura) => void;
 }
 const C = createContext<Ctx | null>(null);
 const useCtx = () => useContext(C)!;
@@ -356,6 +358,12 @@ function LinhaContrato({ c, nivel, i }: { c: ContratoEstrutura; nivel: number; i
             <Link2 className="h-3.5 w-3.5" />
           </button>
         )}
+        {ctx.podeVincular && c.chave !== "sem" && (
+          <button type="button" title="Encarregado por posto" aria-label={`Encarregado por posto — ${c.nome}`} onClick={() => ctx.postos(c)}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus:opacity-100 group-hover:opacity-100">
+            <MapPin className="h-3.5 w-3.5" />
+          </button>
+        )}
         {arrasta && <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/50 opacity-0 transition group-hover:opacity-100" />}
       </div>
       {aberto && (
@@ -571,7 +579,16 @@ function DialogSupervisor({ c, supervisores, onFechar, onEscolher }: {
 function ResumoEncarregados({ c }: { c: ContratoEstrutura }) {
   const ctx = useCtx();
   const lid = useMemo(() => liderancaDoContrato(c), [c]);
-  if (!lid.encarregados.length) return null;
+  if (!lid.encarregados.length && !ctx.podeVincular) return null;
+  if (!lid.encarregados.length) {
+    return (
+      <div className="flex items-center gap-2 border-t px-2.5 py-1.5 text-[11px]">
+        <MapPin className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">Nenhum encarregado reconhecido</span>
+        <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.postos(c)}>Postos</button>
+      </div>
+    );
+  }
   const sem = lid.semEncarregado.length;
   return (
     <div className="flex items-center gap-2 border-t px-2.5 py-1.5 text-[11px]">
@@ -582,6 +599,9 @@ function ResumoEncarregados({ c }: { c: ContratoEstrutura }) {
       </span>
       {ctx.podeVincular && sem > 0 && (
         <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.vincular(c, lid.semEncarregado.map((p) => p.id))}>Vincular</button>
+      )}
+      {ctx.podeVincular && (
+        <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.postos(c)}>Postos</button>
       )}
     </div>
   );
@@ -633,6 +653,9 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
   const [alvo, setAlvo] = useState<string | null>(null);
   const [escolhendo, setEscolhendo] = useState<ContratoEstrutura | null>(null);
   const [vinculando, setVinculando] = useState<{ c: ContratoEstrutura; marcados?: string[] } | null>(null);
+  // Pela chave: depois de salvar a árvore recarrega e o diálogo mostra o contrato novo.
+  const [postosDe, setPostosDe] = useState<string | null>(null);
+  const contratoPostos = postosDe ? e.contratos.find((x) => x.chave === postosDe) ?? null : null;
   const [verLideranca, setVerLideranca] = useState(false);
   const linhasLideranca = useMemo(() => (verLideranca ? liderancas(nos, e) : []), [verLideranca, nos, e]);
   const alternar = useCallback((k: string) => setAbertos((s) => { const x = new Set(s); if (x.has(k)) x.delete(k); else x.add(k); return x; }), []);
@@ -673,6 +696,7 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
     definirSupervisor: (c) => setEscolhendo(c),
     podeVincular: podeMontar,
     vincular: (c, marcados) => setVinculando({ c, marcados }),
+    postos: (c) => setPostosDe(c.chave),
   };
 
   const idsConselho = new Set(e.conselho.map((c) => c.id));
@@ -788,6 +812,7 @@ export function EstruturaSetores({ nos, onPerfil, podeMontar = false }: { nos: N
         {vinculando && (
           <DialogVincularEncarregado c={vinculando.c} marcadosIniciais={vinculando.marcados} onFechar={() => setVinculando(null)} />
         )}
+        {contratoPostos && <DialogPostosEncarregado c={contratoPostos} nos={nos} onFechar={() => setPostosDe(null)} />}
         {verLideranca && (
           <DialogLideranca linhas={linhasLideranca} onPerfil={onPerfil} onFechar={() => setVerLideranca(false)} />
         )}
