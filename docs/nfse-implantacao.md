@@ -61,8 +61,8 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
 
 ## Processamento temporário pelo GitHub Actions
 
-O workflow **NFS-e - fila automática** (`nfse_homologacao.yml`) executa
-um trabalho da fila a cada cinco minutos, exclusivamente na `main` do
+O workflow **NFS-e - fila automática** (`nfse_homologacao.yml`) agenda
+um ciclo da fila a cada cinco minutos, exclusivamente na `main` do
 repositório oficial. Usa o mesmo processamento, reservas e proteção contra
 duplicidade do worker local. Não inicia WhatsApp, e-mail ou os outros workers.
 O estado e os documentos persistem no banco/storage do ERP; o runner é descartável.
@@ -85,15 +85,21 @@ entram no repositório, cache npm ou artefatos. A configuração e o próprio
 conector exigem configuração separada para produção.
 
 Depois do merge, conferir em **Actions → NFS-e - fila automática**.
-**Run workflow** executa um ciclo manualmente na `main`; o cron dispensa essa
-ação no uso normal. Uma execução verde confirma que o ciclo rodou; o resultado
+**Run workflow** executa um ciclo manualmente na `main`. O workflow também
+executa após publicação de alterações no próprio workflow ou no processador.
+Uma execução verde confirma que o ciclo rodou; o resultado
 fiscal de cada pedido deve ser conferido no painel do ERP.
 
-O envio e a consulta podem precisar de execuções diferentes: com fila vazia
-antes do pedido, normalmente há um ciclo para envio e outro para consulta,
-cerca de 5–10 minutos, além de atrasos do agendador ou espera por outros pedidos.
+Quando o ciclo deixa um resultado aguardando consulta ou PDF, o runner espera
+60 segundos e executa mais um ciclo, limitado a dois por execução. Outros pedidos
+ou um resultado ainda pendente podem precisar de uma execução posterior.
 **Atualizar** no ERP apenas relê o resultado salvo; não dispara o Actions.
 O [GitHub documenta intervalo mínimo de cinco minutos e possíveis atrasos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+Na conferência de 11/11, os ciclos manuais funcionaram, mas não foram observadas
+execuções do tipo `schedule`. Esta atualização padroniza o cron para `*/5` e
+acrescenta o disparo após publicação. É necessário observar uma execução
+automática após o merge; a execução manual não comprova o agendador.
 
 O primeiro ciclo remoto já foi conferido; o processador local foi encerrado.
 A reserva no banco protege contra disputa caso duas instâncias se sobreponham.
@@ -141,6 +147,32 @@ O acompanhamento implementado cobre o processamento da emissão e a recuperaçã
 dos documentos. Ainda não monitora cancelamento/substituição realizados no
 portal, nem importa todo o histórico externo. O resultado fiscal de homologação
 permanece separado do número e da conclusão interna da preparação do ERP.
+
+## Retorno do primeiro pedido pela tela — 11/11/2026
+
+A primeira solicitação do Financeiro, DPS 1 / série 1041 em homologação,
+tinha o local da prestação como nome da cidade e CEP com sete dígitos.
+O desenvolvedor confirmou o CEP **95840-000**. Antes do envio, a correção
+técnica foi registrada no snapshot com auditoria: local da prestação 4322004,
+município emissor de testes 3542404 e CEP 95840000. Valores e enquadramentos
+fiscais foram preservados.
+
+O lote foi recebido e o protocolo consultado. O retorno oficial foi
+**P9022: O XML deve ser enviado sem quebras de linha (sem identação)**, com
+`id: null`. A solicitação foi reconciliada como rejeitada, sem retransmissão.
+O adaptador agora substitui quebras nos textos por espaços **antes** de assinar,
+mantendo assinatura e XSD válidos. Erro sem Id só é associado ao protocolo já
+persistido quando há um único item rejeitado sem chave/XML; não autoriza nota.
+
+O formulário passa a validar CEP e formatos dos códigos antes de criar o
+pedido. Série, município emissor e IM configurados são somente leitura.
+Em erro anterior ao envio, **Corrigir dados** encerra a tentativa sem transmissão
+e reabre seus campos para revisão; exige alterar e incluir. Após início do
+envio, continua disponível somente a consulta. Rejeição definitiva permite
+preparar outro pedido com nova DPS, preservando o histórico anterior.
+
+Depois da publicação desta correção, repetir a homologação pela tela e conferir
+o retorno fiscal. A rejeição P9022 não comprova autorização nem libera produção.
 
 O arquivo atualizado da HAAG já passou na validação de titular/chave/validade,
 na consulta autenticada de XML/PDF em produção e no envio assíncrono de DPS
