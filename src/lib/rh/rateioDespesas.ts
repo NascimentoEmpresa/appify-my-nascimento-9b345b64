@@ -647,6 +647,19 @@ export function extrairLinhasBulllaTxt(linhas: string[]): LinhaPdf[] {
   return out.filter((x) => x.valor !== 0);
 }
 
+/**
+ * VALOR COBRADO da Bullla (11/11/2026, boleto 341045/1 de 21/10/2026): o boleto
+ * cobra o "Valor do documento" — que é a SOMA DAS LINHAS do TXT (R$ 136.674,12;
+ * o rodapé "TOTAL FATURAD" deu R$ 39,60 a menos) — menos os abatimentos que só
+ * aparecem no boleto (ACR - DESCONTO COMERCIAL e ACR - CREDITO FACIL
+ * ABATIMENTO: R$ 15.340,46 → cobrado R$ 121.333,66). O rateio é pelo TXT (o
+ * peso de cada colaborador) e distribui o COBRADO. null sem abatimento válido.
+ */
+export function valorCobradoBullla(somaLinhas: number, abatimentos: number): number | null {
+  if (!(abatimentos > 0) || !(somaLinhas > 0) || abatimentos >= somaLinhas) return null;
+  return Math.round((somaLinhas - abatimentos) * 100) / 100;
+}
+
 /** Soma dos "TOTAL FATURAD" (um por arquivo); null se não houver. */
 export function totalBulllaTxt(linhas: string[]): number | null {
   const tot = linhas

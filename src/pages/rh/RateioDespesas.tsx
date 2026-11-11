@@ -42,7 +42,7 @@ import {
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
   competenciaRotulo, contratoPeloNomeArquivo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
-  extrairLinhasDoPdf, identificarLayoutPdf, layoutPorMatricula, linhasDoLayout, qtdEsperadaBsf, totalDoPdf,
+  extrairLinhasDoPdf, identificarLayoutPdf, layoutPorMatricula, linhasDoLayout, qtdEsperadaBsf, totalDoPdf, valorCobradoBullla,
   basesPorParte, partesDoPdf, ROTULO_PARTE, type ParteDoPdf, type ParteGuia,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
@@ -228,6 +228,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const [lendoIa, setLendoIa] = useState(false);
   const [leituraIa, setLeituraIa] = useState<LeituraIaRateio | null>(null);
   const [soPendentes, setSoPendentes] = useState(false);
+  // Bullla (11/11/2026): o boleto cobra a soma das linhas do TXT MENOS os
+  // abatimentos que só ele traz (desconto comercial, crédito fácil).
+  const [abatBoletoTxt, setAbatBoletoTxt] = useState("");
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
   const [soComBase, setSoComBase] = useState(false);
   const inputPdf = useRef<HTMLInputElement>(null);
@@ -928,6 +931,38 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 <Button size="sm" variant="outline" onClick={() => setValorTxt((totalEsperado ?? totalPdf).toFixed(2))}>Usar o total do PDF como valor da despesa</Button>
               )}
             </div>
+            {/* Bullla: rateio pelo TXT, valor = o COBRADO do boleto (documento − abatimentos). */}
+            {pdfInfo?.rotulo.startsWith("Bullla") && !somenteLeitura && (() => {
+              const cobrado = valorCobradoBullla(totalPdf, Number(abatBoletoTxt) || 0);
+              return (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    O boleto da Bullla cobra o <b>valor do documento</b> (a soma das linhas do TXT, {fmtMoeda(totalPdf)}) <b>menos os abatimentos</b> que
+                    só aparecem nele — ACR-Desconto Comercial e ACR-Crédito Fácil Abatimento, no campo "(-) Descontos / Abatimentos". O rateio continua pelo
+                    TXT (o peso de cada colaborador) e distribui o <b>valor cobrado</b>.
+                  </p>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">(-) Descontos / Abatimentos do boleto (R$)</Label>
+                      <CurrencyInput value={abatBoletoTxt} onChange={(v) => {
+                        setAbatBoletoTxt(v);
+                        const c = valorCobradoBullla(totalPdf, Number(v) || 0);
+                        if (c != null) setValorTxt(c.toFixed(2));
+                      }} />
+                    </div>
+                    {cobrado != null ? (
+                      <span className="text-sm pb-2">(=) Valor cobrado <b>{fmtMoeda(cobrado)}</b>
+                        {Math.abs(cobrado - valor) < 0.005
+                          ? <span className="ml-2 text-success font-semibold">é o valor da despesa — rateado pelas linhas do TXT</span>
+                          : <Button size="sm" variant="outline" className="ml-2" onClick={() => setValorTxt(cobrado.toFixed(2))}>Ratear o valor cobrado</Button>}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground pb-2">Sem abatimento, o cobrado é a soma das linhas. Ou digite o valor cobrado direto em "Valor da despesa".</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             {/* Guia com duas partes (FGTS + consignado): cada uma rateia o seu valor e confere com o seu total. */}
             {comPartes && (
               <div className="rounded-md border p-2 space-y-1.5">
