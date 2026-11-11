@@ -16,7 +16,13 @@ import {
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
+  // #0845 / #0848 / #0849 (11/11/2026): as mesmas regras do ModalNovaVaga.
+  filtroEmpregadoDaVaga, bloqueioSubstituicao, quantitativoAcima, textoQuantitativo,
+  ehAdmissao, STATUS_VAGA_GERENTE_OPERACOES, FILTRO_EMPREGADO_VAGA,
+  ENDERECO_TRABALHO_AJUDA, erroEnderecoTrabalho,
+  type SituacaoSubstituido, type QuantitativoContrato, type DecisaoQuantitativo,
 } from "@/lib/recrutamento/vagaRegras";
+import { useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { useResponsaveisDasVagas } from "@/hooks/useResponsaveisDasVagas";
@@ -153,6 +159,10 @@ const VAGA_RESET = {
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
   req_desejaveis: "", exp_minima: "Não", exp_minima_qual: "",
   motivos_saida: "", recomendacao: "", observacao_importante: "",
+  // #0845/#0848: contrato acima do cotado → motivo e quem autorizou.
+  quantitativo_justificativa: "",
+  // #0849: endereço físico onde a pessoa vai trabalhar (obrigatório na etapa 1).
+  endereco_trabalho: "",
 };
 
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
@@ -493,7 +503,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       const { data, error } = await db
         .from("EMPREGADOS")
         .select('"ID", "Nome", "CPF", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Admissão", "Escala", "Descrição do Local", "Setor_ERP"')
-        .eq("Situação", "Trabalhando")
+        // #0845: na Substituição o afastado (qualquer motivo) também aparece —
+        // é justamente quem precisa ser reposto. Mesma régua do ModalNovaVaga.
+        .or(filtroEmpregadoDaVaga(vaga.motivo_vaga))
         .ilike("Nome", `%${term}%`)
         .order('"Nome"')
         .limit(50);
@@ -539,14 +551,24 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [empEscolhido, setEmpEscolhido] = useState<EmpregadoRef | null>(null);
   const [custoBuscando, setCustoBuscando] = useState(false);
 
-  // Substituição anda junto com a demissão de quem sai: o banco recusa a
-  // vaga sem `demissao_id` (trigger rec_vaga_exige_demissao). Em vez de
-  // deixar a pessoa preencher três etapas pra tomar o erro no final, a
-  // busca roda assim que o colaborador é escolhido — achou, vincula sozinho;
-  // não achou, abre o card no meio da tela (OK / Solicitar demissão).
+  // Substituição (#0845, 11/11/2026): a demissão deixou de ser obrigatória.
+  // Escolhido quem sai, o banco responde a situação dele (demissão,
+  // afastamento e atestado vigente liberam; trabalhando barra) e o
+  // quantitativo do contrato (ativos × cotado). Demissão em aberto, quando
+  // existe, continua sendo vinculada. Admissão (#0848): sem colaborador; o
+  // quantitativo é do contrato escolhido, consultado quando o cargo é escolhido.
   const [demissaoId, setDemissaoId] = useState<number | null>(null);
-  const [demissaoBusca, setDemissaoBusca] = useState<"ocioso" | "buscando" | "achou" | "nenhuma">("ocioso");
-  const [avisoDemissao, setAvisoDemissao] = useState(false);
+  const [checagem, setChecagem] = useState<{
+    estado: "ocioso" | "buscando" | "pronto" | "erro";
+    situacao: SituacaoSubstituido | null;
+    quantitativo: QuantitativoContrato | null;
+  }>({ estado: "ocioso", situacao: null, quantitativo: null });
+  const [decisaoQuant, setDecisaoQuant] = useState<DecisaoQuantitativo>("");
+  const admissao = ehAdmissao(vaga.motivo_vaga);
+  const checarSubstituicao = modalVaga && ehSubstituicao(vaga.motivo_vaga) && !!substituidoId;
+  const checarAdmissao = modalVaga && admissao && !!vaga.contrato.trim() && !!vaga.cargo.trim();
+  const checarVaga = checarSubstituicao || checarAdmissao;
+  const chaveConsulta = checarSubstituicao ? `s:${substituidoId}` : checarAdmissao ? `a:${vaga.contrato}` : "";
 
   // "Este colaborador já tem solicitação de X": o banco responde na escolha
   // (solicitacao_em_aberto) e o card no meio da tela barra antes de a pessoa
@@ -554,37 +576,55 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [bloqueio, setBloqueio] = useState<SolicitacaoEmAberto | null>(null);
 
   useEffect(() => {
-    if (!modalVaga || !ehSubstituicao(vaga.motivo_vaga) || !substituidoId) {
-      setDemissaoId(null); setDemissaoBusca("ocioso"); setAvisoDemissao(false); return;
+    if (!chaveConsulta) {
+      setChecagem({ estado: "ocioso", situacao: null, quantitativo: null }); setDemissaoId(null); return;
     }
     let vivo = true;
-    setDemissaoBusca("buscando");
+    setChecagem({ estado: "buscando", situacao: null, quantitativo: null });
     (async () => {
-      const { data, error } = await db
-        .from("SISTEMA_SOLICITACOES_DEMISSAO")
-        .select("id, status, vaga_id")
-        .eq("colaborador_id", substituidoId)
-        .not("status", "in", '("Reprovada","Cancelada")')
-        // Sem filtrar vaga_id: a demissão pode apontar para uma vaga que
-        // foi reprovada/cancelada, e aí a pessoa PODE ser reposta de novo.
-        // Quem trava quem já está numa vaga viva é `presos`.
-        .order("criado_em", { ascending: false })
-        .limit(1);
+      const { data, error } = await db.rpc("rec_vaga_substituicao_checar", checarSubstituicao
+        ? { p_empregado_id: substituidoId, p_contrato: null }
+        : { p_empregado_id: null, p_contrato: vaga.contrato });
       if (!vivo) return;
-      const d = !error && data?.[0];
-      setDemissaoId(d ? Number(d.id) : null);
-      setDemissaoBusca(d ? "achou" : "nenhuma");
-      if (!d) setAvisoDemissao(true);
+      if (error || !data) { setChecagem({ estado: "erro", situacao: null, quantitativo: null }); return; }
+      const r = data as { situacao: SituacaoSubstituido | null; quantitativo: QuantitativoContrato | null };
+      setChecagem({ estado: "pronto", situacao: r.situacao, quantitativo: r.quantitativo });
+      setDemissaoId(r.situacao?.demissao_id ?? null);
     })();
     return () => { vivo = false; };
-  }, [modalVaga, vaga.motivo_vaga, substituidoId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveConsulta]);
+  const quantAcima = quantitativoAcima(checagem.quantitativo);
+  const bloqueioSubst = checarVaga
+    ? bloqueioSubstituicao({ situacao: checagem.situacao, quantitativo: checagem.quantitativo, decisao: decisaoQuant, justificativa: vaga.quantitativo_justificativa })
+    : null;
+  const situacaoBarra = checarSubstituicao && checagem.estado === "pronto" && !!checagem.situacao && !checagem.situacao.permite;
 
-  /** Vai solicitar a demissão de quem foi escolhido; a vaga abre a partir dela. */
-  const irSolicitarDemissao = () => {
-    const id = substituidoId;
-    setAvisoDemissao(false); setModalVaga(false);
-    nav(`${rotas.demissao}?colaborador=${id}`);
-  };
+  // Cargos do contrato (Admissão, #0848): funções do catálogo do contrato;
+  // contrato sem função cadastrada → os cargos de quem trabalha nele hoje.
+  const { data: funcoesDoContrato = [], isFetching: buscandoFuncoes } =
+    useFuncoesDoContrato(admissao && vaga.contrato_id ? vaga.contrato_id : null);
+  const [cargosDoQuadro, setCargosDoQuadro] = useState<string[]>([]);
+  const contratoEscolhido = contratosFull.find(c => rotuloContrato(c) === vaga.contrato) ?? null;
+  const filialDoContrato = String(contratoEscolhido?.Filial ?? "").trim();
+  const usarCargosDoQuadro = admissao && !!vaga.contrato && !buscandoFuncoes && funcoesDoContrato.length === 0;
+  useEffect(() => {
+    if (!usarCargosDoQuadro || !filialDoContrato) { setCargosDoQuadro([]); return; }
+    let vivo = true;
+    db.from("EMPREGADOS").select('"Título do Cargo"').eq("Filial", filialDoContrato).or(FILTRO_EMPREGADO_VAGA).limit(2000)
+      .then(({ data }: { data: Record<string, unknown>[] | null }) => {
+        if (!vivo) return;
+        setCargosDoQuadro([...new Set((data ?? []).map(r => String(r["Título do Cargo"] ?? "").trim()).filter(Boolean))].sort());
+      });
+    return () => { vivo = false; };
+  }, [usarCargosDoQuadro, filialDoContrato]);
+  const nomesRepetidos = new Set(funcoesDoContrato.map(x => x.nome).filter((n, i, a) => a.indexOf(n) !== i));
+  // Quem é o Gerente de Operações (aviso da Admissão).
+  const [gerentesOperacoes, setGerentesOperacoes] = useState<string[]>([]);
+  useEffect(() => {
+    if (!modalVaga) return;
+    db.rpc("rec_gerente_operacoes_nomes").then(({ data }: { data: string[] | null }) => setGerentesOperacoes(data ?? []));
+  }, [modalVaga]);
 
   const selecionarEmpregado = (emp: EmpregadoRef) => {
     const jaTem = ehSubstituicao(vaga.motivo_vaga) ? presos.get(Number(emp.ID)) : undefined;
@@ -595,6 +635,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     const contratoRotulo = contratoMatch ? rotuloContrato(contratoMatch) : "";
     const salarioTxt = emp["Valor Salário"] ? `R$ ${String(emp["Valor Salário"]).replace(".", ",")}` : "";
     setSubstituidoId(emp.ID ?? null);
+    setDecisaoQuant("");
     setVaga(v => ({
       ...v,
       // Nos outros motivos o escolhido é só o molde: o nome não entra na vaga.
@@ -654,7 +695,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
   const abrirModalVaga = () => {
     setModalVaga(true); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false); setVaga({ ...VAGA_RESET });
-    setSubstituidoId(null); setCustoPosto(null); setCustoNota(""); setEmpEscolhido(null);
+    setSubstituidoId(null); setCustoPosto(null); setCustoNota(""); setEmpEscolhido(null); setDecisaoQuant("");
     if (!contratosFull.length) carregarContratos();
   };
 
@@ -666,9 +707,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     if (step === 1) {
       if (!vaga.motivo_vaga) { toast("Selecione o motivo da vaga.", "err"); return false; }
 
-      // Aqui o colaborador é sempre obrigatório: é dele que vêm cargo,
-      // contrato, escala e salário. Não há modo manual nesta tela.
-      if (!substituidoId) {
+      if (admissao) {
+        // Admissão (#0848): contrato e depois um cargo vinculado a ele.
+        if (!vaga.contrato) { toast("Selecione o contrato da vaga.", "err"); return false; }
+        if (!vaga.cargo.trim()) { toast("Selecione um dos cargos vinculados ao contrato.", "err"); return false; }
+      } else if (!substituidoId) {
+        // Nos outros motivos o colaborador é obrigatório: é dele que vêm cargo,
+        // contrato, escala e salário. Não há modo manual nesta tela.
         toast(ehSubstituicao(vaga.motivo_vaga)
           ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
           : "Escolha na lista alguém com o mesmo cargo da vaga — é de lá que vêm cargo, contrato, escala e salário.", "err");
@@ -677,12 +722,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
       const jaTem = ehSubstituicao(vaga.motivo_vaga) && substituidoId ? presos.get(substituidoId) : undefined;
       if (jaTem) { toast(avisoSubstituidoPreso(jaTem), "err"); return false; }
-      // Sem a demissão de quem sai o banco recusa a vaga — o card já avisou
-      // na escolha; aqui só impede de seguir e mostra de novo.
-      if (ehSubstituicao(vaga.motivo_vaga) && !demissaoId) {
-        if (demissaoBusca === "buscando") toast("Ainda procurando a solicitação de demissão — aguarde um instante.", "err");
-        else setAvisoDemissao(true);
-        return false;
+      // #0845: situação de quem sai e quantitativo do contrato (o banco cobra o mesmo).
+      if (checarVaga) {
+        if (checagem.estado === "buscando") { toast("Um instante — consultando a situação do colaborador e o quantitativo do contrato.", "err"); return false; }
+        if (bloqueioSubst) { toast(bloqueioSubst, "err"); return false; }
       }
       if (!vaga.contrato) { toast("Selecione o contrato.", "err"); return false; }
       if (!vaga.cargo.trim()) { toast("Informe o cargo.", "err"); return false; }
@@ -690,6 +733,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       // contrato tem posto no catálogo — é do posto que vêm o V.A e o V.T.
       if (vaga.contrato_id && catListas.postos.length > 0 && !vaga.posto_id) { toast("Selecione o posto no catálogo de Suprimentos — é dele que vêm o V.A e o V.T da vaga.", "err"); return false; }
       if (vaga.posto_id && catListas.funcoes.length > 0 && !vaga.funcao_id) { toast("Selecione a função do posto no catálogo de Suprimentos.", "err"); return false; }
+      // #0849: depois do posto, o endereço efetivo do local de trabalho.
+      const erroEnd = erroEnderecoTrabalho(vaga.endereco_trabalho);
+      if (erroEnd) { toast(erroEnd, "err"); return false; }
       // Estado e cidade obrigatórios (15/09/2026) — mesma regra do Recrutamento.
       if (!vaga.estado) { toast("Selecione o estado (UF) da vaga.", "err"); return false; }
       if (!vaga.cidade) { toast("Selecione a cidade da vaga.", "err"); return false; }
@@ -723,24 +769,37 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       // Só a substituição grava o id: é ele que trava a pessoa numa vaga só.
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
+      // #0845/#0848: o retrato do que a tela mostrou ao abrir a vaga.
+      ...(checarVaga && checagem.estado === "pronto" ? {
+        substituido_situacao: checagem.situacao?.situacao ?? null,
+        substituido_situacao_texto: checagem.situacao?.texto ?? null,
+        quantitativo_ativos: checagem.quantitativo?.ativos ?? null,
+        quantitativo_cotado: checagem.quantitativo?.cotado ?? null,
+      } : {}),
+      quantitativo_justificativa: quantAcima && decisaoQuant === "sim" ? vaga.quantitativo_justificativa.trim() : null,
+      endereco_trabalho: vaga.endereco_trabalho.trim(),
       contrato_id: vaga.contrato_id || null, posto_id: vaga.posto_id || null, funcao_id: vaga.funcao_id || null,
       // O posto escolhido vira o "Posto de Trabalho" do card (coluna local_exato).
       local_exato: postoNomeEscolhido || null,
       administrativa: ehAdministrativa,
       setor: vaga.setor || null,
       // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
-      status: statusInicialVaga(ehAdministrativa, vaga.setor || null),
+      // #0848: toda Admissão nova espera o Gerente de Operações (o banco repete).
+      status: admissao ? STATUS_VAGA_GERENTE_OPERACOES : statusInicialVaga(ehAdministrativa, vaga.setor || null),
       solicitante_nome: user?.user_metadata?.nome ?? user?.email ?? "",
       solicitante_cpf: user?.email ?? "",
     };
     let { error, data } = await db.from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as Record<string, unknown>;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp,
+        substituido_situacao, substituido_situacao_texto, quantitativo_ativos, quantitativo_cotado, quantitativo_justificativa, endereco_trabalho, ...semColunasNovas } = payload as Record<string, unknown>;
       ({ error, data } = await db.from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
-    toast(`Solicitação #${data?.id} criada com sucesso!`, "ok");
+    toast(admissao
+      ? `Solicitação #${data?.id} criada — aguardando aprovação do Gerente de Operações.`
+      : `Solicitação #${data?.id} criada com sucesso!`, "ok");
     setModalVaga(false); setVaga({ ...VAGA_RESET }); setVagaStep(1); setEmpSearch(""); setShowEmpDrop(false);
     setSubstituidoId(null);
     carregarMinhasSols();
@@ -1413,9 +1472,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     // Trocou de motivo: limpa tudo o que vinha do cadastro do
                     // escolhido anterior (senão sobra cargo/contrato/salário de
                     // outro posto) e obriga a escolher de novo.
-                    setSubstituidoId(null); setEmpSearch("");
+                    setSubstituidoId(null); setEmpSearch(""); setEmpEscolhido(null); setDecisaoQuant("");
                     setVaga(v => ({
                       ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "",
+                      contrato_id: "", posto_id: "", funcao_id: "",
                       salario: "", escala: "", insalubridade_recebe: "Não", insalubridade_quanto: "",
                     }));
                   }}>
@@ -1425,7 +1485,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               </div>
               {/* O colaborador é obrigatório em todos os motivos: é dele que
                   a vaga copia cargo, contrato, escala e salário. */}
-              {!!vaga.motivo_vaga && (
+              {/* #0848: Admissão parte do contrato, sem colaborador de referência. */}
+              {admissao && (
+                <div className="ini-fg">
+                  <div style={{ fontSize: 14, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "7px 10px" }}>
+                    Selecione o contrato da vaga. Depois, escolha um dos cargos vinculados a esse contrato.
+                  </div>
+                </div>
+              )}
+              {!!vaga.motivo_vaga && !admissao && (
                 <div className="ini-fg" style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
                   <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>
                   <input className="ini-fi" placeholder="Digite o nome e escolha na lista..." value={empSearch} autoComplete="off"
@@ -1449,7 +1517,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                           })}
                     </div>
                   )}
-                  <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
+                  {!ehSubstituicao(vaga.motivo_vaga) && <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>}
                   {/* Sem nome: fora da Substituição o escolhido é só o molde da
                       vaga, e é isso que a tela confirma. */}
                   {!!substituidoId && !mostraNomeReferencia(vaga.motivo_vaga) && (
@@ -1457,29 +1525,68 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                       ✓ Colaborador escolhido — cargo, contrato e escala já vieram do cadastro dele.
                     </div>
                   )}
-                  {/* Substituição: mostra a demissão vinculada; sem nenhuma, a
-                      nota fica aqui depois que a pessoa fecha o card no OK. */}
-                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "buscando" && (
-                    <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>Procurando a solicitação de demissão…</div>
-                  )}
-                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "achou" && !!demissaoId && (
-                    <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
-                      🔗 Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
-                    </div>
-                  )}
-                  {ehSubstituicao(vaga.motivo_vaga) && !!substituidoId && demissaoBusca === "nenhuma" && (
-                    <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                      <span>⚠️ Sem solicitação de demissão para esta pessoa.</span>
-                      <button type="button" onClick={() => setAvisoDemissao(true)}
-                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #fcd34d", background: "#fff", color: "#92400e", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                        Ver aviso
-                      </button>
-                    </div>
+                  {/* #0845: situação de quem sai, com a frase do banco. Era "sem
+                      solicitação de demissão" + card obrigando a solicitá-la. */}
+                  {checarSubstituicao && (
+                    checagem.estado === "buscando" ? (
+                      <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>Consultando a situação do colaborador…</div>
+                    ) : checagem.estado === "erro" ? (
+                      <div style={{ marginTop: 6, fontSize: 14, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px" }}>
+                        Não foi possível consultar a situação do colaborador agora. Você pode seguir; ao enviar, o sistema confere de novo.
+                      </div>
+                    ) : checagem.situacao?.permite ? (
+                      <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 10px" }}>
+                        ✅ {checagem.situacao.texto}
+                      </div>
+                    ) : checagem.situacao ? (
+                      <div role="alert" style={{ marginTop: 6, fontSize: 14, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 10px" }}>
+                        <b style={{ display: "block" }}>⚠️ {checagem.situacao.texto.split(". ")[0]}.</b>
+                        {checagem.situacao.texto.split(". ").slice(1).join(". ")}
+                      </div>
+                    ) : null
                   )}
                 </div>
               )}
               {/* Contrato e cargo vêm do cadastro do escolhido e ficam travados
-                  — a vaga é do posto dele, não de outro. */}
+                  — a vaga é do posto dele, não de outro. Na Admissão (#0848)
+                  são escolhidos: o contrato, e um cargo vinculado a ele. */}
+              {admissao ? (<>
+                <div className="ini-fg">
+                  <label>Contrato <span style={{ color: "#dc2626" }}>*</span></label>
+                  <select className="ini-fi" value={vaga.contrato}
+                    onChange={e => { const c = e.target.value; setDecisaoQuant(""); setVaga(v => ({ ...v, contrato: c, cargo: "", posto_id: "", funcao_id: "" })); }}>
+                    <option value="">— Selecione o contrato —</option>
+                    {contratosFull.map((c, i) => <option key={i} value={rotuloContrato(c)}>{rotuloContrato(c)}</option>)}
+                  </select>
+                  <div style={{ marginTop: 4, fontSize: 14, color: "#64748b" }}>Ao selecionar o contrato, aparecem os cargos vinculados a ele.</div>
+                </div>
+                <div className="ini-fg">
+                  <label>Cargo <span style={{ color: "#dc2626" }}>*</span></label>
+                  <select className="ini-fi" disabled={!vaga.contrato}
+                    value={vaga.funcao_id || (vaga.cargo ? "q:" + vaga.cargo : "")}
+                    onChange={e => {
+                      const v = e.target.value; setDecisaoQuant("");
+                      if (v.startsWith("q:")) { setVaga(x => ({ ...x, cargo: v.slice(2), posto_id: "", funcao_id: "" })); return; }
+                      const fn = funcoesDoContrato.find(x => x.id === v);
+                      setVaga(x => ({ ...x, cargo: fn?.nome ?? "", posto_id: fn?.posto_id ?? "", funcao_id: fn?.id ?? "" }));
+                    }}>
+                    <option value="">{!vaga.contrato ? "Selecione o contrato primeiro" : buscandoFuncoes ? "Carregando os cargos do contrato…" : "— Selecione o cargo —"}</option>
+                    {funcoesDoContrato.map(fn => <option key={fn.id} value={fn.id}>{fn.nome}{nomesRepetidos.has(fn.nome) ? ` — ${fn.posto_nome}` : ""}</option>)}
+                    {usarCargosDoQuadro && cargosDoQuadro.map(c => <option key={c} value={"q:" + c}>{c}</option>)}
+                  </select>
+                  <div style={{ marginTop: 4, fontSize: 14, color: usarCargosDoQuadro ? "#92400e" : "#64748b" }}>
+                    {usarCargosDoQuadro
+                      ? (cargosDoQuadro.length ? "Este contrato não tem cargos no catálogo de postos e funções — a lista mostra os cargos de quem trabalha nele hoje."
+                        : "Este contrato não tem cargos cadastrados no catálogo nem colaboradores ativos. Peça o cadastro dos postos e funções do contrato.")
+                      : "Cargo carregado a partir da lista de cargos definidos para o contrato selecionado."}
+                  </div>
+                  {cnhDoCargo && (
+                    <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                      🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
+                    </div>
+                  )}
+                </div>
+              </>) : (<>
               <div className="ini-fg">
                 <label>Contrato *<span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span></label>
                 <input className="ini-fi" readOnly value={vaga.contrato} placeholder="Escolha o colaborador acima"
@@ -1496,6 +1603,55 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   </div>
                 )}
               </div>
+              </>)}
+              {/* Quantitativo do contrato (#0845/#0848): ativos × cotado; acima,
+                  Sim/Não — "Não" não prossegue, "Sim" pede justificativa e quem autorizou. */}
+              {checarVaga && checagem.estado === "pronto" && checagem.quantitativo?.contrato_id && (
+                checagem.quantitativo.cotado == null ? (
+                  <div className="ini-fg" style={{ fontSize: 14, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 12px" }}>
+                    O contrato consta com {checagem.quantitativo.ativos ?? 0} colaboradores ativos. Não há quantitativo cotado na Planilha de Custo deste contrato para comparar.
+                  </div>
+                ) : !quantAcima ? (
+                  <div className="ini-fg" style={{ fontSize: 14, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 10, padding: "9px 12px" }}>
+                    {textoQuantitativo(checagem.quantitativo)}
+                  </div>
+                ) : (<>
+                  <div className="ini-fg" style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 14.5, color: "#b45309", fontWeight: 600, lineHeight: 1.45 }}>
+                      {textoQuantitativo(checagem.quantitativo)} Deseja prosseguir com a contratação?
+                    </div>
+                    <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                      {(["nao", "sim"] as const).map(op => {
+                        const marcado = decisaoQuant === op;
+                        return (
+                          <button key={op} type="button" aria-pressed={marcado} onClick={() => setDecisaoQuant(op)}
+                            style={{ minWidth: 120, padding: "9px 18px", borderRadius: 10, fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                              border: marcado ? "1.5px solid #0f3171" : "1.5px solid #94a3b8", background: marcado ? "#0f3171" : "#fff", color: marcado ? "#fff" : "#0f172a" }}>
+                            {op === "sim" ? "Sim" : "Não"}{marcado ? " ✓" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {decisaoQuant === "nao" && (
+                      <div style={{ marginTop: 8, fontSize: 14, fontWeight: 700, color: "#b91c1c" }}>A contratação não prossegue com o contrato acima do quantitativo cotado.</div>
+                    )}
+                  </div>
+                  {decisaoQuant === "sim" && (
+                    <div className="ini-fg">
+                      <label>Justificativa e quem autorizou *</label>
+                      <textarea className="ini-fi" rows={3} placeholder="Informe o motivo e o nome de quem autorizou a contratação."
+                        value={vaga.quantitativo_justificativa} onChange={e => setVaga(v => ({ ...v, quantitativo_justificativa: e.target.value }))} />
+                    </div>
+                  )}
+                </>)
+              )}
+              {/* #0848: toda Admissão nova passa pelo Gerente de Operações. */}
+              {admissao && (
+                <div className="ini-fg" style={{ fontSize: 14, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 10, padding: "10px 12px", lineHeight: 1.45 }}>
+                  ℹ️ Ao finalizar esta solicitação, a vaga seguirá para <b>aprovação do gerente de operações{gerentesOperacoes.length ? <>: {gerentesOperacoes.join(", ")}</> : ""}</b>.
+                  {" "}Toda nova admissão exige autorização, mesmo quando o contrato estiver dentro do <b>quantitativo</b>.
+                </div>
+              )}
               {/* Vínculo com o catálogo de Suprimentos (15/09/2026): posto e
                   função obrigatórios quando o contrato tem posto no catálogo —
                   é do posto que vêm o V.A e o V.T. O contrato é o do
@@ -1506,6 +1662,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 onChange={v => setVaga(x => ({ ...x, ...v }))}
                 onListas={setCatListas}
                 classeInput="ini-fi" classeGrupo="ini-fg" />
+              {/* #0849: Contrato → Cargo → Posto → ENDEREÇO EFETIVO → o resto. */}
+              <div className="ini-fg">
+                <label>Endereço efetivo do local de trabalho <span style={{ color: "#dc2626" }}>*</span></label>
+                <input className="ini-fi" value={vaga.endereco_trabalho} maxLength={300} placeholder={ENDERECO_TRABALHO_AJUDA}
+                  onChange={e => setVaga(v => ({ ...v, endereco_trabalho: e.target.value }))} />
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">
                   <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>
@@ -1701,7 +1863,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
-              {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
+              {vagaStep === 1 && situacaoBarra && <span style={{ marginRight: "auto", alignSelf: "center", fontSize: 14, color: "#64748b" }}>Avanço bloqueado pela situação do colaborador.</span>}
+              {vagaStep < 3 && (() => {
+                const travado = vagaStep === 1 && situacaoBarra;
+                return <button disabled={travado} onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: travado ? "#cbd5e1" : "#0f3171", color: travado ? "#64748b" : "#fff", fontSize: 14.5, fontWeight: 700, cursor: travado ? "not-allowed" : "pointer" }}>Próximo →</button>;
+              })()}
               {vagaStep === 3 && <button onClick={enviarUmaVez(submitVaga)} {...travaEnvio} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: enviando ? "#94a3b8" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: enviando ? "wait" : "pointer" }}>{enviando ? "Enviando…" : "✓ Solicitar Vaga"}</button>}
             </div>
           </div>
@@ -2090,35 +2256,6 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               style={{ padding: "9px 26px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               OK
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Card: Substituição sem solicitação de demissão ──
-          Fica por cima do modal da vaga (z maior) e exige uma escolha: OK
-          (fecha, a pessoa troca o colaborador ou o motivo) ou ir solicitar a
-          demissão — a vaga abre sozinha a partir dela. */}
-      {avisoDemissao && modalVaga && (
-        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setAvisoDemissao(false)}>
-          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: "center", padding: "28px 26px 22px" }}>
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>⚠️</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Falta a solicitação de demissão</div>
-            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.55, marginBottom: 6 }}>
-              <b>{vaga.nome_substituido || "Este colaborador"}</b> ainda não tem solicitação de demissão em andamento.
-            </div>
-            <div style={{ fontSize: 14.5, color: "#64748b", lineHeight: 1.55, marginBottom: 20 }}>
-              Vaga de <b>Substituição</b> é aberta a partir da demissão de quem sai. Solicite a demissão primeiro — ao enviar, a vaga abre sozinha, já preenchida.
-            </div>
-            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
-              <button type="button" onClick={() => setAvisoDemissao(false)}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                OK
-              </button>
-              <button type="button" onClick={irSolicitarDemissao}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Solicitar demissão desse colaborador →
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -31,6 +31,19 @@ export const ehSubstituicao = (m?: string | null): boolean =>
 // Operações — o banco põe o status (trg_rec_vaga_admissao_gerente, mig
 // 20261111235500); aprovada, segue para a fila que teria sem a regra.
 export const MOTIVO_ADMISSAO = "Admissão";
+// ── Endereço efetivo do local de trabalho (chamado #0849, 11/11/2026) ──
+// Obrigatório na etapa 1, logo depois do posto. A Licitação ainda não manda
+// o endereço do posto, então quem abre a vaga digita. "Rua, número, bairro,
+// cidade e UF" — a regra mínima é ter texto de verdade (10+ caracteres), não
+// adivinhar formato de endereço.
+export const ENDERECO_TRABALHO_AJUDA = "Informe o endereço completo do posto de trabalho (rua, número, bairro, cidade e UF).";
+export function erroEnderecoTrabalho(v?: string | null): string | null {
+  const t = String(v ?? "").trim().replace(/\s+/g, " ");
+  if (!t) return "Informe o endereço efetivo do local de trabalho.";
+  if (t.length < 10) return "Endereço muito curto — informe rua, número, bairro, cidade e UF.";
+  return null;
+}
+
 export const ehAdmissao = (m?: string | null): boolean =>
   String(m ?? "").trim() === MOTIVO_ADMISSAO;
 export const STATUS_VAGA_GERENTE_OPERACOES = "Pendente Gerente Operações";

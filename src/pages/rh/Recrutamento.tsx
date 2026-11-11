@@ -79,6 +79,8 @@ interface Solicitacao {
   insalubridade_recebe?: string;
   insalubridade_quanto?: string;
   local_exato?: string;
+  /** #0849: endereço efetivo do local de trabalho, digitado ao abrir a vaga. */
+  endereco_trabalho?: string | null;
   /** Posto do catálogo (sup_posto) — é ele o "Posto de Trabalho"; ver lib/recrutamento/postoDaVaga. */
   posto_id?: string | null;
   data_inicio_prevista?: string;
@@ -2722,6 +2724,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {/* Sem posto do catálogo (vaga antiga/manual) segue o local_exato, como antes. */}
           {di("Posto de Trabalho", postoLocal.posto || s.local_exato)}
           {postoLocal.posto && postoLocal.local ? di("Local exato", postoLocal.local) : null}
+          {s.endereco_trabalho ? di("Endereço efetivo do local de trabalho", s.endereco_trabalho) : null}
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
           {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}
