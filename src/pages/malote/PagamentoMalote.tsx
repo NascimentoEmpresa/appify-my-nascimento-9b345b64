@@ -192,7 +192,9 @@ export default function PagamentoMalote() {
   const contratosMap = useMemo(() => new Map(contratos.map((c) => [c.id, c.nome])), [contratos]);
   const { data: contratoPrimeiraLinhaPorDespesa } = useContratoPrimeiraLinhaRateio(despesaIds);
   function contratoIdResolvido(despesa: MaloteDespesaRow): string | null {
-    return despesa.contrato_id ?? contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? null;
+    // [SEM-CHAMADO] SD-2026-0211: o contrato da SOLICITAÇÃO (despesa.contrato_id) não é o do rateio; a coluna acompanha a 1ª linha do rateio, como
+    // a empresa acima. Sem rateio com contrato, cai no da despesa.
+    return contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.contrato_id ?? null;
   }
 
   // SIS-2026-0286 (Iury): coluna/filtro de "Setor" — o setor_responsavel é
