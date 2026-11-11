@@ -15,7 +15,7 @@ export interface PassoFluxo {
 }
 
 export const PASSOS_FLUXO: PassoFluxo[] = [
-  { chave: "aprovacao", titulo: "Aprovação", icone: "🕒", quem: "Operacional · Analista · Diretoria", status: ["Pendente Operacional", "Pendente Analista", "Pendente Diretoria"] },
+  { chave: "aprovacao", titulo: "Aprovação", icone: "🕒", quem: "Gerente de Operações · Operacional · Analista · Diretoria", status: ["Pendente Gerente Operações", "Pendente Operacional", "Pendente Analista", "Pendente Diretoria"] },
   { chave: "recrutamento", titulo: "Conferência", icone: "🎯", quem: "Recrutamento confere e abre", status: ["Pendente Recrutamento"] },
   { chave: "selecao", titulo: "Seleção de currículos", icone: "📥", quem: "Recrutamento", status: ["Vaga aberta - Seleção de Currículos"] },
   { chave: "juridico", titulo: "Análise jurídica", icone: "⚖️", quem: "Jurídico verifica o candidato", status: ["Em análise jurídica"] },
