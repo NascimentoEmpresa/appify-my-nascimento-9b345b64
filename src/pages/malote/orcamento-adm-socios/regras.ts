@@ -81,8 +81,14 @@ export function resumoContratos(empresas: EmpresaOpcao[], contratos: ContratoOpc
  * o saldo de um contrato ficar negativo (um contrato estourado não "come" o saldo de outro). Somado entre todos os contratos: é o saldo da
  * CLASSIFICAÇÃO, o mesmo para quem a usa (regra 5 do HTML), e não um saldo exclusivo da pessoa.
  */
-export function saldoDaClassificacao(grupos: OrcamentoContratoGrupo[], utilizado: UtilizadoOrcamentoLinha[], classificacaoId: string | null, anoMes: string): number | null {
+export function saldoDaClassificacao(
+  grupos: OrcamentoContratoGrupo[], utilizado: UtilizadoOrcamentoLinha[], classificacaoId: string | null, anoMes: string,
+  /** contratos escolhidos pela pessoa (centros de custo de onde sai); quando informado, só eles entram na soma. Lista vazia = sem saldo ("—"). */
+  contratoIds?: string[],
+): number | null {
   if (!classificacaoId) return null;
+  if (contratoIds && contratoIds.length === 0) return null;
+  const escolhidos = contratoIds ? new Set(contratoIds) : null;
   const gasto = new Map<string, number>();
   for (const l of utilizado) {
     if (!l.contrato_id || l.classificacao_id !== classificacaoId) continue;
@@ -92,6 +98,7 @@ export function saldoDaClassificacao(grupos: OrcamentoContratoGrupo[], utilizado
   let total = 0;
   for (const g of grupos) {
     if (ehContratoAdministrativo(g.contrato.nome)) continue;
+    if (escolhidos && !escolhidos.has(g.contrato.id)) continue;
     const orcado = g.rubricas.reduce((s, r) => (r.classificacaoMaloteId === classificacaoId ? s + r.valor : s), 0);
     total += Math.max(0, orcado - (gasto.get(g.contrato.id) ?? 0));
   }
