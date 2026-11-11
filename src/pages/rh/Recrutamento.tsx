@@ -613,6 +613,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
+  // Busca dentro do "Filtros · Contratos" (11/11/2026): são dezenas de
+  // contratos e achar um rolando a lista era lento.
+  const [buscaContratoFiltro, setBuscaContratoFiltro] = useState("");
   // Etiquetas: filtro (qualquer uma das marcadas), contagem por etiqueta
   // para o menu do filtro, e qual solicitação está com o menu de marcar
   // aberto (uma por vez — é um popover na linha da tabela / no drawer).
@@ -3649,9 +3652,18 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Mostrar só estes contratos</span>
                   {contratoFiltro.length > 0 && <button onClick={() => { setContratoFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
                 </div>
+                {contratoCounts.length > 0 && (
+                  <input autoFocus value={buscaContratoFiltro} onChange={e => setBuscaContratoFiltro(e.target.value)} placeholder="Buscar contrato…"
+                         style={{ width: "100%", boxSizing: "border-box", height: 32, marginBottom: 6, padding: "0 10px", fontSize: 13, border: "1px solid #dbe4f0", borderRadius: 8, outline: "none", color: "#0f172a", background: "#fff" }} />
+                )}
                 {contratoCounts.length === 0 ? (
                   <div style={{ fontSize: 12, color: "#94a3b8", padding: "8px 6px" }}>Nenhum contrato com solicitação.</div>
-                ) : contratoCounts.map(c => {
+                ) : contratoCounts.filter(c => {
+                  // Sem acento e sem caixa: "goncalves" acha "GONÇALVES".
+                  const sem = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+                  const q = sem(buscaContratoFiltro.trim());
+                  return !q || sem(c.contrato).includes(q) || contratoFiltro.includes(c.contrato);
+                }).map(c => {
                   const checked = contratoFiltro.includes(c.contrato);
                   return (
                     <label key={c.contrato} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 6px", borderRadius: 8, cursor: "pointer", background: checked ? "#eef4ff" : "transparent" }}>
