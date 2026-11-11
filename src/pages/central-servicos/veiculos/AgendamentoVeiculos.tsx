@@ -1,7 +1,7 @@
 import { Suspense, lazy, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Car, ClipboardCheck, Gauge } from "lucide-react";
-import { useChecklists } from "@/hooks/useChecklistVeiculo";
+import { useChecklists, useUltimosKm } from "@/hooks/useChecklistVeiculo";
 import { agendamentosComPendencia, avisoParaUsuario, validarChegadaPrevista } from "@/lib/checklistVeiculo";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -90,6 +90,8 @@ export default function AgendamentoVeiculos() {
   // Checklist de saída/chegada (04/11/2026): o que está atrasado nos MEUS
   // agendamentos vira o aviso "VOCÊ PRECISA PREENCHER…" no topo da tela.
   const checklists = useChecklists();
+  // Último KM de cada carro, no card de escolher (mig 20261110220000).
+  const ultimosKm = useUltimosKm();
   const listaChecklists = useMemo(() => checklists.data ?? [], [checklists.data]);
   const meusAtrasados = useMemo(
     () => agendamentosComPendencia((agenda.data ?? []).filter((a) => a.solicitante_id === user?.id), listaChecklists),
@@ -354,6 +356,7 @@ export default function AgendamentoVeiculos() {
                           disponibilidade={disponibilidadeDoVeiculo(v, rascunho.dataInicio)}
                           selecionado={rascunho.veiculo?.id === v.id}
                           onSelecionar={escolherVeiculo}
+                          ultimoKm={ultimosKm.data?.get(v.id) ?? null}
                         />
                       ))}
                     </div>
