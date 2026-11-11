@@ -257,7 +257,9 @@ export function montarPrompt(c: ChamadoParaParecer, entrega?: EntregaReal | null
     `Usuários afetados: ${c.afeta_usuarios ?? "—"}`,
   ];
   if (c.definicao) linhas.push(`Definição da gestão: ${c.definicao}`);
-  linhas.push("", "Descrição:", corta(c.descricao, 6000) || "(sem descrição)");
+  // A descrição deixou de ter limite na abertura (10/11/2026): 20 mil caracteres
+  // cobrem o texto colado inteiro sem estourar o contexto do modelo.
+  linhas.push("", "Descrição:", corta(c.descricao, 20000) || "(sem descrição)");
   if (c.observacoes_solicitante?.trim()) linhas.push("", "Observações do solicitante:", corta(c.observacoes_solicitante, 1500));
   if (horasReais > 0) {
     linhas.push("", `Horas reais informadas pelo desenvolvedor ao concluir: ${horasReais.toLocaleString("pt-BR")} h (desenvolvedor sênior interno, que já conhece o ERP). Vale para o perfil "interno" e é o piso dos outros dois.`);
