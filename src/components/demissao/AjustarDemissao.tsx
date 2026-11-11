@@ -12,6 +12,7 @@ import { chaveContrato } from "@/lib/recrutamento/vagaRegras";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO, STATUS_AJUSTE_SOLICITADO, TABELA, TABELA_ANEXOS,
+  JUSTIFICATIVAS_DESLIGAMENTO, JUSTIFICATIVA_OUTROS,
   TERMINOS_EXPERIENCIA, erroDoArquivo, erroDoAjuste, fmtDataHora, fmtTamanho, mascaraTelefone, podeAjustarDemissao,
   type AlteracaoAjuste, type AnexoDemissao, type FormAjuste,
 } from "@/lib/demissao/solicitacao";
@@ -94,6 +95,8 @@ function DialogAjuste({ id, avisar, onFechar, onEnviada }: {
       setForm({
         data_solicitacao: data.data_solicitacao ?? "", colaborador_posto: data.colaborador_posto ?? "",
         motivo_solicitacao: data.motivo_solicitacao ?? "", motivo_pedido: data.motivo_pedido ?? "", relato: data.relato ?? "",
+        // As abertas antes de 10/11/2026 chegam sem justificativa: o ajuste pede (é obrigatória).
+        justificativa_desligamento: data.justificativa_desligamento ?? "", justificativa_complemento: data.justificativa_complemento ?? "",
         termino_experiencia: data.termino_experiencia ?? "", data_aviso: data.data_aviso ?? "", modelo_aviso: data.modelo_aviso ?? "",
         colaborador_telefone: data.colaborador_telefone ?? "", colaborador_email: data.colaborador_email ?? "",
       });
@@ -204,6 +207,17 @@ function DialogAjuste({ id, avisar, onFechar, onEnviada }: {
                 opcoes={comAtual(MOTIVOS_SOLICITACAO, form.motivo_solicitacao)} />
               <Lista rotulo="Motivo do pedido de demissão *" valor={form.motivo_pedido} aoMudar={(v) => setCampo("motivo_pedido", v)}
                 opcoes={comAtual(MOTIVOS_PEDIDO, form.motivo_pedido)} />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Lista rotulo="Justificativa do desligamento *" valor={form.justificativa_desligamento}
+                aoMudar={(v) => setCampo("justificativa_desligamento", v)} opcoes={[...JUSTIFICATIVAS_DESLIGAMENTO]} />
+              <div>
+                <Label htmlFor="aj-just-comp">
+                  {form.justificativa_desligamento === JUSTIFICATIVA_OUTROS ? "Descreva a justificativa *" : "Complemento da justificativa"}
+                </Label>
+                <Textarea id="aj-just-comp" className="mt-1 min-h-10" maxLength={1000} value={form.justificativa_complemento}
+                  onChange={(e) => setCampo("justificativa_complemento", e.target.value)} />
+              </div>
             </div>
             <div>
               <Label htmlFor="aj-relato">Relato do motivo *</Label>

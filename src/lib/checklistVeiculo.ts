@@ -58,6 +58,13 @@ export interface ChecklistVeiculo {
   preenchido_por_nome?: string | null;
   /** Coluna gerada no banco; a tela recalcula com checklistCompleto() quando não vier. */
   completo?: boolean | null;
+  /** Prestação da viagem (chegada, mig 20261110220000). */
+  video_veiculo?: string | null;
+  agua_verificada?: boolean | null;
+  oleo_verificado?: boolean | null;
+  /** Possível avaria: true/false; null = não respondido. */
+  avaria?: boolean | null;
+  avaria_descricao?: string | null;
 }
 
 /** O mínimo do agendamento que a régua precisa. */
