@@ -1,4 +1,4 @@
-// Um ciclo da fila e, quando necessário, uma consulta após 60 s, sem outros workers.
+// Fila fiscal isolada: ciclos de 60 s no Actions ou diagnóstico de até dois ciclos.
 const fs = require('node:fs');
 const path = require('node:path');
 const { carregarConfiguracao, validarUrlFiscal } = require('./cliente');
@@ -71,17 +71,36 @@ async function executarNoGithub(ambiente = process.env, dependencias = {}) {
       temporarios.ambienteWorker.SUPABASE_SERVICE_ROLE_KEY,
       { auth: { persistSession: false, autoRefreshToken: false } });
     const processar = dependencias.processarFilaNfse || processarFilaNfse;
+    const aguardar = dependencias.aguardar || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+    if (ambiente.NFSE_ACTIONS_CONTINUO === '1') {
+      const minutos = Number(ambiente.NFSE_ACTIONS_DURACAO_MIN || 340);
+      if (!Number.isInteger(minutos) || minutos < 1 || minutos > 340) throw new Error('Duração do processador fora do intervalo de 1 a 340 minutos.');
+      const agora = dependencias.agora || Date.now;
+      const fim = agora() + minutos * 60_000;
+      let falhasSeguidas = 0;
+      console.log('[nfse-actions] Processador ativo; intervalo de 60 segundos.');
+      do {
+        try { await processar(supabase, temporarios.ambienteWorker); falhasSeguidas = 0; }
+        catch {
+          falhasSeguidas++;
+          if (falhasSeguidas >= 3) throw new Error('Três ciclos consecutivos falharam. Confira a disponibilidade do banco e a configuração fiscal.');
+          console.warn('[nfse-actions] Falha de infraestrutura no ciclo; haverá nova tentativa em 60 segundos.');
+        }
+        if (agora() + 60_000 >= fim) break;
+        await aguardar(60_000);
+      } while (agora() < fim);
+      return;
+    }
     const resultado = await processar(supabase, temporarios.ambienteWorker);
     if (resultado?.aguardarConsulta) {
-      const aguardar = dependencias.aguardar || (() => new Promise(resolve => setTimeout(resolve, 60_000)));
-      await aguardar();
+      await aguardar(60_000);
       await processar(supabase, temporarios.ambienteWorker);
     }
   } finally { temporarios.descartar(); }
 }
 
 if (require.main === module) executarNoGithub()
-  .then(() => console.log('[nfse-actions] Ciclo concluído. Confira o ambiente e o resultado fiscal no ERP.'))
+  .then(() => console.log('[nfse-actions] Execução concluída. Confira o ambiente e o resultado fiscal no ERP.'))
   .catch(() => {
     console.error('[nfse-actions] Falha no ciclo. Confira os secrets e a configuração do ambiente fiscal selecionado.');
     process.exitCode = 1;
