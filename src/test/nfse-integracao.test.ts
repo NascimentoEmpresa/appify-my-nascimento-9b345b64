@@ -187,6 +187,40 @@ describe("NFS-e: documento fiscal e certificado", () => {
     expect(await executarSolicitacao(s,deps)).toEqual({estado:"rejeitada",mensagem:"P5006: Informe o código municipal"});
     expect(deps.cliente.enviar).not.toHaveBeenCalled();
   });
+  it("omite pAliq no cenário local não optante de Triunfo, preservando valores e assinatura", async () => {
+    const s = solicitacao(); s.ambiente = "producao";
+    Object.assign(s.dados.parametros,{confirmacao_producao:true,codigo_tributacao:"170501",codigo_integracao_municipal:"8111700",aliquota_iss:"5.00",local_prestacao:"4322004"});
+    s.dados.parametros.tomador.municipio = "4322004";
+    Object.assign(s.dados.nota,{vlr_bruto_total:1500,issqn_total:75,inss_total:165,ir_total:72,vlr_liquido_total:1188});
+    const antes = JSON.stringify(s);
+    const xml = documento.gerarDps(s);
+    expect(xml).not.toContain("<pAliq>");
+    expect(xml).toContain("<tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>2</tpRetISSQN></tribMun>");
+    expect(xml).toContain("<vRetCP>165.00</vRetCP><vRetIRRF>72.00</vRetIRRF>");
+    const assinado = documento.assinarDps(xml,documento.identificadorDps(s),cert,"sha1");
+    await documento.validarEsquema(assinado);
+    const verificador = new SignedXml({publicCert:cert.certPem,getCertFromKeyInfo:()=>null});
+    verificador.loadSignature(documento.elementos(documento.lerXml(assinado),"Signature")[0]);
+    expect(verificador.checkSignature(assinado)).toBe(true);
+    expect(JSON.stringify(s)).toBe(antes);
+    const retorno = retornoXml(s,{liquido:"1188.00"});
+    expect(documento.conferirNota(documento.descompactar(retorno.xmlGZipB64).toString(),s,retorno.chave).numero).toBe("900");
+    const divergente = retornoXml(s,{liquido:"1200.00"});
+    expect(()=>documento.conferirNota(documento.descompactar(divergente.xmlGZipB64).toString(),s,divergente.chave)).toThrow(/líquido retornado diverge/);
+  });
+  it("preserva pAliq em homologação, fora do cenário local e no Simples Nacional", async () => {
+    for (const caso of ["homologacao","prestacao_fora","tomador_fora","simples"]) {
+      const s = solicitacao(); s.ambiente = caso === "homologacao" ? "homologacao" : "producao";
+      Object.assign(s.dados.parametros,{confirmacao_producao:true,local_prestacao:"4322004"});
+      s.dados.parametros.tomador.municipio = "4322004";
+      if(caso === "prestacao_fora")s.dados.parametros.local_prestacao="4314902";
+      if(caso === "tomador_fora")s.dados.parametros.tomador.municipio="4314902";
+      if(caso === "simples")Object.assign(s.dados.parametros,{opcao_simples:"3",regime_apuracao:"1"});
+      const xml = documento.gerarDps(s);
+      expect(xml).toContain("<pAliq>2.00</pAliq>");
+      await documento.validarEsquema(xml);
+    }
+  });
   it("recusa XML com entidade externa, CNPJ divergente, ambiente real e líquido diferente", () => {
     expect(() => documento.lerXml('<!DOCTYPE x [<!ENTITY a SYSTEM "file:///segredo">]><x/>')).toThrow(/XML/);
     for (const alteracoes of [{ cnpj: "99999999000199" }, { liquido: "90.00" }, { ambiente: "1" }]) {
