@@ -1,6 +1,6 @@
 // SIS-2026-0725: os filtros do Fluxo de Caixa aceitam mais de um item.
 import { describe, expect, it } from "vitest";
-import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe } from "@/pages/financeiro/fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, contratosDasEmpresas, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe } from "@/pages/financeiro/fluxo-caixa/filtrosMultiplos";
 import { filtrarPorSituacaoFluxo } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { linhasDoExport } from "@/pages/financeiro/fluxo-caixa/exportRateio";
 
@@ -97,5 +97,33 @@ describe("classificação acompanha o filtro Tipo", () => {
   it("ao trocar o tipo, tira da seleção o que não existe mais e mantém 'Sem …'", () => {
     const entrada = classificacoesDoTipo(linhas, ["entrada"]);
     expect(manterSelecionadasDisponiveis(["assid", "transf", FILTRO_SEM_VALOR], entrada)).toEqual(["transf", FILTRO_SEM_VALOR]);
+  });
+});
+
+// Filtro Centro de Custo acompanha o filtro Empresa: com uma empresa marcada só lista os contratos dela.
+describe("contratosDasEmpresas", () => {
+  const linhas = [
+    { empresa_id: "agps", contrato_id: "c1", contrato_nome: "INVESTIMENTOS AGPS" },
+    { empresa_id: "agps", contrato_id: "c2", contrato_nome: "ADMINISTRATIVO AGPS" },
+    { empresa_id: "sn", contrato_id: "c3", contrato_nome: "SALTO DO JACUI" },
+    { empresa_id: "sn", contrato_id: "c1", contrato_nome: "INVESTIMENTOS AGPS" },
+    { empresa_id: "hagg", contrato_id: null, contrato_nome: null },
+  ];
+
+  it("sem empresa, lista todos os contratos (ordem alfabética)", () => {
+    expect(contratosDasEmpresas(linhas, []).map(([id]) => id)).toEqual(["c2", "c1", "c3"]);
+  });
+
+  it("com uma empresa, só os contratos dela", () => {
+    expect(contratosDasEmpresas(linhas, ["agps"]).map(([id]) => id)).toEqual(["c2", "c1"]);
+    expect(contratosDasEmpresas(linhas, ["hagg"])).toEqual([]);
+  });
+
+  it("com várias empresas, junta os contratos delas sem repetir", () => {
+    expect(contratosDasEmpresas(linhas, ["agps", "sn"]).map(([id]) => id)).toEqual(["c2", "c1", "c3"]);
+  });
+
+  it("ao trocar a empresa, tira da seleção o contrato de outra empresa e mantém 'Sem …'", () => {
+    expect(manterSelecionadasDisponiveis(["c3", "c1", FILTRO_SEM_VALOR], contratosDasEmpresas(linhas, ["agps"]))).toEqual(["c1", FILTRO_SEM_VALOR]);
   });
 });

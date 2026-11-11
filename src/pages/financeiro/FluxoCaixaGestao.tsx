@@ -51,7 +51,7 @@ import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
-import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoTipo, contratosDasEmpresas, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
 import { AlteracaoEmMassaBar } from "./fluxo-caixa/AlteracaoEmMassaBar";
@@ -559,11 +559,10 @@ export default function FluxoCaixaGestao() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhas]);
 
-  const contratosDisponiveis = useMemo(() => {
-    const map = new Map<string, string>();
-    linhas.forEach((l) => l.contrato_id && l.contrato_nome && map.set(l.contrato_id, l.contrato_nome));
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [linhas]);
+  // Todos os contratos — usada para os nomes no resumo da planilha.
+  const contratosDisponiveis = useMemo(() => contratosDasEmpresas(linhas, []), [linhas]);
+  // O filtro Centro de Custo acompanha o filtro Empresa: com uma empresa marcada só lista os contratos dela (antes listava todos).
+  const contratosDaEmpresaFiltro = useMemo(() => contratosDasEmpresas(linhas, empresaIds), [linhas, empresaIds]);
 
   // As opções saem das linhas brutas: a linha agrupada de uma despesa rateada entre pessoas só carrega "Vários".
   const integrantesDisponiveis = useMemo(() => {
@@ -882,7 +881,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Empresa</Label>
-              <SearchableMultiSelect value={fx.empresaIds} onChange={(v) => setFx((f) => ({ ...f, empresaIds: v }))} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect value={fx.empresaIds} onChange={(v) => setFx((f) => ({ ...f, empresaIds: v, contratoIds: manterSelecionadasDisponiveis(f.contratoIds, contratosDasEmpresas(linhas, v)) }))} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Banco</Label>
@@ -890,7 +889,7 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Centro de Custo</Label>
-              <SearchableMultiSelect value={fx.contratoIds} onChange={(v) => setFx((f) => ({ ...f, contratoIds: v }))} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect value={fx.contratoIds} onChange={(v) => setFx((f) => ({ ...f, contratoIds: v }))} options={opcoesDe(contratosDasEmpresas(linhas, fx.empresaIds), "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Integrante</Label>
@@ -1150,11 +1149,11 @@ export default function FluxoCaixaGestao() {
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
-              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={setEmpresaIds} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={(v) => { setEmpresaIds(v); setContratoIds((sel) => manterSelecionadasDisponiveis(sel, contratosDasEmpresas(linhas, v))); setPage(1); }} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Centro de Custo</Label>
-              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDaEmpresaFiltro, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs" title="Só despesas do Malote e lançamentos importados da planilha têm integrante: ao escolher uma pessoa, as linhas de outras origens saem da lista.">Integrante</Label>

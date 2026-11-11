@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NfEmissaoRow } from "@/hooks/useNfEmissao";
-import { abrirDocumentoNfse, AmbienteNfse, EstadoNfse, ParametrosNfse, useConfiguracaoNfse, useReprocessarNfse, useSolicitacoesNfse, useSolicitarNfse } from "@/hooks/useNfseIntegracao";
+import { abrirDocumentoNfse, AmbienteNfse, EstadoNfse, ParametrosNfse, SolicitacaoNfse, useConfiguracaoNfse, useReprocessarNfse, useSolicitacoesNfse, useSolicitarNfse } from "@/hooks/useNfseIntegracao";
 import { fmtMoney } from "../nf-emissao/shared";
+import { validarParametrosNfse } from "./validarParametrosNfse";
 
 const ESTADOS: Record<EstadoNfse, string> = {
   pendente: "Na fila", processando: "Processando", aguardando: "Aguardando a prefeitura",
@@ -28,11 +29,11 @@ function parametrosIniciais(nf: NfEmissaoRow): ParametrosNfse {
     tomador: { documento: "", nome: "", municipio: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", email: "" },
   };
 }
-function Campo({ titulo, valor, alterar, obrigatorio = true, tipo = "text", maximo }: {
-  titulo: string; valor: string; alterar: (valor: string) => void; obrigatorio?: boolean; tipo?: string; maximo?: number;
+function Campo({ titulo, valor, alterar, obrigatorio = true, tipo = "text", maximo, somenteLeitura = false }: {
+  titulo: string; valor: string; alterar: (valor: string) => void; obrigatorio?: boolean; tipo?: string; maximo?: number; somenteLeitura?: boolean;
 }) {
   return <Label className="grid gap-2 text-sm font-normal">{titulo}
-    <Input value={valor} onChange={e => alterar(e.target.value)} required={obrigatorio} type={tipo} maxLength={maximo} step={tipo === "number" ? "0.01" : undefined} min={tipo === "number" ? "0" : undefined} />
+    <Input value={valor} onChange={e => alterar(e.target.value)} readOnly={somenteLeitura} required={obrigatorio} type={tipo} maxLength={maximo} step={tipo === "number" ? "0.01" : undefined} min={tipo === "number" ? "0" : undefined} />
   </Label>;
 }
 function Escolha({ titulo, valor, alterar, opcoes }: { titulo: string; valor: string; alterar: (valor: string) => void; opcoes: [string,string][] }) {
@@ -64,7 +65,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes) return;
-    try { await solicitar.mutateAsync(parametros); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
+    try { await solicitar.mutateAsync(validarParametrosNfse(parametros)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível registrar a solicitação."); }
   }
   async function documento(caminho: string) {
@@ -75,6 +76,20 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   async function retomar(id: string, descartar = false) {
     try { await reprocessar.mutateAsync({ id, descartar }); toast.success(descartar ? "Solicitação descartada antes do envio." : "Solicitação devolvida à fila."); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível atualizar a solicitação."); }
+  }
+  function preparar(base = atual?.dados.parametros || parametrosIniciais(nf)) {
+    setParametros({ ...base, serie: configuracao?.serie ? String(configuracao.serie) : base.serie,
+      municipio_emissor: configuracao?.municipio_emissor || (producao ? "" : "3542404"),
+      inscricao_municipal: configuracao?.inscricao_municipal || base.inscricao_municipal,
+      confirmacao_fiscal: false, confirmacao_producao: false });
+    setEditando(true);
+  }
+  async function corrigir(solicitacao: SolicitacaoNfse) {
+    try {
+      await reprocessar.mutateAsync({ id: solicitacao.id, descartar: true });
+      preparar(solicitacao.dados.parametros);
+      toast.success("Corrija os dados e revise antes de solicitar novamente. A tentativa anterior foi encerrada sem envio.");
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível abrir a correção."); }
   }
   return <section className="rounded-xl border bg-card p-4 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -96,13 +111,14 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
           {s.pdf_path && <Button type="button" variant="outline" size="sm" disabled={baixando} onClick={() => void documento(s.pdf_path!)}><FileDown className="mr-2 h-4 w-4" />PDF oficial</Button>}
         </AcessoGate>
         <AcessoGate menu="financeiro-nfse" acao="alterar">
-          {(["erro","incerta","aguardando","processando"].includes(s.estado) || (s.estado === "autorizada" && !s.pdf_path)) && <Button type="button" size="sm" variant="outline" disabled={reprocessar.isPending} onClick={() => void retomar(s.id)}>{s.envio_iniciado_em ? "Reconsultar resultado" : "Retomar após correção"}</Button>}
+          {(((s.estado !== "erro" || s.envio_iniciado_em) && ["erro","incerta","aguardando","processando"].includes(s.estado)) || (s.estado === "autorizada" && !s.pdf_path)) && <Button type="button" size="sm" variant="outline" disabled={reprocessar.isPending} onClick={() => void retomar(s.id)}>{s.envio_iniciado_em ? "Reconsultar resultado" : "Retomar após correção"}</Button>}
+          {!s.envio_iniciado_em && s.estado === "erro" && <AcessoGate menu="financeiro-nfse" acao="incluir"><Button type="button" size="sm" variant="outline" disabled={reprocessar.isPending || consulta.isFetching} onClick={() => void corrigir(s)}>Corrigir dados</Button></AcessoGate>}
           {!s.envio_iniciado_em && ["pendente","erro"].includes(s.estado) && <Button type="button" size="sm" variant="outline" disabled={reprocessar.isPending} onClick={() => void retomar(s.id,true)}>Descartar solicitação</Button>}
         </AcessoGate>
       </div>
     </div>)}
     {!existeAtiva && nf.status === "enviada" && !consulta.isError && !consulta.isLoading && liberado && <AcessoGate menu="financeiro-nfse" acao="incluir">
-      <Button type="button" variant="outline" onClick={() => { if (!editando) setParametros({ ...(atual?.dados.parametros || parametrosIniciais(nf)), serie: configuracao?.serie ? String(configuracao.serie) : parametros.serie, municipio_emissor: configuracao?.municipio_emissor || (producao ? "" : "3542404"), inscricao_municipal: configuracao?.inscricao_municipal || parametros.inscricao_municipal, confirmacao_fiscal: false, confirmacao_producao: false }); setEditando(v => !v); }}>
+      <Button type="button" variant="outline" disabled={configuracoes.isLoading} onClick={() => { if (editando) setEditando(false); else preparar(); }}>
         <ChevronDown className="mr-2 h-4 w-4" />{editando ? `Fechar preparação de ${rotuloAmbiente}` : `Preparar emissão em ${rotuloAmbiente}`}
       </Button>
     </AcessoGate>}
@@ -110,9 +126,9 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       <div className="rounded-md bg-muted p-3 text-sm">Valores salvos: serviços <strong>{fmtMoney(nf.vlr_bruto_total)}</strong> · líquido <strong>{fmtMoney(nf.vlr_liquido_total)}</strong>. A integração utiliza esses valores e as retenções salvas da preparação.</div>
       {alteracoesPendentes && <p role="alert" className="text-sm text-destructive">Há valores alterados nesta conferência. Salve a preparação na tela de Emissão de NF antes de solicitar a integração.</p>}
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Prestador e documento</legend>
-        <Campo titulo="Série de DPS liberada para o ERP" valor={parametros.serie} alterar={v => salvarCampo("serie",v)} maximo={5} />
-        <Campo titulo="Inscrição municipal do prestador" valor={parametros.inscricao_municipal} alterar={v => salvarCampo("inscricao_municipal",v)} maximo={15} />
-        <Campo titulo={producao ? "Município emissor — código IBGE" : "Município emissor de testes — código IBGE"} valor={parametros.municipio_emissor} alterar={v => salvarCampo("municipio_emissor",v)} maximo={7} />
+        <Campo titulo="Série de DPS liberada para o ERP" valor={parametros.serie} alterar={v => salvarCampo("serie",v)} maximo={5} somenteLeitura={configuracao?.serie != null} />
+        <Campo titulo="Inscrição municipal do prestador" valor={parametros.inscricao_municipal} alterar={v => salvarCampo("inscricao_municipal",v)} maximo={15} somenteLeitura={Boolean(configuracao?.inscricao_municipal)} />
+        <Campo titulo={producao ? "Município emissor — código IBGE" : "Município emissor de testes — código IBGE"} valor={parametros.municipio_emissor} alterar={v => salvarCampo("municipio_emissor",v)} maximo={7} somenteLeitura={Boolean(configuracao?.municipio_emissor)} />
         <Escolha titulo="Simples Nacional na competência" valor={parametros.opcao_simples} alterar={v => salvarCampo("opcao_simples",v)} opcoes={[["1","Não optante"],["2","Optante — MEI"],["3","Optante — ME/EPP"]]} />
         <Escolha titulo="Regime especial de tributação" valor={parametros.regime_especial} alterar={v => salvarCampo("regime_especial",v)} opcoes={[["0","Nenhum"],["1","Ato cooperado"],["2","Estimativa"],["3","Microempresa municipal"],["4","Notário ou registrador"],["5","Profissional autônomo"],["6","Sociedade de profissionais"]]} />
         {parametros.opcao_simples === "3" && <Escolha titulo="Apuração do Simples Nacional" valor={parametros.regime_apuracao} alterar={v => salvarCampo("regime_apuracao",v)} opcoes={[["1","Federais e municipal pelo SN"],["2","Federais pelo SN, ISS fora do SN"],["3","Federais e municipal fora do SN"]]} />}
