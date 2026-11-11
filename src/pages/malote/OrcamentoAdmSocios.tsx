@@ -98,21 +98,25 @@ export default function OrcamentoAdmSocios() {
   const alvoEquipe = useMemo(() => (aba === "administrativo" ? doTipo.filter((p) => pessoaDaEquipe(p, equipe)) : doTipo), [aba, doTipo, equipe]);
   const marcadasNaAba = useMemo(() => new Set([...marcadas].filter((id) => doTipo.some((p) => p.userId === id))), [marcadas, doTipo]);
 
-  // saldo da classificação: calculado uma vez por classificação (muitas pessoas repetem a mesma)
+  // saldo: da classificação da pessoa, só nos contratos que ela escolheu (centros de custo de onde sai). Pessoas com a mesma combinação dividem o cálculo.
   const saldos = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const p of doTipo) {
-      const id = configDe(p.userId).classificacaoId;
-      if (id && !m.has(id)) m.set(id, saldoDaClassificacao(grupos, utilizado, id, anoMes));
+      const c = configDe(p.userId);
+      if (!c.classificacaoId) continue;
+      const chave = `${c.classificacaoId}|${[...c.contratoIds].sort().join(",")}`;
+      if (!m.has(chave)) m.set(chave, saldoDaClassificacao(grupos, utilizado, c.classificacaoId, anoMes, c.contratoIds));
     }
     return m;
   }, [doTipo, configs, grupos, utilizado, anoMes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saldoDe = (c: ConfigPessoa): number | null =>
+    c.classificacaoId ? saldos.get(`${c.classificacaoId}|${[...c.contratoIds].sort().join(",")}`) ?? null : null;
 
   const nomeClassificacao = useMemo(() => new Map(opcoesClassificacao.map((o) => [o.value, o.label])), [opcoesClassificacao]);
   const visiveis = useMemo(
     () => ordenarPessoas(filtradas, ordem.chave, ordem.direcao, {
       origem: (p) => nomeClassificacao.get(configDe(p.userId).classificacaoId ?? "") ?? "",
-      saldo: (p) => { const id = configDe(p.userId).classificacaoId; return id ? saldos.get(id) ?? null : null; },
+      saldo: (p) => saldoDe(configDe(p.userId)),
     }),
     [filtradas, ordem, nomeClassificacao, configs, saldos], // eslint-disable-line react-hooks/exhaustive-deps
   );
@@ -332,7 +336,7 @@ export default function OrcamentoAdmSocios() {
                       Saldo da classificação
                       <Tooltip>
                         <TooltipTrigger asChild><button type="button" aria-label="Informação sobre saldo da classificação" className="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px]">i</button></TooltipTrigger>
-                        <TooltipContent className="max-w-[260px] text-xs">É o valor de saldo que esta classificação possui no mês selecionado. O saldo pertence à classificação e não é exclusivo desta pessoa.</TooltipContent>
+                        <TooltipContent className="max-w-[260px] text-xs">É o saldo que esta classificação possui no mês selecionado, somando apenas os contratos escolhidos para esta pessoa. O saldo pertence à classificação e não é exclusivo dela.</TooltipContent>
                       </Tooltip>
                     </span>
                   </CabecalhoOrdenavel>
@@ -354,7 +358,7 @@ export default function OrcamentoAdmSocios() {
                     )}
                     {bloco.pessoas.map((p) => {
                   const c = configDe(p.userId);
-                  const saldo = c.classificacaoId ? saldos.get(c.classificacaoId) : null;
+                  const saldo = saldoDe(c);
                   return (
                     <TableRow key={p.userId}>
                       <TableCell><Checkbox aria-label={`Selecionar ${p.nome}`} checked={marcadas.has(p.userId)} onCheckedChange={(v) => alternarMarca(p.userId, v === true)} /></TableCell>
