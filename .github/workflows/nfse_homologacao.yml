@@ -1,0 +1,39 @@
+name: NFS-e - fila de homologação
+
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nfse-homologacao
+  cancel-in-progress: false
+
+jobs:
+  processar:
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' && github.ref == 'refs/heads/main' && vars.NFSE_ACTIONS_HABILITADO == '1'
+    runs-on: ubuntu-latest
+    environment: nfse-homologacao
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Instalar dependências do processador
+        run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
+      - name: Processar um trabalho da fila de homologação
+        run: node worker/src/nfse/github-actions.js
+        env:
+          NFSE_SUPABASE_URL: ${{ secrets.NFSE_SUPABASE_URL }}
+          NFSE_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NFSE_SUPABASE_SERVICE_ROLE_KEY }}
+          NFSE_CONFIG_JSON: ${{ secrets.NFSE_CONFIG_JSON }}
+          NFSE_CERTIFICADO_PFX_B64: ${{ secrets.NFSE_CERTIFICADO_PFX_B64 }}
+          NFSE_CERTIFICADO_SENHA: ${{ secrets.NFSE_CERTIFICADO_SENHA }}
