@@ -76,4 +76,14 @@ describe('NFS-e no GitHub Actions', () => {
     await assert.rejects(executarNoGithub(env, { carregarConfiguracao: () => { throw new Error('certificado-sintetico-invalido'); }, processarFilaNfse: processar }), /certificado-sintetico-invalido/);
     assert.deepEqual(readdirSync(env.RUNNER_TEMP), []); assert.equal(processados, 1);
   });
+  it('consulta mais uma vez após 60 segundos quando há resultado pendente, sem laço permanente', async () => {
+    const env = ambiente(); const ordem = [];
+    await executarNoGithub(env, {
+      carregarConfiguracao: () => undefined, criarCliente: () => ({}),
+      processarFilaNfse: async () => { ordem.push('ciclo'); return { aguardarConsulta: true }; },
+      aguardar: async () => { ordem.push('aguardar'); },
+    });
+    assert.deepEqual(ordem, ['ciclo','aguardar','ciclo']);
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP), []);
+  });
 });

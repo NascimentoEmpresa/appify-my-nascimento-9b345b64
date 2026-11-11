@@ -39,7 +39,13 @@ async function tratarLote(s,lote,deps) {
     exigir(typeof lote.protocolo === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lote.protocolo),'Retorno sem protocolo de acompanhamento válido.');
     return {estado:'aguardando',protocolo:lote.protocolo,mensagem:'Lote recebido. Aguardando processamento na prefeitura.'};
   }
-  const item=lote.lote?.find(i => i.id === identificadorDps(s));
+  if (s.protocolo) exigir(lote.protocolo === s.protocolo, 'O retorno não corresponde ao protocolo solicitado.');
+  const itens=Array.isArray(lote.lote) ? lote.lote : [];
+  let item=itens.find(i => i.id === identificadorDps(s));
+  // A GOVBR pode rejeitar o XML antes de ler o Id (ex.: P9022). Só aceitamos
+  // esse erro sem Id no protocolo persistido, com um único item e sem nota.
+  if (!item && s.protocolo && itens.length === 1 && itens[0].id == null &&
+      itens[0].statusProcessamento === 'ERRO' && !itens[0].chaveAcesso && !itens[0].xmlGZipB64) item=itens[0];
   exigir(item,'O lote processado não identifica a DPS solicitada.');
   if(item.statusProcessamento === 'ERRO') {
     const mensagens=Array.isArray(item.erros) ? item.erros.slice(0,8).map(e=>`${e.codigo}: ${e.descricao}`).join(' | ') : 'Rejeição sem detalhes';
@@ -115,5 +121,7 @@ async function processarFilaNfse(supabase, ambiente = process.env) {
   }
   const atualizado=await rpc(supabase,'nfse_registrar_resultado',{_id:s.id,_reserva:s.reserva,_resultado:resultado});
   if(!atualizado) console.warn('[nfse] Reserva expirada; o próximo ciclo reconciliará a solicitação.');
+  return { aguardarConsulta: Boolean(atualizado && (['aguardando','incerta'].includes(resultado.estado) ||
+    (resultado.estado === 'autorizada' && !resultado.pdf_path))) };
 }
 module.exports={ processarFilaNfse, executarSolicitacao, tratarLote, recuperarNota };
