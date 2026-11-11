@@ -249,7 +249,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   // 1ª linha do rateio quando não tem no nível da despesa.
   const { data: contratoPrimeiraLinhaPorDespesa } = useContratoPrimeiraLinhaRateio(despesaIdsTodos);
   function contratoIdResolvido(despesa: MaloteDespesaRow): string | null {
-    return despesa.contrato_id ?? contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? null;
+    // [SEM-CHAMADO] SD-2026-0211: 1ª linha do rateio primeiro (como a empresa); o contrato da solicitação é só fallback.
+    return contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.contrato_id ?? null;
   }
   const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
   const classificacaoPorId = useMemo(
