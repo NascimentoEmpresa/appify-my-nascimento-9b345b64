@@ -26,4 +26,18 @@ describe("NFS-e: revisão antes de entrar na fila", () => {
       expect(() => validarParametrosNfse(p)).toThrow(/informe \d números/);
     }
   });
+  it("exige código do serviço da prefeitura para 170501 em produção de Triunfo e o mantém separado do desdobramento", () => {
+    const p = parametrosNfse(); p.municipio_emissor = "4322004";
+    expect(() => validarParametrosNfse(p, "producao")).toThrow(/Código do serviço na prefeitura/);
+    expect(() => validarParametrosNfse(p, "homologacao")).not.toThrow();
+    p.codigo_integracao_municipal = " 8111700 "; p.codigo_municipal = "123";
+    const normalizado = validarParametrosNfse(p, "producao");
+    expect(normalizado.codigo_integracao_municipal).toBe("8111700");
+    expect(normalizado.codigo_municipal).toBe("123");
+    expect(p.codigo_integracao_municipal).toBe(" 8111700 ");
+    for (const invalido of ["x".repeat(21), "81.11-7/00", "<codigo>"]) {
+      p.codigo_integracao_municipal = invalido;
+      expect(() => validarParametrosNfse(p)).toThrow(/até 20 letras ou números/);
+    }
+  });
 });

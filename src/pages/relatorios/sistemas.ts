@@ -27,7 +27,7 @@ export const SISTEMAS: SistemaRelatorio[] = [
   { slug: "chamados", titulo: "Chamados", menu: "diretoria_rel_chamados", rpc: "dir_rel_chamados", icone: LifeBuoy, cor: "#0f766e", descricao: "Chamados de sistemas" },
   { slug: "orientacoes", titulo: "Orientações Jurídicas", menu: "diretoria_rel_orientacoes", rpc: "dir_rel_orientacoes", icone: Scale, cor: "#9333ea", descricao: "Dúvidas enviadas ao Jurídico" },
   { slug: "mudanca-funcao", titulo: "Mudança de Função", menu: "diretoria_rel_mudanca_funcao", rpc: "dir_rel_mudanca_funcao", icone: ArrowLeftRight, cor: "#db2777", descricao: "Trocas de função e cargo" },
-  { slug: "colaboradores", titulo: "Colaboradores", menu: "diretoria_rel_colaboradores", rpc: "dir_rel_colaboradores", icone: Users, cor: "#16a34a", descricao: "Quadro de colaboradores (EMPREGADOS)" },
+  // 11/11/2026: o relatório Colaboradores saiu do sistema (pedido do Pablo); /app/relatorios/colaboradores redireciona para o Relatório Geral (App.tsx).
   { slug: "turnover", titulo: "Turn-over", menu: "diretoria_rel_turnover", rpc: "dir_rel_turnover", icone: Repeat, cor: "#b45309", descricao: "Admissões, desligamentos e rotatividade" },
 ];
 

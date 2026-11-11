@@ -92,6 +92,16 @@ describe("saldo da classificação (regra 5)", () => {
     const g = [grupo("c1", "UFRGS", "hagg", { indiretos: 1000, outra: 50 }), grupo("c9", "ADMINISTRATIVO NH", "nh", { indiretos: 777 })];
     expect(saldoDaClassificacao(g, [gasto({ valor: 100, competencia: "2026-09-01" }), gasto({ valor: 30, classificacao_id: "outra" })], "indiretos", "2026-10")).toBe(1000);
   });
+  it("com contratos escolhidos, soma só eles (saldo muda conforme a seleção)", () => {
+    const g = [grupo("c1", "UFRGS", "hagg", { indiretos: 1000 }), grupo("c2", "SAMU", "nh", { indiretos: 500 })];
+    const gastos = [gasto({ valor: 100 })];
+    expect(saldoDaClassificacao(g, gastos, "indiretos", "2026-10", ["c1", "c2"])).toBe(1400);
+    expect(saldoDaClassificacao(g, gastos, "indiretos", "2026-10", ["c1"])).toBe(900);
+    expect(saldoDaClassificacao(g, gastos, "indiretos", "2026-10", ["c2"])).toBe(500);
+  });
+  it("classificação sem nenhum contrato escolhido não tem saldo", () => {
+    expect(saldoDaClassificacao([grupo("c1", "UFRGS", "hagg", { indiretos: 1000 })], [], "indiretos", "2026-10", [])).toBeNull();
+  });
   it("sem classificação escolhida não há saldo", () => {
     expect(saldoDaClassificacao([], [], null, "2026-10")).toBeNull();
   });

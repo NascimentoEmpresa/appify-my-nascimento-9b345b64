@@ -205,6 +205,31 @@ no ambiente genérico de testes GOVBR. As notas de homologação 1 e 3 tiveram
 XML/PDF recuperados e valores conferidos. Isso não configura automaticamente
 o worker nem libera emissão real em Triunfo.
 
+## Serviço municipal e rejeição P5006
+
+A DPS 2 de produção, série 1041, foi recebida e rejeitada por P5006: o serviço
+nacional 170501 tem mais de uma correspondência municipal vigente em Triunfo.
+O retorno indicou 7830200, 8111700 e 8630502 e exigiu o campo `cIntContrib`.
+Nenhuma NFS-e foi autorizada nessa tentativa.
+
+O campo **Código do serviço na prefeitura** envia `codigo_integracao_municipal`
+para `cServ/cIntContrib`, após `cNBS`, conforme o XSD nacional. Aceita de 1 a
+20 letras/números, sem separadores. O campo anterior foi renomeado para
+**Desdobramento municipal, se aplicável** e continua enviando `cTribMun`, de
+três dígitos. Os dois códigos são distintos e não devem ser substituídos um
+pelo outro. Para serviço 170501, município emissor 4322004, em produção, o
+formulário e o processador exigem o código do serviço da prefeitura antes do envio.
+
+O código não é escolhido automaticamente. A nota anterior 1442 da HAAG traz
+170501 com `cIntContrib=8111700`, mas é de outro contrato. O Financeiro deve
+confirmar o enquadramento da prestação atual no portal ou com o responsável
+fiscal. Após publicar a correção, usar **Preparar emissão em produção** na
+mesma preparação apta, informar o código confirmado, revisar e confirmar uma
+nova solicitação/DPS. Preservar a tentativa rejeitada e não retransmiti-la.
+
+O ensaio desta correção usa XML e assinaturas locais, sem criar pedido nem
+transmitir outra DPS fiscal.
+
 ## Confirmações antes de habilitar
 
 - A documentação pública do provedor e o teste realizado confirmam

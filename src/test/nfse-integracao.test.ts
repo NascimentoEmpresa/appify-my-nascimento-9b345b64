@@ -150,6 +150,43 @@ describe("NFS-e: documento fiscal e certificado", () => {
     expect(xml).toContain("<imovel><end><CEP>90000000</CEP>");
     await documento.validarEsquema(xml);
   });
+  it("envia o código da prefeitura em cIntContrib sem confundir com cTribMun e passa no XSD assinado", async () => {
+    for (const codigo of ["7830200", "8111700", "8630502"]) {
+      const s = solicitacao();
+      const p = s.dados.parametros as typeof s.dados.parametros & { codigo_integracao_municipal?: string };
+      p.codigo_tributacao = "170501"; p.codigo_municipal = "123"; p.codigo_integracao_municipal = codigo;
+      const xml = documento.gerarDps(s);
+      expect(xml).toContain(`<cTribMun>123</cTribMun>`);
+      expect(xml).toContain(`<cNBS>118031000</cNBS><cIntContrib>${codigo}</cIntContrib>`);
+      await documento.validarEsquema(documento.assinarDps(xml, documento.identificadorDps(s), cert, "sha1"));
+    }
+    expect(documento.gerarDps(solicitacao())).not.toContain("<cIntContrib>");
+  });
+  it("bloqueia serviço ambíguo em produção antes de enviar e recusa código fora do esquema", async () => {
+    const s = solicitacao(); s.ambiente = "producao"; s.dados.parametros.confirmacao_producao = true;
+    s.dados.parametros.codigo_tributacao = "170501";
+    const deps = dependencias();
+    await expect(executarSolicitacao(s, deps)).rejects.toThrow(/Código do serviço na prefeitura/);
+    expect(deps.marcarEnvio).not.toHaveBeenCalled(); expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    const p = s.dados.parametros as typeof s.dados.parametros & { codigo_integracao_municipal?: string };
+    for (const invalido of ["x".repeat(21), "8111700<"]){
+      p.codigo_integracao_municipal = invalido;
+      expect(() => documento.gerarDps(s)).toThrow(/Código do serviço na prefeitura inválido/);
+    }
+    p.codigo_integracao_municipal = "8111700";
+    await documento.validarEsquema(documento.gerarDps(s));
+  });
+  it("continua consultando o retorno de uma DPS antiga já enviada sem o código municipal", async () => {
+    const s = solicitacao(); s.ambiente = "producao"; s.dados.parametros.confirmacao_producao = true;
+    s.dados.parametros.codigo_tributacao = "170501"; s.envio_iniciado_em = "2026-11-11T18:05:00Z";
+    s.protocolo = "33333333-3333-4333-8333-333333333333";
+    const deps = dependencias();
+    deps.cliente.consultarProtocolo.mockResolvedValue({tipoAmbiente:"PRODUCAO",processado:true,protocolo:s.protocolo,lote:[{
+      id:documento.identificadorDps(s),statusProcessamento:"ERRO",erros:[{codigo:"P5006",descricao:"Informe o código municipal"}],
+    }]} as never);
+    expect(await executarSolicitacao(s,deps)).toEqual({estado:"rejeitada",mensagem:"P5006: Informe o código municipal"});
+    expect(deps.cliente.enviar).not.toHaveBeenCalled();
+  });
   it("recusa XML com entidade externa, CNPJ divergente, ambiente real e líquido diferente", () => {
     expect(() => documento.lerXml('<!DOCTYPE x [<!ENTITY a SYSTEM "file:///segredo">]><x/>')).toThrow(/XML/);
     for (const alteracoes of [{ cnpj: "99999999000199" }, { liquido: "90.00" }, { ambiente: "1" }]) {
