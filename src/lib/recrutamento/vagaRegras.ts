@@ -24,6 +24,19 @@ export const motivoLabel = (m?: string | null): string =>
 export const ehSubstituicao = (m?: string | null): boolean =>
   String(m ?? "").trim() === MOTIVO_SUBSTITUICAO;
 
+// ── Admissão (chamado #0848, Fernanda, 11/11/2026) ──────────────────────
+// Admissão não usa colaborador de exemplo: escolhe o CONTRATO e depois um dos
+// CARGOS vinculados a ele; escolhido o cargo, vale o quantitativo do contrato
+// (o mesmo do #0845). E TODA admissão nova nasce aguardando o Gerente de
+// Operações — o banco põe o status (trg_rec_vaga_admissao_gerente, mig
+// 20261111235500); aprovada, segue para a fila que teria sem a regra.
+export const MOTIVO_ADMISSAO = "Admissão";
+export const ehAdmissao = (m?: string | null): boolean =>
+  String(m ?? "").trim() === MOTIVO_ADMISSAO;
+export const STATUS_VAGA_GERENTE_OPERACOES = "Pendente Gerente Operações";
+/** Menu fantasma (Operacional) de quem aprova as admissões. */
+export const MENU_GERENTE_APROVA_ADMISSAO = "operacional_gerente_aprova_admissao";
+
 /**
  * Quantas vagas o motivo permite pedir.
  *
@@ -77,7 +90,7 @@ export function nomeCompletoValido(v?: string | null): boolean {
 }
 
 /** A vaga ainda espera a aprovação da etapa 1 (Operacional/analista ou Diretoria). */
-export const STATUS_AGUARDANDO_APROVACAO = ["Pendente Analista", "Pendente Operacional", "Pendente Diretoria"];
+export const STATUS_AGUARDANDO_APROVACAO = ["Pendente Gerente Operações", "Pendente Analista", "Pendente Operacional", "Pendente Diretoria"];
 
 /**
  * "PODE CONCLUIR DIRETO" (02/10/2026, mig 289): a vaga conclui direto só
@@ -379,6 +392,7 @@ export const ehStatusConcluidoLegado = (status: string | null | undefined): bool
 
 export const rotuloStatusVaga = (status: string | null | undefined): string =>
   status === "Pendente Analista" ? "Pendente Operacional"
+    : status === STATUS_VAGA_GERENTE_OPERACOES ? "Aguardando aprovação do Gerente de Operações"
     : ehStatusConcluidoLegado(status) ? "Contratado"
     : String(status ?? "");
 

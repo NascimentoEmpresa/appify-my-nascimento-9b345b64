@@ -68,7 +68,7 @@ const ORDEM = Object.keys(ETAPA_KANBAN);
 const SELECAO_CURRICULOS: Aparencia = { area: "Recrutamento", texto: "SELEÇÃO DE CURRÍCULOS", cor: "#a855f7", tinta: "#7e22ce" };
 
 /** Filas de aprovação: a vaga ainda não chegou ao Recrutamento — sem detalhe. */
-const FILAS_DE_APROVACAO = ["Pendente Operacional", "Pendente Analista", "Pendente Diretoria"];
+const FILAS_DE_APROVACAO = ["Pendente Gerente Operações", "Pendente Operacional", "Pendente Analista", "Pendente Diretoria"];
 
 export interface StatusDetalhado {
   /** O que vai escrito no selo. */

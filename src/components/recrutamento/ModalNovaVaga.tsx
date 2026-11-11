@@ -34,6 +34,7 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { QuadroBeneficiosDoPosto } from "@/components/licitacoes/convencoes/QuadroBeneficios";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
   MOTIVOS_VAGA, MOTIVO_SUBSTITUICAO, ehSubstituicao, maximoDeVagas, quantidadeValida, avaliarPrazo, dataMinimaVaga,
@@ -43,12 +44,13 @@ import {
   faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
   substituidosComVagaViva, avisoSubstituidoPreso, filtroEmpregadoDaVaga,
   bloqueioSubstituicao, quantitativoAcima, textoQuantitativo,
+  ehAdmissao, STATUS_VAGA_GERENTE_OPERACOES, FILTRO_EMPREGADO_VAGA,
   type SituacaoSubstituido, type QuantitativoContrato, type DecisaoQuantitativo,
   cargoForaDasFuncoes, escalaDiferenteDoCadastro,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { PerguntaLoginErp, loginErpDoBanco, loginErpParaBanco } from "./PerguntaLoginErp";
-import { AlertTriangle, CheckCircle2, Undo2, PenLine, Ban, Link2, Car } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Undo2, PenLine, Ban, Link2, Car, Info } from "lucide-react";
 
 // EMPREGADOS, CONTRATOS, CARGOS e SISTEMA_* não estão no types.ts gerado;
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -455,7 +457,32 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // Contrato trocado à mão (RT) → quantitativo do contrato novo, pelo nome.
   const contratoTrocado = !!vaga.contrato && !!contratoDoEscolhido && vaga.contrato !== contratoDoEscolhido;
   const contratoConsulta = contratoTrocado ? vaga.contrato : "";
+  // Admissão (#0848, 11/11/2026): sem colaborador; o quantitativo é do
+  // contrato escolhido e é consultado assim que o cargo é escolhido.
+  const admissao = ehAdmissao(vaga.motivo_vaga);
+  const checarAdmissao = aberto && !editando && admissao && !!vaga.contrato.trim() && !!vaga.cargo.trim();
+  // A tela consulta o quantitativo nos dois motivos; a situação de quem sai
+  // só existe na Substituição.
+  const checarVaga = checarSubstituicao || checarAdmissao;
+  const consultaAdmissao = checarAdmissao ? vaga.contrato : "";
   useEffect(() => {
+    if (checarAdmissao) {
+      let vivo = true;
+      setChecagem({ estado: "buscando", situacao: null, quantitativo: null });
+      setDecisaoQuant("");
+      const t = setTimeout(async () => {
+        const { data, error } = await db.rpc("rec_vaga_substituicao_checar", { p_empregado_id: null, p_contrato: consultaAdmissao });
+        if (!vivo) return;
+        if (error || !data) { setChecagem({ estado: "erro", situacao: null, quantitativo: null }); return; }
+        const r = data as { quantitativo: QuantitativoContrato | null };
+        setChecagem({ estado: "pronto", situacao: null, quantitativo: r.quantitativo });
+      }, vagaManual ? 500 : 0);  // contrato digitado à mão: espera parar de digitar
+      return () => { vivo = false; clearTimeout(t); };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checarAdmissao, consultaAdmissao]);
+  useEffect(() => {
+    if (checarAdmissao) return;
     if (!checarSubstituicao) {
       setChecagem({ estado: "ocioso", situacao: null, quantitativo: null });
       if (!editando && !vinculoDemissao) setDemissaoId(null);
@@ -478,9 +505,45 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checarSubstituicao, substituidoId, contratoConsulta]);
 
+  // ── Cargos do contrato (Admissão, #0848) ─────────────────────────────
+  // "Deve carregar somente os cargos que já estão definidos/vinculados ao
+  // contrato selecionado." A fonte é o catálogo do contrato (Contratos ›
+  // postos e funções — o mesmo de Suprimentos, que define uniforme/EPI e de
+  // onde vêm V.A e V.T): escolher a função já preenche posto e função da
+  // vaga. Contrato fora do catálogo ou sem função cadastrada: os cargos de
+  // quem está ativo no contrato hoje, para a admissão não travar — com aviso.
+  const admissaoPeloContrato = admissao && !vagaManual;
+  const { data: funcoesDoContrato = [], isFetching: buscandoFuncoes } =
+    useFuncoesDoContrato(admissaoPeloContrato && vaga.contrato_id ? vaga.contrato_id : null);
+  const [cargosDoQuadro, setCargosDoQuadro] = useState<string[]>([]);
+  const contratoEscolhido = contratosFull.find(c => rotuloContrato(c) === vaga.contrato) ?? null;
+  const filialDoContrato = String(contratoEscolhido?.Filial ?? "").trim();
+  const usarCargosDoQuadro = admissaoPeloContrato && !!vaga.contrato && !buscandoFuncoes && funcoesDoContrato.length === 0;
+  useEffect(() => {
+    if (!usarCargosDoQuadro || !filialDoContrato) { setCargosDoQuadro([]); return; }
+    let vivo = true;
+    db.from("EMPREGADOS").select('"Título do Cargo"').eq("Filial", filialDoContrato)
+      .or(FILTRO_EMPREGADO_VAGA).limit(2000)
+      .then(({ data }: { data: Record<string, unknown>[] | null }) => {
+        if (!vivo) return;
+        const nomes = [...new Set((data ?? []).map(r => String(r["Título do Cargo"] ?? "").trim()).filter(Boolean))].sort();
+        setCargosDoQuadro(nomes);
+      });
+    return () => { vivo = false; };
+  }, [usarCargosDoQuadro, filialDoContrato]);
+  // Função com o mesmo nome em dois postos: o posto entra no rótulo.
+  const nomesRepetidos = new Set(funcoesDoContrato.map(x => x.nome).filter((n, i, a) => a.indexOf(n) !== i));
+
+  // Quem é o Gerente de Operações (vai no aviso da Admissão).
+  const [gerentesOperacoes, setGerentesOperacoes] = useState<string[]>([]);
+  useEffect(() => {
+    if (!aberto) return;
+    db.rpc("rec_gerente_operacoes_nomes").then(({ data }: { data: string[] | null }) => setGerentesOperacoes(data ?? []));
+  }, [aberto]);
+
   // O que ainda prende a etapa 1 de uma Substituição (null = nada).
   const quantAcima = quantitativoAcima(checagem.quantitativo);
-  const bloqueioSubst = checarSubstituicao
+  const bloqueioSubst = checarVaga
     ? bloqueioSubstituicao({
         situacao: checagem.situacao, quantitativo: checagem.quantitativo,
         decisao: decisaoQuant, justificativa: vaga.quantitativo_justificativa,
@@ -537,7 +600,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
       // No modo manual ninguém preenche por você: o que o cadastro daria vira
       // digitação, e o que era "escolha alguém" vira "informe o campo".
-      if (ehRT && !substituidoId) {
+      if (ehRT && !substituidoId && !ehAdmissao(vaga.motivo_vaga)) {
         toast("Vaga de Reserva Técnica: escolha na lista um colaborador de exemplo do mesmo posto — depois dá para ajustar os dados.", "err");
         return false;
       }
@@ -553,6 +616,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           toast("Em Substituição, escolha na lista quem será substituído — mesmo preenchendo o resto à mão.", "err");
           return false;
         }
+      } else if (ehAdmissao(vaga.motivo_vaga)) {
+        // Admissão (#0848): contrato e depois um cargo vinculado a ele.
+        if (!vaga.contrato) { toast("Selecione o contrato da vaga.", "err"); return false; }
+        if (!vaga.cargo.trim()) { toast("Selecione um dos cargos vinculados ao contrato.", "err"); return false; }
       } else if (!substituidoId) {
         toast(ehSubstituicao(vaga.motivo_vaga)
           ? "Escolha na lista o colaborador que será substituído — o cargo e o contrato vêm do cadastro dele."
@@ -564,7 +631,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       // contrato. Sem demissão não barra mais — afastamento e atestado
       // vigente liberam; só "trabalhando" barra. O gatilho do banco
       // (rec_vaga_exige_demissao, mig 20261111235000) cobra o mesmo.
-      if (checarSubstituicao) {
+      if (checarVaga) {
         if (checagem.estado === "buscando") { toast("Um instante — consultando a situação do colaborador e o quantitativo do contrato.", "err"); return false; }
         if (bloqueioSubst) { toast(bloqueioSubst, "err"); return false; }
       }
@@ -627,7 +694,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
       // #0845: o retrato do que a tela mostrou ao abrir a vaga.
-      ...(checarSubstituicao && checagem.estado === "pronto" ? {
+      ...(checarVaga && checagem.estado === "pronto" ? {
         substituido_situacao: checagem.situacao?.situacao ?? null,
         substituido_situacao_texto: checagem.situacao?.texto ?? null,
         quantitativo_ativos: checagem.quantitativo?.ativos ?? null,
@@ -647,6 +714,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     if (!editando) {
       // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
       payload.status = statusInicialVaga(ehAdministrativa, vaga.setor || null);
+      // #0848: toda Admissão nova espera o Gerente de Operações (o banco
+      // repete a regra em trg_rec_vaga_admissao_gerente).
+      if (ehAdmissao(vaga.motivo_vaga)) payload.status = STATUS_VAGA_GERENTE_OPERACOES;
       payload.solicitante_nome = user?.user_metadata?.nome ?? user?.email ?? "";
       payload.solicitante_cpf = user?.email ?? "";
     }
@@ -668,7 +738,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     toast(
       editando
         ? `Solicitação #${solicitacao!.id} atualizada.`
-        : `Solicitação #${data?.id} criada com sucesso!`,
+        : ehAdmissao(vaga.motivo_vaga)
+          ? `Solicitação #${data?.id} criada — aguardando aprovação do Gerente de Operações.`
+          : `Solicitação #${data?.id} criada com sucesso!`,
       "ok",
     );
     onFechar();
@@ -751,7 +823,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 // Trocou de motivo: limpa tudo o que veio do cadastro do
                 // escolhido anterior (senão sobra cargo/contrato/salário de
                 // outro posto) e obriga a escolher de novo.
-                setSubstituidoId(null); setEmpSearch("");
+                setSubstituidoId(null); setEmpSearch(""); setEmpEscolhido(null); setDecisaoQuant("");
                 setVaga(v => ({
                   ...v, motivo_vaga: m, nome_substituido: "", cargo: "", contrato: "",
                   contrato_id: "", posto_id: "", funcao_id: "",
@@ -779,7 +851,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 <div style={{ marginTop: 6, fontSize: 13, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "6px 9px" }}>
                   Selecione abaixo o colaborador que será substituído. As informações dele virão prontas{ehRT ? " e você pode alterar o que precisar" : ""}.
                 </div>
-              ) : ehRT && (
+              ) : admissaoPeloContrato ? (
+                <div style={{ marginTop: 6, fontSize: 13, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "6px 9px" }}>
+                  Selecione o contrato da vaga. Depois, escolha um dos cargos vinculados a esse contrato.
+                </div>
+              ) : ehRT && !admissao && (
                 <div style={{ marginTop: 6, fontSize: 13, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "6px 9px" }}>
                   Escolha abaixo um <b>colaborador de exemplo do mesmo posto</b>: os dados dele vêm prontos e você pode alterar o que precisar.
                 </div>
@@ -798,7 +874,8 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           )}
           {/* Em Substituição o colaborador continua obrigatório mesmo à
               mão: é o vínculo que impede duas vagas repondo a mesma pessoa. */}
-          {!!vaga.motivo_vaga && (!vagaManual || ehSubstituicao(vaga.motivo_vaga) || ehRT) && (
+          {/* Admissão (#0848) não tem colaborador de referência: parte do contrato. */}
+          {!!vaga.motivo_vaga && !admissao && (!vagaManual || ehSubstituicao(vaga.motivo_vaga) || ehRT) && (
             <div className="nvg-fg" style={{ position: "relative" }}
               onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
               <label>{ehRT && !ehSubstituicao(vaga.motivo_vaga) ? "Colaborador de exemplo (mesmo posto)" : rotuloReferencia(vaga.motivo_vaga)} *</label>
@@ -904,6 +981,55 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               a cadastrar antes de pedir; um campo de texto puro devolveria
               "ANALISTA ADM" e "Analista Administrativo" como coisas
               diferentes. */}
+          {admissaoPeloContrato ? (<>
+            <div className="nvg-fg">
+              <label>Contrato <span style={{ color: "#dc2626" }}>*</span></label>
+              <select className="nvg-fi" value={vaga.contrato}
+                onChange={e => {
+                  const c = e.target.value;
+                  // Trocou o contrato: o cargo era do anterior.
+                  setVaga(v => ({ ...v, contrato: c, cargo: "", posto_id: "", funcao_id: "" }));
+                  setDecisaoQuant("");
+                }}>
+                <option value="">— Selecione o contrato —</option>
+                {vaga.contrato && !contratoEscolhido && <option value={vaga.contrato}>{vaga.contrato}</option>}
+                {contratosFull.map((c, i) => <option key={i} value={rotuloContrato(c)}>{rotuloContrato(c)}</option>)}
+              </select>
+              <div style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}>Ao selecionar o contrato, aparecem os cargos vinculados a ele.</div>
+            </div>
+            <div className="nvg-fg">
+              <label>Cargo <span style={{ color: "#dc2626" }}>*</span></label>
+              <select className="nvg-fi" disabled={!vaga.contrato}
+                value={vaga.funcao_id || (vaga.cargo ? "q:" + vaga.cargo : "")}
+                onChange={e => {
+                  const v = e.target.value;
+                  setDecisaoQuant("");
+                  if (v.startsWith("q:")) { setVaga(x => ({ ...x, cargo: v.slice(2), posto_id: "", funcao_id: "" })); return; }
+                  const fn = funcoesDoContrato.find(x => x.id === v);
+                  setVaga(x => ({ ...x, cargo: fn?.nome ?? "", posto_id: fn?.posto_id ?? "", funcao_id: fn?.id ?? "" }));
+                }}>
+                <option value="">{!vaga.contrato ? "Selecione o contrato primeiro" : buscandoFuncoes ? "Carregando os cargos do contrato…" : "— Selecione o cargo —"}</option>
+                {funcoesDoContrato.map(fn => (
+                  <option key={fn.id} value={fn.id}>{fn.nome}{nomesRepetidos.has(fn.nome) ? ` — ${fn.posto_nome}` : ""}</option>
+                ))}
+                {usarCargosDoQuadro && cargosDoQuadro.map(c => <option key={c} value={"q:" + c}>{c}</option>)}
+                {vaga.cargo && !vaga.funcao_id && !cargosDoQuadro.includes(vaga.cargo) && <option value={"q:" + vaga.cargo}>{vaga.cargo}</option>}
+              </select>
+              <div style={{ marginTop: 4, fontSize: 13, color: usarCargosDoQuadro ? "#92400e" : "#64748b" }}>
+                {!vaga.contrato ? "Cargo carregado a partir da lista de cargos definidos para o contrato selecionado."
+                  : usarCargosDoQuadro
+                    ? (cargosDoQuadro.length
+                        ? "Este contrato não tem cargos no catálogo de postos e funções — a lista mostra os cargos de quem trabalha nele hoje."
+                        : "Este contrato não tem cargos cadastrados no catálogo de postos e funções nem colaboradores ativos. Peça o cadastro dos postos e funções do contrato.")
+                    : "Cargo carregado a partir da lista de cargos definidos para o contrato selecionado."}
+              </div>
+              {cnhDoCargo && (
+                <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                  <Car size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
+                </div>
+              )}
+            </div>
+          </>) : (<>
           <div className="nvg-fg">
             <label>Contrato *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido{ehRT ? "; pode alterar" : ""}</span>}</label>
             <input className="nvg-fi"
@@ -961,12 +1087,16 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               </div>
             )}
           </div>
+          </>)}
           {/* Quantitativo do contrato (#0845): ativos × cotado, com RT Sim ou
               Não. É uma validação À PARTE da situação de quem sai — a
               substituição pode estar liberada e o contrato acima do cotado.
               Acima: Sim/Não; "Não" não prossegue, "Sim" pede a justificativa
               e quem autorizou. */}
-          {checarSubstituicao && checagem.estado === "pronto" && checagem.quantitativo?.contrato_id && (
+          {checarVaga && checagem.estado === "buscando" && admissao && (
+            <div className="nvg-fg" style={{ fontSize: 13, color: "#64748b" }}>Consultando o quantitativo do contrato…</div>
+          )}
+          {checarVaga && checagem.estado === "pronto" && checagem.quantitativo?.contrato_id && (
             checagem.quantitativo.cotado == null ? (
               <div className="nvg-fg" style={{ fontSize: 13, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 12px" }}>
                 O contrato consta com {checagem.quantitativo.ativos ?? 0} colaboradores ativos. Não há quantitativo cotado na Planilha de Custo deste contrato para comparar.
@@ -1010,6 +1140,18 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 </div>
               )}
             </>)
+          )}
+          {/* #0848: toda Admissão nova passa pelo Gerente de Operações —
+              dentro ou acima do quantitativo. Quem abre a vaga fica sabendo
+              antes de enviar. */}
+          {admissao && !editando && (
+            <div className="nvg-fg" style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 10, padding: "10px 12px", lineHeight: 1.45 }}>
+              <Info size={18} strokeWidth={2} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                Ao finalizar esta solicitação, a vaga seguirá para <b>aprovação do gerente de operações{gerentesOperacoes.length ? <>: {gerentesOperacoes.join(", ")}</> : ""}</b>.
+                {" "}Toda nova admissão exige autorização, mesmo quando o contrato estiver dentro do <b>quantitativo</b>.
+              </span>
+            </div>
           )}
           {/* Vínculo com o catálogo (15/09/2026): posto e função obrigatórios
               quando o contrato tem posto no catálogo — é do posto que vêm o
