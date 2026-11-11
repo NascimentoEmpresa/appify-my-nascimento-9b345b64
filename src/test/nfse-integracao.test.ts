@@ -110,6 +110,19 @@ describe("NFS-e: documento fiscal e certificado", () => {
     expect(() => documento.abrirCertificado(arquivo, "senha-sintetica", CNPJ, new Date("2100-01-01"))).toThrow(/validade/);
     expect(() => documento.abrirCertificado(arquivo, "senha-incorreta", CNPJ)).toThrow(/arquivo e a senha/);
   });
+  it("remove quebras dos textos antes de assinar, preserva valores e mantém a assinatura válida", async () => {
+    const s = solicitacao();
+    s.dados.parametros.descricao = "Limpeza & conservação\r\nCompetência: 10/2026\nValor: R$ 100,00\rFim\tOK";
+    const assinado = documento.assinarDps(documento.gerarDps(s), documento.identificadorDps(s), cert, "sha1");
+    expect(assinado).not.toMatch(/[\r\n\t]/);
+    expect(assinado).toContain("Limpeza &amp; conservação Competência: 10/2026 Valor: R$ 100,00 Fim OK");
+    expect(assinado).toContain("<vServ>100.00</vServ>");
+    expect(s.dados.parametros.descricao).toContain("\r\n");
+    await documento.validarEsquema(assinado);
+    const verificador = new SignedXml({ publicCert: cert.certPem, getCertFromKeyInfo: () => null });
+    verificador.loadSignature(documento.elementos(documento.lerXml(assinado), "Signature")[0]);
+    expect(verificador.checkSignature(assinado)).toBe(true);
+  });
   it("impede envio com líquido inconsistente, revisão ausente e dados incompatíveis com o XSD", async () => {
     const s = solicitacao(); s.dados.nota.vlr_liquido_total = 99;
     expect(() => documento.gerarDps(s)).toThrow(/líquido salvo/);
@@ -198,5 +211,23 @@ describe("NFS-e: recuperação sem emissão duplicada", () => {
     const resultado = await tratarLote(s, { tipoAmbiente: "HOMOLOGACAO", processado: true, lote: [{ id: documento.identificadorDps(s), statusProcessamento: "ERRO", erros: [{ codigo: "E001", descricao: "Cadastro inválido" }] }] }, dependencias());
     expect(resultado).toEqual({ estado: "rejeitada", mensagem: "E001: Cadastro inválido" });
     await expect(tratarLote(s, { tipoAmbiente: "PRODUCAO", processado: true }, dependencias())).rejects.toThrow(/homologação/);
+  });
+  it("mostra rejeição sem Id somente para o protocolo persistido de um lote unitário sem nota", async () => {
+    const s = solicitacao(); s.envio_iniciado_em = "2026-11-11T16:00:00Z";
+    s.protocolo = "33333333-3333-4333-8333-333333333333";
+    const item = { id: null, chaveAcesso: null, xmlGZipB64: null, statusProcessamento: "ERRO", erros: [{ codigo: "P9022", descricao: "XML com quebras de linha" }] };
+    const lote = { tipoAmbiente: "HOMOLOGACAO", processado: true, protocolo: s.protocolo, lote: [item] };
+    expect(await tratarLote(s, lote, dependencias())).toEqual({ estado: "rejeitada", mensagem: "P9022: XML com quebras de linha" });
+    for (const invalido of [
+      { ...lote, protocolo: "outro-protocolo" }, { ...lote, lote: [item, item] },
+      { ...lote, lote: [{ ...item, id: "outra-DPS" }] },
+      { ...lote, lote: [{ ...item, chaveAcesso: "4".repeat(50) }] },
+      { ...lote, lote: [{ ...item, statusProcessamento: "SUCESSO" }] },
+    ]) await expect(tratarLote(s, invalido, dependencias())).rejects.toThrow();
+    const semProtocolo = { ...s, protocolo: null };
+    await expect(tratarLote(semProtocolo, lote, dependencias())).rejects.toThrow(/não identifica/);
+    const deps = dependencias(); deps.cliente.consultarProtocolo.mockResolvedValue(lote as never);
+    expect((await executarSolicitacao(s, deps)).estado).toBe("rejeitada");
+    expect(deps.cliente.enviar).not.toHaveBeenCalled();
   });
 });

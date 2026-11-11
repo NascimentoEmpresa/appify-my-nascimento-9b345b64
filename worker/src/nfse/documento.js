@@ -15,7 +15,8 @@ class ErroNfse extends Error {
 }
 function exigir(condicao, mensagem) { if (!condicao) throw new ErroNfse('DADOS_INVALIDOS', mensagem); }
 const digitos = valor => String(valor ?? '').replace(/[.\-/\s]/g, '');
-const escapar = valor => String(valor).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+// P9022 da GOVBR: até quebras dentro da descrição devem sair antes da assinatura.
+const escapar = valor => String(valor).replace(/\r\n|[\r\n\t]/g, ' ').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
 const tag = (nome, valor) => `<${nome}>${escapar(valor)}</${nome}>`;
 function centavos(valor) {
   exigir(valor !== null && valor !== undefined && valor !== '' && Number.isFinite(Number(valor)), 'Valor monetário ausente ou inválido.');
