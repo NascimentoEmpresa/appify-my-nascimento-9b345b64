@@ -119,6 +119,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
           <Field label="Salário" val={cand.salario} />
           <Field label="Insalubridade" val={cand.insalubridade_recebe + (cand.insalubridade_quanto ? " — " + cand.insalubridade_quanto : "")} />
           <Field label="Local" val={cand.local_exato} />
+          <Field label="Endereço do local de trabalho" val={cand.endereco_trabalho} />
           <Field label="Reserva Técnica (RT)" val={cand.reserva_tecnica ? "Sim" : null} />
           {/* Indicação de quem abriu a vaga. Só aparece quando existe — o
               Field some sozinho com valor vazio. */}
