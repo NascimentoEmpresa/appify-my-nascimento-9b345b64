@@ -27,7 +27,7 @@ describe('NFS-e no GitHub Actions', () => {
       assert.throws(() => prepararArquivos(env)); assert.deepEqual(readdirSync(env.RUNNER_TEMP), []);
     }
   });
-  it('bloqueia produção e JSON inválido antes de criar arquivos', () => {
+  it('bloqueia a URL de produção no fluxo de homologação e JSON inválido', () => {
     for (const config of ['json-invalido', JSON.stringify({ empresas: [{
       cnpj: '11222333000181', url: 'https://webapp1-triunfo.cidade360.cloud/NFSe.Api', serie: 1041,
       homologacao_confirmada: true, serie_confirmada: true, algoritmo_assinatura: 'sha1',
@@ -35,6 +35,21 @@ describe('NFS-e no GitHub Actions', () => {
       const env = { ...ambiente(), NFSE_CONFIG_JSON: config };
       assert.throws(() => prepararArquivos(env)); assert.deepEqual(readdirSync(env.RUNNER_TEMP), []);
     }
+  });
+  it('exige liberação e configuração de produção separadas do ambiente de teste', async () => {
+    const env = ambiente(); env.NFSE_AMBIENTE = 'producao';
+    assert.throws(() => prepararArquivos(env), /não habilitado/);
+    env.NFSE_PRODUCAO_HABILITADA = '1';
+    assert.throws(() => prepararArquivos(env), /Confirme/);
+    env.NFSE_CONFIG_JSON = JSON.stringify({ empresas: [{
+      cnpj:'11222333000181',ambiente:'producao',url:'https://webapp1-triunfo.cidade360.cloud/NFSe.Api',
+      serie:4321,producao_confirmada:true,serie_confirmada:true,algoritmo_assinatura:'sha1',
+      municipio_emissor:'4322004',inscricao_municipal:'100',
+    }] });
+    let ciclos = 0;
+    await executarNoGithub(env, { carregarConfiguracao: () => undefined, criarCliente: () => ({}),
+      processarFilaNfse: async (_cliente,dados) => { ciclos++; assert.equal(dados.NFSE_AMBIENTE,'producao'); assert.equal(dados.NFSE_PRODUCAO_HABILITADA,'1'); } });
+    assert.equal(ciclos,1); assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
   });
   it('processa um ciclo com arquivos privados e os remove ao terminar', async () => {
     const env = ambiente(); let arquivoConfig = ''; let processados = 0; let validacoes = 0;

@@ -30,15 +30,21 @@ export interface ParametrosNfse {
   tributos_aproximados_estaduais: string;
   tributos_aproximados_municipais: string;
   confirmacao_fiscal: boolean;
+  confirmacao_producao?: boolean;
   tomador: {
     documento: string; nome: string; municipio: string; cep: string;
     logradouro: string; numero: string; complemento: string; bairro: string; email: string;
   };
 }
 export type EstadoNfse = "pendente" | "processando" | "aguardando" | "autorizada" | "rejeitada" | "erro" | "incerta";
+export type AmbienteNfse = "homologacao" | "producao";
+export interface ConfiguracaoNfse {
+  ambiente: AmbienteNfse; serie: number | null; municipio_emissor: string;
+  inscricao_municipal: string; habilitado: boolean; nf_piloto_id: string | null;
+}
 export interface SolicitacaoNfse {
   id: string;
-  ambiente: "homologacao";
+  ambiente: AmbienteNfse;
   estado: EstadoNfse;
   serie: number;
   numero_dps: number;
@@ -57,12 +63,26 @@ const CHAVE = "nfse-integracao";
 const clienteNfse = supabase as unknown as SupabaseClient;
 const CAMPOS = "id,ambiente,estado,serie,numero_dps,numero_nf,chave,mensagem,criado_em,atualizado_em,envio_iniciado_em,xml_retorno_path,pdf_path,dados";
 
-export function useSolicitacoesNfse(notaId: string) {
+export function useConfiguracaoNfse(empresaId: string) {
   return useQuery({
-    queryKey: [CHAVE, notaId],
+    queryKey: [CHAVE, "configuracao", empresaId],
+    queryFn: async () => {
+      const { data, error } = await clienteNfse.from("NFSE_CONFIGURACAO")
+        .select("ambiente,serie,municipio_emissor,inscricao_municipal,habilitado,nf_piloto_id")
+        .eq("empresa_id", empresaId).limit(2);
+      if (error) throw error;
+      return (data ?? []) as ConfiguracaoNfse[];
+    },
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+export function useSolicitacoesNfse(notaId: string, ambiente: AmbienteNfse = "homologacao") {
+  return useQuery({
+    queryKey: [CHAVE, notaId, ambiente],
     queryFn: async () => {
       const { data, error } = await clienteNfse.from("NFSE_SOLICITACAO")
-        .select(CAMPOS).eq("nf_emissao_id", notaId).order("criado_em", { ascending: false }).limit(5);
+        .select(CAMPOS).eq("nf_emissao_id", notaId).eq("ambiente", ambiente).order("criado_em", { ascending: false }).limit(5);
       if (error) throw error;
       return (data ?? []) as SolicitacaoNfse[];
     },
@@ -70,11 +90,11 @@ export function useSolicitacoesNfse(notaId: string) {
     refetchOnWindowFocus: false,
   });
 }
-export function useSolicitarNfse(notaId: string) {
+export function useSolicitarNfse(notaId: string, ambiente: AmbienteNfse = "homologacao") {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (parametros: ParametrosNfse) => {
-      const { data, error } = await clienteNfse.rpc("nfse_solicitar_homologacao", { _nf_id: notaId, _parametros: parametros });
+      const { data, error } = await clienteNfse.rpc("nfse_solicitar_emissao", { _nf_id: notaId, _parametros: parametros, _ambiente: ambiente });
       if (error) throw error;
       return data as string;
     },

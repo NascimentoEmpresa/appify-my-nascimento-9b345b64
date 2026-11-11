@@ -352,6 +352,19 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 update -qq
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-client-18
 
+      - name: Provar fila NFS-e e separação de produção em PostgreSQL 18
+        if: steps.novas.outputs.tem
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: prova
+        run: |
+          set -euo pipefail
+          if ! grep -q 'sis_2026_0841_nfse_producao.sql' novas.txt; then exit 0; fi
+          createdb nfse_0841_teste
+          psql -d nfse_0841_teste -v ON_ERROR_STOP=1 -f worker/test/nfse-producao.sql
+
       - name: Aplicar cada migration e separar erro de sintaxe de erro de schema
         if: steps.novas.outputs.tem
         env:

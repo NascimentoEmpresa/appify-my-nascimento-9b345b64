@@ -35,10 +35,11 @@ function texto(valor, maximo, nome) {
   return resultado;
 }
 function validarSolicitacao(s) {
-  exigir(s.ambiente === 'homologacao', 'Este piloto aceita somente homologação.');
+  exigir(['homologacao','producao'].includes(s.ambiente), 'Ambiente fiscal inválido.');
   const p = s.dados?.parametros;
   const n = s.dados?.nota;
   exigir(p && n && p.confirmacao_fiscal === true, 'Confirme a revisão dos dados fiscais antes de solicitar.');
+  if (s.ambiente === 'producao') exigir(p.confirmacao_producao === true, 'Confirme a emissão de uma nota fiscal real.');
   const cnpj = codigo(s.dados.empresa?.cnpj, 14, 'o CNPJ do prestador');
   exigir(Number.isSafeInteger(Number(s.numero_dps)) && Number(s.numero_dps) > 0 && Number(s.numero_dps) <= 999999999999999, 'Número de DPS inválido.');
   exigir(Number.isInteger(Number(s.serie)) && Number(s.serie) >= 1 && Number(s.serie) <= 49999, 'Série inválida.');
@@ -108,7 +109,7 @@ function gerarDps(s) {
   const i = p.imovel;
   const imovel = p.informar_imovel ? `<imovel>${i.inscricao ? tag('inscImobFisc',i.inscricao) : ''}<end>${tag('CEP',digitos(i.cep))}${tag('xLgr',i.logradouro)}${tag('nro',i.numero)}${i.complemento ? tag('xCpl',i.complemento) : ''}${tag('xBairro',i.bairro)}</end></imovel>` : '';
   const ibsCbs = `<IBSCBS>${tag('finNFSe','0')}${tag('indFinal',p.consumidor_final)}${tag('cIndOp',p.ibs_indicador_operacao)}${p.tipo_operacao ? tag('tpOper',p.tipo_operacao) : ''}${p.tipo_ente_governamental ? tag('tpEnteGov',p.tipo_ente_governamental) : ''}${tag('indDest','0')}${imovel}<valores><trib><gIBSCBS>${tag('CST',p.ibs_cst)}${tag('cClassTrib',p.ibs_classificacao)}</gIBSCBS></trib></valores></IBSCBS>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb','2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento)}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento)}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
 }
 
 function abrirCertificado(caminho, senha, cnpj, agora = new Date()) {
@@ -177,7 +178,7 @@ function conferirNota(xml, s, chave) {
   exigir(dps.length === 1, 'Retorno sem uma única DPS identificada.');
   const info = elementos(dps[0],'infDPS')[0];
   exigir(info?.getAttribute('Id') === identificadorDps(s), 'A DPS retornada não corresponde à solicitação.');
-  exigir(valor(info,'tpAmb') === '2', 'O provedor retornou um documento fora de homologação.');
+  exigir(valor(info,'tpAmb') === (s.ambiente === 'producao' ? '1' : '2'), 'O provedor retornou um documento de outro ambiente fiscal.');
   const emit = elementos(doc,'emit')[0];
   exigir(emit && valor(emit,'CNPJ') === s.dados.empresa.cnpj, 'O CNPJ do documento retornado diverge do prestador.');
   exigir(/^\d{50}$/.test(chave) && elementos(doc,'infNFSe')[0]?.getAttribute('Id') === `NFS${chave}`, 'Chave de NFS-e inconsistente.');
