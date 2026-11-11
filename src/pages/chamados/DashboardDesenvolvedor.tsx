@@ -16,9 +16,13 @@ import {
 } from "recharts";
 import {
   ArrowLeft, Trophy, CheckCircle2, Timer, Zap, CalendarDays, Star, TrendingUp,
-  ShieldAlert, Sparkles, Users, Hourglass, Clock4, Flame,
+  ShieldAlert, Sparkles, Users, Hourglass, Clock4, PlayCircle,
 } from "lucide-react";
 import { STATUS_CHAMADO, CATEGORIAS, labelDe, mediaAvaliacao, type Chamado } from "./types";
+import { rotuloHoras, rotuloMes } from "@/pages/sistemas/hora-extra/dashboardHoraExtraUtils";
+import {
+  hojeSaoPaulo, mesDe, resumoMesHe, seriePrevistoRealizado, statusMesHe, type LinhaHeDev,
+} from "@/pages/sistemas/hora-extra/heDoDesenvolvedor";
 
 // =====================================================================
 // MEU DASHBOARD (Painel do Desenvolvedor) — visão pessoal do dev logado
@@ -49,17 +53,13 @@ const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 // Hora Extra tem enum e RLS próprios (ver src/pages/sistemas/hora-extra/types.tsx
 // e useHoraExtra.ts) — aqui só lê o histórico pessoal pros gráficos, sem duplicar
 // a tela de Solicitações de Hora Extra.
-const LABEL_STATUS_HE: Record<string, string> = {
-  aguardando_liberacao: "Aguardando liberação", aprovada: "Aprovada",
-  aguardando_validacao: "Aguardando validação", concluida: "Concluída", reprovada: "Reprovada",
-};
-const COR_STATUS_HE: Record<string, string> = {
-  aguardando_liberacao: "hsl(var(--warning))", aprovada: "hsl(var(--info))",
-  aguardando_validacao: "hsl(var(--primary))", concluida: "hsl(var(--success))", reprovada: "hsl(var(--destructive))",
-};
-// Faixa ampla o bastante para pegar todo o histórico sem precisar calcular hoje.
-const HE_DATA_INICIO = "2000-01-01";
-const HE_DATA_FIM = "2099-12-31";
+// 11/11/2026: os números seguem EXATAMENTE as regras do Dashboard de Hora Extra
+// (RPC hora_extra_dashboard), mês a mês pelo data_he — ver heDoDesenvolvedor.ts.
+// Antes somava só "concluída", de todo o histórico, com status contado por
+// quantidade de pedidos; não batia com nada do sistema de HE.
+const COR_STATUS_HE = { aprovadas: "#16a34a", concluidas: "#2563eb", pendentes: "#f97316" } as const;
+const AZUL_PREVISTO = "#93c5fd";
+const AZUL_REALIZADO = "#1d4ed8";
 
 const TT_STYLE = { background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 } as const;
 
@@ -84,8 +84,8 @@ function useContagem(valor: number, ms = 900) {
 
 /** Tile do hero: número animado (aceita 1 casa decimal via `casas`). */
 function Metrica({
-  icon: Icon, label, valor, casas = 0, sufixo = "", hint, i,
-}: { icon: typeof Trophy; label: string; valor: number; casas?: number; sufixo?: string; hint?: string; i: number }) {
+  icon: Icon, label, valor, casas = 0, sufixo = "", hint, i, formatar,
+}: { icon: typeof Trophy; label: string; valor: number; casas?: number; sufixo?: string; hint?: string; i: number; formatar?: (n: number) => string }) {
   const fator = 10 ** casas;
   const n = useContagem(Math.round(valor * fator));
   return (
@@ -101,7 +101,7 @@ function Metrica({
         <div className="min-w-0">
           <p className="truncate text-[10px] font-bold uppercase tracking-wider opacity-80">{label}</p>
           <p className="font-display text-2xl font-black tabular-nums leading-tight">
-            {(n / fator).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}{sufixo}
+            {formatar ? formatar(n) : <>{(n / fator).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}{sufixo}</>}
           </p>
         </div>
       </div>
@@ -188,14 +188,11 @@ export default function DashboardDesenvolvedor() {
     enabled: !!user?.id && dev && podeCarregarAlvo,
     queryFn: async () => {
       let q = (supabase as any).from("HORA_EXTRA_SOLICITACAO")
-        .select("data_he,tipo,status,total_previsto_min,total_real_min");
+        .select("data_he,status,total_previsto_min,total_real_min");
       if (alvoId) q = q.eq("colaborador_id", alvoId);
-      const { data, error } = await q.gte("data_he", HE_DATA_INICIO).lte("data_he", HE_DATA_FIM)
-        .order("data_he", { ascending: true }).limit(5000);
+      const { data, error } = await q.order("data_he", { ascending: true }).limit(5000);
       if (error) throw error;
-      return (data ?? []) as Array<{
-        data_he: string; tipo: string; status: string; total_previsto_min: number; total_real_min: number | null;
-      }>;
+      return (data ?? []) as LinhaHeDev[];
     },
   });
 
@@ -284,30 +281,16 @@ export default function DashboardDesenvolvedor() {
     return soma / concluidos.length;
   }, [concluidos]);
 
-  // ---- Horas extras --------------------------------------------------
-  const heConcluidas = useMemo(() => horasExtras.filter((h) => h.status === "concluida"), [horasExtras]);
-  const totalHorasHE = useMemo(
-    () => heConcluidas.reduce((s, h) => s + (h.total_real_min ?? h.total_previsto_min ?? 0), 0) / 60,
-    [heConcluidas],
+  // ---- Horas extras (regras do Dashboard de HE, por mês) -------------
+  const hojeSp = hojeSaoPaulo();
+  const [mesHe, setMesHe] = useState(() => mesDe(hojeSp));
+  const resumoHe = useMemo(() => resumoMesHe(horasExtras, mesHe, hojeSp), [horasExtras, mesHe, hojeSp]);
+  const serieHe = useMemo(
+    () => seriePrevistoRealizado(horasExtras, mesHe, 12).map((m) => ({ ...m, rotulo: rotuloMes(m.mes) })),
+    [horasExtras, mesHe],
   );
-  const hePorMes = useMemo(() => {
-    const hoje = new Date();
-    return Array.from({ length: 12 }, (_, k) => {
-      const d = new Date(hoje.getFullYear(), hoje.getMonth() - (11 - k), 1);
-      const fim = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-      const minutos = heConcluidas
-        .filter((h) => { const dt = new Date(`${h.data_he}T12:00:00`); return dt >= d && dt < fim; })
-        .reduce((s, h) => s + (h.total_real_min ?? h.total_previsto_min ?? 0), 0);
-      return { mes: d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""), horas: +(minutos / 60).toFixed(1) };
-    });
-  }, [heConcluidas]);
-  const maxHorasMes = Math.max(1, ...hePorMes.map((m) => m.horas));
-  const hePorStatus = useMemo(() => {
-    const m: Record<string, number> = {};
-    horasExtras.forEach((h) => { m[h.status] = (m[h.status] ?? 0) + 1; });
-    return Object.entries(m).map(([status, value]) => ({ status, value }));
-  }, [horasExtras]);
-  const heEmergenciais = useMemo(() => horasExtras.filter((h) => h.tipo === "emergencial").length, [horasExtras]);
+  const statusHe = useMemo(() => statusMesHe(horasExtras, mesHe, hojeSp), [horasExtras, mesHe, hojeSp]);
+  const totalStatusHe = statusHe.reduce((t, f) => t + f.minutos, 0);
 
   if (!dev && !podeVerOutros) {
     return (
@@ -561,39 +544,65 @@ export default function DashboardDesenvolvedor() {
             </div>
           </Card>
 
-          {/* ---------- Horas extras ---------- */}
+          {/* ---------- Horas extras (mesmas regras do Dashboard de HE) ---------- */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-sm font-bold">
+              <Hourglass className="h-4 w-4 text-info" />
+              Horas extras de {rotuloMes(mesHe)}
+            </p>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Mês
+              <input
+                type="month" value={mesHe} max={mesDe(hojeSp)}
+                onChange={(e) => e.target.value && setMesHe(e.target.value)}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              />
+            </label>
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Metrica
-              i={4} icon={Hourglass} label="Horas extras (concluídas)" valor={totalHorasHE} casas={1} sufixo=" h"
-              hint={`${heConcluidas.length} solicitação(ões) concluída(s)`}
+              i={4} icon={Clock4} label="HE aprovadas no mês" valor={resumoHe.aprovadas_min} formatar={rotuloHoras}
+              hint="Previsto das aprovadas, em validação e concluídas"
             />
-            <Metrica i={5} icon={Clock4} label="Solicitações de hora extra" valor={horasExtras.length} hint="Em qualquer status" />
-            <Metrica i={6} icon={Flame} label="Emergenciais" valor={heEmergenciais} hint="Do total de solicitações" />
+            <Metrica
+              i={5} icon={PlayCircle} label="HE realizadas no mês" valor={resumoHe.realizadas_min} formatar={rotuloHoras}
+              hint="Real das em validação e concluídas"
+            />
+            <Metrica
+              i={6} icon={Hourglass} label="Pendentes de conclusão" valor={resumoHe.pendentes}
+              hint="Aprovadas com data já passada, sem conclusão"
+            />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="animate-rise-in relative overflow-hidden border-info/20 bg-gradient-to-br from-card via-card to-info/10 p-4 shadow-lg" style={{ animationDelay: "500ms" }}>
               <div className="absolute -left-10 -bottom-10 h-40 w-40 rounded-full bg-info/15 blur-3xl" />
               <div className="relative">
-                <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
-                  <Hourglass className="h-4 w-4 text-info" />
-                  {alvo === "eu" ? "Minhas horas extras por mês" : alvo === "todos" ? "Horas extras da equipe por mês" : `Horas extras de ${nomeAlvo} por mês`}
-                </p>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="flex items-center gap-1.5 text-sm font-bold">
+                    <Hourglass className="h-4 w-4 text-info" />
+                    {alvo === "eu" ? "Minhas horas extras por mês" : alvo === "todos" ? "Horas extras da equipe por mês" : `Horas extras de ${nomeAlvo} por mês`}
+                  </p>
+                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: AZUL_PREVISTO }} />Previsto</span>
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: AZUL_REALIZADO }} />Realizado</span>
+                  </div>
+                </div>
                 <div className="h-52">
-                  {heConcluidas.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Sem hora extra concluída ainda.</div>
+                  {!serieHe.some((m) => m.previsto_min > 0 || m.realizado_min > 0) ? (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Sem hora extra nos últimos 12 meses.</div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={hePorMes} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
+                      <BarChart data={serieHe} margin={{ top: 8, right: 4, left: -12, bottom: 0 }} barGap={2}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                        <XAxis dataKey="mes" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={TT_STYLE} formatter={(v: number) => [`${v.toFixed(1).replace(".", ",")} h`, ""]} cursor={{ fill: "hsl(var(--info) / 0.06)" }} />
-                        <Bar dataKey="horas" radius={[5, 5, 0, 0]} maxBarSize={40}>
-                          {hePorMes.map((m, i) => (
-                            <Cell key={i} fill={`hsl(var(--info) / ${m.horas === 0 ? 0.12 : 0.4 + (m.horas / maxHorasMes) * 0.6})`} />
-                          ))}
-                        </Bar>
+                        <XAxis dataKey="rotulo" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(r: string) => r.split("/")[0]} />
+                        <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(m: number) => rotuloHoras(m)} />
+                        <Tooltip
+                          contentStyle={TT_STYLE} cursor={{ fill: "hsl(var(--info) / 0.06)" }}
+                          formatter={(v: number, nome: string) => [rotuloHoras(Number(v) || 0), nome]}
+                        />
+                        <Bar dataKey="previsto_min" name="Previsto" fill={AZUL_PREVISTO} radius={[4, 4, 0, 0]} maxBarSize={22} />
+                        <Bar dataKey="realizado_min" name="Realizado" fill={AZUL_REALIZADO} radius={[4, 4, 0, 0]} maxBarSize={22} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -604,34 +613,36 @@ export default function DashboardDesenvolvedor() {
             <Card className="animate-rise-in p-4 shadow-lg" style={{ animationDelay: "560ms" }}>
               <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
                 <Clock4 className="h-4 w-4 text-primary" />
-                {alvo === "eu" ? "Status das minhas solicitações de HE" : alvo === "todos" ? "Status das solicitações de HE — equipe" : `Status das solicitações de HE de ${nomeAlvo}`}
+                {alvo === "eu" ? "Status das minhas HEs" : alvo === "todos" ? "Status das HEs — equipe" : `Status das HEs de ${nomeAlvo}`} — {rotuloMes(mesHe)}
               </p>
               <div className="flex items-center gap-4">
                 <div className="h-40 w-40 shrink-0">
-                  {hePorStatus.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Sem dados ainda.</div>
+                  {totalStatusHe === 0 ? (
+                    <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">Sem HE liberada neste mês.</div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={hePorStatus} dataKey="value" nameKey="status" cx="50%" cy="50%" innerRadius={38} outerRadius={62} paddingAngle={2}>
-                          {hePorStatus.map((d) => <Cell key={d.status} fill={COR_STATUS_HE[d.status] ?? "hsl(var(--muted-foreground))"} />)}
+                        <Pie data={statusHe.filter((f) => f.minutos > 0)} dataKey="minutos" nameKey="rotulo" cx="50%" cy="50%" innerRadius={38} outerRadius={62} paddingAngle={2}>
+                          {statusHe.filter((f) => f.minutos > 0).map((f) => <Cell key={f.chave} fill={COR_STATUS_HE[f.chave]} />)}
                         </Pie>
-                        <Tooltip contentStyle={TT_STYLE} formatter={(v: number, _n, p: any) => [`${v} solicitação(ões)`, LABEL_STATUS_HE[p.payload.status] ?? p.payload.status]} />
+                        <Tooltip contentStyle={TT_STYLE} formatter={(v: number, nome: string) => [rotuloHoras(Number(v) || 0), nome]} />
                       </PieChart>
                     </ResponsiveContainer>
                   )}
                 </div>
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  {hePorStatus.map((d) => (
-                    <div key={d.status} className="flex items-center justify-between text-xs">
+                  {statusHe.map((f) => (
+                    <div key={f.chave} className="flex items-center justify-between text-xs">
                       <span className="flex items-center gap-1.5 truncate">
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: COR_STATUS_HE[d.status] ?? "hsl(var(--muted-foreground))" }} />
-                        {LABEL_STATUS_HE[d.status] ?? d.status}
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: COR_STATUS_HE[f.chave] }} />
+                        {f.rotulo}
                       </span>
-                      <span className="font-semibold">{d.value}</span>
+                      <span className="font-semibold">
+                        {rotuloHoras(f.minutos)}
+                        {totalStatusHe > 0 && <span className="ml-1 font-normal text-muted-foreground">({Math.round((f.minutos / totalStatusHe) * 100)}%)</span>}
+                      </span>
                     </div>
                   ))}
-                  {hePorStatus.length === 0 && <p className="text-xs text-muted-foreground">Sem solicitações ainda.</p>}
                 </div>
               </div>
             </Card>
