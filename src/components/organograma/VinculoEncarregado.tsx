@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Download, Link2, Loader2, Search, UserCheck, UserX } from "lucide-react";
+import { Download, Link2, Loader2, MapPin, Search, UserCheck, UserX } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import type { ContratoEstrutura } from "@/lib/organograma/estruturaSetores";
 import {
   casaLideranca, liderDe, liderancaDoContrato, linhasCsvLideranca, type LinhaLideranca,
 } from "@/lib/organograma/liderancaContrato";
+import { chaveRegra, postosDoContrato, resumoPostos, type RegraPosto } from "@/lib/organograma/postoEncarregado";
 
 // =====================================================================
 // SIS-2026-0770 (reaberto pela Helena, 10/11/2026): vínculo de cada
@@ -176,6 +177,190 @@ export function DialogVincularEncarregado({ c, marcadosIniciais, onFechar }: {
           <Button disabled={!escolhido || !nMarcados || salvar.isPending} onClick={() => salvar.mutate()}>
             {salvar.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} Vincular {nMarcados || ""}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Encarregado por posto (SIS-2026-0770, 11/11/2026) ──────────────────
+// Regra em lib/organograma/postoEncarregado.ts e na mig 20261111120000.
+
+type ResultadoPostos = { postos: number; ligados: number; mantidos: number; falhas: number };
+
+/** Quais postos do contrato cada encarregado fiscaliza e é responsável. */
+export function DialogPostosEncarregado({ c, nos, onFechar }: {
+  c: ContratoEstrutura; nos: NoPessoa[]; onFechar: () => void;
+}) {
+  const qc = useQueryClient();
+  const chaveQ = ["organograma-posto-encarregado", c.empresa, c.filial];
+  const regrasQ = useQuery({
+    queryKey: chaveQ,
+    enabled: c.empresa != null && c.filial != null,
+    queryFn: async () => {
+      const { data, error } = await sb.from("ORGANOGRAMA_POSTO_ENCARREGADO")
+        .select("empresa, filial, posto_codigo, encarregado_no")
+        .eq("empresa", c.empresa).eq("filial", c.filial).range(0, 1999);
+      if (error) throw error;
+      return new Map<string, string>(((data ?? []) as RegraPosto[]).map((r) => [chaveRegra(r.empresa, r.filial, r.posto_codigo), r.encarregado_no]));
+    },
+    retry: false,
+  });
+  const regras = useMemo(() => regrasQ.data ?? new Map<string, string>(), [regrasQ.data]);
+  const postos = useMemo(() => postosDoContrato(c, regras, nos), [c, regras, nos]);
+  const resumo = resumoPostos(postos);
+  const lid = useMemo(() => liderancaDoContrato(c), [c]);
+
+  // Encarregados para escolher: os reconhecidos no contrato + quem já foi
+  // definido em algum posto + quem o usuário buscar.
+  const [extras, setExtras] = useState<NoPessoa[]>([]);
+  const opcoes = useMemo(() => {
+    const m = new Map<string, NoPessoa>();
+    lid.encarregados.forEach((t) => m.set(t.encarregado.id, t.encarregado));
+    postos.forEach((p) => { if (p.encarregado) m.set(p.encarregado.id, p.encarregado); });
+    extras.forEach((n) => m.set(n.id, n));
+    return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [lid, postos, extras]);
+  const [outro, setOutro] = useState("");
+  const candidatosOutro = outro.trim().length >= 2
+    ? c.membros.filter((m) => !opcoes.some((o) => o.id === m.id) && normal(`${m.nome} ${funcaoDe(m)}`).includes(normal(outro))).slice(0, 8)
+    : [];
+
+  const [busca, setBusca] = useState("");
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [emLote, setEmLote] = useState<string>("");
+  const [aberto, setAberto] = useState<string | null>(null);
+  const visiveis = postos.filter((p) => !busca || normal(`${p.nome} ${p.codigo} ${p.encarregado?.nome ?? ""}`).includes(normal(busca)));
+
+  const salvar = useMutation({
+    mutationFn: async ({ codigos, encarregado }: { codigos: string[]; encarregado: string | null }) => {
+      const { data, error } = await sb.rpc("organograma_definir_encarregado_postos", {
+        p_empresa: c.empresa, p_filial: c.filial, p_postos: codigos, p_encarregado: encarregado, p_aplicar: true,
+      });
+      if (error) throw error;
+      return { r: (data ?? { postos: codigos.length, ligados: 0, mantidos: 0, falhas: 0 }) as ResultadoPostos, encarregado };
+    },
+    onSuccess: ({ r, encarregado }) => {
+      const enc = encarregado ? opcoes.find((o) => o.id === encarregado) : null;
+      if (!enc) toast.success(`${r.postos} posto(s) sem encarregado definido. Quem já estava ligado continua.`);
+      else {
+        toast.success(`${r.postos} posto(s) com ${tituloNome(enc.nome)}: ${r.ligados} colaborador(es) passaram a se reportar a ele${r.mantidos ? `, ${r.mantidos} já estavam com ele` : ""}.`);
+        if (r.falhas) toast.warning(`${r.falhas} não foram ligados: o encarregado está abaixo deles na árvore.`);
+      }
+      setMarcados(new Set());
+      qc.invalidateQueries({ queryKey: chaveQ });
+      qc.invalidateQueries({ queryKey: ["organograma-arvore"] });
+      qc.invalidateQueries({ queryKey: ["organograma-busca"] });
+    },
+    onError: (e: Error) => toast.error(e.message || "Não deu para salvar o encarregado do posto."),
+  });
+
+  const alternar = (cod: string) => setMarcados((s) => { const x = new Set(s); if (x.has(cod)) x.delete(cod); else x.add(cod); return x; });
+  const todosVisiveis = visiveis.length > 0 && visiveis.every((p) => marcados.has(p.codigo));
+  const semBanco = regrasQ.isError;
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onFechar()}>
+      <DialogContent className="grid max-h-[92vh] max-w-4xl grid-cols-[minmax(0,1fr)] grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><MapPin className="h-5 w-5 text-primary" /> Encarregado por posto</DialogTitle>
+          <DialogDescription>
+            {c.nome} · {resumo.total} posto(s), {resumo.comEncarregado} com encarregado definido. Quem está no posto passa a se reportar ao encarregado escolhido, e quem entrar depois nesse posto já entra ligado a ele.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[12rem] flex-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar posto ou encarregado…" className="h-8 pl-7 text-sm" aria-label="Buscar posto" />
+          </div>
+          <div className="relative min-w-[12rem]">
+            <Input value={outro} onChange={(e) => setOutro(e.target.value)} placeholder="Outro encarregado do contrato…" className="h-8 text-sm" aria-label="Buscar outra pessoa como encarregado" />
+            {candidatosOutro.length > 0 && (
+              <div className="absolute right-0 z-50 mt-1 w-72 rounded-lg border bg-popover p-1 shadow-lg">
+                {candidatosOutro.map((m) => (
+                  <button key={m.id} type="button" onClick={() => { setExtras((x) => [...x, m]); setOutro(""); }}
+                    className="block w-full rounded-md px-2 py-1 text-left text-xs hover:bg-muted">
+                    <b>{tituloNome(m.nome)}</b> <span className="text-muted-foreground">· {funcaoDe(m) || "—"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="min-h-0 overflow-auto rounded-xl border">
+          {semBanco ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">O vínculo por posto ainda não está disponível no banco (migration 20261111120000).</p>
+          ) : regrasQ.isLoading ? (
+            <p className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</p>
+          ) : !postos.length ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">Ninguém do contrato tem posto no cadastro.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-muted/95 text-left text-[11px] uppercase tracking-wide text-muted-foreground backdrop-blur">
+                <tr>
+                  <th className="w-8 px-2 py-2">
+                    <input type="checkbox" className="h-4 w-4 accent-[hsl(var(--primary))]" aria-label="Marcar todos os postos" checked={todosVisiveis}
+                      onChange={() => setMarcados((s) => { const x = new Set(s); visiveis.forEach((p) => (todosVisiveis ? x.delete(p.codigo) : x.add(p.codigo))); return x; })} />
+                  </th>
+                  <th className="px-2 py-2 font-semibold">Posto</th>
+                  <th className="px-2 py-2 text-right font-semibold">Pessoas</th>
+                  <th className="px-2 py-2 font-semibold">Encarregado responsável</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {visiveis.map((p) => (
+                  <Fragment key={p.codigo}>
+                    <tr className={cn("align-middle", marcados.has(p.codigo) && "bg-primary/5")}>
+                      <td className="px-2 py-1.5">
+                        <input type="checkbox" className="h-4 w-4 accent-[hsl(var(--primary))]" aria-label={`Marcar ${p.nome}`} checked={marcados.has(p.codigo)} onChange={() => alternar(p.codigo)} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <button type="button" className="text-left font-medium hover:underline" onClick={() => setAberto(aberto === p.codigo ? null : p.codigo)}>{p.nome}</button>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {p.codigo}
+                          {p.encarregado && p.foraDoEncarregado > 0 && <b className="ml-1 text-amber-700 dark:text-amber-300">· {p.foraDoEncarregado} ainda fora</b>}
+                          {p.encarregadoFora && <b className="ml-1 text-amber-700 dark:text-amber-300">· encarregado fora do contrato</b>}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{p.pessoas.length}</td>
+                      <td className="px-2 py-1.5">
+                        <select value={p.encarregado?.id ?? ""} disabled={salvar.isPending}
+                          onChange={(e) => salvar.mutate({ codigos: [p.codigo], encarregado: e.target.value || null })}
+                          aria-label={`Encarregado do posto ${p.nome}`}
+                          className={cn("h-8 w-full max-w-[18rem] rounded-md border bg-background px-2 text-sm", !p.encarregado && "border-amber-400 text-amber-800 dark:text-amber-200")}>
+                          <option value="">— sem encarregado definido —</option>
+                          {opcoes.map((o) => <option key={o.id} value={o.id}>{tituloNome(o.nome)}{funcaoDe(o) ? ` · ${funcaoDe(o)}` : ""}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                    {aberto === p.codigo && (
+                      <tr className="bg-muted/30">
+                        <td />
+                        <td colSpan={3} className="px-2 py-2 text-xs">
+                          {p.pessoas.map((x) => tituloNome(x.nome)).join(" · ")}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:items-center">
+          <span className="mr-auto text-xs text-muted-foreground">{marcados.size} posto(s) marcado(s)</span>
+          <select value={emLote} onChange={(e) => setEmLote(e.target.value)} aria-label="Encarregado para os postos marcados"
+            className="h-9 rounded-md border bg-background px-2 text-sm" disabled={!marcados.size}>
+            <option value="">Escolha o encarregado…</option>
+            {opcoes.map((o) => <option key={o.id} value={o.id}>{tituloNome(o.nome)}</option>)}
+          </select>
+          <Button disabled={!marcados.size || !emLote || salvar.isPending} onClick={() => salvar.mutate({ codigos: [...marcados], encarregado: emLote })}>
+            {salvar.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} Definir nos marcados
+          </Button>
+          <Button variant="outline" onClick={onFechar}>Fechar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
