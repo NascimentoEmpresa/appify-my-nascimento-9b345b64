@@ -456,7 +456,7 @@ export default function FluxoCaixaGestao() {
           : editNovoContratoId
           ?"Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + (editNovoIntegranteId ? "; integrante alterado na origem" : "") + "; os demais campos valem só neste Fluxo de Caixa."
           : editNovoIntegranteId
-          ? "Integrante alterado na origem (Malote); os demais campos valem só neste Fluxo de Caixa."
+          ? "Integrante alterado na origem; os demais campos valem só neste Fluxo de Caixa."
           : "Atualizado só neste Fluxo de Caixa — o lançamento original não muda."
       );
       setItemEditar(null);
@@ -518,7 +518,7 @@ export default function FluxoCaixaGestao() {
   const doParametroLista = (k: string) => (searchParams.get(k) ?? "").split(",").filter(Boolean);
   const [contratoIds, setContratoIds] = useState<string[]>(() => doParametroLista("contrato"));
   const [classificacaoIds, setClassificacaoIds] = useState<string[]>(() => doParametroLista("classificacao"));
-  // SIS-2026-0823: filtro por Integrante (só despesa do Malote tem; "Sem integrante" = as demais e as ainda sem ninguém).
+  // SIS-2026-0823: filtro por Integrante (só despesa do Malote e, desde a SIS-2026-0859, a importação da planilha têm; "Sem integrante" = as demais e as ainda sem ninguém).
   const [integranteIds, setIntegranteIds] = useState<string[]>(() => doParametroLista("integrante"));
   const [formasFiltro, setFormasFiltro] = useState<string[]>([]);
   const [situacoes, setSituacoes] = useState<SituacaoFluxo[]>([]);
@@ -1157,7 +1157,7 @@ export default function FluxoCaixaGestao() {
               <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDisponiveis, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
-              <Label className="text-xs" title="Só despesas do Malote têm integrante: ao escolher uma pessoa, as linhas de outras origens saem da lista.">Integrante</Label>
+              <Label className="text-xs" title="Só despesas do Malote e lançamentos importados da planilha têm integrante: ao escolher uma pessoa, as linhas de outras origens saem da lista.">Integrante</Label>
               <SearchableMultiSelect className="text-xs" value={integranteIds} onChange={(v) => { setIntegranteIds(v); setPage(1); }} options={opcoesDe(integrantesDisponiveis, "Sem integrante (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             {aba !== "realizado" && (
