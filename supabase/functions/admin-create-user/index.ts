@@ -16,6 +16,8 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+// O nome do setor como está em Administração › Setores (user_setor).
+const SETOR_ENCARREGADOS = "Encarregados";
 
 interface Body {
   email: string;
@@ -24,6 +26,10 @@ interface Body {
   cargo?: string | null;
   empresa_id?: string | null;
   roles?: string[];
+  // Setores (Administração › Setores). Desde 11/11/2026 gravados AQUI (antes a
+  // tela gravava em user_setor depois): quem só cria Encarregados não tem a
+  // escrita em user_setor, e a trava do setor tem que ser do servidor.
+  setores?: string[];
   telefone?: string | null;
   // O que a pessoa faz na empresa (profiles.bio, a mesma de Meu Perfil).
   bio?: string | null;
@@ -110,16 +116,26 @@ Deno.serve(async (req) => {
       auth: { persistSession: false },
     });
 
-    const { data: podeCriar, error: roleErr } = await admin.rpc("can_access", {
-      _user: callerId,
-      _menu: "administracao",
-      _acao: "incluir",
-    });
-
-    if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
-    if (!podeCriar) {
+    // 11/11/2026 (mig 20261111260000): além da Administração (incluir), quem
+    // tem "PODE CRIAR LOGIN (só Encarregados)" cria usuário — mas só do setor
+    // Encarregados, com o perfil básico. Sem a migration, a regra antiga.
+    let escopo: "tudo" | "encarregados" | null = null;
+    const regua = await admin.rpc("login_pode_criar", { _quem: callerId });
+    if (!regua.error) {
+      escopo = regua.data === "tudo" || regua.data === "encarregados" ? regua.data : null;
+    } else {
+      const { data: podeCriar, error: roleErr } = await admin.rpc("can_access", {
+        _user: callerId,
+        _menu: "administracao",
+        _acao: "incluir",
+      });
+      if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
+      escopo = podeCriar ? "tudo" : null;
+    }
+    if (!escopo) {
       return jsonResponse({ error: "Apenas administradores podem criar usuários." }, 403);
     }
+    const soEncarregados = escopo === "encarregados";
 
     let body: Body;
     try {
@@ -134,7 +150,12 @@ Deno.serve(async (req) => {
     const cargo = normalizeTextOrNull(body.cargo);
     const telefone = normalizeTelefone(body.telefone);
     const empresa_id = normalizeTextOrNull(body.empresa_id);
-    const requestedRoles = uniqueStrings(body.roles);
+    // Quem só cria Encarregados não escolhe perfil nem setor.
+    const requestedRoles = soEncarregados ? [] : uniqueStrings(body.roles);
+    const setores = soEncarregados ? [SETOR_ENCARREGADOS] : uniqueStrings(body.setores);
+    if (soEncarregados && uniqueStrings(body.setores).some((s) => s.toUpperCase() !== SETOR_ENCARREGADOS.toUpperCase())) {
+      return jsonResponse({ error: "Com a permissão \"Pode criar login\" só dá para criar usuário do setor Encarregados." }, 403);
+    }
     const bio = normalizeTextOrNull(body.bio)?.slice(0, 500) ?? null;
     const organograma = body.organograma ?? null;
 
@@ -238,6 +259,7 @@ Deno.serve(async (req) => {
         // o auth user deixaria essas 2 linhas órfãs pra trás (foi exatamente assim
         // que os perfis órfãos de teste apareceram). Limpa os 3 antes de apagar.
         await admin.from("user_roles").delete().eq("user_id", newUserId);
+        await admin.from("user_setor").delete().eq("user_id", newUserId);
         await admin.from("user_empresa").delete().eq("user_id", newUserId);
         await admin.from("profiles").delete().eq("id", newUserId);
         await admin.auth.admin.deleteUser(newUserId);
@@ -311,6 +333,22 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: `Erro ao vincular perfis: ${rolesErr.message}` }, 500);
     }
 
+    // Setor (11/11/2026): gravado aqui, com a service role. Para quem só cria
+    // Encarregados, é sempre e só o setor Encarregados.
+    if (setores.length > 0) {
+      const { error: setorErr } = await admin
+        .from("user_setor")
+        .insert(setores.map((setor) => ({ user_id: newUserId, setor })));
+      if (setorErr) {
+        // Sem o setor o login de Encarregado ficaria sem o recorte do setor: desfaz.
+        if (soEncarregados) {
+          await rollbackCreatedUser();
+          return jsonResponse({ error: `Erro ao gravar o setor: ${setorErr.message}` }, 500);
+        }
+        console.error("Erro ao gravar setores do usuário criado", newUserId, setorErr.message);
+      }
+    }
+
     // Por último: é a etapa que pode recusar por regra de negócio (colaborador
     // já vinculado a outro login, superior que fecharia ciclo). Recusou, desfaz
     // o usuário e o operador corrige sem ficar com conta pela metade.
@@ -346,6 +384,8 @@ Deno.serve(async (req) => {
       user_id: newUserId,
       roles: rolesToApply,
       empresa_id,
+      setores,
+      setores_gravados: true,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

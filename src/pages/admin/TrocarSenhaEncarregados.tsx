@@ -14,22 +14,37 @@
 // não é a barreira.
 // =====================================================================
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Loader2, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ResetSenhaSection } from "@/components/admin/UsuariosReal";
+import { NovoUsuarioDialog, ResetSenhaSection, SETOR_ENCARREGADOS } from "@/components/admin/UsuariosReal";
+import { usePermissoes } from "@/context/PermissoesContext";
 
 interface Encarregado { user_id: string; nome: string; email: string | null }
 
 export default function TrocarSenhaEncarregados() {
+  const { can } = usePermissoes();
+  const qc = useQueryClient();
+  const podeCriar = can("visualizar", undefined, "criar_login_encarregados");
+  // Quem só cria login (sem "PODE TROCAR A SENHA") não vê o reset — a lista nem é pedida.
+  const podeTrocar = can("visualizar", undefined, "trocar_senha_encarregados");
+  const { data: empresas = [] } = useQuery({
+    queryKey: ["empresas-novo-encarregado"],
+    enabled: podeCriar,
+    queryFn: async () => {
+      const { data } = await (supabase as unknown as { from: (t: string) => any }).from("empresas").select("id, codigo, razao_social").order("razao_social"); // eslint-disable-line @typescript-eslint/no-explicit-any
+      return (data ?? []) as { id: string; codigo: string; razao_social: string }[];
+    },
+  });
   const [userId, setUserId] = useState<string>("");
 
   const { data: usuarios = [], isLoading, error } = useQuery({
     queryKey: ["senha-encarregados"],
     staleTime: 60_000,
+    enabled: podeTrocar,
     queryFn: async (): Promise<Encarregado[]> => {
       const { data, error } = await (supabase as unknown as {
         rpc: (f: string) => Promise<{ data: Encarregado[] | null; error: { message: string } | null }>;
@@ -45,10 +60,16 @@ export default function TrocarSenhaEncarregados() {
     <div className="space-y-6">
       <PageHeader
         title="Configurações do ERP"
-        breadcrumb={["Configurações do ERP", "Trocar senha"]}
-        subtitle="Redefinir a senha dos usuários do setor Encarregados."
+        breadcrumb={["Configurações do ERP", podeTrocar ? "Trocar senha" : "Criar login"]}
+        subtitle={podeTrocar && podeCriar ? "Criar login e redefinir a senha dos usuários do setor Encarregados."
+          : podeTrocar ? "Redefinir a senha dos usuários do setor Encarregados." : "Criar o login de novos usuários do setor Encarregados."}
+        actions={podeCriar ? (
+          // 11/11/2026: "PODE CRIAR LOGIN (só Encarregados)" — o mesmo Novo usuário da Administração, travado no setor.
+          <NovoUsuarioDialog empresas={empresas} setoresCatalogo={[SETOR_ENCARREGADOS]} soEncarregados onCreated={() => qc.invalidateQueries()} />
+        ) : undefined}
       />
 
+      {podeTrocar && (
       <Card className="max-w-2xl space-y-5 p-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -91,6 +112,12 @@ export default function TrocarSenhaEncarregados() {
           </div>
         )}
       </Card>
+      )}
+      {!podeTrocar && podeCriar && (
+        <Card className="max-w-2xl p-5 text-sm text-muted-foreground">
+          Use <b>Novo usuário</b>, no canto de cima: o login nasce no setor <b>Encarregados</b>, com o acesso básico. As telas que ele vai usar se liberam em Acesso por Usuário.
+        </Card>
+      )}
     </div>
   );
 }
