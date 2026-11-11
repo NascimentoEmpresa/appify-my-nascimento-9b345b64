@@ -1086,11 +1086,14 @@ export function useMandarParaAprovacaoNovamente() {
     // vira despesaFields no useSalvarDespesa).
     mutationFn: async (input: SalvarDespesaInput & { descricaoEvento?: string | null }) => {
       const { descricaoEvento, ...resto } = input;
+      // SIS-2026-0856: status, nível e motivo_ajuste vão no MESMO update. Antes eram dois (o 2º só zerava o nível/motivo): para o lançador da
+      // Classificação (que só pode gravar enquanto a despesa está em ajuste), o 2º update já não passava na regra de acesso e ficava sem efeito.
       const despesaId = await salvar.mutateAsync({
         ...resto,
         status: "pendente_aprovacao",
+        nivel_aprovacao_atual: 1,
+        motivo_ajuste: null,
       });
-      await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1, motivo_ajuste: null }).eq("id", despesaId);
       await registrarEventoDespesa(despesaId, "reenvio_aprovacao", descricaoEvento ?? null, 1);
       return despesaId;
     },
