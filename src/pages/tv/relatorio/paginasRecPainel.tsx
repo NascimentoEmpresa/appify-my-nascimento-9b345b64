@@ -72,11 +72,16 @@ function curto(contrato: string) {
   return contrato.replace(/\s+-\s+[\d./\s-]+$/, "").replace(/\s+-\s+\d.*$/, "").trim() || contrato;
 }
 
+/** Último bloco mostrado (vale entre uma volta e outra da playlist, enquanto a página está aberta). */
+let ultimoBloco = -1;
+
 export function TelaRecPainel({ d, atualizado }: { d: DadosRecPainelTv; atualizado: string | null }) {
   const t = tons(d);
   const pct = pctAdmissoes(d.admissoes);
   const blocos = blocosDeContratos(d.vagas.por_contrato);
-  const [bloco, setBloco] = useState(0);
+  // 11/11/2026: a playlist reveza com o RH; ao voltar, segue do bloco seguinte ao que parou.
+  const [bloco, setBloco] = useState(() => (ultimoBloco + 1) % Math.max(blocos.length, 1));
+  useEffect(() => { ultimoBloco = bloco; }, [bloco]);
   const [agora, setAgora] = useState(() => new Date());
   const ms = SEGUNDOS_POR_BLOCO_REC * 1000;
   useEffect(() => {

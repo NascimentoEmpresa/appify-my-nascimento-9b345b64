@@ -66,6 +66,8 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   // 11/11/2026 (mig 20261111190000): o modelo "TV Recrutamento e Seleção",
   // animado, girando os contratos (src/lib/tv/recPainelTv.ts).
   { slug: "rec-painel", titulo: "Recrutamento e Seleção", paginas: 1, semFiltros: true },
+  // 11/11/2026 (mig 20261111220000): salários e benefícios × Planilha de Custo, por contrato.
+  { slug: "rh-salarios", titulo: "RH — Salários e benefícios × orçamento", paginas: 1, semFiltros: true },
   // 12/10/2026 (mig 20261012000001, SIS-2026-0635): as 13 TVs gerenciais por
   // diretoria do documento "Indicadores das TVs" — indicadores com meta e
   // semáforo (src/lib/tv/gerencial.ts). Sem período nem contrato: cada
