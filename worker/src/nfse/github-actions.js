@@ -1,4 +1,4 @@
-// Um ciclo da fila NFS-e por execução do Actions, sem iniciar os outros workers.
+// Um ciclo da fila e, quando necessário, uma consulta após 60 s, sem outros workers.
 const fs = require('node:fs');
 const path = require('node:path');
 const { carregarConfiguracao, validarUrlFiscal } = require('./cliente');
@@ -70,7 +70,13 @@ async function executarNoGithub(ambiente = process.env, dependencias = {}) {
     const supabase = criarCliente(temporarios.ambienteWorker.SUPABASE_URL,
       temporarios.ambienteWorker.SUPABASE_SERVICE_ROLE_KEY,
       { auth: { persistSession: false, autoRefreshToken: false } });
-    await (dependencias.processarFilaNfse || processarFilaNfse)(supabase, temporarios.ambienteWorker);
+    const processar = dependencias.processarFilaNfse || processarFilaNfse;
+    const resultado = await processar(supabase, temporarios.ambienteWorker);
+    if (resultado?.aguardarConsulta) {
+      const aguardar = dependencias.aguardar || (() => new Promise(resolve => setTimeout(resolve, 60_000)));
+      await aguardar();
+      await processar(supabase, temporarios.ambienteWorker);
+    }
   } finally { temporarios.descartar(); }
 }
 
