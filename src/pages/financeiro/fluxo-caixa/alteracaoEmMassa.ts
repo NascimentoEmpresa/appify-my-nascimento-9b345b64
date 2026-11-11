@@ -88,7 +88,7 @@ export function planejarTrocaDeClassificacao(linhas: LinhaMassa[], novaClassific
   return { aplicar, ignoradas };
 }
 
-// SIS-2026-0823: troca o integrante da despesa do Malote. Só o Malote tem integrante (linha de rateio); despesa rateada em várias linhas fica de fora
+// SIS-2026-0823: troca o integrante da despesa do Malote (SIS-2026-0859: e do lançamento importado da planilha). No Malote o integrante (linha de rateio); despesa rateada em várias linhas fica de fora
 // (o integrante é de cada linha: ajuste na grade de rateio do Malote). Fornecedor e Integrante podem coexistir na mesma linha, então nada é limpo.
 export function planejarTrocaDeIntegrante(linhas: LinhaMassa[], novoEmpregadoId: number): PlanoMassa {
   const aplicar: LinhaMassa[] = [];
@@ -96,10 +96,14 @@ export function planejarTrocaDeIntegrante(linhas: LinhaMassa[], novoEmpregadoId:
   const jaVistas = new Set<string>();
   for (const l of linhas) {
     const ignora = (motivo: string) => ignoradas.push({ linha: l, motivo });
-    if (l.origem !== "malote") { ignora("Só despesa do Malote tem integrante"); continue; }
-    if (l.fatura_cartao_id) { ignora("Fatura de cartão: o integrante é de cada despesa, no Malote"); continue; }
-    if ((l.qtdLinhasRateio ?? 1) > 1) { ignora("Rateada em várias linhas: ajuste o integrante de cada uma na grade de rateio do Malote"); continue; }
-    if ((l.qtdLinhasRateio ?? 1) === 0) { ignora("Despesa sem linha de rateio: ajuste direto no Malote"); continue; }
+    // SIS-2026-0859: lançamento importado da planilha também tem integrante (grava em todas as cotas do lançamento, rateado ou não).
+    const importado = l.origem === "importacao_historica";
+    if (l.origem !== "malote" && !importado) { ignora("Integrante só em despesa do Malote ou lançamento importado da planilha"); continue; }
+    if (!importado) {
+      if (l.fatura_cartao_id) { ignora("Fatura de cartão: o integrante é de cada despesa, no Malote"); continue; }
+      if ((l.qtdLinhasRateio ?? 1) > 1) { ignora("Rateada em várias linhas: ajuste o integrante de cada uma na grade de rateio do Malote"); continue; }
+      if ((l.qtdLinhasRateio ?? 1) === 0) { ignora("Despesa sem linha de rateio: ajuste direto no Malote"); continue; }
+    }
     if (l.integrante_empregado_id === novoEmpregadoId) { ignora("Já está com este integrante"); continue; }
     // O integrante vale para a despesa inteira: as outras parcelas marcadas já são cobertas pela primeira.
     const chave = `${l.origem}:${l.despesa_id}`;

@@ -188,7 +188,7 @@ export function AlteracaoEmMassaBar({
               </div>
             )}
             {tipo === "integrante" ? (
-              <p className="text-xs text-muted-foreground">O integrante muda <strong>na linha de rateio da despesa do Malote</strong> (origem), sem mexer em valor, centro de custo, classificação nem fornecedor. Cada despesa fica no histórico dela.</p>
+              <p className="text-xs text-muted-foreground">O integrante muda <strong>na origem</strong> (linha de rateio da despesa do Malote, ou o lançamento importado da planilha), sem mexer em valor, centro de custo, classificação nem fornecedor. Cada lançamento fica no histórico dele.</p>
             ) : tipo === "conta_banco" ? (
               <p className="text-xs text-muted-foreground">Só liga o lançamento à conta do banco, para conciliar cada conta separada. Valor, data, classificação e centro de custo não mudam, e dá para trocar a conta depois.</p>
             ) : tipo === "classificacao" ? (
