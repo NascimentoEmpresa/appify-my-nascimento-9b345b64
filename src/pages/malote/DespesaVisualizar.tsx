@@ -23,6 +23,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users, ExternalLink, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { ReordenarRateio } from "./ReordenarRateio";
+import { useReordenarRateioAjuste } from "@/hooks/useMaloteDespesa";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -349,6 +351,9 @@ export default function DespesaVisualizar() {
   const [ajusteAdminMotivo, setAjusteAdminMotivo] = useState("");
   const reenviar = useMandarParaAprovacaoNovamente();
   const salvarEdicaoPosAprovacao = useSalvarEdicaoPosAprovacao();
+  const reordenarRateio = useReordenarRateioAjuste();
+  // ordem das linhas do Rateio arrastada e ainda não salva (ReordenarRateio): o Salvar/Reenviar da tela grava junto
+  const [ordemRateioPendente, setOrdemRateioPendente] = useState<string[] | null>(null);
   const atualizarDatasParcelas = useAtualizarDatasParcelas();
   const atualizarValoresParcelas = useAtualizarValoresParcelas();
   const aprovar = useAprovarDespesa();
@@ -1530,6 +1535,23 @@ export default function DespesaVisualizar() {
         descricaoEvento: partesResumo.length > 0 ? partesResumo.join("\n") : null,
       };
 
+      // Ordem das linhas do Rateio arrastada e não salva (só em ajuste_pagamento). Se o Rateio vai ser regravado (delete + insert, ordem = posição no
+      // array), a ordem entra no próprio array; senão grava pela RPC AGORA, enquanto a despesa ainda está em ajuste_pagamento (ela exige esse status).
+      const regravaRateio = modo === "reenviar" && (rateioBaseEditavel || rateioRestritoEditavel || valorTotalMudouNaFaseCongelada);
+      let linhasParaGravar = linhasRateio;
+      if (ordemRateioPendente && despesa!.status === "ajuste_pagamento") {
+        if (regravaRateio) {
+          const posicao = new Map(ordemRateioPendente.map((id, i) => [id, i]));
+          linhasParaGravar = [...linhasRateio].sort((a, b) => (posicao.get(a.id ?? "") ?? 9999) - (posicao.get(b.id ?? "") ?? 9999));
+        } else {
+          await reordenarRateio.mutateAsync({
+            despesaId: despesa!.id,
+            linhaIds: ordemRateioPendente,
+            descricao: "Ordem do rateio alterada.",
+          });
+        }
+      }
+
       if (modo === "reenviar") {
         // Rascunho/necessidade_de_ajuste: único botão, sempre esse caminho.
         // Pendente_aprovacao/aguardando_pagamento: solicitante escolheu
@@ -1540,7 +1562,7 @@ export default function DespesaVisualizar() {
         // travado e intocado mesmo reenviando.
         await reenviar.mutateAsync(
           rateioBaseEditavel || rateioRestritoEditavel || valorTotalMudouNaFaseCongelada
-            ? { ...payloadBase, rateio: linhasRateio }
+            ? { ...payloadBase, rateio: linhasParaGravar }
             : payloadBase
         );
         toast.success("Enviado para aprovação novamente (reiniciado em N1).");
@@ -2520,6 +2542,10 @@ export default function DespesaVisualizar() {
               podeJustificarComoAprovador={configurado}
               souSolicitante={souSolicitante}
             />
+          )}
+          {/* [SEM-CHAMADO] SD-2026-0211: reordenar as linhas (a 1ª é a que as listas mostram), inclusive em despesa parcelada com rateio travado. */}
+          {podeCorrigirNecessidadeDeAjuste && despesa.status === "ajuste_pagamento" && (
+            <ReordenarRateio despesaId={despesa.id} linhas={data?.rateio ?? []} contratos={contratos} empresas={empresas} onPendente={setOrdemRateioPendente} />
           )}
         </CardContent>
       </Card>

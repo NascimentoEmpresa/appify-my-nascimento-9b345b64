@@ -133,7 +133,8 @@ export default function ArquivosMalote() {
   }
   // DM-2026-0515: contrato pode estar só na linha do rateio.
   function contratoIdResolvido(despesa: MaloteDespesaRow): string | null {
-    return despesa.contrato_id ?? contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? null;
+    // [SEM-CHAMADO] SD-2026-0211: 1ª linha do rateio primeiro (como a empresa); o contrato da solicitação é só fallback.
+    return contratoPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.contrato_id ?? null;
   }
   // SIS-2026-0335: setor_responsavel virou lista (mais de um setor por
   // Classificação) — filtro/opções passam a considerar QUALQUER um dos
