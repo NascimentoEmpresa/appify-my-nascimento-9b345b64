@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Package } from "lucide-react";
 import { cardsSup, paginasSup, SEGUNDOS_POR_PAGINA_SUP, type DadosSupPainelTv, type ItemValor, type TomCard } from "@/lib/tv/supPainelTv";
-import { FONTE, LARANJA, TINTA, TINTA_SUAVE } from "./base";
+import { FONTE, LARANJA, TINTA, TINTA_SUAVE, LogoTv } from "./base";
 
 // =====================================================================
 // TV › Compras — Suprimentos (11/11/2026, mig 20261111180000).
@@ -239,7 +239,7 @@ export function TelaSupPainel({ d, cor, atualizado }: { d: DadosSupPainelTv; cor
           </div>
         </div>
         <p className="shrink-0 font-black leading-none tabular-nums" style={{ fontSize: 70 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
-        <div className="shrink-0 rounded-2xl px-5 py-3 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 19, background: LARANJA }}>Grupo<br />Nascimento</div>
+        <LogoTv />
       </div>
 
       <div key={pagina} className="min-h-0 flex-1 px-12 pb-5 pt-7" style={{ animation: "tv-entra 600ms ease-out" }}>

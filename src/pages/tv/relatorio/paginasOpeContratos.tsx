@@ -7,8 +7,7 @@ import { MARGEM_PADRAO, type LinhaContrato, type StatusInd } from "@/lib/operaci
 import {
   alertaPrincipal, CONTRATOS_POR_TELA, glosasPorCausa, linhasDaTv, SEGUNDOS_POR_CONTRATO, totaisOpe, type DadosOpeContratosTv,
 } from "@/lib/tv/opeContratosTv";
-import logoBranco from "@/assets/logo-nascimento-branco.webp";
-import { FONTE, TINTA, TINTA_SUAVE } from "./base";
+import { FONTE, LogoTv, TINTA, TINTA_SUAVE } from "./base";
 
 // =====================================================================
 // TV › Operacional — "TV da Gerência Operacional" (11/11/2026, refeita no
@@ -112,8 +111,7 @@ export function TelaOpeContratos({ d, atualizado }: { d: DadosOpeContratosTv; co
     <div className="flex h-full w-full flex-col gap-5 px-9 pb-4 pt-5" style={{ fontFamily: FONTE, background: "linear-gradient(180deg,#f5f3ff 0%,#f8fafc 100%)" }}>
       {/* Topo */}
       <div className="relative flex shrink-0 items-center gap-6 overflow-hidden rounded-[26px] px-8 text-white" style={{ height: 124, background: "linear-gradient(110deg,#4c1d95 0%,#6d28d9 55%,#7c3aed 100%)" }}>
-        {/* A logo oficial (branca), a mesma da tela padrão das TVs (TvTelaPadrao). */}
-        <img src={logoBranco} alt="Grupo Nascimento" className="shrink-0 object-contain" style={{ height: 76, maxWidth: 260 }} />
+        <LogoTv altura={70} />
         <div className="min-w-0 flex-1 border-l border-white/30 pl-6">
           <p className="font-bold uppercase tracking-widest opacity-85" style={{ fontSize: 18 }}>Dashboard gerencial • Grupo Nascimento</p>
           <p className="font-black leading-tight tracking-tight" style={{ fontSize: 48 }}>TV da Gerência Operacional</p>

@@ -3,7 +3,7 @@ import { AlertTriangle, BarChart3, CheckCircle2, Clock, Shuffle, Users } from "l
 import {
   blocosDeContratos, ondeAgir, pctAdmissoes, SEGUNDOS_POR_BLOCO_REC, tons, type DadosRecPainelTv, type Tom,
 } from "@/lib/tv/recPainelTv";
-import { FONTE, LARANJA, TINTA, TINTA_SUAVE } from "./base";
+import { FONTE, LARANJA, TINTA, TINTA_SUAVE, LogoTv } from "./base";
 
 // =====================================================================
 // TV › Recrutamento e Seleção (11/11/2026, mig 20261111190000) — o layout do
@@ -121,7 +121,7 @@ export function TelaRecPainel({ d, atualizado }: { d: DadosRecPainelTv; atualiza
           <p className="font-black leading-none tabular-nums" style={{ fontSize: 76 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
           <p className="mt-1 font-semibold opacity-90" style={{ fontSize: 22 }}>{agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).replace(/^./, (c) => c.toUpperCase())}</p>
         </div>
-        <div className="relative shrink-0 rounded-2xl px-5 py-3 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 20, background: LARANJA }}>Grupo<br />Nascimento</div>
+        <LogoTv />
       </div>
 
       {/* Os 5 números */}

@@ -4,7 +4,7 @@ import {
   brlCurto, brlTv, pctRecebido, resumoPresidencia, rotuloMesTv, tomMargem, tomNaoEmitido,
   type DadosCtlPainelTv, type DadosFinPainelTv, type DadosPrePainelTv, type TomGestao,
 } from "@/lib/tv/gestaoTv";
-import { FONTE, LARANJA, TINTA, TINTA_SUAVE } from "./base";
+import { FONTE, LARANJA, TINTA, TINTA_SUAVE, LogoTv } from "./base";
 
 // =====================================================================
 // TVs de gestão — Financeiro (Controle de Faturamento), Controladoria
@@ -38,7 +38,7 @@ function Moldura({ cor, cor2, icone, area, titulo, selo, atualizado, children }:
         </div>
         <span className="shrink-0 rounded-full bg-white px-5 py-1.5 font-bold uppercase tracking-wide" style={{ fontSize: 20, color: cor }}>{selo}</span>
         <p className="shrink-0 font-black leading-none tabular-nums" style={{ fontSize: 72 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
-        <div className="shrink-0 rounded-2xl px-5 py-3 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 19, background: LARANJA }}>Grupo<br />Nascimento</div>
+        <LogoTv />
       </div>
       <div className="min-h-0 flex-1">{children}</div>
       <p className="shrink-0 font-semibold" style={{ fontSize: 17, color: TINTA_SUAVE }}>Dados do ERP{atualizado ? ` · atualizado às ${atualizado}` : ""}</p>

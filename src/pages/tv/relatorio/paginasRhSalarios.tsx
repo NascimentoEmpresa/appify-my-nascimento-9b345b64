@@ -3,7 +3,7 @@ import { Wallet } from "lucide-react";
 import {
   acimaDoOrcamento, contratosDoGrafico, desvioTotal, FOLGA_ORCAMENTO, rotuloCompetencias, tomDesvio, type DadosRhSalariosTv,
 } from "@/lib/tv/rhSalariosTv";
-import { FONTE, LARANJA, TINTA, TINTA_SUAVE } from "./base";
+import { FONTE, LARANJA, TINTA, TINTA_SUAVE, LogoTv } from "./base";
 
 // =====================================================================
 // TV › RH — Salários e benefícios × orçamento (11/11/2026, mig 20261111220000).
@@ -37,7 +37,7 @@ export function TelaRhSalarios({ d, atualizado }: { d: DadosRhSalariosTv; atuali
           <p className="font-black leading-tight tracking-tight" style={{ fontSize: 50 }}>Salários e benefícios × orçamento</p>
         </div>
         <p className="shrink-0 font-black leading-none tabular-nums" style={{ fontSize: 72 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
-        <div className="shrink-0 rounded-2xl px-5 py-3 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 19, background: LARANJA }}>Grupo<br />Nascimento</div>
+        <LogoTv />
       </div>
 
       <div className="grid shrink-0 grid-cols-3 gap-6" style={{ height: 150 }}>
