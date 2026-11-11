@@ -10,6 +10,7 @@ const ROTULO_TIPO: Record<string, string> = {
   rateio_desfeito: "Rateio desfeito",
   excluido: "Excluído",
   restaurado: "Restaurado",
+  integrante_alterado: "Integrante alterado", // SIS-2026-0859 (lançamento importado da planilha)
   ajuste_criado: "Ajuste criado",
   ajuste_alterado: "Ajuste alterado",
   ajuste_desfeito: "Ajuste desfeito",
