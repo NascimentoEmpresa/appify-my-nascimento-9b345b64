@@ -402,6 +402,8 @@ jobs:
         run: npm ci --prefer-offline --no-audit --no-fund
       - name: Instalar dependências do worker para os testes de NFS-e
         run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
+      - name: Testar execução isolada de NFS-e no GitHub
+        run: node --test worker/test/nfse-github-actions.test.cjs
       - name: Testes
         run: npm test
 
