@@ -10,6 +10,10 @@ import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { EnviarFeriasMalote, abrirReciboFerias, type MaloteDaFerias } from "./EnviarFeriasMalote";
 import { EnviarFeriasLoteMalote } from "./EnviarFeriasLoteMalote";
+import {
+  SITUACOES_MALOTE_FERIAS, acoesMaloteFerias, passaNoFiltroMalote, situacaoMaloteFerias,
+  type SituacaoMaloteFerias,
+} from "@/lib/rh/situacaoMaloteFerias";
 
 // SISTEMA_SOLICITACOES_FERIAS e o histórico não estão no types.ts gerado;
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -85,6 +89,11 @@ interface SolicitacaoFerias {
   malote_despesa_id?: string | null;
   malote_enviado_por?: string | null;
   malote_enviado_em?: string | null;
+  /** #0865 (mig 20261111235800): programada no Malote sem o recibo, e o check final da Mentore. */
+  malote_programado_em?: string | null;
+  malote_programado_por?: string | null;
+  mentore_enviado_em?: string | null;
+  mentore_enviado_por?: string | null;
   criado_em?: string | null;
   atualizado_em?: string | null;
 }
@@ -130,6 +139,13 @@ function SeniorBadge({ status }: { status?: string | null }) {
   return <span style={{ display: "inline-flex", padding: "2px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap",
     background: gerado ? "#e0f2fe" : "#f8fafc", color: gerado ? "#0369a1" : "#94a3b8", border: `1px solid ${gerado ? "#bae6fd" : "#e2e8f0"}` }}>{gerado ? "Gerado" : "Pendente"}</span>;
 }
+/** Situação no Malote (#0865): pendente de anexo, enviado, Enviado pra Mentore. */
+function MaloteBadge({ situacao }: { situacao: SituacaoMaloteFerias }) {
+  if (situacao === "nao_enviado") return null;
+  const c = SITUACOES_MALOTE_FERIAS.find(x => x.valor === situacao)!;
+  return <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap",
+    background: c.cor.bg, color: c.cor.fg, border: `1px solid ${c.cor.bd}` }}>{c.rotulo}</span>;
+}
 const fmtReais = (v?: number | string | null) => (v == null || v === "" ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 
 const inputData: CSSProperties = { padding: "7px 10px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none", background: "#fff", color: "#0f172a" };
@@ -158,11 +174,19 @@ export default function Ferias() {
   const limparPeriodo = () => { setMes(""); setDe(""); setAte(""); };
   // Status Senior (04/11/2026): "Pendente" = ainda não gerou na Senior.
   const [fSenior, setFSenior] = useState("");
+  // Filtro do Malote (#0865): não enviado, pendente de anexo, enviado, Mentore.
+  const [fMalote, setFMalote] = useState("");
+  // Número/status da despesa no Malote, por solicitação (RPC: quem só tem o RH não lê malote_despesa).
+  const [malotes, setMalotes] = useState<Map<number, MaloteDaFerias>>(new Map());
+  const situacaoDe = useCallback((r: SolicitacaoFerias) => situacaoMaloteFerias(r, !!malotes.get(r.id)?.ativo), [malotes]);
   const rowsFiltradas = useMemo(
     () => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos) && passaNoPeriodo(r, basePeriodo, de, ate)
-      && (!fSenior || (r.status_senior || "Pendente") === fSenior)),
-    [rows, fContratos, basePeriodo, de, ate, fSenior],
+      && (!fSenior || (r.status_senior || "Pendente") === fSenior)
+      && passaNoFiltroMalote(situacaoDe(r), fMalote)),
+    [rows, fContratos, basePeriodo, de, ate, fSenior, fMalote, situacaoDe],
   );
+  // Matrícula (#0865): EMPREGADOS."Cadastro" do colaborador, por solicitação.
+  const [matriculas, setMatriculas] = useState<Map<number, string>>(new Map());
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<SolicitacaoFerias | null>(null);
@@ -196,8 +220,10 @@ export default function Ferias() {
   const { data: podeEnviarMalote = false } = useScreenAccess("rh_ferias", "enviar_malote");
   const [enviandoMalote, setEnviandoMalote] = useState(false);
   const [loteAberto, setLoteAberto] = useState(false);
-  // Número/status da despesa no Malote, por solicitação (RPC: quem só tem o RH não lê malote_despesa).
-  const [malotes, setMalotes] = useState<Map<number, MaloteDaFerias>>(new Map());
+  // #0865: confirmações de "Programar no malote" e do "Enviado pra Mentore".
+  const [confirmando, setConfirmando] = useState<"" | "programar" | "desprogramar" | "mentore" | "desfazer_mentore">("");
+  const [conferiuMentore, setConferiuMentore] = useState(false);
+  const [gravandoMalote, setGravandoMalote] = useState(false);
   useEffect(() => {
     setDocSenior(sol?.status_senior || "Pendente");
     setDocEnviado(sol?.documentacao_enviada_em ?? "");
@@ -237,7 +263,19 @@ export default function Ferias() {
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
     setRows(data);
     carregarMalotes(data.filter(r => r.malote_despesa_id).map(r => r.id));
+    carregarMatriculas(data.map(r => r.id));
   }, [statusFilter, busca, toast]);
+
+  async function carregarMatriculas(ids: number[]) {
+    const m = new Map<number, string>();
+    for (let i = 0; i < ids.length; i += 5000) {
+      const { data } = await db.rpc("ferias_matriculas", { p_ids: ids.slice(i, i + 5000) });
+      for (const x of (data ?? []) as { solicitacao_id: number; matricula: string | null }[]) {
+        if (x.matricula) m.set(Number(x.solicitacao_id), x.matricula);
+      }
+    }
+    setMatriculas(m);
+  }
 
   async function carregarMalotes(ids: number[]) {
     if (!ids.length) { setMalotes(new Map()); return; }
@@ -282,6 +320,7 @@ export default function Ferias() {
     setCancelando(false);
     setMotivoCanc("");
     setVerHist(false);
+    setConfirmando(""); setConferiuMentore(false);
     carregarHist(row.id);
   };
   const fecharDrawer = () => { setDrawerId(null); setSol(null); setHist([]); setVerHist(false); setEnviandoMalote(false); };
@@ -319,6 +358,23 @@ export default function Ferias() {
     setCancelando(false);
     setMotivoCanc("");
     recarregarTudo();
+  };
+
+  /** #0865: programar no malote (ou desfazer) e o check final da Mentore (ou desfazer). */
+  const acaoMalote = async (qual: "programar" | "desprogramar" | "mentore" | "desfazer_mentore") => {
+    if (!drawerId || gravandoMalote) return;
+    setGravandoMalote(true);
+    const { error } = qual === "programar" || qual === "desprogramar"
+      ? await db.rpc("ferias_programar_malote", { p_id: drawerId, p_programar: qual === "programar" })
+      : await db.rpc("ferias_enviado_mentore", { p_id: drawerId, p_enviado: qual === "mentore" });
+    setGravandoMalote(false);
+    if (error) { toast("Erro: " + error.message, "err"); return; }
+    toast(qual === "programar" ? "Programada no Malote — pendente de anexo de documento."
+      : qual === "desprogramar" ? "Programação no Malote desfeita."
+      : qual === "mentore" ? "Enviado pra Mentore — férias concluídas."
+      : "Envio pra Mentore desfeito.", "ok");
+    setConfirmando(""); setConferiuMentore(false);
+    await recarregarSol();
   };
 
   const salvarDocumentacao = async () => {
@@ -404,6 +460,11 @@ export default function Ferias() {
             <option value="Pendente">Pendente (não gerado)</option>
             <option value="Gerado">Gerado</option>
           </select>],
+          ["Malote", <select key="ml" value={fMalote} onChange={e => setFMalote(e.target.value)} style={inputData}>
+            <option value="">Todos</option>
+            {SITUACOES_MALOTE_FERIAS.map(x => <option key={x.valor} value={x.valor}>{x.filtro}</option>)}
+            <option value="ja_foi">Já enviados ao Malote (todos)</option>
+          </select>],
           ["Mês", <input key="m" type="month" value={mes} onChange={e => escolherMes(e.target.value)} style={inputData} />],
           ["De", <input key="d" type="date" value={de} max={ate || undefined} onChange={e => { setMes(""); setDe(e.target.value); }} style={inputData} />],
           ["Até", <input key="a" type="date" value={ate} min={de || undefined} onChange={e => { setMes(""); setAte(e.target.value); }} style={inputData} />],
@@ -413,6 +474,9 @@ export default function Ferias() {
             {campo}
           </label>
         ))}
+        {fMalote && !temPeriodo && (
+          <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto" }}><b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) no filtro do Malote</span>
+        )}
         {temPeriodo && (
           <>
             <button onClick={limparPeriodo} style={{ padding: "7px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Limpar período</button>
@@ -447,7 +511,10 @@ export default function Ferias() {
                 onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
                 <td style={{ padding: "11px 14px", fontSize: 13 }}>
                   <div style={{ fontWeight: 600, color: "#0f172a" }}>{r.colaborador_nome}</div>
-                  <div style={{ fontSize: 11, color: "#94a3b8" }}>{r.colaborador_cargo}{r.colaborador_filial ? ` · ${r.colaborador_filial}` : ""}</div>
+                  <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                    {matriculas.get(r.id) && <b style={{ color: "#475569" }}>Matrícula {matriculas.get(r.id)} · </b>}
+                    {r.colaborador_cargo}{r.colaborador_filial ? ` · ${r.colaborador_filial}` : ""}
+                  </div>
                 </td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>
                   {r.tipo === "venda"
@@ -465,7 +532,8 @@ export default function Ferias() {
                 </td>
                 <td style={{ padding: "11px 14px" }}><SeniorBadge status={r.status_senior} /></td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569", whiteSpace: "nowrap" }}>
-                  {r.data_malote ? fmtDt(r.data_malote) : "—"}
+                  {r.data_malote ? fmtDt(r.data_malote) : situacaoDe(r) === "nao_enviado" ? "—" : ""}
+                  <div><MaloteBadge situacao={situacaoDe(r)} /></div>
                   {malotes.get(r.id) && <div style={{ fontSize: 10.5, color: malotes.get(r.id)!.ativo ? "#0f3171" : "#b91c1c", fontWeight: 700 }}>{malotes.get(r.id)!.numero}{malotes.get(r.id)!.ativo ? "" : " (fora)"}</div>}
                 </td>
                 <td style={{ padding: "11px 14px", fontSize: 11.5, color: "#475569", maxWidth: 240 }}>
@@ -496,7 +564,7 @@ export default function Ferias() {
             <div style={{ padding: "18px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a" }}>{sol.colaborador_nome}</div>
-                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>#{sol.id} · {sol.colaborador_cargo}{sol.colaborador_filial ? ` · ${sol.colaborador_filial}` : ""}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>#{sol.id}{matriculas.get(sol.id) ? ` · Matrícula ${matriculas.get(sol.id)}` : ""} · {sol.colaborador_cargo}{sol.colaborador_filial ? ` · ${sol.colaborador_filial}` : ""}</div>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <button onClick={() => setVerHist(v => !v)} title="Quem criou, aprovou, reprovou — com data e hora"
@@ -556,6 +624,7 @@ export default function Ferias() {
                     ? [["Tipo", "💰 Venda de dias — sem tirar as férias"], ["Dias vendidos", `${sol.dias_vendidos || 0} dias`]]
                     : [["Saída", fmtDt(sol.data_saida)], ["Retorno", fmtDt(sol.data_retorno)],
                        ["Dias de férias", `${sol.dias_ferias} dias`], ["Abono (vendidos)", `${sol.dias_vendidos || 0} dias`]]),
+                  ["Matrícula", matriculas.get(sol.id) || "—"],
                   ["CPF", sol.colaborador_cpf || "—"],
                   ["Admissão", fmtDt(sol.colaborador_admissao)],
                   ["Solicitante", sol.solicitante_nome || "—"],
@@ -602,15 +671,81 @@ export default function Ferias() {
                     {sol.valor_confirmado_por && <div style={{ fontSize: 11, color: "#94a3b8" }}>{sol.valor_origem === "leitura" ? "lido do recibo" : "digitado"} · confirmado por {sol.valor_confirmado_por}</div>}
                   </div>
                 </div>
-                {podeDoc && sol.status === "Aprovada" && (
-                  <button onClick={() => setEnviandoMalote(true)}
-                    style={{ marginTop: 10, width: "100%", padding: "10px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                    {malotes.get(sol.id)?.ativo ? "📦 Ver o envio ao Malote"
-                      : !sol.recibo_path ? "📎 Anexar recibo da Senior e enviar ao Malote"
-                      : !sol.valor_confirmado_em ? "🔎 Conferir o valor do recibo"
-                      : "📦 Enviar ao Malote"}
-                  </button>
-                )}
+                {/* #0865: situação no Malote — programada sem documento,
+                    enviada, ou o check final da Mentore. */}
+                {(() => {
+                  const sit = situacaoDe(sol);
+                  const pode = acoesMaloteFerias(sol.status, sit);
+                  return (<>
+                    {sit === "pendente_anexo" && (
+                      <div style={{ marginTop: 10, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#92400e" }}>
+                        <b>PENDENTE DE ANEXO DE DOCUMENTO</b> — programada no Malote por {sol.malote_programado_por || "—"} em {fmtDtHora(sol.malote_programado_em ?? undefined)}.
+                        <div style={{ marginTop: 2 }}>Para finalizar o pagamento e estar de fato no Malote, anexe o recibo da Senior e envie.</div>
+                      </div>
+                    )}
+                    {sit === "mentore" && (
+                      <div style={{ marginTop: 10, background: "#dcfce7", border: "1px solid #86efac", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#166534" }}>
+                        <b>✅ ENVIADO PRA MENTORE</b> — por {sol.mentore_enviado_por || "—"} em {fmtDtHora(sol.mentore_enviado_em ?? undefined)}. Férias concluídas.
+                      </div>
+                    )}
+                    {podeDoc && sol.status === "Aprovada" && (
+                      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={() => setEnviandoMalote(true)}
+                          style={{ flex: "1 1 260px", padding: "10px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          {malotes.get(sol.id)?.ativo ? "📦 Ver o envio ao Malote"
+                            : !sol.recibo_path ? "📎 Anexar recibo da Senior e enviar ao Malote"
+                            : !sol.valor_confirmado_em ? "🔎 Conferir o valor do recibo"
+                            : "📦 Enviar ao Malote"}
+                        </button>
+                        {podeEnviarMalote && pode.programar && (
+                          <button onClick={() => setConfirmando("programar")}
+                            style={{ flex: "1 1 180px", padding: "10px", borderRadius: 10, border: "1px solid #0f3171", background: "#fff", color: "#0f3171", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                            🗓️ Programar no malote
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {podeEnviarMalote && pode.enviarMentore && confirmando !== "mentore" && (
+                      <button onClick={() => { setConferiuMentore(false); setConfirmando("mentore"); }}
+                        style={{ marginTop: 8, width: "100%", padding: "10px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        ✅ Enviado pra Mentore (check final)
+                      </button>
+                    )}
+                    {podeEnviarMalote && (pode.desprogramar || pode.desfazerMentore) && !confirmando && (
+                      <button onClick={() => setConfirmando(pode.desprogramar ? "desprogramar" : "desfazer_mentore")}
+                        style={{ marginTop: 6, background: "none", border: "none", padding: 0, color: "#64748b", fontSize: 12, textDecoration: "underline", cursor: "pointer" }}>
+                        {pode.desprogramar ? "Desfazer a programação no Malote" : "Desfazer o Enviado pra Mentore"}
+                      </button>
+                    )}
+                    {confirmando && (
+                      <div style={{ marginTop: 10, background: "#fffbeb", border: "2px solid #fcd34d", borderRadius: 10, padding: 12, fontSize: 12.5, color: "#78350f" }}>
+                        <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                          {confirmando === "programar" ? "Programar no malote sem o documento?"
+                            : confirmando === "desprogramar" ? "Desfazer a programação no Malote?"
+                            : confirmando === "mentore" ? "Confirmar o check final: Enviado pra Mentore"
+                            : "Desfazer o Enviado pra Mentore?"}
+                        </div>
+                        {confirmando === "programar" && <div>As férias de <b>{sol.colaborador_nome}</b> ficam como <b>PENDENTE DE ANEXO DE DOCUMENTO</b>. O pagamento só é finalizado — e a despesa entra de fato no Malote — quando o recibo da Senior for anexado e enviado.</div>}
+                        {confirmando === "mentore" && (<>
+                          <div>Marca o pagamento das férias de <b>{sol.colaborador_nome}</b> como enviado à Mentore e conclui as férias.</div>
+                          {!sol.retorno_documentacao && <div style={{ marginTop: 4, fontWeight: 700 }}>⚠️ O retorno da documentação ainda está em branco.</div>}
+                          <label style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: 6 }}>
+                            <input type="checkbox" checked={conferiuMentore} onChange={e => setConferiuMentore(e.target.checked)} style={{ marginTop: 2 }} />
+                            <span>Conferi: a documentação está ok e o pagamento foi enviado à Mentore.</span>
+                          </label>
+                        </>)}
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button disabled={gravandoMalote || (confirmando === "mentore" && !conferiuMentore)} onClick={() => acaoMalote(confirmando)}
+                            style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: confirmando === "mentore" ? "#16a34a" : "#0f3171", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: gravandoMalote || (confirmando === "mentore" && !conferiuMentore) ? 0.5 : 1 }}>
+                            {gravandoMalote ? "Gravando…" : "Confirmar"}
+                          </button>
+                          <button onClick={() => { setConfirmando(""); setConferiuMentore(false); }}
+                            style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Voltar</button>
+                        </div>
+                      </div>
+                    )}
+                  </>);
+                })()}
                 {podeDoc && sol.status !== "Aprovada" && !sol.recibo_path && (
                   <div style={{ marginTop: 6, fontSize: 11.5, color: "#94a3b8" }}>O envio ao Malote libera quando a solicitação estiver aprovada.</div>
                 )}
