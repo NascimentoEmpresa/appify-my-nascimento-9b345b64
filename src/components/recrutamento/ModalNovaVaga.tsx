@@ -33,6 +33,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { QuadroBeneficiosDoPosto } from "@/components/licitacoes/convencoes/QuadroBeneficios";
+import { useReferenciaDoPosto } from "@/hooks/useConvencoes";
+import { herancaDaConvencao, urlEditarConvencao } from "@/lib/licitacoes/convencoes";
+import { Link } from "react-router-dom";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
 import { useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
@@ -412,6 +415,20 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vagaManual, vaga.escala]);
+
+  // Benefícios pela CONVENÇÃO COLETIVA (13/11/2026, mig 20261113100500):
+  // posto escolhido → convenção do contrato (ou a do posto, na Planilha de
+  // Custo) → TODOS os benefícios. Com convenção, ela manda sobre o V.A/V.T da
+  // planilha e o campo fica só leitura — mudar é no cadastro da convenção.
+  // Mesma consulta (e mesmo cache) do quadro "Benefícios e adicionais da vaga".
+  const refConvencao = useReferenciaDoPosto(vaga.contrato_id || null, postoNomeEscolhido || null);
+  const herancaVaga = postoNomeEscolhido && vaga.contrato_id ? herancaDaConvencao(refConvencao.data) : null;
+  const convencaoDaVagaId = herancaVaga ? refConvencao.data?.principal_id ?? null : null;
+  useEffect(() => {
+    if (!herancaVaga || custoBuscando) return;
+    if (vaga.beneficios !== herancaVaga.beneficios) setVaga(v => ({ ...v, beneficios: herancaVaga.beneficios }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [herancaVaga?.beneficios, custoBuscando, vaga.beneficios]);
 
   const selecionarEmpregado = (emp: EmpregadoRef, motivo: string = vaga.motivo_vaga, contratos: Record<string, unknown>[] = contratosFull) => {
     const jaTem = ehSubstituicao(motivo) ? presos.get(Number(emp.ID)) : undefined;
@@ -1330,6 +1347,17 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               puxados quando o posto do catálogo é escolhido, mas o campo
               deixou de ser só leitura (16/09/2026) — a planilha nem sempre
               batia com o posto real e a vaga abria com benefício errado. */}
+          {herancaVaga ? (
+            <div className="nvg-fg">
+              <label>Benefícios <span style={{ color: "#64748b", fontWeight: 600 }}>— da Convenção Coletiva do posto</span></label>
+              <textarea className="nvg-fi" rows={3} readOnly value={vaga.beneficios || "A convenção não tem benefício preenchido."}
+                style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              <div style={{ marginTop: 6, fontSize: 13, color: "#1e3a8a", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "6px 9px" }}>
+                Os benefícios deste posto vêm da Convenção Coletiva e não são editados na vaga. Para mudar algum valor, atualize o cadastro da convenção
+                {convencaoDaVagaId && <> — <Link to={urlEditarConvencao(convencaoDaVagaId)} target="_blank" style={{ fontWeight: 700, textDecoration: "underline" }}>editar convenção</Link></>}.
+              </div>
+            </div>
+          ) : (
           <div className="nvg-fg">
             <label>Benefícios{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — VT e VA da Planilha de Custo; corrija se não bater</span>}</label>
             <textarea className="nvg-fi" rows={2}
@@ -1337,6 +1365,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} />
             {!vagaManual && custoNota && <div style={{ marginTop: 4, fontSize: 14, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#64748b" : "#92400e" }}>{custoNota}</div>}
           </div>
+          )}
           {/* Local exato voltou (16/09/2026), obrigatório e sempre manual: o
               posto do catálogo identifica o contrato, não a unidade/endereço
               onde a pessoa vai trabalhar. Sem isso o Recrutamento não sabia
