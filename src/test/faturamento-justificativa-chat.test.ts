@@ -3,7 +3,7 @@ import { resumirChats, type MensagemFaturamento } from "@/hooks/useFaturamentoJu
 
 // SIS-2026-0808: o resumo da coluna "Justificativa" conta as mensagens do chat de cada contrato e guarda a última.
 const M = (o: Partial<MensagemFaturamento> = {}): MensagemFaturamento => ({
-  id: "m", contrato_id: "c1", competencia: "2026-10-01", autor_id: "u1", destinatario_id: null, texto: "oi", created_at: "2026-10-20T10:00:00Z", ...o,
+  id: "m", contrato_id: "c1", competencia: "2026-10-01", autor_id: "u1", destinatario_id: null, texto: "oi", anexos: [], created_at: "2026-10-20T10:00:00Z", ...o,
 });
 
 describe("resumo do chat de faturamento por contrato", () => {
