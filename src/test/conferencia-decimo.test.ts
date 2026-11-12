@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   ETAPA_RH, MENU, MENU_DA_ACAO, MODULO_DA_ACAO, STATUS_TODOS,
   acharCabecalho, codigoDaCelula, competenciaPadrao, contaAvanco, corDoStatus, etapaDoStatus,
-  explicaStatus, lerPlanilhaDecimo, normalizaCabecalho, numeroDaCelula, ordemDoStatus,
+  alertaDoContrato, emAtividade, explicaStatus, linhasDaPlanilha, normalizaCabecalho, numeroDaCelula, ordemDoStatus,
+  resumoSituacoes,
   podeAgir, prazoDaParcela, proximoStatus,
   type Acao, type StatusDecimo,
 } from "@/lib/conferenciaDecimo/conferencia";
@@ -129,11 +130,6 @@ describe("competência e prazo legal", () => {
 });
 
 describe("planilha da Senior", () => {
-  const contratos = [
-    { empresa: 1, filial: 10, nome: "PREFEITURA A" },
-    { empresa: 1, filial: 20, nome: "HOSPITAL B" },
-    { empresa: 2, filial: 20, nome: "ESCOLA C" },
-  ];
 
   it("lê número em formato BR, do Excel e com R$", () => {
     expect(numeroDaCelula(1234.5)).toBe(1234.5);
@@ -174,45 +170,71 @@ describe("planilha da Senior", () => {
     expect(acharCabecalho([["Nome", "Valor"]])).toBeNull();
   });
 
-  it("soma por contrato a planilha por colaborador e conta as pessoas", () => {
+  it("acha a matrícula e a quantidade quando existem", () => {
+    const c = acharCabecalho([["Empresa", "Filial", "Cadastro", "Nome", "Qtd", "Valor 13º"]])!;
+    expect(c.colCadastro).toBe(2);
+    expect(c.colQtd).toBe(4);
+    expect(c.candidatasValor[0]).toBe(5);
+  });
+
+  it("manda as linhas cruas (o banco soma e acha o contrato), sem título nem total", () => {
     const l = [
-      ["Empresa", "Filial", "Nome", "Valor"],
-      [1, 10, "ANA", "1.000,00"],
-      [1, 10, "BIA", 500.255],
-      [1, 20, "CAIO", 800],
-      [2, 20, "DUDA", 700],
-      [9, 99, "EDU", 50],
-      [1, 10, "ZERO", 0],
-      [null, null, "Total", 3000],
+      ["Empresa", "Filial", "Matrícula", "Nome", "Valor"],
+      [1, "10 - PREFEITURA", "0101", "ANA", "1.000,00"],
+      [1, 10, 102, "BIA", 500.255],
+      [1, 20, "", "CAIO", 800],
+      [1, 10, "X9", "ZÉ", 50],
+      [1, 10, "103", "ZERO", 0],
+      [null, null, null, "Total", 2350.26],
     ];
     const c = acharCabecalho(l)!;
-    const r = lerPlanilhaDecimo(l, c, 3, contratos);
-    expect(r.porContrato).toEqual([
-      { empresa: 2, filial: 20, nome: "ESCOLA C", valor: 700, qtd: 1 },
-      { empresa: 1, filial: 20, nome: "HOSPITAL B", valor: 800, qtd: 1 },
-      { empresa: 1, filial: 10, nome: "PREFEITURA A", valor: 1500.26, qtd: 2 },
+    const r = linhasDaPlanilha(l, c, 4);
+    expect(r.linhas).toEqual([
+      { empresa: 1, filial: 10, cadastro: "0101", valor: 1000, qtd: null },
+      { empresa: 1, filial: 10, cadastro: "102", valor: 500.26, qtd: null },
+      { empresa: 1, filial: 20, cadastro: null, valor: 800, qtd: null },
+      { empresa: 1, filial: 10, cadastro: null, valor: 50, qtd: null },
     ]);
-    expect(r.semContrato).toEqual([{ empresa: 9, filial: 99, valor: 50 }]);
-    expect(r.total).toBe(3000.26);
-    expect(r.linhasIgnoradas).toBe(2);
+    expect(r.ignoradas).toBe(2);
+    expect(r.total).toBe(2350.26);
   });
 
-  it("planilha já resumida sem qtd não inventa quantidade", () => {
+  it("planilha sem empresa manda empresa nula", () => {
     const l = [["Filial", "Total 13º"], [10, 1500]];
-    const r = lerPlanilhaDecimo(l, acharCabecalho(l)!, 1, contratos);
-    expect(r.porContrato).toEqual([{ empresa: 1, filial: 10, nome: "PREFEITURA A", valor: 1500, qtd: null }]);
+    expect(linhasDaPlanilha(l, acharCabecalho(l)!, 1).linhas)
+      .toEqual([{ empresa: null, filial: 10, cadastro: null, valor: 1500, qtd: null }]);
+  });
+});
+
+describe("situação das pessoas do contrato", () => {
+  const p = (situacao: string, nome = situacao) => ({ cadastro: null, nome, cargo: null, situacao, admissao: null });
+
+  it("Trabalhando é atividade; o resto é situação a olhar", () => {
+    expect(emAtividade("Trabalhando")).toBe(true);
+    expect(emAtividade(" trabalhando ")).toBe(true);
+    expect(emAtividade("Auxílio Doença")).toBe(false);
+    expect(emAtividade(null)).toBe(false);
   });
 
-  it("usa a coluna de quantidade quando existe", () => {
-    const l = [["Filial", "Qtd Colaboradores", "Valor"], [10, 12, 1500]];
-    const r = lerPlanilhaDecimo(l, acharCabecalho(l)!, 2, contratos);
-    expect(r.porContrato[0].qtd).toBe(12);
+  it("resume com Trabalhando primeiro e depois do maior para o menor", () => {
+    expect(resumoSituacoes([p("Férias"), p("Trabalhando"), p("Auxílio Doença"), p("Férias"), p("")])).toEqual([
+      { situacao: "Trabalhando", n: 1 },
+      { situacao: "Férias", n: 2 },
+      { situacao: "Auxílio Doença", n: 1 },
+      { situacao: "Sem situação", n: 1 },
+    ]);
   });
 
-  it("filial sem empresa que existe em duas empresas fica de fora", () => {
-    const l = [["Filial", "Valor"], [20, 100], [10, 200]];
-    const r = lerPlanilhaDecimo(l, acharCabecalho(l)!, 1, contratos);
-    expect(r.ambiguas).toEqual([{ filial: 20, valor: 100 }]);
-    expect(r.porContrato.map(c => c.filial)).toEqual([10]);
+  it("contrato com uma só pessoa em Auxílio Doença acende o alerta forte", () => {
+    expect(alertaDoContrato([p("Auxílio Doença")])).toEqual({ nivel: "forte", texto: "Ninguém trabalhando: 1 em Auxílio Doença" });
+  });
+
+  it("contrato sem ninguém ligado também alerta", () => {
+    expect(alertaDoContrato([])?.nivel).toBe("forte");
+  });
+
+  it("parte afastada é informativo; todo mundo trabalhando, sem alerta", () => {
+    expect(alertaDoContrato([p("Trabalhando"), p("Férias")])).toEqual({ nivel: "info", texto: "1 em Férias" });
+    expect(alertaDoContrato([p("Trabalhando"), p("Trabalhando")])).toBeNull();
   });
 });

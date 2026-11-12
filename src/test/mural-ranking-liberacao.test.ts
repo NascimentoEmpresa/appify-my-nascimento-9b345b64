@@ -61,3 +61,23 @@ describe("itensDaPrevia (Ver prévia do Mural do Início)", () => {
     expect(itensDaPrevia<Linha>(todos, [todos[3]], ch).map((x) => x.id)).toEqual(["a1"]);
   });
 });
+
+import { recadosDaPessoa } from "@/lib/formularios/muralReconhecimento";
+
+describe("recadosDaPessoa (clicar no nome no Início)", () => {
+  const meses = [
+    { mes: "2026-09", itens: [{ colaborador: "ANA SILVA", c: "set1" }, { colaborador: "BIA", c: "set2" }] },
+    { mes: "2026-10", itens: [{ colaborador: " ana silva ", c: "out1" }, { colaborador: "ANA SILVA", c: "out2" }] },
+    { mes: "2026-08", itens: [{ colaborador: "BIA", c: "ago1" }] },
+  ];
+  it("junta todos os recados da pessoa, do mês mais novo ao mais velho, sem caixa nem espaços", () => {
+    expect(recadosDaPessoa(meses, "Ana Silva").map((b) => [b.mes, b.itens.map((i) => i.c)])).toEqual([
+      ["2026-10", ["out1", "out2"]],
+      ["2026-09", ["set1"]],
+    ]);
+  });
+  it("mês sem recado dela fica de fora; nome vazio não devolve nada", () => {
+    expect(recadosDaPessoa(meses, "BIA").map((b) => b.mes)).toEqual(["2026-09", "2026-08"]);
+    expect(recadosDaPessoa(meses, "  ")).toEqual([]);
+  });
+});
