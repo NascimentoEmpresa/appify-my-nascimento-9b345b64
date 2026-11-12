@@ -239,9 +239,12 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
     // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
   });
 
-  // Havendo horas gastas, elas são exatas no interno e piso no mercado (09/11/2026).
+  // 12/11/2026 (auditoria da Bonificação, aprovado pelo Iury): o preço é o
+  // GRAVADO, só pelo pedido — as horas digitadas não refazem mais a conta na
+  // tela (antes eram piso do mercado e o valor seguia as horas de cada dev).
+  // Elas continuam valendo só para o custo real, no card verde abaixo.
   const conta = parecer
-    ? precificarPorHorasGastas(parecer.precos, parecer.valor_medio, parecer.horas_estimadas, reais)
+    ? precificarPorHorasGastas(parecer.precos, parecer.valor_medio, parecer.horas_estimadas, null)
     : null;
   const peloEscopo = !!conta?.pelasHorasGastas && conta.precos.some((p) => p.perfil !== "interno" && Number(p.horas) > Number(conta.horas));
   // Com horas gastas, o card "Equipe interna" vira o valor real gasto

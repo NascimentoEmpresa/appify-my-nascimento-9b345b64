@@ -26,7 +26,7 @@ function parametrosIniciais(nf: NfEmissaoRow): ParametrosNfse {
     ibs_cst: "", ibs_classificacao: "", ibs_indicador_operacao: "", consumidor_final: "", tipo_operacao: "", tipo_ente_governamental: "",
     tributos_aproximados_federais: "0.00", tributos_aproximados_estaduais: "0.00", tributos_aproximados_municipais: "0.00", confirmacao_fiscal: false,
     informar_imovel: false, imovel: { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", inscricao: "" },
-    tomador: { documento: "", nome: "", municipio: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", email: "" },
+    tomador: { documento: "", nome: "", inscricao_municipal: "", municipio: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", email: "" },
   };
 }
 function Campo({ titulo, valor, alterar, obrigatorio = true, tipo = "text", maximo, somenteLeitura = false }: {
@@ -59,6 +59,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   const exigeCodigoPrefeitura = producao && parametros.municipio_emissor === "4322004" && parametros.codigo_tributacao.replace(/[.\-/\s]/g, "") === "170501";
   const solicitacoes = consulta.data ?? [];
   const atual = solicitacoes[0];
+  const exigeInscricaoTomador = atual?.estado === "rejeitada" && /\bP4016\b/.test(atual.mensagem ?? "");
   const existeAtiva = solicitacoes.some(s => s.estado !== "rejeitada");
   const salvarCampo = (campo: keyof ParametrosNfse, valor: string | boolean) => setParametros(p => ({ ...p, [campo]: valor, confirmacao_fiscal: campo === "confirmacao_fiscal" ? Boolean(valor) : false, confirmacao_producao: campo === "confirmacao_producao" ? Boolean(valor) : false }));
   const salvarTomador = (campo: keyof ParametrosNfse["tomador"], valor: string) => setParametros(p => ({ ...p, confirmacao_fiscal: false, confirmacao_producao: false, tomador: { ...p.tomador, [campo]: valor } }));
@@ -66,7 +67,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes) return;
-    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
+    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente, exigeInscricaoTomador)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível registrar a solicitação."); }
   }
   async function documento(caminho: string) {
@@ -138,6 +139,8 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Campo titulo="CPF/CNPJ" valor={parametros.tomador.documento} alterar={v => salvarTomador("documento",v)} maximo={18} />
         <Campo titulo="Nome / razão social" valor={parametros.tomador.nome} alterar={v => salvarTomador("nome",v)} maximo={150} />
         <Campo titulo="Município — código IBGE" valor={parametros.tomador.municipio} alterar={v => salvarTomador("municipio",v)} maximo={7} />
+        <Campo titulo="Inscrição municipal do tomador" valor={parametros.tomador.inscricao_municipal ?? ""} alterar={v => salvarTomador("inscricao_municipal",v)} obrigatorio={exigeInscricaoTomador} maximo={15} />
+        <p className="text-sm text-muted-foreground md:col-span-3">Informe a inscrição municipal do cliente conforme o cadastro na prefeitura, preservando os zeros iniciais. {exigeInscricaoTomador ? "A rejeição P4016 exige esse dado para identificar o cadastro correto do tomador." : "Preencha quando o tomador possuir inscrição municipal ou quando a prefeitura exigir."}</p>
         <Campo titulo="CEP" valor={parametros.tomador.cep} alterar={v => salvarTomador("cep",v)} maximo={9} />
         <Campo titulo="Logradouro" valor={parametros.tomador.logradouro} alterar={v => salvarTomador("logradouro",v)} maximo={255} />
         <Campo titulo="Número" valor={parametros.tomador.numero} alterar={v => salvarTomador("numero",v)} maximo={60} />
