@@ -1,7 +1,7 @@
 // SIS-2026-0879: anexos (NF, prints) e observação no "Classificar item" do Cartão de Crédito.
 //
 // Um lugar só para o bucket, o caminho no storage e os limites. O banco confere tudo de novo
-// (migration 20261112210000): o caminho tem que estar na pasta do item e o arquivo novo tem que
+// (migration 20261112223000): o caminho tem que estar na pasta do item e o arquivo novo tem que
 // ter sido enviado por quem salva.
 
 import { fmtTamanho, nomeSeguro, type AnexoRef } from "@/lib/solicitacoes/anexos";

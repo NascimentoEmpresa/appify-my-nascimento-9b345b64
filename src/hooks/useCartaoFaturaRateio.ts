@@ -93,7 +93,7 @@ export function useItensParaClassificar() {
       ]);
       if (itensRes.error) throw itensRes.error;
       if (rateiosRes.error) throw rateiosRes.error;
-      // Tabela ainda não criada (frontend publicado antes da migration 20261112210000): a lista segue sem os ícones.
+      // Tabela ainda não criada (frontend publicado antes da migration 20261112223000): a lista segue sem os ícones.
       if (complRes.error && !["42P01", "PGRST205"].includes(complRes.error.code)) throw complRes.error;
 
       const complPorItem = new Map<string, { qtd: number; obs: boolean }>();
@@ -149,7 +149,7 @@ export function useSalvarRateioItem() {
 
 // ── SIS-2026-0879: observação + anexos (NF, prints) do item ─────────────────
 // Leitura pela RLS (mesma regra do rateio); escrita só pela RPC cartao_fatura_item_salvar_complemento
-// (migration 20261112210000), que confere cada caminho e cada arquivo no storage.
+// (migration 20261112223000), que confere cada caminho e cada arquivo no storage.
 
 export interface ComplementoItemFatura {
   observacao: string;
