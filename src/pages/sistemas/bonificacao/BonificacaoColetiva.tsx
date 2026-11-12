@@ -354,7 +354,8 @@ function TabelaDevs({ devs, acao, extras = false, clt }: {
             <TableHead>Desenvolvedor</TableHead><TableHead>Entregas</TableHead>
             {CRITERIOS.map((k) => <TableHead key={k}>{ROTULO_CRITERIO[k]}</TableHead>)}
             <TableHead>Nota final</TableHead>
-            {extras && <><TableHead>Mercado IA</TableHead><TableHead>Freelancer IA</TableHead><TableHead>{clt ? <span className="inline-flex items-center gap-1">CLT (salário do mês)<Ajuda texto="Salário do colaborador (cadastro da Senior) proporcional aos dias corridos já passados no mês atual — sobe sozinho a cada dia. Meses anteriores ficam R$ 0,00 por enquanto. Só aparece para quem tem 'Colaboradores — Ver salário'; os demais veem —." /></span> : "CLT IA"}</TableHead></>}
+            {/* 11/11/2026 (Pablo): média por entrega ao lado do total — o total cresce com a quantidade de entregas; a média compara o porte do que cada um entregou. */}
+            {extras && <><TableHead>Mercado IA</TableHead><TableHead><span className="inline-flex items-center gap-1">Média por entrega<Ajuda texto="Mercado IA ÷ número de entregas do mês. O total cresce com a quantidade de entregas; a média mostra o porte médio do que cada um entregou." /></span></TableHead><TableHead>Freelancer IA</TableHead><TableHead>{clt ? <span className="inline-flex items-center gap-1">CLT (salário do mês)<Ajuda texto="Salário do colaborador (cadastro da Senior) proporcional aos dias corridos já passados no mês atual — sobe sozinho a cada dia. Meses anteriores ficam R$ 0,00 por enquanto. Só aparece para quem tem 'Colaboradores — Ver salário'; os demais veem —." /></span> : "CLT IA"}</TableHead></>}
             {acao && <TableHead />}
           </TableRow>
         </TableHeader>
@@ -365,7 +366,7 @@ function TabelaDevs({ devs, acao, extras = false, clt }: {
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell className="font-semibold tabular-nums">{d.entregas.length ? moeda(Math.round((d.mercado / d.entregas.length) * 100) / 100) : "—"}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}
