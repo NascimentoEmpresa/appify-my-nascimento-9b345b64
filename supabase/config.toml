@@ -236,3 +236,9 @@ verify_jwt = true
 # permissão (sistemas_bonificacao + visualizar) é conferida lá dentro.
 [functions.bonificacao-ia]
 verify_jwt = true
+
+# Formulários › Respostas › "Mural do Início" (12/11/2026): triagem por IA dos
+# comentários positivos antes de publicar. Só JWT de usuário; o portão é
+# cs_form_pode(_, 'acesso') dentro das RPCs cs_form_mural_triagem*.
+[functions.mural-triagem-ia]
+verify_jwt = true
