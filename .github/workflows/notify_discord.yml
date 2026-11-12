@@ -10,25 +10,31 @@ jobs:
     steps:
       - name: Send notification to Discord
         if: ${{ github.event.pull_request.merged == true }}
+        env:
+          # Quem criou e quem mergeou vêm do próprio evento. Desde 12/11/2026
+          # cada dev aprova a própria PR depois de testada — não é mais sempre
+          # o Iury, então o nome de quem mergeou não fica escrito fixo.
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          MERGER_LOGIN: ${{ github.event.pull_request.merged_by.login }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          AUTHOR="${{ github.event.pull_request.user.login }}"
-          MERGER="Iury Silva"
+          # Mapeamento de logins -> nomes desejados (login novo: uma linha aqui).
+          nome() {
+            case "$1" in
+              EduardoJeiel007)           echo "duduzin" ;;
+              Tasuyuk1|PabloTasuyuk)     echo "pablero" ;;
+              joaovperetti)              echo "jão" ;;
+              otaviosistemas)            echo "Otavio" ;;
+              controladoriathamires-hub) echo "Thamires" ;;
+              haggltda)                  echo "IURYzera" ;;
+              *)                         echo "$1" ;;
+            esac
+          }
+          AUTHOR="$(nome "$AUTHOR_LOGIN")"
+          MERGER="$(nome "$MERGER_LOGIN")"
 
-          # Mapeamento de logins -> nomes desejados
-          case "$AUTHOR" in
-            EduardoJeiel007) AUTHOR="duduzin" ;;
-            Tasuyuk1)   AUTHOR="pablero" ;;
-            joaovperetti)       AUTHOR="jão" ;;
-          esac
-
-          MESSAGE="Autorização de PR na branch main por IURYzera\n\n\
-          PR criada pelo $AUTHOR\n\n\
-          gurizadaaaa, por favor digitem:\n\
-          $ git fetch origin main\n\
-          $ git rebase origin\n\
-          $ git status\n\
-          "
+          MESSAGE="Autorização de PR na branch main por $MERGER\n\nPR criada por $AUTHOR"
 
           curl -H "Content-Type: application/json" \
                -d "{\"content\": \"$MESSAGE\"}" \
-               ${{ secrets.DISCORD_WEBHOOK_URL }}
+               "$WEBHOOK"
