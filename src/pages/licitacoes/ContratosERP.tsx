@@ -41,11 +41,13 @@ import {
 } from "@/hooks/useContratoQuadro";
 import { QuadroPostosContrato, paraFormulario } from "@/components/licitacoes/QuadroPostosContrato";
 import { CardObrigatorios } from "@/components/licitacoes/CardObrigatorios";
+import { CampoConvencaoDoContrato, useReferenciaDoContrato } from "@/components/licitacoes/convencoes/ConvencaoDoContrato";
+import { useConvencaoDoContrato, useSalvarConvencaoDoContrato } from "@/hooks/useConvencoes";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   type LinhaQuadroForm, conferirContrato, contratoCompleto, errosDoQuadro,
-  conferirQuadroComContrato, paraPayload, totalDeVagas,
+  conferirQuadroComContrato, paraPayload, totalDeVagas, aplicarHerancaNoQuadro,
 } from "@/lib/licitacoes/quadroPostos";
 import { BADGE as DOC_BADGE, periodLabel } from "@/pages/Documentos";
 import { corEmpresa, corEmpresaFundo } from "@/pages/malote/EmpresaContratoBadge";
@@ -235,6 +237,29 @@ export default function ContratosERP() {
     setQuadro(quadroSalvo.map(paraFormulario));
   }, [editando, quadroSalvo, quadroCarregou]);
 
+  // ── Convenção Coletiva do contrato (13/11/2026, mig 20261113100500) ────
+  // Vinculada, TODOS os benefícios dos postos do contrato vêm dela (o Quadro
+  // de Postos fica só leitura nesses campos e a Solicitação de Vaga puxa pelo
+  // resolvedor do banco). Gravada depois do contrato, como o quadro — o
+  // contrato novo só tem id depois do upsert.
+  const [convencaoSel, setConvencaoSel] = useState({ convencaoId: "", decretoId: "" });
+  const { data: convencaoGravada, isSuccess: convencaoCarregou } = useConvencaoDoContrato(editando?.id ?? null);
+  const salvarConvencao = useSalvarConvencaoDoContrato();
+  const idConvencaoCarregada = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editando || !convencaoCarregou) return;
+    if (idConvencaoCarregada.current === editando.id) return;
+    idConvencaoCarregada.current = editando.id;
+    setConvencaoSel({ convencaoId: convencaoGravada?.convencao_id ?? "", decretoId: convencaoGravada?.decreto_id ?? "" });
+  }, [editando, convencaoGravada, convencaoCarregou]);
+  const refContrato = useReferenciaDoContrato(editando?.id ?? null, convencaoSel.convencaoId, convencaoSel.decretoId, convencaoGravada);
+  const herancaQuadro = convencaoSel.convencaoId && refContrato.heranca
+    ? { convencaoId: convencaoSel.convencaoId, valores: refContrato.heranca } : null;
+  // Quem vincula: a mesma régua da policy (lic_contrato_convencao_pode_gravar).
+  const podeConvencaoQuadro = useScreenAccess("contrato_quadro_postos", editando ? "alterar" : "incluir").data === true;
+  const podeConvencaoCadastro = useScreenAccess("licitacoes_convencoes", "alterar").data === true;
+  const podeVincularConvencao = podeConvencaoQuadro || podeConvencaoCadastro;
+
   const geradasPorId = useMemo(() => {
     const m: Record<string, { geradas: number; vivas: number }> = {};
     for (const l of quadroSalvo) m[l.id] = { geradas: l.vagas_geradas, vivas: l.vagas_vivas };
@@ -386,6 +411,8 @@ export default function ContratosERP() {
     // null para que o efeito carregue o quadro do próximo contrato editado.
     setQuadro([]);
     idQuadroCarregado.current = null;
+    setConvencaoSel({ convencaoId: "", decretoId: "" });
+    idConvencaoCarregada.current = null;
     setModalOpen(true);
   }
 
@@ -396,6 +423,10 @@ export default function ContratosERP() {
       // modal abriria mostrando o quadro do contrato anterior.
       setQuadro([]);
       idQuadroCarregado.current = null;
+    }
+    if (idConvencaoCarregada.current !== c.id) {
+      setConvencaoSel({ convencaoId: "", decretoId: "" });
+      idConvencaoCarregada.current = null;
     }
     setForm({
       empresa_id: c.empresa_id,
@@ -473,6 +504,25 @@ export default function ContratosERP() {
       id: editando?.id,
     });
 
+    // Convenção do contrato: antes do quadro, que herda dela. Só grava se
+    // mudou; falhar aqui não desfaz o contrato (mesmo raciocínio do quadro).
+    const convencaoMudou = (convencaoGravada?.convencao_id ?? "") !== convencaoSel.convencaoId
+      || (convencaoGravada?.decreto_id ?? "") !== (convencaoSel.convencaoId ? convencaoSel.decretoId : "");
+    if (convencaoMudou && podeVincularConvencao) {
+      try {
+        await salvarConvencao.mutateAsync({
+          contratoId, convencaoId: convencaoSel.convencaoId || null, decretoId: convencaoSel.decretoId || null,
+        });
+      } catch (e) {
+        toast({
+          title: "Contrato salvo, mas a Convenção Coletiva não",
+          description: e instanceof Error ? e.message : String(e),
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     // O quadro é gravado DEPOIS do contrato, e não junto, porque o contrato
     // novo só ganha id aqui. Falhar no quadro não desfaz o contrato (não há
     // transação entre dois round-trips do PostgREST): o contrato fica salvo,
@@ -480,7 +530,7 @@ export default function ContratosERP() {
     // o cadastro inteiro por causa de uma linha de posto.
     if (quadro.length || quadroSalvo.length) {
       try {
-        await salvarQuadro.mutateAsync({ contratoId, linhas: paraPayload(quadro) });
+        await salvarQuadro.mutateAsync({ contratoId, linhas: paraPayload(aplicarHerancaNoQuadro(quadro, herancaQuadro?.valores)) });
       } catch {
         toast({
           title: "Contrato salvo, mas o quadro de postos não",
@@ -892,6 +942,21 @@ export default function ContratosERP() {
             <div className="col-span-2 md:col-span-3">{field("CNPJ do Cliente", "cnpj_cliente")}</div>
           </div>
 
+          {/* Convenção Coletiva do contrato (13/11/2026): os benefícios de
+              todos os postos saem dela — ver ConvencaoDoContrato.tsx. */}
+          <div className="rounded-lg border bg-muted/20 p-3">
+            <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Convenção Coletiva</h5>
+            <CampoConvencaoDoContrato
+              convencaoId={convencaoSel.convencaoId}
+              decretoId={convencaoSel.decretoId}
+              onChange={setConvencaoSel}
+              convencoes={refContrato.convencoes}
+              resposta={refContrato.resposta}
+              carregando={refContrato.carregando}
+              podeAlterar={podeVincularConvencao}
+            />
+          </div>
+
           <SectionHeader n={2} title="Vigência e Prazos" />
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {field("Data Início", "data_inicio", { type: "date", required: true })}
@@ -988,6 +1053,7 @@ export default function ContratosERP() {
               onChange={setQuadro}
               geradasPorId={geradasPorId}
               somenteLeitura={!podeEditarQuadro}
+              heranca={herancaQuadro}
             />
           </AcessoGate>
 

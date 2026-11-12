@@ -12,6 +12,9 @@ import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componente
 import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCard";
 import { AvisosCard } from "@/components/notificacoes/AvisosCard";
 import { ReconhecimentoCard } from "@/components/reconhecimento/ReconhecimentoCard";
+
+/** Cartão "Reconhecimento e Convivência Profissional" no Início (desligado em 12/11/2026). */
+const MURAL_NO_INICIO = false;
 import fachadaImg from "@/assets/fachada.jpg";
 import {
   CircleUserRound, ListChecks, Megaphone, Quote, Star, Search,
@@ -501,7 +504,11 @@ export default function Inicio() {
               (30/10/2026). Some sem nada liberado; fora do [data-reveal]
               pelo mesmo motivo do Quadro de Avisos — e anima a própria
               entrada. Encarregado externo não vota, não vê. */}
-          {!externo && <ReconhecimentoCard />}
+          {/* 12/11/2026, Pablo: "tira do mural do início agora". Cartão fora
+              do Início até segunda ordem — a moderação continua no formulário
+              e o que está liberado fica guardado; para voltar, troque
+              MURAL_NO_INICIO para true. */}
+          {MURAL_NO_INICIO && !externo && <ReconhecimentoCard />}
         </div>
       </div>
     </div>

@@ -462,3 +462,20 @@ export function conferirQuadroComContrato(
     : `O quadro soma ${total} colaboradores, ${Math.abs(diferenca)} a MENOS que os ${estipulado} estipulados no contrato.`;
   return { total, estipulado, diferenca, aviso };
 }
+
+// ── Convenção do contrato (13/11/2026, mig 20261113100500) ──────────────
+// Com convenção vinculada no contrato, benefícios e percentuais de TODOS os
+// postos saem dela (ver herancaDaConvencao em convencoes.ts), por cima do
+// que estiver na linha — inclusive do "Puxar da Planilha". É o que a tela
+// mostra e o que vai para contrato_quadro_salvar (e dali para as vagas).
+export function aplicarHerancaNoQuadro(
+  linhas: LinhaQuadroForm[],
+  h: { beneficios: string; insalubridade_pct: string; periculosidade_pct: string } | null | undefined,
+): LinhaQuadroForm[] {
+  if (!h) return linhas;
+  return linhas.map(l => (
+    l.beneficios === h.beneficios && l.insalubridade_pct === h.insalubridade_pct && l.periculosidade_pct === h.periculosidade_pct
+      ? l
+      : { ...l, beneficios: h.beneficios, insalubridade_pct: h.insalubridade_pct, periculosidade_pct: h.periculosidade_pct }
+  ));
+}

@@ -25,10 +25,13 @@
 
 import { useMemo, useState } from "react";
 import {
-  ChevronDown, ChevronUp, Image as ImageIcon, Loader2, Megaphone, Pencil, Plus, Search,
+  ChevronDown, ChevronUp, Image as ImageIcon, Loader2, Megaphone, Pencil, Plus, RefreshCw, Search,
   Trash2, Upload, Eye, X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { forcarRecargaGeral } from "@/lib/recargaGeral";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,6 +88,21 @@ export default function QuadroAvisos() {
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("todas");
   const [form, setForm] = useState<FormNotificacao | null>(null);
+  const [forcando, setForcando] = useState(false);
+  const forcarRecarga = async () => {
+    if (!window.confirm(
+      "Todas as abas abertas do ERP, de todos os usuários, vão recarregar assim que a pessoa mexer na tela (clicar, rolar, digitar ou trocar de tela).\n\n" +
+      "Quem estiver no meio de um formulário pode perder o que não salvou. Continuar?")) return;
+    setForcando(true);
+    try {
+      await forcarRecargaGeral(supabase as any, "Quadro de Avisos");
+      toast.success("Pedido enviado: cada aba aberta recarrega no próximo clique, rolagem ou troca de tela (esta também).");
+    } catch (e) {
+      toast.error("Não deu para forçar a recarga: " + ((e as { message?: string })?.message ?? String(e)));
+    } finally {
+      setForcando(false);
+    }
+  };
   /**
    * Pré-visualizando o formulário (16/10/2026). O Dialog de edição fecha
    * enquanto isso — o `form` continua em estado, nada se perde — porque o
@@ -269,11 +287,21 @@ export default function QuadroAvisos() {
         module="Central de Serviços"
         breadcrumb={["Quadro de Avisos"]}
         actions={
-          podeCriar ? (
-            <Button onClick={() => setForm({ ...FORM_VAZIO })}>
-              <Plus className="mr-2 h-4 w-4" /> Criar aviso
-            </Button>
-          ) : undefined
+          <div className="flex flex-wrap gap-2">
+            {/* Recarga geral (12/11/2026, incidente do Mural): faz toda aba
+                aberta do ERP recarregar — src/lib/recargaGeral.ts. Só para
+                quem tem a capacidade sistema_forcar_recarga. */}
+            <AcessoGate menu="sistema_forcar_recarga" acao="alterar">
+              <Button variant="outline" onClick={forcarRecarga} disabled={forcando}>
+                <RefreshCw className={cn("mr-2 h-4 w-4", forcando && "animate-spin")} /> Forçar todos a recarregar
+              </Button>
+            </AcessoGate>
+            {podeCriar && (
+              <Button onClick={() => setForm({ ...FORM_VAZIO })}>
+                <Plus className="mr-2 h-4 w-4" /> Criar aviso
+              </Button>
+            )}
+          </div>
         }
       />
 

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { abrirAnexoConvencao, useReferenciaDoPosto } from "@/hooks/useConvencoes";
 import {
-  identificacaoCct, montarQuadro, vigenciaTxt,
+  identificacaoCct, montarQuadro, urlEditarConvencao, vigenciaTxt,
   type ReferenciaConvencao, type RespostaReferencia,
 } from "@/lib/licitacoes/convencoes";
 import { IconeBeneficio } from "./IconeBeneficio";
@@ -57,7 +57,11 @@ export function QuadroBeneficios({ resposta, carregando, acao, compacto, titulo 
             {titulo}
             <span title="A Licitação cadastra a CCT/decreto e vincula ao posto na Planilha de Custo. Ajustes são feitos lá, no cadastro de origem."><Info className="h-3.5 w-3.5 text-blue-500" /></span>
           </h3>
-          <p className="text-xs text-muted-foreground">Preenchido automaticamente pela CCT vinculada na Planilha de Custo.</p>
+          <p className="text-xs text-muted-foreground">
+            {resposta?.origem === "contrato"
+              ? "Preenchido automaticamente pela Convenção Coletiva vinculada ao contrato."
+              : "Preenchido automaticamente pela CCT vinculada na Planilha de Custo."}
+          </p>
           {!compacto && <p className="text-[11px] text-muted-foreground/80">Os valores vêm do cadastro da convenção do posto; ajustes são feitos lá, pela Licitação.</p>}
         </div>
         {acao}
@@ -106,12 +110,21 @@ export function QuadroBeneficios({ resposta, carregando, acao, compacto, titulo 
                   <p className="text-xs text-foreground">
                     Benefícios extraídos da CCT vinculada ao contrato {principal.contrato_nome ?? "—"}{resposta?.posto ? ` · posto ${resposta.posto}` : ""}
                   </p>
-                  <p className="text-[11.5px] text-muted-foreground">Fonte: Planilha de Custo (Licitações)</p>
+                  <p className="text-[11.5px] text-muted-foreground">
+                    {/* Convenção do contrato (mig 20261113100500) vale para todos os postos dele. */}
+                    {resposta?.origem === "contrato" ? "Fonte: Convenção Coletiva do contrato (Licitações › Contratos)" : "Fonte: Planilha de Custo (Licitações)"}
+                  </p>
                   {q.usadas.map((r, i) => <LinhaOrigem key={r.id} r={r} principal={i === 0} />)}
                 </div>
-                <Link to="/app/licitacoes/planilha-custo" className="flex shrink-0 items-center gap-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">
-                  Ver Planilha de Custo <ExternalLink className="h-3.5 w-3.5" />
-                </Link>
+                {resposta?.origem === "contrato" ? (
+                  <Link to={urlEditarConvencao(principal.id)} className="flex shrink-0 items-center gap-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">
+                    Ver convenção <ExternalLink className="h-3.5 w-3.5" />
+                  </Link>
+                ) : (
+                  <Link to="/app/licitacoes/planilha-custo" className="flex shrink-0 items-center gap-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">
+                    Ver Planilha de Custo <ExternalLink className="h-3.5 w-3.5" />
+                  </Link>
+                )}
               </div>
             )}
             {rodape}

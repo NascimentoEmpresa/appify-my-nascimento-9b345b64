@@ -42,8 +42,10 @@ import {
   type LinhaQuadroForm, LINHA_VAZIA, faltamNaLinha, erroDaLinha, rotuloDaLinha,
   totalDeColaboradores, totalDePostos, totalDeFuncoes, totalDeVagas, totalSalarialMensal,
   brl, paraInteiro, paraNumero, chavePosto, linhaEmUso,
-  paresDoCatalogo, mesclarComCatalogo,
+  paresDoCatalogo, mesclarComCatalogo, aplicarHerancaNoQuadro,
 } from "@/lib/licitacoes/quadroPostos";
+import type { HerancaConvencao } from "@/lib/licitacoes/convencoes";
+import { AvisoConvencaoDoContrato } from "@/components/licitacoes/convencoes/ConvencaoDoContrato";
 import type { LinhaQuadro } from "@/hooks/useContratoQuadro";
 
 const db = supabase as any;
@@ -91,10 +93,16 @@ interface Props {
   geradasPorId?: Record<string, { geradas: number; vivas: number }>;
   /** Some com os botões de escrita para quem só pode olhar. */
   somenteLeitura?: boolean;
+  /**
+   * Convenção Coletiva do contrato (13/11/2026, mig 20261113100500): com
+   * ela, benefícios e percentuais de TODOS os postos saem da convenção, só
+   * leitura — mudar é no cadastro dela.
+   */
+  heranca?: { convencaoId: string; valores: HerancaConvencao } | null;
 }
 
 export function QuadroPostosContrato({
-  contratoId, contratoNome, linhas, onChange, geradasPorId = {}, somenteLeitura = false,
+  contratoId, contratoNome, linhas, onChange, geradasPorId = {}, somenteLeitura = false, heranca = null,
 }: Props) {
   const [aberta, setAberta] = useState<number | null>(null);
   const [soEmUso, setSoEmUso] = useState(false);
@@ -110,7 +118,10 @@ export function QuadroPostosContrato({
     () => paresDoCatalogo(postosCatalogo, funcoesCatalogo),
     [postosCatalogo, funcoesCatalogo],
   );
-  const exibidas = useMemo(() => mesclarComCatalogo(linhas, pares), [linhas, pares]);
+  const exibidas = useMemo(
+    () => aplicarHerancaNoQuadro(mesclarComCatalogo(linhas, pares), heranca?.valores),
+    [linhas, pares, heranca?.valores],
+  );
   const visiveis = soEmUso ? exibidas.filter(linhaEmUso) : exibidas;
 
   const total = totalDeColaboradores(exibidas);
@@ -217,6 +228,7 @@ export function QuadroPostosContrato({
             contratoNome={contratoNome}
             geradas={l.id ? geradasPorId[l.id] : undefined}
             somenteLeitura={somenteLeitura}
+            convencaoId={heranca?.convencaoId ?? null}
           />
         ) : null
       ))}
@@ -251,12 +263,15 @@ interface LinhaProps {
   contratoNome: string;
   geradas?: { geradas: number; vivas: number };
   somenteLeitura: boolean;
+  /** Convenção do contrato: benefícios/percentuais só leitura, vindos dela. */
+  convencaoId: string | null;
 }
 
 function LinhaDoQuadro({
   linha: l, indice: i, aberta, onAbrir, onMexer, onRemover, onOutraFuncao,
-  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura,
+  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura, convencaoId,
 }: LinhaProps) {
+  const daConvencao = !!convencaoId;
   // O posto do catálogo é achado pelo NOME a cada render, em vez de guardado
   // no estado do formulário. Guardar exigiria manter nome e id em dia a cada
   // tecla, e um id desencontrado do nome é pior que id nenhum: as funções
@@ -318,7 +333,9 @@ function LinhaDoQuadro({
       title: `Da Planilha de Custo — posto "${custo.posto}"`,
       description: custo.por_posto === false
         ? "O nome não casou exato; foi usado o posto de mesma cidade e jornada. Confira os valores."
-        : "Salário, insalubridade e benefícios preenchidos.",
+        : daConvencao
+          ? "Salário preenchido. Benefícios e insalubridade continuam os da Convenção Coletiva do contrato."
+          : "Salário, insalubridade e benefícios preenchidos.",
     });
   }
 
@@ -498,7 +515,8 @@ function LinhaDoQuadro({
               <Input
                 className="h-9" placeholder="Ex: 40"
                 value={l.insalubridade_pct}
-                disabled={somenteLeitura}
+                disabled={somenteLeitura || daConvencao}
+                title={daConvencao ? "Vem da Convenção Coletiva do contrato" : undefined}
                 onChange={e => onMexer({ insalubridade_pct: e.target.value })}
               />
             </div>
@@ -507,7 +525,8 @@ function LinhaDoQuadro({
               <Input
                 className="h-9" placeholder="Ex: 30"
                 value={l.periculosidade_pct}
-                disabled={somenteLeitura}
+                disabled={somenteLeitura || daConvencao}
+                title={daConvencao ? "Vem da Convenção Coletiva do contrato" : undefined}
                 onChange={e => onMexer({ periculosidade_pct: e.target.value })}
               />
             </div>
@@ -522,16 +541,25 @@ function LinhaDoQuadro({
           </div>
 
           <div className="flex flex-col gap-1">
-            <Label className="text-xs">Benefícios</Label>
-            <Input
-              className="h-9" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
-              value={l.beneficios}
-              disabled={somenteLeitura}
-              onChange={e => onMexer({ beneficios: e.target.value })}
-            />
-            <span className="text-[11px] text-muted-foreground">
-              Vai para a vaga exatamente como está escrito aqui. "Puxar da Planilha" preenche no formato do Recrutamento.
-            </span>
+            <Label className="text-xs">Benefícios{daConvencao && <span className="font-normal text-muted-foreground"> — da Convenção Coletiva do contrato</span>}</Label>
+            {daConvencao ? (
+              <>
+                <Textarea className="min-h-[60px] text-xs" value={l.beneficios || "A convenção não tem benefício preenchido."} disabled readOnly />
+                <AvisoConvencaoDoContrato convencaoId={convencaoId!} compacto />
+              </>
+            ) : (
+              <>
+                <Input
+                  className="h-9" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
+                  value={l.beneficios}
+                  disabled={somenteLeitura}
+                  onChange={e => onMexer({ beneficios: e.target.value })}
+                />
+                <span className="text-[11px] text-muted-foreground">
+                  Vai para a vaga exatamente como está escrito aqui. "Puxar da Planilha" preenche no formato do Recrutamento.
+                </span>
+              </>
+            )}
           </div>
 
           {/* Jornada */}
