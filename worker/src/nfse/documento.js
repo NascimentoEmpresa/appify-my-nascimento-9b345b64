@@ -112,7 +112,14 @@ function gerarDps(s) {
   // detalhados. Enviar apenas CSLL faz o provedor ignorar PIS/COFINS no líquido.
   const contribuicoesRetidas = (centavos(n.pis_total) + centavos(n.cofins_total) + centavos(n.csll_total)) / 100;
   const federais = pisCofins + [['vRetCP',n.inss_total],['vRetIRRF',n.ir_total],['vRetCSLL',contribuicoesRetidas]].filter(([,v]) => centavos(v) > 0).map(([nome,v]) => tag(nome,moeda(v))).join('');
-  const valores = `<valores><vServPrest>${tag('vServ',moeda(n.vlr_bruto_total))}</vServPrest><trib><tribMun>${tag('tribISSQN','1')}${tag('tpRetISSQN',p.iss_retido)}${tag('pAliq',Number(p.aliquota_iss).toFixed(2))}</tribMun>${federais ? `<tribFed>${federais}</tribFed>` : ''}<totTrib><vTotTrib>${tag('vTotTribFed',moeda(p.tributos_aproximados_federais))}${tag('vTotTribEst',moeda(p.tributos_aproximados_estaduais))}${tag('vTotTribMun',moeda(p.tributos_aproximados_municipais))}</vTotTrib></totTrib></trib></valores>`;
+  // P3070 GOVBR: no cenário local de Triunfo, não optante e sem regime especial,
+  // a prefeitura fornece a alíquota. TribISSQN é 1 e não emitimos benefício BM.
+  // Só omitimos pAliq; a taxa e as retenções salvas continuam sendo conferidas.
+  const aliquotaPelaPrefeitura = s.ambiente === 'producao' && digitos(p.municipio_emissor) === '4322004' &&
+    p.opcao_simples === '1' && p.regime_especial === '0' &&
+    digitos(p.local_prestacao) === '4322004' && digitos(t.municipio) === '4322004';
+  const aliquotaXml = aliquotaPelaPrefeitura ? '' : tag('pAliq',Number(p.aliquota_iss).toFixed(2));
+  const valores = `<valores><vServPrest>${tag('vServ',moeda(n.vlr_bruto_total))}</vServPrest><trib><tribMun>${tag('tribISSQN','1')}${tag('tpRetISSQN',p.iss_retido)}${aliquotaXml}</tribMun>${federais ? `<tribFed>${federais}</tribFed>` : ''}<totTrib><vTotTrib>${tag('vTotTribFed',moeda(p.tributos_aproximados_federais))}${tag('vTotTribEst',moeda(p.tributos_aproximados_estaduais))}${tag('vTotTribMun',moeda(p.tributos_aproximados_municipais))}</vTotTrib></totTrib></trib></valores>`;
   const i = p.imovel;
   const imovel = p.informar_imovel ? `<imovel>${i.inscricao ? tag('inscImobFisc',i.inscricao) : ''}<end>${tag('CEP',digitos(i.cep))}${tag('xLgr',i.logradouro)}${tag('nro',i.numero)}${i.complemento ? tag('xCpl',i.complemento) : ''}${tag('xBairro',i.bairro)}</end></imovel>` : '';
   const ibsCbs = `<IBSCBS>${tag('finNFSe','0')}${tag('indFinal',p.consumidor_final)}${tag('cIndOp',p.ibs_indicador_operacao)}${p.tipo_operacao ? tag('tpOper',p.tipo_operacao) : ''}${p.tipo_ente_governamental ? tag('tpEnteGov',p.tipo_ente_governamental) : ''}${tag('indDest','0')}${imovel}<valores><trib><gIBSCBS>${tag('CST',p.ibs_cst)}${tag('cClassTrib',p.ibs_classificacao)}</gIBSCBS></trib></valores></IBSCBS>`;
