@@ -11,6 +11,9 @@ import { BUCKET_CLASSIFICACAO_CARTAO, caminhoAnexoClassificacao, type AnexoClass
 
 const KEY = "malote_cartao_fatura_item_rateio";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tabelas/RPCs fora do types.ts gerado (SIS-2026-0879: um cast só para o arquivo)
+const db = supabase as any;
+
 export interface RateioItemLinha {
   id?: string;
   classificacao_id: string;
@@ -25,7 +28,7 @@ export function useRateioItemFatura(itemId: string | null) {
     queryKey: [KEY, itemId],
     enabled: !!itemId,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from("malote_cartao_fatura_item_rateio")
         .select("id, classificacao_id, contrato_id, percentual, valor, ordem")
         .eq("item_id", itemId)
@@ -57,12 +60,23 @@ export interface ItemParaClassificar {
   tem_observacao: boolean;
 }
 
+// Linha crua do select de useItensParaClassificar (fatura e cartão vêm aninhados).
+interface ItemBruto {
+  id: string;
+  descricao: string;
+  data_compra: string | null;
+  valor: number;
+  parcela_atual: number | null;
+  parcela_total: number | null;
+  malote_cartao_fatura?: { competencia?: string; cartao_id?: string; malote_cartao_credito?: { nome_cartao?: string } | null } | null;
+}
+
 export function useItensParaClassificar() {
   return useQuery({
     queryKey: [KEY, "para_classificar"],
     queryFn: async () => {
       const [itensRes, rateiosRes, complRes] = await Promise.all([
-        (supabase as any)
+        db
           .from("malote_cartao_fatura_item")
           .select(
             "id, descricao, data_compra, valor, parcela_atual, parcela_total, " +
@@ -73,9 +87,9 @@ export function useItensParaClassificar() {
           // nem tem o que ratear (o rateio exige valor >= 0) — fora da lista de classificação.
           .gt("valor", 0)
           .order("data_compra", { ascending: false }),
-        (supabase as any).from("malote_cartao_fatura_item_rateio").select("item_id"),
+        db.from("malote_cartao_fatura_item_rateio").select("item_id"),
         // SIS-2026-0879: só o que a lista precisa para o ícone (quantos anexos, se tem observação).
-        (supabase as any).from("malote_cartao_fatura_item_complemento").select("item_id, observacao, anexos"),
+        db.from("malote_cartao_fatura_item_complemento").select("item_id, observacao, anexos"),
       ]);
       if (itensRes.error) throw itensRes.error;
       if (rateiosRes.error) throw rateiosRes.error;
@@ -92,7 +106,7 @@ export function useItensParaClassificar() {
         qtdPorItem.set(r.item_id, (qtdPorItem.get(r.item_id) ?? 0) + 1);
       }
 
-      return (itensRes.data ?? []).map((i: any) => ({
+      return ((itensRes.data ?? []) as ItemBruto[]).map((i) => ({
         id: i.id,
         descricao: i.descricao,
         data_compra: i.data_compra,
@@ -114,7 +128,7 @@ export function useSalvarRateioItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ itemId, linhas }: { itemId: string; linhas: RateioItemLinha[] }) => {
-      const { error: erroDelete } = await (supabase as any)
+      const { error: erroDelete } = await db
         .from("malote_cartao_fatura_item_rateio")
         .delete()
         .eq("item_id", itemId);
@@ -122,7 +136,7 @@ export function useSalvarRateioItem() {
 
       if (linhas.length > 0) {
         const rows = linhas.map(({ id: _id, ...l }, i) => ({ ...l, item_id: itemId, ordem: i }));
-        const { error: erroInsert } = await (supabase as any).from("malote_cartao_fatura_item_rateio").insert(rows);
+        const { error: erroInsert } = await db.from("malote_cartao_fatura_item_rateio").insert(rows);
         if (erroInsert) throw erroInsert;
       }
     },
@@ -147,7 +161,7 @@ export function useComplementoItemFatura(itemId: string | null) {
     queryKey: [KEY, "complemento", itemId],
     enabled: !!itemId,
     queryFn: async (): Promise<ComplementoItemFatura> => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await db
         .from("malote_cartao_fatura_item_complemento")
         .select("observacao, anexos")
         .eq("item_id", itemId)
@@ -174,7 +188,7 @@ export function useSalvarComplementoItem() {
           if (error) throw new Error(`Não foi possível anexar "${f.name}": ${error.message}`);
           novos.push({ nome: f.name, path, tipo: f.type || null, tamanho: f.size });
         }
-        const { error } = await (supabase as any).rpc("cartao_fatura_item_salvar_complemento", {
+        const { error } = await db.rpc("cartao_fatura_item_salvar_complemento", {
           _item_id: i.itemId,
           _observacao: i.observacao,
           _anexos: [...i.manter, ...novos],
