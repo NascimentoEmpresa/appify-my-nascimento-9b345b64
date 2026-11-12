@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { setoresDoResponsavel, SETOR_TODOS } from "@/lib/implantacao/painelSetores";
 import { cn } from "@/lib/utils";
 import {
   useImplantacaoContratos,
@@ -26,7 +28,7 @@ import {
   type OpcaoSimNao,
 } from "@/lib/implantacao/camposResposta";
 import type { ImplantacaoContrato, ChecklistItem, Resposta, HistoricoEntry } from "@/hooks/useImplantacao";
-import { CheckCircle2, Circle, ChevronDown, Trash2, X as XIcon, CheckCircle, History, Plus } from "lucide-react";
+import { CheckCircle2, Circle, ChevronDown, Trash2, X as XIcon, CheckCircle, History, Plus, LayoutDashboard } from "lucide-react";
 import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 import { useDocTipos } from "@/hooks/useDocumentos";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -66,7 +68,12 @@ export default function Implantacao() {
   const { data: contratos = [], isLoading, error } = useImplantacaoContratos(null, { todasEmpresas: true });
   const { data: checklistItems = [] } = useChecklistItems();
 
-  const [contratoSelecionado, setContratoSelecionado] = useState<string | null>(null);
+  // Painel por setor: "Preencher / Atualizar" chega aqui com ?contrato= e
+  // ?setor=. O setor é o normalizado do painel ("SST" pega também
+  // "SST/Compras"), por isso é um filtro à parte do de responsável.
+  const [params] = useSearchParams();
+  const [contratoSelecionado, setContratoSelecionado] = useState<string | null>(() => params.get("contrato"));
+  const [setorFiltro, setSetorFiltro] = useState<string>(() => params.get("setor") ?? "");
   const [momentoFiltro, setMomentoFiltro] = useState<string>("");
   const [responsavelFiltro, setResponsavelFiltro] = useState<string>("");
   const [editandoNome, setEditandoNome] = useState(false);
@@ -82,7 +89,7 @@ export default function Implantacao() {
   const contrato = contratos.find((c) => c.id === contratoSelecionado) ?? null;
 
   useMemo(() => {
-    if (contratos.length > 0 && !contratoSelecionado) {
+    if (contratos.length > 0 && (!contratoSelecionado || !contratos.some((c) => c.id === contratoSelecionado))) {
       setContratoSelecionado(contratos[0].id);
     }
   }, [contratos, contratoSelecionado]);
@@ -98,9 +105,13 @@ export default function Implantacao() {
       if (ROW_INDEX_NO_TOPO.has(i.row_index)) return false;
       if (momentoFiltro && i.momento !== momentoFiltro) return false;
       if (responsavelFiltro && i.responsavel_acao !== responsavelFiltro && i.responsavel_acao !== "Todos") return false;
+      if (setorFiltro) {
+        const setores = setoresDoResponsavel(i.responsavel_acao);
+        if (!setores.includes(setorFiltro) && !setores.includes(SETOR_TODOS)) return false;
+      }
       return true;
     });
-  }, [checklistItems, momentoFiltro, responsavelFiltro]);
+  }, [checklistItems, momentoFiltro, responsavelFiltro, setorFiltro]);
 
   const responsaveisFiltrados = useMemo(() => [...new Set(itensFiltrados.map((i) => i.responsavel_acao))], [itensFiltrados]);
 
@@ -152,6 +163,13 @@ export default function Implantacao() {
         title="Implantação de Contratos"
         breadcrumb={["Contratos", "Implantação"]}
         subtitle="Checklist de implantação por contrato — acompanhe cada setor até a operação plena."
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/licitacoes/implantacao/painel${contratoSelecionado ? `?contrato=${contratoSelecionado}` : ""}`}>
+              <LayoutDashboard className="mr-1.5 h-4 w-4" /> Painel por setor
+            </Link>
+          </Button>
+        }
       />
 
       {/* KPIs */}
@@ -221,6 +239,18 @@ export default function Implantacao() {
               <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
                 <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
               </div>
+            </div>
+          )}
+
+          {setorFiltro && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Mostrando as perguntas do setor</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary px-3 py-1 font-semibold text-primary-foreground">
+                {setorFiltro}
+                <button type="button" onClick={() => setSetorFiltro("")} title="Mostrar todos os setores">
+                  <XIcon className="h-3 w-3" />
+                </button>
+              </span>
             </div>
           )}
 
