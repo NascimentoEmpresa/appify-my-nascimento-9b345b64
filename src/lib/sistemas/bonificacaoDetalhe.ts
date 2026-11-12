@@ -65,8 +65,24 @@ export function detalheValores(entregas: EntregaComOrigem[], campo: CampoValor):
 export const ROTULO_ORIGEM: Record<OrigemValor, string> = {
   gestor: "avaliação do gestor",
   ia: "parecer da I.A",
-  "sem valor": "sem valor",
+  "sem valor": "aguardando a I.A — fora da soma e da média",
 };
+
+/**
+ * Média por entrega SÓ entre as que têm valor (12/11/2026, auditoria da
+ * Bonificação): na média de novembro, chamado sem parecer contava como R$ 0 —
+ * 10 de 13 do Eduardo e 6 de 23 do João — e o dev parecia valer menos por um
+ * defeito do fechamento automático, não pelo trabalho. Pendente fica à parte
+ * (`pendentes`), à vista, até a I.A precificar.
+ */
+export function mediaComValor(entregas: EntregaComOrigem[], campo: CampoValor): { media: number | null; comValor: number; pendentes: number } {
+  const valores = entregas.map((e) => valorDoCampo(e, campo)).filter((v): v is number => v !== null);
+  return {
+    media: valores.length ? r2(valores.reduce((a, v) => a + v, 0) / valores.length) : null,
+    comValor: valores.length,
+    pendentes: entregas.length - valores.length,
+  };
+}
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -86,7 +102,8 @@ export function contextoComparativo(devs: ResumoDev[], rotuloMes: string): strin
         nota_final: d.nota === null ? null : r2(d.nota),
         criterios: Object.fromEntries(CRITERIOS.map((k) => [ROTULO_CRITERIO[k], d.medias[k] === null ? null : r2(d.medias[k] as number)])),
         mercado_total: r2(d.mercado),
-        media_por_entrega: n ? r2(d.mercado / n) : null,
+        media_por_entrega: mediaComValor(d.entregas as EntregaComOrigem[], "valorMercado").media,
+        aguardando_ia: mediaComValor(d.entregas as EntregaComOrigem[], "valorMercado").pendentes,
         freelancer_total: r2(d.freelancer),
         lucro_total: r2((d.entregas as EntregaComOrigem[]).reduce((a, e) => a + (e.lucro ?? 0), 0)),
         chamados: (d.entregas as EntregaComOrigem[]).map((e) => ({

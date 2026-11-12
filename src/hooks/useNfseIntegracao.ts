@@ -34,6 +34,7 @@ export interface ParametrosNfse {
   confirmacao_producao?: boolean;
   tomador: {
     documento: string; nome: string; municipio: string; cep: string;
+    inscricao_municipal?: string;
     logradouro: string; numero: string; complemento: string; bairro: string; email: string;
   };
 }
