@@ -36,9 +36,11 @@ import { MOTIVOS_REABERTURA, rotaNovoChamado, type MotivoReabertura } from "@/li
 //
 // MOTIVO DA REABERTURA (12/11/2026, mig 20261112002000, pedido do Pablo):
 // o solicitante escolhe por quê.
-//   · "Não atendeu o solicitado" → RPC chamado_reabrir_nao_atendeu: volta
-//     para 'aberto' SEM responsável, na triagem do Gestor de Sistemas, que
-//     verifica e envia para um dev de novo. O que não ficou certo é obrigatório.
+//   · "Não atendeu o solicitado" → RPC chamado_reabrir_nao_atendeu. Na mig
+//     20261112002000 voltava direto para 'aberto' sem responsável; desde a
+//     mig 20261112190000 (mesmo dia) só registra o PEDIDO — o Gestor de
+//     Sistemas confirma (mesmo dev ou outro) ou nega com motivo, no card
+//     CHAMADO REABERTO. O que não ficou certo é obrigatório.
 //   · "Precisa de modificações" → NÃO reabre: "Pra melhorias, abra outro
 //     chamado". O botão leva ao formulário de chamado novo já preenchido com
 //     este (AbrirChamado ?baseado=), com o quadro "O que é preciso a mais", e
@@ -95,7 +97,8 @@ export function ReabrirChamadoDialog({
 
     let novo = statusDestino;
     if (solicitante) {
-      // A RPC muda o status, tira o responsável E grava o "Chamado reaberto: …" no histórico.
+      // Desde a mig 20261112190000 a RPC só PEDE: o status fica como está até
+      // o Gestor de Sistemas confirmar ou negar (card CHAMADO REABERTO).
       const { data, error } = await (supabase as any)
         .rpc("chamado_reabrir_nao_atendeu", { p_chamado_id: chamado.id, p_motivo: motivo.trim() });
       if (error) {
@@ -133,8 +136,8 @@ export function ReabrirChamadoDialog({
     setTipoMotivo("");
     onOpenChange(false);
     toast({
-      title: `Chamado #${chamado.numero} reaberto`,
-      description: solicitante ? "Voltou para o Gestor de Sistemas verificar e enviar para um desenvolvedor." : `Voltou para "${rotulo}".`,
+      title: solicitante ? `Pedido de reabertura do #${chamado.numero} enviado` : `Chamado #${chamado.numero} reaberto`,
+      description: solicitante ? "O Gestor de Sistemas confirma a reabertura e envia para um desenvolvedor — você é avisado." : `Voltou para "${rotulo}".`,
     });
     // Um chamado reaberto muda fila, contadores e listas das duas telas ao
     // mesmo tempo; invalidar por prefixo evita listar chave por chave e
@@ -182,7 +185,7 @@ export function ReabrirChamadoDialog({
                   onChange={(e) => setMotivo(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  O chamado volta para <b>Aberto</b>, na triagem do Gestor de Sistemas, e a data de conclusão é desfeita.
+                  O pedido vai para o <b>Gestor de Sistemas</b>, que confirma a reabertura (com o mesmo desenvolvedor ou outro) ou explica por que não reabre.
                 </p>
               </>
             )}

@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { AvisoPendenciasGestao } from "./ReaberturaTransferenciaChamado";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
 import { aguardandoGestorSistemas, desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
@@ -480,6 +481,9 @@ export default function PainelDistribuicao() {
         <StatCard icon={CheckCircle2} tone="success" label="Concluídos (mês)" value={stats?.concluidos_mes ?? 0} />
         <StatCard icon={AlertTriangle} tone="destructive" label="Atrasados" value={stats?.atrasados ?? 0} />
       </div>
+
+      {/* Reaberturas e transferências esperando o Gestor de Sistemas (mig 20261112190000). */}
+      <AvisoPendenciasGestao nomeDe={nomeDe} onAbrir={(cid) => nav(`/app/sistemas/chamados/${cid}/coordenar`)} />
 
       {/* items-start: cada coluna fica com a altura do próprio conteúdo (sem o
           card da esquerda esticar até a altura da coluna da direita). */}
