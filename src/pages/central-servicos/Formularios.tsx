@@ -156,8 +156,12 @@ export default function Formularios() {
   const [toasts, setToasts] = useState<{ id: number; msg: string; t: string }[]>([]);
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 4200); };
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silencioso`: revalida sem trocar a lista por "Carregando…". O modal de
+  // Acesso chama isto a CADA clique de permissão; com o loading cheio a grade
+  // de cards sumia e voltava atrás do modal — a "metade da tela bugando"
+  // (12/11/2026).
+  const load = useCallback(async (silencioso = false) => {
+    if (!silencioso) setLoading(true);
     const [fRes, rRes, aRes] = await Promise.all([
       (supabase as any).from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
       // Contagem feita no banco, um HEAD por formulário. Antes baixava
@@ -556,7 +560,7 @@ export default function Formularios() {
         <FormularioAcesso
           formulario={acessoForm}
           onFechar={() => setAcessoForm(null)}
-          onSalvo={load}
+          onSalvo={() => load(true)}
           toast={toast}
         />
       )}
