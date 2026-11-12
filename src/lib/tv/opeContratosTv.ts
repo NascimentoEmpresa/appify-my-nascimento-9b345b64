@@ -28,7 +28,7 @@ export interface FinanceiroTv {
   custo_por_mes: Record<string, number>;
   /**
    * A linha do mês no Faturamento da Empresa: Valor Líquido − Despesas de
-   * TODOS os contratos (mig 20261113005000). É o que o cartão "Lucratividade"
+   * TODOS os contratos (mig 20261113005100). É o que o cartão "Lucratividade"
    * mostra — antes ele somava só os contratos com receita ≥ R$ 10 mil e custo
    * lançado, e deu 19,5% na TV contra 10,43% no Faturamento (set/26).
    */
@@ -110,7 +110,7 @@ export function totaisOpe(d: DadosOpeContratosTv, linhas: LinhaContrato[] = linh
   const pPostos = contratados > 0 ? r1t((cobertos / contratados) * 100) : null;
 
   // A margem do cartão é a do Faturamento da Empresa (bloco `empresa` do banco).
-  // Sem ele (banco ainda sem a mig 20261113005000), a conta antiga por contrato.
+  // Sem ele (banco ainda sem a mig 20261113005100), a conta antiga por contrato.
   let margem: number | null;
   const emp = d.financeiro?.empresa;
   if (emp) {
