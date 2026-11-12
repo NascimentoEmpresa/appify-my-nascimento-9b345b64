@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { chaveSetor, setoresUnicos } from "@/lib/formularios/setorChave";
+import { apagarGrantSetor } from "@/lib/formularios/setorAcesso";
 import type { Formulario } from "./Formularios";
 
 // =====================================================================
@@ -63,18 +66,27 @@ const PAPEIS_LEITURA = [MARCADOR, "ver_tudo", "ver_proprias", "ver_setor"];
 const rotuloPapel = (p: string) => PAPEIS.find((x) => x.valor === p)?.rotulo ?? p;
 // Quem pode mexer na própria lista — é por eles que se mede "a lista ficou órfã".
 const GERENCIAM = ["form_dono", "form_gerenciar"];
-const chaveSetor = (s: string) => s.trim().toUpperCase();
+// chaveSetor (lib): SEM acento — JURIDICO e JURÍDICO são o mesmo chip, como na
+// regra do banco (cs_form_chave_setor, mig 20261113003000).
 
 interface Linha { id: number; user_id: string; papel: string }
 /** O que a pessoa vê deste formulário, quando há regra própria. */
 interface RegraVer { caps: Set<string>; setores: Set<string> }
 interface Perfil { id: string; display_name: string | null; email: string | null }
 
+// O modal vai por PORTAL para o <body> (12/11/2026, "metade da tela
+// bugando"): a rota fica dentro do `.sh-entra` do AppShell, que anima com
+// `transform` — e transform num ancestral vira o containing block do
+// `position: fixed`. O fundo escurecia só a área de conteúdo, o modal
+// centrava nela e saía cortado em cima. Mesmo motivo de ModalExportarDados.
+// A caixa é coluna: cabeçalho e rodapé fixos, só o miolo rola.
 const cx = {
   fundo: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "flex",
-           alignItems: "center", justifyContent: "center", zIndex: 950 } as React.CSSProperties,
-  caixa: { background: "#fff", borderRadius: 16, padding: 22, width: 620, maxWidth: "94vw",
-           maxHeight: "88vh", overflowY: "auto" } as React.CSSProperties,
+           alignItems: "center", justifyContent: "center", zIndex: 950, padding: 16 } as React.CSSProperties,
+  caixa: { background: "#fff", borderRadius: 16, width: 640, maxWidth: "100%",
+           maxHeight: "min(88vh, 900px)", display: "flex", flexDirection: "column",
+           boxShadow: "0 24px 60px rgba(15,23,42,.25)", overflow: "hidden" } as React.CSSProperties,
+  miolo: { padding: "0 22px 4px", overflowY: "auto", overscrollBehavior: "contain", flex: 1, minHeight: 0 } as React.CSSProperties,
   btn: (bg: string, c = "#fff", border = "none"): React.CSSProperties => ({
     background: bg, color: c, border, borderRadius: 8, padding: "7px 12px",
     fontSize: 13, fontWeight: 600, cursor: "pointer" }),
@@ -102,6 +114,7 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
   // Só entra no mapa quem tem o marcador.
   const [regras, setRegras] = useState<Map<string, RegraVer>>(new Map());
   const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
+  const [catalogoCarregado, setCatalogoCarregado] = useState(false);
   const [abertoSetores, setAbertoSetores] = useState<string | null>(null);  // user_id com a lista de setores aberta
   const [novoVer, setNovoVer] = useState("");     // pessoa a ganhar regra de leitura
   const [buscaVer, setBuscaVer] = useState("");
@@ -163,18 +176,18 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
   useEffect(() => {
     (async () => {
       const { data } = await (supabase as any).rpc("cs_form_setores_catalogo");
-      const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
-      const porChave = new Map<string, string>();
-      (data ?? []).forEach((r: any) => {
-        const l = String(r.setor ?? "").trim();
-        if (!l) return;
-        const k = norm(l);
-        if (k === "PADRAO" || porChave.has(k)) return;
-        porChave.set(k, l);
-      });
-      setSetoresCatalogo([...porChave.values()].sort((a, b) => a.localeCompare(b, "pt-BR")));
+      // Uma grafia por setor (a acentuada); a RPC já deduplica, aqui é rede.
+      setSetoresCatalogo(setoresUnicos((data ?? []).map((r: any) => r.setor)));
+      setCatalogoCarregado(true);
     })();
   }, []);
+
+  // Esc fecha, como os modais do shadcn.
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onFechar]);
 
   const nomeDe = (userId: string) => {
     const p = perfis.find((x) => x.id === userId);
@@ -330,9 +343,10 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
     const chave = chaveSetor(setor);
     const tem = regras.get(userId)?.setores.has(chave) ?? false;
     setSalvando(true);
+    // Apaga pela chave: a linha pode estar gravada como JURIDICO e o chip
+    // mostrar JURÍDICO — `.eq("setor")` não pegava nada e o banco seguia dando.
     const { error } = tem
-      ? await (supabase as any).from("CS_FORM_ACESSOS").delete()
-          .eq("formulario_id", formulario.id).eq("user_id", userId).eq("papel", "ver_setor").eq("setor", setor)
+      ? await apagarGrantSetor(userId, "ver_setor", formulario.id, setor)
       : await (supabase as any).from("CS_FORM_ACESSOS")
           .insert({ ...linhaBase, papel: "ver_setor", user_id: userId, setor });
     setSalvando(false);
@@ -341,12 +355,17 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
     onSalvo();
   };
 
+  const rotuloPorChave = useMemo(
+    () => new Map(setoresCatalogo.map((s) => [chaveSetor(s), s] as const)), [setoresCatalogo]);
+
   /** Resumo em uma linha do que a regra concede — é o que se lê de relance. */
   const resumoRegra = (r: RegraVer) => {
     const partes: string[] = [];
     if (r.caps.has("ver_tudo")) partes.push("todas as respostas");
     if (r.caps.has("ver_proprias")) partes.push("só as que ela enviou");
-    if (r.setores.size) partes.push(`setor: ${[...r.setores].sort().join(", ")}`);
+    // r.setores guarda a CHAVE (sem acento); o resumo mostra a grafia do catálogo.
+    if (r.setores.size) partes.push(`setor: ${[...r.setores].map((k) => rotuloPorChave.get(k) ?? k)
+      .sort((a, b) => a.localeCompare(b, "pt-BR")).join(", ")}`);
     return partes.length ? partes.join(" + ") : "não vê nenhuma resposta deste formulário";
   };
   // Os QUATRO papéis da lista já leem todas as respostas (cs_form_pode(_,'ver')),
@@ -354,16 +373,23 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
   // diria "não vê nenhuma resposta" para alguém que vê todas pelo papel.
   const papelNaLista = (userId: string) => linhas.find((l) => l.user_id === userId)?.papel ?? null;
 
-  return (
+  return createPortal(
     <div style={cx.fundo} onClick={onFechar}>
-      <div style={cx.caixa} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <div>
+      <div style={cx.caixa} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Acesso ao formulário">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12,
+                      padding: "18px 22px 12px", borderBottom: "1px solid #f1f5f9", flexShrink: 0 }}>
+          <div style={{ minWidth: 0 }}>
             <h3 style={{ margin: 0, fontSize: 17, color: "#0f172a" }}>Acesso ao formulário</h3>
             <p style={{ margin: "3px 0 0", fontSize: 13, color: "#64748b" }}>{formulario.titulo}</p>
           </div>
-          <button onClick={onFechar} style={cx.btn("transparent", "#94a3b8")}>✕</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {/* Sinal discreto de gravação — no lugar de recarregar a tela. */}
+            <span style={{ fontSize: 11.5, color: "#64748b", visibility: salvando ? "visible" : "hidden" }}>Salvando…</span>
+            <button onClick={onFechar} aria-label="Fechar" style={cx.btn("transparent", "#94a3b8")}>✕</button>
+          </div>
         </div>
+
+        <div style={cx.miolo}>
 
         {/* Regime atual — é a informação mais importante da tela. */}
         <div style={{
@@ -491,7 +517,9 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
                         {abertoSetores === userId && (
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 7, paddingLeft: 2 }}>
                             {setoresCatalogo.length === 0 && (
-                              <span style={{ fontSize: 11.5, color: "#94a3b8" }}>Carregando setores…</span>
+                              <span style={{ fontSize: 11.5, color: "#94a3b8" }}>
+                                {catalogoCarregado ? "Nenhum setor disponível." : "Carregando setores…"}
+                              </span>
                             )}
                             {setoresCatalogo.map((s) => (
                               <button key={s} onClick={() => alternarSetor(userId, s)} disabled={salvando}
@@ -532,11 +560,13 @@ export function FormularioAcesso({ formulario, onFechar, onSalvo, toast }: {
             </div>
           </>
         )}
+        </div>
 
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ padding: "12px 22px", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end", flexShrink: 0 }}>
           <button onClick={onFechar} style={cx.btn("#f1f5f9", "#334155", "1px solid #e2e8f0")}>Fechar</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

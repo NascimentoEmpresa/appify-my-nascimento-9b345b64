@@ -9,6 +9,7 @@ import { Formulario, Pergunta, fmtDt, situacao, normalizaPerguntas } from "./For
 import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, invalidarFichas } from "./EmpregadoDetalheModal";
 import { gerarPdfRespostas, type BlocoPdf, type RespostaPdf } from "@/lib/formularios/respostasPdf";
 import { textoValorEspecial } from "@/components/formularios/PerguntasEspeciais";
+import { mesmoSetor, setoresUnicos } from "@/lib/formularios/setorChave";
 import MuralModeracao from "./MuralModeracao";
 
 // =====================================================================
@@ -590,7 +591,9 @@ export default function FormularioRespostas() {
   const opcoesResp = useMemo(
     () => [...new Set(respsEscopo.map(r => nomeRespondente(r)).filter(n => n && n !== "Anônimo"))].sort(),
     [respsEscopo, nomeRespondente]);
-  const opcoesSetor = useMemo(() => [...new Set(respsEscopo.map(r => (r.setor ?? "").trim()).filter(Boolean))].sort(), [respsEscopo]);
+  // Uma grafia por setor: o Setor_ERP carimbado vem com e sem acento
+  // (JURIDICO/JURÍDICO, LICITACAO/LICITAÇÃO) e o filtro listava os dois.
+  const opcoesSetor = useMemo(() => setoresUnicos(respsEscopo.map(r => r.setor)), [respsEscopo]);
   // Respostas filtradas alimentam AS DUAS abas (resumo e individuais) e o CSV.
   // Data: intervalo fechado nas duas pontas - "até 31/05" inclui o dia 31
   // inteiro (por isso o fim do dia, não 00:00).
@@ -599,7 +602,7 @@ export default function FormularioRespostas() {
     const ate = fAte ? new Date(`${fAte}T23:59:59.999`).getTime() : null;
     return respsEscopo.filter(r => {
       if (fResp && nomeRespondente(r) !== fResp) return false;
-      if (fSetor && (r.setor ?? "").trim() !== fSetor) return false;
+      if (fSetor && !mesmoSetor(r.setor, fSetor)) return false;
       if (de != null || ate != null) {
         const t = new Date(r.enviado_em).getTime();
         if (isNaN(t)) return false;
