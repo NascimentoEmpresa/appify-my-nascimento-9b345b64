@@ -42,6 +42,17 @@
 // desenvolvedor faz que leva 1h mas é de extrema importância e complexidade,
 // e tem coisa que leva 1h mas é bem tranquilo"): o preço é
 // horas × valor/hora × FATOR_COMPLEXIDADE[nível].
+//
+// SÓ O QUE O DEV NÃO CONTROLA (12/11/2026, aprovado pelo Iury depois da
+// auditoria da Bonificação): o preço de novembro media as HORAS DIGITADAS
+// pelo próprio dev (~R$ 500 por hora digitada, igual para todos), e chamado
+// fechado pela PR, sem horas, valia R$ 0 — 10 de 13 do Eduardo e 6 de 23 do
+// João, enquanto o Pablo (login fora da lista do fechamento automático)
+// fechava tudo à mão e tinha tudo precificado. A reavaliação do mesmo dia
+// passou a premiar a quantidade de PRs e os comentários que o dev escreve.
+// Daqui em diante o preço sai SÓ do pedido (montarPromptDoPreco): sem horas
+// informadas, sem PRs e sem histórico. Esses dados seguem na tela, como
+// informação, e as horas continuam valendo para o CUSTO real (card verde).
 
 export interface ChamadoParaParecer {
   id: string;
@@ -207,23 +218,21 @@ Contexto técnico do ERP: React 18 + Vite + TypeScript + shadcn/ui no front; Pos
 O QUE VOCÊ PRECIFICA: o valor de MERCADO para contratar esse trabalho no Brasil — quanto um cliente pagaria a um fornecedor para entregar o mesmo resultado. Não é o tempo que a equipe interna levou.
 
 COMO ESTIMAR:
-1. Se vier a seção "ENTREGA REAL", ela manda: o preço é do que FOI ENTREGUE, não do texto de abertura (que costuma ser curto). Leia os títulos das PRs para entender o escopo verdadeiro e pense no PROJETO equivalente contratado do zero: descoberta, arquitetura, implementação, testes, migração de dados, infraestrutura, documentação/runbook, acompanhamento em produção, correções. Cada PR mergeada de infraestrutura, banco, segurança ou arquitetura costuma representar de 4 a 16 horas de especialista; PR pequena de tela, de 1 a 4 horas. Muitas PRs ao longo de semanas = projeto grande, não chamado pequeno.
-2. Sem entrega real (chamado novo), estime pelo pedido, incluindo entendimento, implementação, testes e publicação.
-3. Pense também no "produto equivalente": se o chamado entrega um módulo ou sistema inteiro (ex.: recrutamento e seleção completo, migração de infraestrutura com alta disponibilidade e failover), compare com quanto o mercado cobra por esse sistema/projeto e NÃO subestime — projetos assim custam dezenas a centenas de milhares de reais numa software house.
-4. Fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
-5. Leia também o HISTÓRICO do chamado (comentários e observações), quando vier: ele costuma revelar o escopo que o título esconde.
-6. Integração com banco, governo ou sistema externo não é tela: conte o estudo do manual e do layout, a geração e validação do arquivo, a homologação com o terceiro, o tratamento de rejeição, os testes com dado real e o risco financeiro. Compare com o que o mercado cobra por uma integração dessas pronta.
+1. Estime SÓ pelo pedido (assunto, tipo, módulo e descrição do solicitante), incluindo entendimento, implementação, testes e publicação. Você não recebe horas gastas, PRs nem comentários de quem desenvolveu: o mesmo pedido tem de dar o mesmo preço, seja quem for o desenvolvedor.
+2. Pense também no "produto equivalente": se o chamado entrega um módulo ou sistema inteiro (ex.: recrutamento e seleção completo, migração de infraestrutura com alta disponibilidade e failover), compare com quanto o mercado cobra por esse sistema/projeto e NÃO subestime — projetos assim custam dezenas a centenas de milhares de reais numa software house.
+3. Fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
+4. Integração com banco, governo ou sistema externo não é tela: conte o estudo do manual e do layout, a geração e validação do arquivo, a homologação com o terceiro, o tratamento de rejeição, os testes com dado real e o risco financeiro. Compare com o que o mercado cobra por uma integração dessas pronta.
 
 Perfis (use EXATAMENTE estes códigos). Todos são de DESENVOLVEDOR SÊNIOR e o valor/hora de cada um é FIXO, definido pela empresa — você NÃO escolhe valor/hora, só estima as HORAS que cada perfil levaria:
 - "freelancer": freelancer PJ sênior;
 - "software_house": software house ou consultoria com time sênior;
 - "interno": desenvolvedor sênior interno CLT, que já conhece o ERP.
-Se vier "Horas reais informadas pelo desenvolvedor": repita esse número em "horas" SÓ no perfil "interno". Em "freelancer" e "software_house" estime as horas para entregar o MESMO ESCOPO do zero, sem conhecer o ERP: as horas reais são o piso, nunca o teto nem a referência, porque foram gastas por quem já conhece o sistema e trabalha com apoio de I.A. Na "explicacao", cite as etapas concretas que sustentam as horas daquele perfil. Seja realista: um ajuste simples continua sendo poucas horas, e não infle o que o escopo não sustenta.
+Em "freelancer" e "software_house" estime as horas para entregar o MESMO ESCOPO do zero, sem conhecer o ERP; em "interno", as horas de um sênior que já conhece o sistema e trabalha com apoio de I.A. Na "explicacao", cite as etapas concretas que sustentam as horas daquele perfil. Seja realista: um ajuste simples continua sendo poucas horas, e não infle o que o escopo não sustenta.
 
 Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa, NÃO a duração. Algo feito em 1 hora pode ser 5 (correção crítica em produção, regra de acesso/segurança, dado financeiro ou de folha, banco em produção, algo que parava a operação) e algo de 1 hora pode ser 1 (trocar um texto). A complexidade multiplica o preço, então avalie com cuidado:
 1 = muito baixa (texto, rótulo, ajuste trivial, sem risco), 2 = baixa (ajuste numa tela, filtro simples), 3 = média (tela ou regra nova, mexe no banco), 4 = alta (vários módulos, regras de acesso, integração, risco real de quebrar algo em uso), 5 = muito alta (infraestrutura, segurança, migração de dados, alta disponibilidade, correção crítica em produção, integração externa complexa, módulo ou sistema inteiro).
 
-Se o chamado for dúvida/orientação ou vago, estime mesmo assim o esforço provável e diga nas premissas o que faltou. Nas premissas, diga se o preço veio da entrega real ou só do pedido.
+Se o chamado for dúvida/orientação ou vago, estime mesmo assim o esforço provável e diga nas premissas o que faltou.
 
 Responda SÓ com JSON, sem texto fora dele, neste formato:
 {
@@ -287,6 +296,15 @@ export function montarPrompt(c: ChamadoParaParecer, entrega?: EntregaReal | null
   return linhas.join("\n");
 }
 
+/**
+ * O prompt do PREÇO (12/11/2026, ver o cabeçalho): só o pedido. As horas
+ * informadas, as PRs e o histórico ficam de fora mesmo que venham no chamado,
+ * para nenhum dado escrito ou controlado por quem desenvolveu mexer no valor.
+ */
+export function montarPromptDoPreco(c: ChamadoParaParecer): string {
+  return montarPrompt({ ...c, horas_gastas: null }, null, null);
+}
+
 // ── Chat sobre o parecer ───────────────────────────────────────────────
 // Pedido do Pablo (29/10/2026): "se eu perguntar 'da onde você tirou esse
 // valor caro?' ela tem que argumentar perfeitamente". A I.A recebe o chamado
@@ -305,7 +323,7 @@ export interface ParecerParaChat {
   premissas: string | null;
 }
 
-export function montarSistemaChat(c: ChamadoParaParecer, p: ParecerParaChat, entrega?: EntregaReal | null): string {
+export function montarSistemaChat(c: ChamadoParaParecer, p: ParecerParaChat): string {
   const faixas = PERFIS.map((x) => `- ${x.rotulo} ("${x.perfil}"): R$ ${x.valor_hora}/h fixo — ${x.embasamento}`).join("\n")
     + "\nFator de complexidade (multiplica o preço): " + Object.entries(FATOR_COMPLEXIDADE).map(([n, f]) => `nível ${n} = ×${String(f).replace(".", ",")}`).join(", ")
     + ". Mede dificuldade, risco e importância, não a duração.";
@@ -317,8 +335,8 @@ Como responder:
 - Os valores gravados são FIXOS e definitivos: explique e justifique ESSES números. Não proponha preço, horas ou valor/hora diferentes, não refaça a conta com outros números e não diga que "daria outro valor". Se a pessoa discordar, explique o raciocínio por trás das horas gravadas.
 - O valor/hora de cada perfil é a tabela fixa da empresa para DESENVOLVEDOR SÊNIOR (abaixo), não uma escolha sua: diga isso e mostre por que é coerente com o mercado de sênior no Brasil.
 - O preço não mede só o tempo: o fator de complexidade multiplica a conta. Se perguntarem por que algo de poucas horas custa caro (ou barato), explique pela dificuldade, pelo risco e pela importância do que foi feito.
-- Havendo horas reais informadas pelo desenvolvedor ao concluir, só o perfil interno usa essas horas. Freelancer e software house têm as horas estimadas para entregar o mesmo escopo do zero, nunca abaixo das reais (o valor/hora da software house já embute gestão, impostos e margem).
-- O preço é o de MERCADO para contratar o resultado com profissional sênior, não o tempo que a equipe interna levou. Se houver "ENTREGA REAL" abaixo, use as PRs para mostrar de onde vêm as horas.
+- O preço sai SÓ do pedido do solicitante: horas gastas, PRs e comentários de quem desenvolveu não entram, para o mesmo pedido valer o mesmo com qualquer desenvolvedor. Diga isso se perguntarem por que as horas informadas não mudam o valor (o valor/hora da software house já embute gestão, impostos e margem).
+- O preço é o de MERCADO para contratar o resultado com profissional sênior, não o tempo que a equipe interna levou.
 - Não invente fonte, pesquisa ou estatística com nome e número exato que você não tem. Pode citar as referências de mercado de forma geral (tabelas de freelancer, propostas de software house, custo CLT de dev pleno/sênior no Brasil em 2026).
 - O parecer gravado não muda — diga isso se pedirem para alterar.
 - Português do Brasil, direto, frases curtas. Markdown simples (listas, **negrito**, tabela pequena quando ajudar). Valores em R$.
@@ -327,9 +345,9 @@ Valor/hora fixo de desenvolvedor sênior usado no parecer (Brasil, 2026):
 ${faixas}
 
 CHAMADO:
-${montarPrompt(c, entrega)}
+${montarPromptDoPreco(c)}
 
-PARECER GRAVADO (o preço de cada perfil = horas × valor/hora × fator de complexidade; havendo horas reais, valor médio = média de freelancer e software house):
+PARECER GRAVADO (o preço de cada perfil = horas × valor/hora × fator de complexidade):
 ${JSON.stringify(p)}`;
 }
 

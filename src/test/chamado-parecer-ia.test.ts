@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, PERFIS, VALOR_HORA_SENIOR, FATOR_COMPLEXIDADE, type ChamadoParaParecer,
+  extrairJson, limparHistorico, montarPrompt, montarPromptDoPreco, montarSistemaChat, resumirEntrega, validarParecer, PERFIS, VALOR_HORA_SENIOR, FATOR_COMPLEXIDADE, type ChamadoParaParecer,
 } from "../../supabase/functions/_shared/chamado-parecer-ia.ts";
 
 const resposta = (extra: Record<string, unknown> = {}) => ({
@@ -178,5 +178,34 @@ describe("entrega real (SIS-2026-0276: 2 linhas de pedido, dezenas de PRs)", () 
     expect(p).toContain("ENTREGA REAL");
     expect(p).toContain("2 PR(s) ao longo de 56 dia(s)");
     expect(p).toContain("- alta disponibilidade entre tres provedores");
+  });
+});
+
+describe("preço só pelo pedido (12/11/2026, auditoria da Bonificação)", () => {
+  const c: ChamadoParaParecer = {
+    id: "1", numero: "SIS-2026-0900", assunto: "Trocar a cor do fundo", tipo_solicitacao: "ajuste",
+    descricao: "Fundo azul na tela de férias.", categorias: [], modulo_sistema: "rh", modulo_sistema_outro: null,
+    ambiente: "producao", impacto_trabalho: null, urgencia: null, afeta_usuarios: null, observacoes_solicitante: null,
+    status: "concluido", horas_gastas: 8,
+  };
+
+  it("o prompt do preço leva o pedido e nada que o dev controla", () => {
+    const p = montarPromptDoPreco(c);
+    expect(p).toContain("Trocar a cor do fundo");
+    expect(p).toContain("Fundo azul na tela de férias.");
+    expect(p).not.toContain("Horas reais");
+    expect(p).not.toContain("ENTREGA REAL");
+    expect(p).not.toContain("HISTÓRICO");
+  });
+
+  it("o mesmo pedido dá o mesmo prompt com 1 h ou 8 h digitadas", () => {
+    expect(montarPromptDoPreco({ ...c, horas_gastas: 1 })).toBe(montarPromptDoPreco({ ...c, horas_gastas: 8 }));
+  });
+
+  it("o chat explica pelo mesmo pedido, sem horas", () => {
+    const s = montarSistemaChat(c, { precos: [], valor_medio: 100, horas_estimadas: 1, complexidade_nivel: 1,
+      complexidade_rotulo: "Muito baixa", complexidade_justificativa: "x", premissas: null });
+    expect(s).not.toContain("Horas reais");
+    expect(s).toContain("SÓ do pedido");
   });
 });

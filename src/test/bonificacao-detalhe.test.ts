@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextoComparativo, detalheValores, origemDoValor } from "@/lib/sistemas/bonificacaoDetalhe";
+import { contextoComparativo, detalheValores, mediaComValor, origemDoValor } from "@/lib/sistemas/bonificacaoDetalhe";
 import { resumoPorDev, CONFIG_PADRAO, entregaDaLinha, lucroDaEntrega, type EntregaBonificacao, type LinhaEntregaRpc } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   MAX_MENSAGENS_HISTORICO, montarMensagensBonificacao, normalizarMensagens, SYSTEM_PROMPT_BONIFICACAO,
@@ -36,7 +36,7 @@ describe("Bonificação — detalhe dos valores ao passar o mouse", () => {
     const devs = resumoPorDev(entregas, CONFIG_PADRAO);
     const ctx = JSON.parse(contextoComparativo(devs, "Novembro/2026"));
     expect(ctx.mes).toBe("Novembro/2026");
-    expect(ctx.desenvolvedores[0]).toMatchObject({ nome: "Ana", entregas: 3, mercado_total: 55800, media_por_entrega: 18600, freelancer_total: 37200 });
+    expect(ctx.desenvolvedores[0]).toMatchObject({ nome: "Ana", entregas: 3, mercado_total: 55800, media_por_entrega: 27900, aguardando_ia: 1, freelancer_total: 37200 });
     expect(ctx.desenvolvedores[0].chamados).toHaveLength(3);
     expect(ctx.desenvolvedores[0].chamados.find((c: { numero: string }) => c.numero === "SIS-2026-0010").observacao).toBe("P1, 4 h.");
   });
@@ -91,5 +91,22 @@ describe("Lucro da entrega — valor de mercado − custo real conosco", () => {
     expect(linha.valor).toBe(e.lucro);
     // toLocaleString usa espaço não separável depois do "R$".
     expect(linha.conta?.replace(/\s/g, " ")).toContain("de mercado − R$ 114,13 de custo real (8 h × hora do salário)");
+  });
+});
+
+describe("Bonificação — chamado sem parecer não vira R$ 0 (12/11/2026)", () => {
+  it("a média só conta as entregas com valor e mostra as pendentes à parte", () => {
+    expect(mediaComValor(entregas, "valorMercado")).toEqual({ media: 27900, comValor: 2, pendentes: 1 });
+  });
+
+  it("sem nenhuma entrega com valor, não há média", () => {
+    expect(mediaComValor([entregas[2]], "valorMercado")).toEqual({ media: null, comValor: 0, pendentes: 1 });
+  });
+
+  it("o contexto da I.A leva a média sem as pendentes", () => {
+    const [dev] = resumoPorDev(entregas, CONFIG_PADRAO);
+    const ctx = JSON.parse(contextoComparativo([dev], "Novembro/2026"));
+    expect(ctx.desenvolvedores[0].media_por_entrega).toBe(27900);
+    expect(ctx.desenvolvedores[0].aguardando_ia).toBe(1);
   });
 });

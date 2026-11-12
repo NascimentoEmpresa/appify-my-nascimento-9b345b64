@@ -6,20 +6,17 @@
 // Secrets: CHAMADOS_CI_SECRET (SUPABASE_URL / SERVICE_ROLE já existem).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { perfilDoLoginGithub } from "../_shared/dev-github-login.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const CI_SECRET = Deno.env.get("CHAMADOS_CI_SECRET") ?? "";
 
-// Login do GitHub → profiles.id. Mesma lista de devs usada em
-// .github/workflows/notify_discord.yml — atualizar aqui junto quando entrar
-// gente nova no time. CHAMADO_SISTEMA_EVENTO.autor_id é NOT NULL (FK pra
-// auth.users), então sem essa correspondência o evento não é gravado.
-const GITHUB_LOGIN_PARA_PROFILE_ID: Record<string, string> = {
-  EduardoJeiel007: "97260632-2f1a-44e3-9f93-58b2b1f3702c",
-  Tasuyuk1: "301bfa45-d01a-4e81-abd9-18d48bccef97",
-  joaovperetti: "e2c4faf6-289e-4f80-a235-628c2d674f46",
-};
+// Login do GitHub → profiles.id: tabela DEV_GITHUB_USUARIO (12/11/2026, ver
+// _shared/dev-github-login.ts). Antes era uma lista chumbada aqui, sem os
+// logins do Pablo (PabloTasuyuk) e do Otavio. CHAMADO_SISTEMA_EVENTO.autor_id
+// é NOT NULL (FK pra auth.users), então sem essa correspondência o evento não
+// é gravado.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -61,7 +58,7 @@ Deno.serve(async (req) => {
   if (chErr) return json({ error: chErr.message }, 500);
   if (!chamado) return json({ ok: true, vinculado: false, motivo: "chamado não encontrado" });
 
-  const autorId = GITHUB_LOGIN_PARA_PROFILE_ID[prAutorGithub];
+  const autorId = await perfilDoLoginGithub(admin, prAutorGithub);
   if (!autorId) return json({ ok: true, vinculado: false, motivo: "autor do GitHub não mapeado" });
 
   // Idempotência: não duplica se essa PR já foi registrada nesse chamado.
