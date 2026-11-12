@@ -444,6 +444,8 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
+        // SIS-2026-0871: painel gerencial (Ruan) — notas, despesas, empréstimos, aplicações e projeção numa tela só. Menu fluxo-caixa-gerencial.
+        { label: "Fluxo de Caixa Gerencial", to: "/app/financeiro/fluxo-caixa-gerencial", icon: BarChart3 },
         { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight },
         { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard },
         { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree },
