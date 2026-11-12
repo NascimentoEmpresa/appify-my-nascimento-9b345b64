@@ -151,7 +151,7 @@ export function AvaliarEntregaDialog({ entrega, aberto, aoFechar, fechado }: {
             <p className="text-[11px] text-muted-foreground">
               Mercado = software house do parecer da IA; CLT = equipe interna. Só o valor de mercado entra na nota.
               {entrega.horasGastas !== null && <> Horas informadas pelo dev: {String(entrega.horasGastas).replace(".", ",")} h.</>}
-              {entrega.iaStatus !== "pronto" && <> A IA só estima chamado concluído com as horas gastas informadas.</>}
+              {entrega.iaStatus !== "pronto" && <> O parecer da IA deste chamado ainda não ficou pronto: ela avalia sozinha pelo escopo, sem precisar das horas gastas.</>}
             </p>
             {entrega.valorMercado !== null && !entrega.valoresAvaliados && (
               <p className="text-[11px] text-muted-foreground">Hoje vale o da IA: {moeda(entrega.valorMercado)}.</p>

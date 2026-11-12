@@ -814,6 +814,8 @@ const App = () => (
             <Route path="historico" element={<Historico />} />
             <Route path="administracao" element={<Administracao />} />
             <Route path="senhas-encarregados" element={<TrocarSenhaEncarregados />} />
+            {/* 11/11/2026 (mig 20261111260000): a mesma tela para "PODE CRIAR LOGIN (Encarregados)" — cada rota tem um menu só. */}
+            <Route path="logins-encarregados" element={<TrocarSenhaEncarregados />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
             {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord

@@ -15,20 +15,24 @@ const ck = (agendamento_id: string, tipo: "saida" | "chegada", completo = true):
 const DEZ = new Date("2026-11-10T13:00:00Z"), SETE = new Date("2026-11-10T10:00:00Z");
 
 describe("prestação da viagem", () => {
-  const completa = { video_veiculo: "v.mp4", agua_verificada: true, oleo_verificado: true, avaria: false, avaria_descricao: null };
-  it("completa com KM, nota (ou 'não abasteci'), vídeo, água, óleo e avaria respondida", () => {
-    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false }, completa, true)).toEqual([]);
-    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: true }, completa, false)).toEqual([]);
+  const completa = { avaria: false, avaria_descricao: null };
+  it("completa com KM, abastecimento respondido (nota se Sim) e avaria respondida — vídeo e água/óleo não entram mais", () => {
+    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false, houve_abastecimento: true }, completa, true)).toEqual([]);
+    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false, houve_abastecimento: false }, completa, false)).toEqual([]);
+    // "não abasteci" do checklist de chegada ainda vale como Não.
+    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: true, houve_abastecimento: null }, completa, false)).toEqual([]);
   });
   it("lista tudo o que falta", () => {
-    expect(faltandoPrestacao({ km_inicial: null, km_final: null, sem_abastecimento: false }, null, false)).toEqual([
-      "KM de saída", "KM de retorno", 'Foto da nota do combustível (ou "não abasteci")', "Vídeo completo do veículo",
-      "Verificação de água e óleo", "Informar se há avaria",
+    expect(faltandoPrestacao({ km_inicial: null, km_final: null, sem_abastecimento: false, houve_abastecimento: null }, null, false)).toEqual([
+      "KM de saída", "KM de retorno", "Responder se houve abastecimento", "Informar se há avaria",
     ]);
   });
-  it("água sem óleo não basta; avaria 'sim' exige descrição", () => {
-    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: true }, { ...completa, oleo_verificado: false }, false)).toEqual(["Verificação de água e óleo"]);
-    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: true }, { ...completa, avaria: true, avaria_descricao: " " }, false)).toEqual(["Descrição da avaria"]);
+  it("Sim sem nota exige a foto da nota; nota anexada basta mesmo sem resposta", () => {
+    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false, houve_abastecimento: true }, completa, false)).toEqual(["Foto da nota do combustível"]);
+    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false, houve_abastecimento: null }, completa, true)).toEqual([]);
+  });
+  it("avaria 'sim' exige descrição", () => {
+    expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: true }, { avaria: true, avaria_descricao: " " }, false)).toEqual(["Descrição da avaria"]);
   });
 });
 

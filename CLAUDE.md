@@ -112,7 +112,9 @@ implementação (usada manualmente ou disparada pelo `worker/`).
 **Ao abrir a PR que resolve um chamado, o título TEM que começar com
 `SIS-AAAA-NNNN: <resumo>`** (sem colchetes) — CI (`chamado_pr_sync.yml`)
 bloqueia o merge se faltar, e (`chamado_concluir_no_merge.yml`) **conclui o
-chamado sozinho quando a PR é mergeada**, sem passo manual extra. PR sem
+chamado sozinho quando a PR é aberta** (fora de rascunho; o merge fica de
+reserva) e põe no chat do chamado um resumo da entrega para o solicitante,
+com as URLs das telas alteradas — sem passo manual extra. PR sem
 chamado relacionado usa `[SEM-CHAMADO]:` (com colchetes) no início do título.
 
 ## Pastas fora do ciclo normal de desenvolvimento
