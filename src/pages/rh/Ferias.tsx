@@ -219,6 +219,11 @@ export default function Ferias() {
   // Enviar ao Malote: ação própria do menu, fora do toggle (como no Rateio).
   const { data: podeEnviarMalote = false } = useScreenAccess("rh_ferias", "enviar_malote");
   const [enviandoMalote, setEnviandoMalote] = useState(false);
+  // 12/11/2026 (mig 20261112203700): "Programar no malote" abre o envio já
+  // SEM o documento — a despesa vai ao Malote pendente de anexo e o banco
+  // trava o pagamento até o recibo ser anexado.
+  const [enviarSemDoc, setEnviarSemDoc] = useState(false);
+  const abrirEnvioMalote = (semDoc: boolean) => { setEnviarSemDoc(semDoc); setEnviandoMalote(true); };
   const [loteAberto, setLoteAberto] = useState(false);
   // #0865: confirmações de "Programar no malote" e do "Enviado pra Mentore".
   const [confirmando, setConfirmando] = useState<"" | "programar" | "desprogramar" | "mentore" | "desfazer_mentore">("");
@@ -554,7 +559,8 @@ export default function Ferias() {
           500 e cobriria o Dialog); ao fechar, o drawer volta já atualizado. */}
       {drawerId && sol && enviandoMalote && (
         <EnviarFeriasMalote aberto sol={sol} malote={malotes.get(sol.id) ?? null} podeEnviar={podeEnviarMalote}
-          onFechar={() => setEnviandoMalote(false)} onMudou={recarregarSol} />
+          semDocumentoInicial={enviarSemDoc}
+          onFechar={() => { setEnviandoMalote(false); setEnviarSemDoc(false); }} onMudou={recarregarSol} />
       )}
       {drawerId && sol && !enviandoMalote && (
         <div onClick={e => { if (e.target === e.currentTarget) fecharDrawer(); }}
@@ -675,12 +681,24 @@ export default function Ferias() {
                     enviada, ou o check final da Mentore. */}
                 {(() => {
                   const sit = situacaoDe(sol);
-                  const pode = acoesMaloteFerias(sol.status, sit);
+                  const noMalote = !!malotes.get(sol.id)?.ativo;
+                  const pode = acoesMaloteFerias(sol.status, sit, noMalote);
                   return (<>
                     {sit === "pendente_anexo" && (
                       <div style={{ marginTop: 10, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#92400e" }}>
-                        <b>PENDENTE DE ANEXO DE DOCUMENTO</b> — programada no Malote por {sol.malote_programado_por || "—"} em {fmtDtHora(sol.malote_programado_em ?? undefined)}.
-                        <div style={{ marginTop: 2 }}>Para finalizar o pagamento e estar de fato no Malote, anexe o recibo da Senior e envie.</div>
+                        {noMalote ? (<>
+                          <b>PENDENTE DE ANEXO DE DOCUMENTO</b> — no Malote ({malotes.get(sol.id)!.numero}) sem o recibo, enviada por {sol.malote_enviado_por || "—"} em {fmtDtHora(sol.malote_enviado_em ?? undefined)}.
+                          <div style={{ marginTop: 2 }}>O <b>pagamento está bloqueado</b> até o recibo da Senior ser anexado.</div>
+                          {podeDoc && (
+                            <button onClick={() => abrirEnvioMalote(false)}
+                              style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, border: "none", background: "#b45309", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                              📎 Anexar o recibo agora
+                            </button>
+                          )}
+                        </>) : (<>
+                          <b>PENDENTE DE ANEXO DE DOCUMENTO</b> — programada no Malote por {sol.malote_programado_por || "—"} em {fmtDtHora(sol.malote_programado_em ?? undefined)}, mas a despesa ainda não foi criada.
+                          <div style={{ marginTop: 2 }}>Use "Programar no malote" para enviar agora, com ou sem o recibo.</div>
+                        </>)}
                       </div>
                     )}
                     {sit === "mentore" && (
@@ -690,17 +708,17 @@ export default function Ferias() {
                     )}
                     {podeDoc && sol.status === "Aprovada" && (
                       <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button onClick={() => setEnviandoMalote(true)}
+                        <button onClick={() => abrirEnvioMalote(false)}
                           style={{ flex: "1 1 260px", padding: "10px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                          {malotes.get(sol.id)?.ativo ? "📦 Ver o envio ao Malote"
+                          {malotes.get(sol.id)?.ativo ? (sol.recibo_path ? "📦 Ver o envio ao Malote" : "📎 Anexar o recibo (pendente)")
                             : !sol.recibo_path ? "📎 Anexar recibo da Senior e enviar ao Malote"
                             : !sol.valor_confirmado_em ? "🔎 Conferir o valor do recibo"
                             : "📦 Enviar ao Malote"}
                         </button>
                         {podeEnviarMalote && pode.programar && (
-                          <button onClick={() => setConfirmando("programar")}
+                          <button onClick={() => abrirEnvioMalote(true)} title="Envia ao Malote sem o recibo: fica pendente de anexo e o pagamento só libera depois de anexar"
                             style={{ flex: "1 1 180px", padding: "10px", borderRadius: 10, border: "1px solid #0f3171", background: "#fff", color: "#0f3171", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                            🗓️ Programar no malote
+                            🗓️ Programar no malote (sem documento)
                           </button>
                         )}
                       </div>
@@ -725,7 +743,6 @@ export default function Ferias() {
                             : confirmando === "mentore" ? "Confirmar o check final: Enviado pra Mentore"
                             : "Desfazer o Enviado pra Mentore?"}
                         </div>
-                        {confirmando === "programar" && <div>As férias de <b>{sol.colaborador_nome}</b> ficam como <b>PENDENTE DE ANEXO DE DOCUMENTO</b>. O pagamento só é finalizado — e a despesa entra de fato no Malote — quando o recibo da Senior for anexado e enviado.</div>}
                         {confirmando === "mentore" && (<>
                           <div>Marca o pagamento das férias de <b>{sol.colaborador_nome}</b> como enviado à Mentore e conclui as férias.</div>
                           {!sol.retorno_documentacao && <div style={{ marginTop: 4, fontWeight: 700 }}>⚠️ O retorno da documentação ainda está em branco.</div>}
