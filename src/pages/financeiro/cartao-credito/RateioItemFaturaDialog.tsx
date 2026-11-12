@@ -1,18 +1,86 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, Plus, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Download, ExternalLink, FileText, Loader2, Paperclip, Plus, Trash2, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useContratosAtivos } from "@/hooks/useMaloteDespesa";
-import { RateioItemLinha, useRateioItemFatura, useSalvarRateioItem } from "@/hooks/useCartaoFaturaRateio";
+import {
+  RateioItemLinha,
+  obterAnexoClassificacao,
+  useComplementoItemFatura,
+  useRateioItemFatura,
+  useSalvarComplementoItem,
+  useSalvarRateioItem,
+} from "@/hooks/useCartaoFaturaRateio";
+import {
+  MAX_ANEXOS_POR_ITEM,
+  MAX_OBSERVACAO,
+  abreNaAba,
+  complementoMudou,
+  juntarArquivos,
+  type AnexoClassificacao,
+} from "@/lib/cartaoFatura/anexosClassificacao";
+import { arquivosDaColagem, fmtTamanho, nomeDeColagem } from "@/lib/solicitacoes/anexos";
 
 const fmtBRL = (n: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
+
+// SIS-2026-0879: um anexo já salvo — nome, tamanho, Abrir (PDF/imagem), Baixar e tirar da lista.
+function AnexoSalvo({ anexo, onRemover, desabilitado }: { anexo: AnexoClassificacao; onRemover: () => void; desabilitado: boolean }) {
+  const [ocupado, setOcupado] = useState(false);
+
+  async function usar(modo: "abrir" | "baixar") {
+    // A aba é reservada AINDA no clique: depois do await o bloqueador de pop-up barraria.
+    const aba = modo === "abrir" ? window.open("", "_blank") : null;
+    setOcupado(true);
+    try {
+      const blob = await obterAnexoClassificacao(anexo.path);
+      const url = URL.createObjectURL(anexo.tipo && !blob.type ? new Blob([blob], { type: anexo.tipo }) : blob);
+      if (aba) {
+        aba.opener = null;
+        aba.location.href = url;
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = anexo.nome;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      aba?.close();
+      toast.error(`Não foi possível ${modo === "abrir" ? "abrir" : "baixar"} "${anexo.nome}"`, { description: e instanceof Error ? e.message : undefined });
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+      {ocupado ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+      <span className="min-w-0 flex-1 truncate" title={anexo.nome}>{anexo.nome}</span>
+      {anexo.tamanho ? <span className="shrink-0 text-muted-foreground">{fmtTamanho(anexo.tamanho)}</span> : null}
+      {abreNaAba(anexo) && (
+        <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="Abrir" aria-label={`Abrir ${anexo.nome}`} disabled={ocupado} onClick={() => void usar("abrir")}>
+          <ExternalLink className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="Baixar" aria-label={`Baixar ${anexo.nome}`} disabled={ocupado} onClick={() => void usar("baixar")}>
+        <Download className="h-3.5 w-3.5" />
+      </Button>
+      <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0 text-destructive" title="Remover anexo" aria-label={`Remover ${anexo.nome}`} disabled={desabilitado} onClick={onRemover}>
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
 
 interface RateioItemFaturaDialogProps {
   open: boolean;
@@ -27,6 +95,13 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
   const { data: contratos = [] } = useContratosAtivos();
   const { data: linhasExistentes } = useRateioItemFatura(itemId);
   const salvar = useSalvarRateioItem();
+  // SIS-2026-0879: observação + anexos (NF, prints) do item.
+  const { data: complemento } = useComplementoItemFatura(itemId);
+  const salvarComplemento = useSalvarComplementoItem();
+  const [observacao, setObservacao] = useState("");
+  const [removidos, setRemovidos] = useState<string[]>([]);
+  const [arquivos, setArquivos] = useState<File[]>([]);
+  const seletor = useRef<HTMLInputElement>(null);
 
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("valor");
   const [linhas, setLinhas] = useState<RateioItemLinha[]>([]);
@@ -40,6 +115,33 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, linhasExistentes]);
+
+  useEffect(() => {
+    if (!open) return;
+    setObservacao(complemento?.observacao ?? "");
+    setRemovidos([]);
+    setArquivos([]);
+  }, [open, complemento]);
+
+  const anexosSalvos = complemento?.anexos ?? [];
+  const anexosMantidos = anexosSalvos.filter((a) => !removidos.includes(a.path));
+  const totalAnexos = anexosMantidos.length + arquivos.length;
+  const salvando = salvar.isPending || salvarComplemento.isPending;
+
+  function adicionarArquivos(lista: File[]) {
+    if (!lista.length) return;
+    const r = juntarArquivos(arquivos, lista, anexosMantidos.length);
+    setArquivos(r.arquivos);
+    r.avisos.forEach((a) => toast.warning(a));
+  }
+
+  // Print colado com Ctrl+V vira anexo (chega sem nome: ganha um com data e hora).
+  function aoColar(e: ClipboardEvent) {
+    const colados = arquivosDaColagem(e.clipboardData?.items);
+    if (!colados.length) return;
+    e.preventDefault();
+    adicionarArquivos(colados.map((f) => new File([f], nomeDeColagem(f), { type: f.type })));
+  }
 
   const totalRateado = useMemo(() => linhas.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhas]);
   const diferenca = valorItem - totalRateado;
@@ -73,16 +175,32 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
     if (!podeSalvar) return;
     try {
       await salvar.mutateAsync({ itemId: itemId!, linhas });
-      toast.success("Classificação salva.");
-      onClose();
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar classificação.");
+      return;
     }
+    if (complementoMudou({ observacaoSalva: complemento?.observacao ?? "", observacao, removidos: removidos.length, novos: arquivos.length })) {
+      try {
+        await salvarComplemento.mutateAsync({
+          itemId: itemId!,
+          observacao,
+          manter: anexosMantidos,
+          removidos: anexosSalvos.filter((a) => removidos.includes(a.path)),
+          arquivos,
+        });
+      } catch (e) {
+        // O rateio já foi gravado: o diálogo fica aberto para tentar de novo só a observação/anexos.
+        toast.error("Classificação salva, mas a observação/anexos não.", { description: e instanceof Error ? e.message : undefined });
+        return;
+      }
+    }
+    toast.success("Classificação salva.");
+    onClose();
   }
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" onPaste={aoColar}>
         <DialogHeader>
           <DialogTitle>Classificar item</DialogTitle>
         </DialogHeader>
@@ -203,12 +321,79 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
           </div>
         </div>
 
+        {/* SIS-2026-0879: observação e anexos (NF, prints) do item — opcionais, valem para o item inteiro (não por linha). */}
+        <div className="space-y-3 rounded-md border border-border p-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="obs-classificacao" className="text-xs">Observação (opcional)</Label>
+            <Textarea
+              id="obs-classificacao"
+              value={observacao}
+              onChange={(e) => setObservacao(e.target.value)}
+              maxLength={MAX_OBSERVACAO}
+              rows={3}
+              placeholder="Ex.: compra de material para o contrato X, NF em anexo."
+              className="text-sm"
+              disabled={salvando}
+            />
+            {observacao.length > MAX_OBSERVACAO * 0.9 && (
+              <p className="text-right text-[11px] text-muted-foreground">{observacao.length}/{MAX_OBSERVACAO}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs">Anexos — NF e/ou prints (opcional)</Label>
+              <input
+                ref={seletor}
+                type="file"
+                multiple
+                accept=".pdf,.xml,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  adicionarArquivos(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => seletor.current?.click()}
+                disabled={salvando || totalAnexos >= MAX_ANEXOS_POR_ITEM}
+                title={`Até ${MAX_ANEXOS_POR_ITEM} arquivos, 25 MB cada`}
+              >
+                <Paperclip className="h-3.5 w-3.5" /> Anexar arquivos
+              </Button>
+            </div>
+            {totalAnexos === 0 ? (
+              <p className="text-[11px] text-muted-foreground">PDF, XML ou imagem, até {MAX_ANEXOS_POR_ITEM} arquivos de 25 MB. Também dá para colar um print (Ctrl+V).</p>
+            ) : (
+              <div className="space-y-1">
+                {anexosMantidos.map((a) => (
+                  <AnexoSalvo key={a.path} anexo={a} desabilitado={salvando} onRemover={() => setRemovidos((r) => [...r, a.path])} />
+                ))}
+                {arquivos.map((f, idx) => (
+                  <div key={`${f.name}-${f.size}-${idx}`} className="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-xs">
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate" title={f.name}>{f.name}</span>
+                    <span className="shrink-0 text-muted-foreground">{fmtTamanho(f.size)} · sobe ao salvar</span>
+                    <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="Tirar" aria-label={`Tirar ${f.name}`} disabled={salvando} onClick={() => setArquivos((l) => l.filter((_, i) => i !== idx))}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={salvar.isPending}>
+          <Button variant="outline" onClick={onClose} disabled={salvando}>
             Cancelar
           </Button>
-          <Button onClick={handleSalvar} disabled={salvar.isPending || !podeSalvar} title={!podeSalvar ? "Selecione a classificação em todas as linhas e acerte o total do rateio" : undefined}>
-            {salvar.isPending ? "Salvando..." : "Salvar"}
+          <Button onClick={handleSalvar} disabled={salvando || !podeSalvar} title={!podeSalvar ? "Selecione a classificação em todas as linhas e acerte o total do rateio" : undefined}>
+            {salvando ? "Salvando..." : "Salvar"}
           </Button>
         </DialogFooter>
       </DialogContent>
