@@ -11,7 +11,7 @@
 --
 -- O DESENHO
 --   Um contador único, "SISTEMA_RECARGA_GERAL".versao. Cada aba do ERP
---   lembra o número que viu ao abrir e pergunta de novo a cada ~90 s
+--   lembra o número que viu ao abrir e pergunta de novo a cada ~2 min
 --   (src/lib/recargaGeral.ts). Número maior → a aba recarrega: a visível
 --   depois de um sorteio de até 30 s (nada de manada — post-mortem 03/11), a
 --   escondida só quando a pessoa voltar a ela.

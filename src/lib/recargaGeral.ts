@@ -7,7 +7,7 @@
 // mandar as abas abertas recarregarem.
 //
 // Agora cada aba guarda o número de "SISTEMA_RECARGA_GERAL".versao que viu
-// ao abrir (mig 20261113110100) e pergunta de novo a cada ~90 s, só com a
+// ao abrir (mig 20261113110100) e pergunta de novo a cada ~2 min, só com a
 // aba visível. Número maior que o visto → recarrega:
 //   · aba visível: avisa e recarrega depois de um sorteio de até 30 s — as
 //     abas não voltam todas no mesmo segundo (post-mortem de 03/11: a
@@ -20,7 +20,7 @@
 
 import { toast } from "sonner";
 
-export const INTERVALO_MS = 90_000;
+export const INTERVALO_MS = 120_000;
 export const ATRASO_MAX_MS = 30_000;
 
 /** O que fazer com a versão lida do servidor. Puro, para o teste. */
@@ -69,6 +69,7 @@ export function instalarRecargaGeral(sb: Rpc) {
   void verificar(sb);
   // Intervalo sorteado por aba (±20 %), para não perguntarem todas juntas.
   const passo = Math.round(INTERVALO_MS * (0.8 + Math.random() * 0.4));
+  // guardiao-ok: único polling deliberado do ERP — é o que alcança aba parada (incidente do Mural 12/11/2026); 1 RPC STABLE de 1 número a cada ~2 min, só com a aba visível (0,5 req/min/aba, contra 13 req/min do caso de 03/11)
   window.setInterval(() => void verificar(sb), passo);
   // Voltou para a aba: confere na hora (no máximo 1x a cada 20 s).
   document.addEventListener("visibilitychange", () => {
