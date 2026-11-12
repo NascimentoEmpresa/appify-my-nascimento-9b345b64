@@ -19,7 +19,7 @@ export const LIMITE_PADRAO_MB = 10;
 
 export const LIMITE_POR_BUCKET_MB: Record<string, number> = {
   "anexos": 25, "avatars": 10, "avisos-anexos": 5, "bi-capas": 10, "caepi": 25,
-  "cartao-faturas": 25, "cartao-logos": 10, "chamados-sistemas": 20,
+  "cartao-classificacao-anexos": 25, "cartao-faturas": 25, "cartao-logos": 10, "chamados-sistemas": 20,
   "checklist-faturamento-anexos": 25, "colaboradores-fotos": 10,
   "conciliacao-fluxo-caixa": 10, "concord": 25, "convencoes-coletivas": 25,
   "copiloto-audios": 10, "cotacoes-arquivos": 10, "cs-formularios": 25,

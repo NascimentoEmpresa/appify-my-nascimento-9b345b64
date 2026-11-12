@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertCircle, CheckCircle2, CreditCard, ListTree, Wallet, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, CreditCard, ListTree, MessageSquare, Paperclip, Wallet, X } from "lucide-react";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { useItensParaClassificar, ItemParaClassificar } from "@/hooks/useCartaoFaturaRateio";
@@ -226,7 +226,21 @@ export default function ClassificarLancamentos() {
                         <TableCell className="text-sm">
                           {i.data_compra ? new Date(i.data_compra + "T00:00:00").toLocaleDateString("pt-BR") : "—"}
                         </TableCell>
-                        <TableCell className="text-sm">{i.descricao}</TableCell>
+                        <TableCell className="text-sm">
+                          <span>{i.descricao}</span>
+                          {/* SIS-2026-0879: o item já tem anexo (NF/print) ou observação — abre no Classificar. */}
+                          {(i.qtd_anexos > 0 || i.tem_observacao) && (
+                            <span className="ml-2 inline-flex items-center gap-1.5 align-middle text-muted-foreground">
+                              {i.qtd_anexos > 0 && (
+                                <span className="inline-flex items-center gap-0.5 text-xs" title={`${i.qtd_anexos} anexo${i.qtd_anexos > 1 ? "s" : ""}`}>
+                                  <Paperclip className="h-3.5 w-3.5" />
+                                  {i.qtd_anexos}
+                                </span>
+                              )}
+                              {i.tem_observacao && <MessageSquare className="h-3.5 w-3.5" aria-label="Tem observação" />}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right text-sm font-medium">{formatBRL(i.valor)}</TableCell>
                         <TableCell className="text-center">
                           {i.qtd_rateio === 0 ? (
