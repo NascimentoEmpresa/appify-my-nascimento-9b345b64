@@ -96,11 +96,42 @@ describe("soma com as HEs do ERP", () => {
     expect(r.total).toBe(5 * 60);
   });
 
-  it("não soma ponto e HE do mesmo dia: vale o maior", () => {
+  it("não soma ponto e HE do mesmo dia: dia fechado vale o ponto (12/11/2026)", () => {
     const batidas = dia("2026-11-03", 6); // 2h no ponto
     expect(resumirMesHoraExtra(resposta(batidas, [he("a", "2026-11-03", 2)])).total).toBe(2 * 60);
-    expect(resumirMesHoraExtra(resposta(batidas, [he("a", "2026-11-03", 5)])).total).toBe(5 * 60);
+    // Pediu 5h e o ponto fechou com 2h: foram 2h. Antes valia o maior (5h).
+    const r = resumirMesHoraExtra(resposta(batidas, [he("a", "2026-11-03", 5)]));
+    expect(r.total).toBe(2 * 60);
+    expect(r.minutosForaDoPonto).toBe(0);
     expect(resumirMesHoraExtra(resposta(dia("2026-11-03", 9), [he("a", "2026-11-03", 1)])).total).toBe(5 * 60);
+  });
+
+  it("hoje não conta pelo ponto: o dia ainda está aberto; vale a HE pedida", () => {
+    const r = resumirMesHoraExtra({
+      ...resposta([...dia("2026-11-03", 6), ["2026-11-12", 457], ["2026-11-12", 1278]], [he("a", "2026-11-12", 3)]),
+      hoje: "2026-11-12",
+    });
+    expect(r.minutosPonto).toBe(2 * 60); // só o dia 3
+    expect(r.minutosForaDoPonto).toBe(3 * 60); // a HE de hoje, não as 13h41 de 07:37→21:18
+    expect(r.total).toBe(5 * 60);
+  });
+
+  it("caso real do Pablo, novembro/2026: igual à Senior (24h26)", () => {
+    const b = (d: string, ...m: number[]) => m.map((x) => [d, x] as Batida);
+    const batidas = [
+      ...b("2026-11-03", 455, 722, 757, 1262), ...b("2026-11-04", 450, 722, 784, 1283), ...b("2026-11-05", 463, 727, 759, 1259),
+      ...b("2026-11-06", 451, 726, 763), ...b("2026-11-09", 458, 720, 780, 1295), ...b("2026-11-10", 459, 721, 769, 1289),
+      ...b("2026-11-11", 461, 720, 770, 1279), ...b("2026-11-12", 457, 1278),
+    ];
+    const hes = [["2026-11-03", 240], ["2026-11-04", 240], ["2026-11-05", 240], ["2026-11-09", 249], ["2026-11-10", 254], ["2026-11-11", 240]]
+      .map(([d, m], i) => ({ id: String(i), data_he: d as string, minutos: m as number, feriado: false, status: "aguardando_validacao" }));
+    const r = resumirMesHoraExtra({
+      mes: "2026-11", hoje: "2026-11-12", ponto_disponivel: true, motivo: null, solicitacoes: hes,
+      colaborador: { ...colaborador(batidas), escala: { codigo: 23, descricao: "07:30-17:18 (1H)(08:48)", h_semana: "44:00", h_mes: "220:00", h_dsr: "07:20" } },
+    });
+    expect(r.minutosPonto).toBe(24 * 60 + 26);
+    expect(r.minutosForaDoPonto).toBe(0);
+    expect(r.total).toBe(24 * 60 + 26);
   });
 
   it("duas HEs no mesmo dia somam entre si", () => {

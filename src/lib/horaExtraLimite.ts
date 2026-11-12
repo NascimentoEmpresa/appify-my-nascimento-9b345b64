@@ -13,7 +13,21 @@
 //     não tem batida. Se contasse só o ponto, dava para pedir 200h adiantadas.
 //
 // NÃO SOMA OS DOIS NO MESMO DIA: quem bateu o ponto e abriu a HE do mesmo dia
-// fez uma hora extra só, registrada em dois lugares. Em cada dia vale o maior.
+// fez uma hora extra só, registrada em dois lugares.
+//
+// DIA FECHADO NO PONTO, VALE O PONTO (12/11/2026, Pablo: "não tá fazendo
+// sentido o calculo das horas extras aqui. E no meu ponto da senior são 24h e
+// 26min" — a tela dava 29h23). Antes valia o MAIOR entre ponto e HE em cada
+// dia, e o dia de hoje contava pelo ponto. Deu errado de dois jeitos:
+//   · HOJE: o dia ainda está aberto. A BI da Senior trouxe uma batida 21:18
+//     com data de 12/11 (a saída repetida de 11/11), e 07:37→21:18 virou
+//     4h53 de "hora extra" que não existe — a própria Senior mostrava só 07:37;
+//   · ARREDONDAMENTO: HE pedida de 4h00 num dia que o ponto fechou com 3h56
+//     somava os 4 minutos que ninguém fez.
+// Agora: dia FECHADO (antes de hoje, batidas em pares) conta só pelo ponto —
+// é o registro do que foi feito, igual ao da Senior. A HE pedida só entra nos
+// dias que o ponto ainda não tem: hoje, futuro, sem batida ou batida ímpar.
+// Continua não dando para pedir 200h adiantadas.
 //
 // O LIMITE NÃO É BLOQUEIO: passou de 48h, a tela pede três confirmações e
 // depois salva normalmente. Exatamente 48h ainda não passou.
@@ -53,7 +67,7 @@ export interface PontoMesHoraExtra {
 export interface ResumoMesHoraExtra {
   /** O que o ponto da Senior registrou no mês. */
   minutosPonto: number;
-  /** HE do ERP que ainda não apareceu no ponto (dia sem batida, ou HE maior que a batida). */
+  /** HE do ERP de dia que o ponto ainda não fechou (hoje, futuro, sem batida, batida ímpar). */
   minutosForaDoPonto: number;
   total: number;
   passouLimite: boolean;
@@ -80,6 +94,7 @@ export function resumirMesHoraExtra(resposta: PontoMesHoraExtra, opcoes: OpcoesR
   solicitacoes.forEach((s) => somarHe(s.data_he, s.minutos));
   if (opcoes.novaHe) somarHe(opcoes.novaHe.data, opcoes.novaHe.minutos);
 
+  // Só dias FECHADOS: antes de hoje e com as batidas em pares.
   const pontoPorDia = new Map<string, number>();
   if (resposta.colaborador) {
     // Dia marcado como feriado na solicitação: é o único registro de feriado
@@ -88,20 +103,20 @@ export function resumirMesHoraExtra(resposta: PontoMesHoraExtra, opcoes: OpcoesR
       solicitacoes.filter((s) => s.feriado).map((s) => [s.data_he, "Feriado informado na HE"] as const),
     );
     const espelho = montarEspelho(resposta.colaborador, resposta.mes, resposta.hoje, feriadosExtras);
-    espelho.dias.forEach((d) => pontoPorDia.set(d.data, minutosExtraDoDia(d)));
+    espelho.dias
+      .filter((d) => d.data < resposta.hoje && d.batidas.length > 0 && d.batidas.length % 2 === 0)
+      .forEach((d) => pontoPorDia.set(d.data, minutosExtraDoDia(d)));
   }
 
   let minutosPonto = 0;
-  let total = 0;
-  new Set([...hePorDia.keys(), ...pontoPorDia.keys()]).forEach((dia) => {
-    const ponto = pontoPorDia.get(dia) ?? 0;
-    minutosPonto += ponto;
-    total += Math.max(ponto, hePorDia.get(dia) ?? 0);
-  });
+  let minutosForaDoPonto = 0;
+  pontoPorDia.forEach((ponto) => { minutosPonto += ponto; });
+  hePorDia.forEach((he, dia) => { if (!pontoPorDia.has(dia)) minutosForaDoPonto += he; });
+  const total = minutosPonto + minutosForaDoPonto;
 
   return {
     minutosPonto,
-    minutosForaDoPonto: total - minutosPonto,
+    minutosForaDoPonto,
     total,
     passouLimite: total > LIMITE_HE_MES_MIN,
     excedente: Math.max(0, total - LIMITE_HE_MES_MIN),
