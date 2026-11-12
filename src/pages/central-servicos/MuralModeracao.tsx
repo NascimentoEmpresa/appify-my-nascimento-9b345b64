@@ -59,6 +59,15 @@ import { CartaoReconhecimento, type ItemCartao } from "@/components/reconhecimen
 // de volta no envio normal (com as duas confirmações). Enquanto a IA lê, os
 // botões de liberar esperam; se ela falhar, um aviso diz que a triagem não
 // rodou e tudo segue como antes (regra em lib/formularios/muralTriagem).
+//
+// 12/11/2026 (Pablo: "coloca opção pra tirar do painel inicial, e ali todos
+// podem ver, não precisa ter permissões"): "⤺ Tirar do Início" no recado, na
+// pessoa e no mês inteiro (rodapé), com uma confirmação. Tirar = voltar a
+// PENDENTE (mesmo cs_form_mural_decidir/_lote do "Desfazer", sem migration):
+// some do cartão e pode ser liberado de novo. Ver o cartão já não exige
+// permissão nenhuma — cs_form_mural_inicio só pede estar logado e o Início
+// só esconde do encarregado externo (login anônimo); permissão
+// (cs_form_pode 'acesso') é só para liberar/tirar, aqui.
 // =====================================================================
 
 const MESES_CAP = (ym: string) => rotuloMes(ym).replace(/^./, (c) => c.toUpperCase());
@@ -102,6 +111,8 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   // Prévia: o que vai ser liberado (somado ao que já está no mural).
   const [previa, setPrevia] = useState<{ aLiberar: ItemModeracao[]; quem?: string } | null>(null);
   const [cardIAAberto, setCardIAAberto] = useState(true);
+  // "Tirar do Início": o que já está publicado volta a pendente (uma confirmação).
+  const [tirar, setTirar] = useState<{ lista: ItemModeracao[]; quem?: string } | null>(null);
   const { data: itens = [], isLoading, error } = useMuralModeracao(formId, mes, true);
   const decidir = useDecidirMural();
   // Triagem por IA: só depois que a fila carregou e se há pendente.
@@ -172,7 +183,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               </div>
               <ul style={{ fontSize: 11.5, opacity: .9, margin: "6px 0 0", paddingLeft: 16, lineHeight: 1.5 }}>
                 <li><b>Ranking:</b> do 1º ao último pela quantidade de comentários positivos no mês; empate vai para a nota média.</li>
-                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão.</li>
+                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e todo mundo logado vê, sem precisar de permissão. <b>⤺ Tirar do Início</b> devolve o publicado para pendente.</li>
                 <li><b>Triagem por IA:</b> comentários que não cabem num mural público (comparação com o líder, crítica a terceiros, assunto pessoal…) já vêm <b>desabilitados</b>; habilite se quiser enviar.</li>
               </ul>
             </div>
@@ -317,6 +328,14 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                       title="Ver como os recados desta pessoa aparecem no Início"
                       style={btn("#fff", "#0f3171", "1px solid #c7d2fe")}>👁 Prévia</button>
                   )}
+                  {p.itens.some((i) => i.status === "liberado") && (
+                    <button disabled={ocupado}
+                      onClick={() => setTirar({ lista: p.itens.filter((i) => i.status === "liberado"), quem: p.colaborador })}
+                      title="Tirar do cartão do Início os recados desta pessoa que já estão publicados"
+                      style={btn("#fff", "#b45309", "1px solid #fde68a")}>
+                      ⤺ Tirar do Início
+                    </button>
+                  )}
                   {pend.length > 0 && (
                     <button disabled={travaLiberar}
                       onClick={() => pedirLiberacao(pend, p.colaborador, pendForaIA.length)}
@@ -360,7 +379,11 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                             {i.status !== "recusado" && (
                               <button disabled={ocupado} onClick={() => aplicar([i], "recusado")} style={btn("#fff", "#b91c1c", "1px solid #fecaca")}>Recusar</button>
                             )}
-                            {i.status !== "pendente" && (
+                            {i.status === "liberado" && (
+                              <button disabled={ocupado} onClick={() => setTirar({ lista: [i], quem: p.colaborador })}
+                                style={btn("#fff", "#b45309", "1px solid #fde68a")}>⤺ Tirar do Início</button>
+                            )}
+                            {i.status === "recusado" && (
                               <button disabled={ocupado} onClick={() => aplicar([i], "pendente")} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Desfazer</button>
                             )}
                           </div>
@@ -392,6 +415,13 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             style={pendentesLiberaveis.length || contagem.liberado ? btn("#fff", "#0f3171", "1px solid #c7d2fe") : btnApagado}>
             👁 Ver prévia
           </button>
+          {contagem.liberado > 0 && (
+            <button disabled={ocupado} onClick={() => setTirar({ lista: itens.filter((i) => i.status === "liberado") })}
+              title="Tirar do cartão do Início tudo o que está publicado deste mês"
+              style={btn("#fff", "#b45309", "1px solid #fde68a")}>
+              ⤺ Tirar do Início ({contagem.liberado})
+            </button>
+          )}
           <button disabled={!pendentesLiberaveis.length || travaLiberar}
             onClick={() => pedirLiberacao(pendentesLiberaveis, undefined, bloqueadosIA.length)}
             title={triando ? "Aguarde a triagem da IA" : undefined}
@@ -435,6 +465,33 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                     }}
                     style={btn("#b91c1c")}>✓ Confirmo, liberar {confirmar.lista.length}</button>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tirar && (
+          <div onClick={() => setTirar(null)} style={{ position: "absolute", inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div role="alertdialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+              style={{ width: "min(420px, 100%)", background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 20px 50px rgba(15,23,42,.35)" }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#b45309" }}>TIRAR DO INÍCIO?</div>
+              <div style={{ marginTop: 8, fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+                Saem do cartão "Reconhecimento e Convivência Profissional" <b>{plural(tirar.lista.length, "comentário", "comentários")}</b> dos
+                votos de <b>{MESES_CAP(mes)}</b>{tirar.quem ? <> de <b>{tirar.quem}</b></> : null}.
+                {" "}Eles voltam para <b>Pendente</b> aqui e podem ser liberados de novo depois.
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+                <button onClick={() => setTirar(null)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Cancelar</button>
+                <button autoFocus disabled={ocupado}
+                  onClick={() => {
+                    const n = tirar.lista.length;
+                    decidir.mutate({ itens: tirar.lista, status: "pendente" }, {
+                      onSuccess: () => toast.success(`${plural(n, "comentário tirado", "comentários tirados")} do Início.`),
+                      onError: (e: Error) => toast.error(e?.message ?? "Não foi possível tirar do Início."),
+                    });
+                    setTirar(null);
+                  }}
+                  style={btn("#b45309")}>⤺ Tirar {tirar.lista.length} do Início</button>
               </div>
             </div>
           </div>
