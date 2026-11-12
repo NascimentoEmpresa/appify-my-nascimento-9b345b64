@@ -25,6 +25,8 @@ import { TrocaFuncaoSetoresUsuario } from "@/components/admin/TrocaFuncaoSetores
 import { rotaVisivelNoGerenciamento } from "@/lib/menusOcultosGerenciamento";
 import { acoesGravadasPeloToggle } from "@/lib/acoesDoToggleAcesso";
 import { AcessoPorSetorCargoPanel } from "@/pages/admin/tabs/AcessoPorSetorCargoPanel";
+import { chaveSetor, setoresUnicos } from "@/lib/formularios/setorChave";
+import { apagarGrantSetor } from "@/lib/formularios/setorAcesso";
 
 const FORM_MENU_CODIGO = "central_servicos_formularios";
 const REUNIOES_MENU_CODIGO = "central_servicos_reunioes";
@@ -1697,7 +1699,8 @@ function lerRegrasPorFormulario(todas: any[]): Map<string, RegraForm> {
     .forEach((r) => {
       const id = String(r.formulario_id);
       const atual = porForm.get(id) ?? { caps: new Set<string>(), setores: new Set<string>() };
-      if (r.papel === "ver_setor" && r.setor) atual.setores.add(String(r.setor).trim().toUpperCase());
+      // Chave SEM acento: JURIDICO e JURÍDICO são o mesmo chip (mig 20261113003000).
+      if (r.papel === "ver_setor" && r.setor) atual.setores.add(chaveSetor(r.setor));
       else if (r.papel !== MARCADOR_FORM) atual.caps.add(r.papel);
       porForm.set(id, atual);
     });
@@ -1768,7 +1771,7 @@ function SetorToggles({ titulo, descricao, rotuloLinha, descLinha, ariaLinha, se
                 <p className="text-[13px]">{rotuloLinha(s)}</p>
                 <p className="text-[11px] text-muted-foreground">{descLinha(s)}</p>
               </div>
-              <Switch checked={marcados.has(s.toUpperCase())} onCheckedChange={() => onToggle(s)} aria-label={ariaLinha(s)} />
+              <Switch checked={marcados.has(chaveSetor(s))} onCheckedChange={() => onToggle(s)} aria-label={ariaLinha(s)} />
             </div>
           ))}
         </div>
@@ -1800,7 +1803,7 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
     // própria daquele formulário e não podem se misturar aqui — senão o painel
     // geral mostraria ligado um switch que só vale dentro de um formulário.
     const linhas = todas.filter((r: any) => !r.formulario_id);
-    const setoresDe = (papel: string) => new Set<string>(linhas.filter((r: any) => r.papel === papel && r.setor).map((r: any) => String(r.setor).trim().toUpperCase()));
+    const setoresDe = (papel: string) => new Set<string>(linhas.filter((r: any) => r.papel === papel && r.setor).map((r: any) => chaveSetor(r.setor)));
     setCaps(new Set<string>(linhas.map((r: any) => r.papel)));
     setSetoresVer(setoresDe("ver_setor"));
     setSetoresCriar(setoresDe("criar_setor"));
@@ -1826,10 +1829,7 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
       // Dedup SEM acento/caixa (JURIDICO == JURÍDICO) e fora o placeholder PADRAO
       // (= "sem setor"). A RPC já faz isso; aqui é rede de segurança e mantém a
       // 1ª grafia que veio (a RPC devolve a da resposta primeiro).
-      const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
-      const porChave = new Map<string, string>();  // CHAVE(sem acento) → rótulo de exibição
-      (data ?? []).forEach((r: any) => { const l = String(r.setor ?? "").trim(); if (!l) return; const k = norm(l); if (k === "PADRAO" || porChave.has(k)) return; porChave.set(k, l); });
-      setSetoresErp([...porChave.values()].sort((a, b) => a.localeCompare(b, "pt-BR")));
+      setSetoresErp(setoresUnicos((data ?? []).map((r: any) => r.setor)));
     })();
   }, []);
 
@@ -1840,11 +1840,13 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   const toggle = async (papel: FormCap) => {
     const tem = caps.has(papel);
     const oposto = !tem ? OPOSTO[papel] : undefined;  // ao LIGAR, remover o contrario
+    // `.is(formulario_id, null)`: o switch GERAL não pode apagar a regra própria
+    // de um formulário (ver_tudo/ver_proprias por formulário, mig 20260921000002).
     if (tem) {
-      const { error } = await (supabase as any).from("CS_FORM_ACESSOS").delete().eq("user_id", userId).eq("papel", papel);
+      const { error } = await (supabase as any).from("CS_FORM_ACESSOS").delete().eq("user_id", userId).eq("papel", papel).is("formulario_id", null);
       if (error) { onToast(erroPerm(error.message), "err"); return; }
     } else {
-      if (oposto && caps.has(oposto)) await (supabase as any).from("CS_FORM_ACESSOS").delete().eq("user_id", userId).eq("papel", oposto);
+      if (oposto && caps.has(oposto)) await (supabase as any).from("CS_FORM_ACESSOS").delete().eq("user_id", userId).eq("papel", oposto).is("formulario_id", null);
       const { error } = await (supabase as any).from("CS_FORM_ACESSOS").insert({ papel, user_id: userId });
       if (error) { onToast(erroPerm(error.message), "err"); return; }
     }
@@ -1860,16 +1862,18 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   // gravam/removem 1 linha por (usuario, setor) e refletem no estado local.
   const fazSetorHandlers = (papel: "ver_setor" | "criar_setor", marcados: Set<string>, setMarcados: (f: (s: Set<string>) => Set<string>) => void) => ({
     onToggle: async (setor: string) => {
-      const chave = setor.trim().toUpperCase();
+      // Pela chave sem acento: a linha pode estar gravada com a outra grafia.
+      const chave = chaveSetor(setor);
       const tem = marcados.has(chave);
       const { error } = tem
-        ? await (supabase as any).from("CS_FORM_ACESSOS").delete().eq("user_id", userId).eq("papel", papel).eq("setor", setor)
+        ? await apagarGrantSetor(userId, papel, null, setor)
         : await (supabase as any).from("CS_FORM_ACESSOS").insert({ papel, user_id: userId, setor });
       if (error) { onToast(erroPerm(error.message), "err"); return; }
       setMarcados(s => { const n = new Set(s); tem ? n.delete(chave) : n.add(chave); return n; });
     },
     onLimpar: async () => {
-      const { error } = await (supabase as any).from("CS_FORM_ACESSOS").delete().eq("user_id", userId).eq("papel", papel);
+      // Só o GERAL — sem formulario_id; a regra própria de formulário fica.
+      const { error } = await apagarGrantSetor(userId, papel, null, null);
       if (error) { onToast(erroPerm(error.message), "err"); return; }
       setMarcados(() => new Set());
     },
@@ -1946,11 +1950,10 @@ function FormPermsUsuario({ userId, onToast }: { userId: string; onToast: (m: st
   };
 
   const toggleSetorForm = async (formId: string, setor: string) => {
-    const chave = setor.trim().toUpperCase();
+    const chave = chaveSetor(setor);
     const tem = regrasForm.get(formId)?.setores.has(chave) ?? false;
     const { error } = tem
-      ? await (supabase as any).from("CS_FORM_ACESSOS").delete()
-          .eq("user_id", userId).eq("formulario_id", formId).eq("papel", "ver_setor").eq("setor", setor)
+      ? await apagarGrantSetor(userId, "ver_setor", formId, setor)
       : await (supabase as any).from("CS_FORM_ACESSOS")
           .insert({ papel: "ver_setor", user_id: userId, formulario_id: formId, setor });
     if (error) { onToast(erroPerm(error.message), "err"); return; }
