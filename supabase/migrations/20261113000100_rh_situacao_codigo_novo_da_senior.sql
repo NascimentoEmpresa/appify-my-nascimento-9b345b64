@@ -66,7 +66,10 @@ BEGIN
     RETURN;  -- já aplicado
   END IF;
   IF position(velho IN v_def) = 0 THEN
-    RAISE EXCEPTION '% mudou: não achei o trecho da descrição da situação.', f;
+    -- NOTICE, não EXCEPTION (guardião M6): abortar aqui deixaria a migration
+    -- pendente e pararia a fila do time. Sem o trecho, não mexe na função.
+    RAISE WARNING '% mudou: não achei o trecho da descrição da situação — função NÃO alterada.', f;
+    RETURN;
   END IF;
   EXECUTE replace(v_def, velho, novo);
 END $$;
