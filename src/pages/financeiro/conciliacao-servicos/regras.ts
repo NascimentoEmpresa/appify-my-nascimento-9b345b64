@@ -33,6 +33,7 @@ export const TOLERANCIA = 0.005;
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 export interface FiltrosConciliacao {
+  /** 0 = todos os anos */
   ano: number;
   /** "YYYY-MM" ou "" (todas) */
   competencia: string;
@@ -126,7 +127,7 @@ export function codigosDoFiltro(codigo: string): string[] {
 
 // Recorte comum às três telas (ano pela competência; competência; contrato; código; situação).
 function recorteComum(n: NfEmissaoRow, f: FiltrosConciliacao): boolean {
-  if (!n.competencia.startsWith(`${f.ano}-`)) return false;
+  if (f.ano && !n.competencia.startsWith(`${f.ano}-`)) return false;
   if (f.competencia && n.competencia.slice(0, 7) !== f.competencia) return false;
   if (f.contratoId && n.contrato_id !== f.contratoId) return false;
   if (f.codigo && n.tipo_nota !== f.codigo) return false;

@@ -92,4 +92,10 @@ describe("SIS-2026-0869 · conciliação financeira do Relatório de Serviços",
     expect(r.porContrato).toHaveLength(1);
     expect(r.porContrato[0].difTotal).toBe(150);
   });
+
+  it("ano 0 = todos os anos", () => {
+    const nfs = [nf({ id: "1" }), nf({ id: "2", competencia: "2025-03-01" })];
+    expect(conciliar({ nfs, itensPorNf: itensVazios, contratoPorId: contratos, filtros }).resumo.notasAvaliadas).toBe(1);
+    expect(conciliar({ nfs, itensPorNf: itensVazios, contratoPorId: contratos, filtros: { ...filtros, ano: 0 } }).resumo.notasAvaliadas).toBe(2);
+  });
 });

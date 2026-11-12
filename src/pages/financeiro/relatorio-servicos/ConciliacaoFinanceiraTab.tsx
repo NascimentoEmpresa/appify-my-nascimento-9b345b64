@@ -66,7 +66,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
     return [...s].sort((a, b) => b - a);
   }, [nfs, anoAtual]);
   const competencias = useMemo(
-    () => [...new Set(nfs.filter((n) => n.competencia.startsWith(`${ano}-`)).map((n) => n.competencia.slice(0, 7)))].sort(),
+    () => [...new Set(nfs.filter((n) => !ano || n.competencia.startsWith(`${ano}-`)).map((n) => n.competencia.slice(0, 7)))].sort(),
     [nfs, ano],
   );
   const contratosOpcoes = useMemo(
@@ -87,7 +87,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
 
   // Itens só são necessários para o pendente (descontos pós-emissão); busca os do ano/código escolhidos.
   const idsParaItens = useMemo(
-    () => nfs.filter((n) => !foraDoRelatorio(n) && n.competencia.startsWith(`${ano}-`) && (!codigo || n.tipo_nota === codigo)).map((n) => n.id),
+    () => nfs.filter((n) => !foraDoRelatorio(n) && (!ano || n.competencia.startsWith(`${ano}-`)) && (!codigo || n.tipo_nota === codigo)).map((n) => n.id),
     [nfs, ano, codigo],
   );
   const { data: itensPorNf, isLoading: carregandoItens, refetch: refetchItens } = useItensNfEmissaoEmLote(idsParaItens);
@@ -128,7 +128,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
     const conteudo = "﻿" + csv.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";")).join("\r\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([conteudo], { type: "text/csv;charset=utf-8" }));
-    a.download = `conciliacao_relatorio_servicos_${ano}.csv`;
+    a.download = `conciliacao_relatorio_servicos_${ano || "todos_os_anos"}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
@@ -139,6 +139,8 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
   const dadosBarras = indicadores.map((i) => ({ nome: i.rotulo.replace("Faturamento ", "").replace("Valor ", ""), geral: i.valores.geral, dashboard: i.valores.dashboard, faturamento: i.valores.faturamento }));
   const evolucao = useMemo(() => {
     const m = new Map(porCompetencia.map((g) => [g.chave, g.difTotal]));
+    // Todos os anos: uma barra por competência que tem NF (ordem cronológica), não os 12 meses de um ano.
+    if (!ano) return porCompetencia.map((g) => ({ mes: mesLabel(g.chave), diferenca: g.difTotal }));
     return Array.from({ length: 12 }, (_, i) => {
       const k = `${ano}-${String(i + 1).padStart(2, "0")}`;
       return { mes: mesLabel(k), diferenca: m.get(k) ?? 0 };
@@ -209,8 +211,8 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
       <div className="card-elevated flex flex-wrap items-end gap-2 p-3 text-xs">
         <Filtro rotulo="Ano">
           <Select value={String(ano)} onValueChange={(v) => { setAno(Number(v)); setCompetencia(TODOS); }}>
-            <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>{anos.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
+            <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="0">Todos</SelectItem>{anos.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
           </Select>
         </Filtro>
         <Filtro rotulo="Competência">
@@ -319,7 +321,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-base">Evolução da divergência por competência ({ano})</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base">Evolução da divergência por competência ({ano || "todos os anos"})</CardTitle></CardHeader>
               <CardContent>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
