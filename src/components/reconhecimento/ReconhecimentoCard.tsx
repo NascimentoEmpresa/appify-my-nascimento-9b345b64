@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Award, ChevronLeft, ChevronRight, Quote, Star } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Award, ChevronLeft, ChevronRight, Quote, Star, X } from "lucide-react";
 import { useMuralInicio, type ItemMuralInicio } from "@/hooks/useMuralReconhecimento";
-import { lerNota, rotuloMes } from "@/lib/formularios/muralReconhecimento";
+import { lerNota, recadosDaPessoa, rotuloMes } from "@/lib/formularios/muralReconhecimento";
 
 /**
  * Cartão "Reconhecimento e Convivência Profissional" do Início (30/10/2026).
@@ -25,6 +26,13 @@ import { lerNota, rotuloMes } from "@/lib/formularios/muralReconhecimento";
  *
  * O cartão SOME quando não há nada liberado no mês — como o de aniversários,
  * cartão vazio numa tela aberta o dia inteiro é ruído.
+ *
+ * 12/11/2026 (Pablo: "ao clicar no nome de uma pessoa deve aparecer todos
+ * comentários bons que apareceram pra ela"): o nome no destaque é um botão
+ * que abre a janela "Recados para Fulana" com TODOS os recados publicados
+ * dela, de todos os meses que o Início tem (recadosDaPessoa), do mais novo ao
+ * mais velho. O carrossel pausa enquanto a janela está aberta. Na prévia da
+ * moderação, a janela só conhece o mês da prévia.
  */
 const INTERVALO_MS = 7000;
 
@@ -46,6 +54,7 @@ export function ReconhecimentoCard() {
       key={bloco.mes}
       mes={bloco.mes}
       itens={bloco.itens}
+      historico={meses}
       navMes={meses.length > 1 ? {
         anterior: i < meses.length - 1 ? () => setIndice(i + 1) : undefined,
         proximo: i > 0 ? () => setIndice(i - 1) : undefined,
@@ -60,14 +69,17 @@ export function ReconhecimentoCard() {
  * como fica antes de ser publicado") — o mesmo componente, para a prévia
  * nunca ficar diferente do que vai ao ar.
  */
-export function CartaoReconhecimento({ mes, itens, rodape, navMes }: {
+export function CartaoReconhecimento({ mes, itens, rodape, navMes, historico }: {
   mes: string; itens: ItemCartao[]; rodape?: string;
   /** Setas de mês (só no Início, com mais de um mês publicado). Sem a função = seta desabilitada. */
   navMes?: { anterior?: () => void; proximo?: () => void };
+  /** Todos os meses publicados, para "todos os recados da pessoa". Sem ele, só o mês do cartão. */
+  historico?: { mes: string; itens: ItemCartao[] }[];
 }) {
   useEstiloReconhecimento();
   const [atual, setAtual] = useState(0);
   const [pausado, setPausado] = useState(false);
+  const [pessoaAberta, setPessoaAberta] = useState<ItemCartao | null>(null);
   const [ciclo, setCiclo] = useState(0);   // reinicia a barra de progresso a cada troca
 
   // Uma pessoa por rosto na fila, com quantos recados recebeu.
@@ -93,10 +105,10 @@ export function CartaoReconhecimento({ mes, itens, rodape, navMes }: {
   // máquinas da empresa) deixaria o cartão parado no primeiro recado. Lá só
   // os enfeites param e a troca vira um fade (ver o CSS).
   useEffect(() => {
-    if (pausado || itens.length < 2) return;
+    if (pausado || pessoaAberta || itens.length < 2) return;
     const t = window.setTimeout(() => ir(atual + 1), INTERVALO_MS);
     return () => window.clearTimeout(t);
-  }, [atual, pausado, itens.length, ir, ciclo]);
+  }, [atual, pausado, pessoaAberta, itens.length, ir, ciclo]);
 
   if (!itens.length) return null;
   const it = itens[Math.min(atual, itens.length - 1)];
@@ -142,7 +154,12 @@ export function CartaoReconhecimento({ mes, itens, rodape, navMes }: {
             {it.avatar_url ? <img src={it.avatar_url} alt="" /> : <span className="rec-iniciais">{iniciais(it.colaborador)}</span>}
           </div>
           <div className="rec-corpo">
-            <p className="rec-nome">{nomeLegivel(it.colaborador)}</p>
+            <p className="rec-nome">
+              <button type="button" className="rec-nome-btn" onClick={() => setPessoaAberta(it)}
+                title={`Ver todos os recados para ${nomeLegivel(it.colaborador)}`}>
+                {nomeLegivel(it.colaborador)}
+              </button>
+            </p>
             <p className="rec-setor">{[it.cargo, it.setor].filter(Boolean).map((t) => nomeLegivel(String(t))).join(" · ")}</p>
             {nota != null && (
               <div className="rec-estrelas" aria-label={`Nota ${it.nota} de ${escala}`}>
@@ -179,9 +196,75 @@ export function CartaoReconhecimento({ mes, itens, rodape, navMes }: {
             })}
           </div>
         )}
-        <p className="rec-rodape">{rodape ?? "Recados anônimos, liberados por quem cuida da avaliação."}</p>
+        <p className="rec-rodape">{rodape ?? "Recados anônimos, liberados por quem cuida da avaliação."} Clique no nome para ver todos os recados da pessoa.</p>
       </div>
+      {pessoaAberta && (
+        <RecadosDaPessoa pessoa={pessoaAberta} meses={historico ?? [{ mes, itens }]} onFechar={() => setPessoaAberta(null)} />
+      )}
     </section>
+  );
+}
+
+/** Janela com todos os recados publicados de uma pessoa, mês a mês. */
+function RecadosDaPessoa({ pessoa, meses, onFechar }: {
+  pessoa: ItemCartao; meses: { mes: string; itens: ItemCartao[] }[]; onFechar: () => void;
+}) {
+  const blocos = useMemo(() => recadosDaPessoa(meses, pessoa.colaborador), [meses, pessoa.colaborador]);
+  const total = blocos.reduce((s, b) => s + b.itens.length, 0);
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onFechar]);
+  // Portal: o cartão tem overflow hidden e animação; a janela vai para o body.
+  return createPortal(
+    <div className="rec-janela-fundo" onClick={onFechar}>
+      <div className="rec-janela" role="dialog" aria-modal="true" aria-label={`Recados para ${nomeLegivel(pessoa.colaborador)}`}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="rec-janela-hd">
+          <div className="rec-foto rec-foto--p">
+            {pessoa.avatar_url ? <img src={pessoa.avatar_url} alt="" /> : <span className="rec-iniciais">{iniciais(pessoa.colaborador)}</span>}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p className="rec-nome">{nomeLegivel(pessoa.colaborador)}</p>
+            <p className="rec-setor">
+              {[pessoa.cargo, pessoa.setor].filter(Boolean).map((t) => nomeLegivel(String(t))).join(" · ")}
+              {" · "}{total} {total === 1 ? "recado" : "recados"}
+            </p>
+          </div>
+          <button type="button" className="rec-seta" onClick={onFechar} aria-label="Fechar"><X size={16} /></button>
+        </div>
+        <div className="rec-janela-corpo">
+          {blocos.map((b) => (
+            <section key={b.mes}>
+              <h4 className="rec-janela-mes">{rotuloMes(b.mes)} · {b.itens.length}</h4>
+              {b.itens.map((r) => {
+                const n = lerNota(r.nota);
+                const esc = Math.max(2, r.escala || 5);
+                return (
+                  <div key={r.chave} className="rec-janela-item">
+                    {n != null && (
+                      <div className="rec-estrelas" aria-label={`Nota ${r.nota} de ${esc}`}>
+                        {Array.from({ length: esc }, (_, i) => (
+                          <Star key={i} size={12} className={i < Math.round(n) ? "rec-estrela rec-estrela--fixa" : "rec-estrela"}
+                            fill={i < Math.round(n) ? "currentColor" : "none"} aria-hidden />
+                        ))}
+                      </div>
+                    )}
+                    <blockquote className="rec-texto rec-texto--fixo">
+                      <Quote size={16} className="rec-aspas" aria-hidden />
+                      {r.comentario}
+                    </blockquote>
+                  </div>
+                );
+              })}
+            </section>
+          ))}
+        </div>
+        <p className="rec-rodape" style={{ padding: "0 18px 14px" }}>Recados anônimos, liberados por quem cuida da avaliação.</p>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -312,6 +395,29 @@ const CSS_RECONHECIMENTO = `
 .rec-rosto b{position:absolute;right:-5px;top:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:9999px;
   font-size:.6rem;line-height:16px;color:#fff;background:#f97316;border:2px solid hsl(var(--card));}
 .rec-rodape{margin-top:12px;font-size:.68rem;color:hsl(var(--muted-foreground));}
+
+/* Nome clicável → janela com todos os recados da pessoa (12/11/2026). */
+.rec-nome-btn{all:unset;cursor:pointer;border-radius:4px;text-decoration:underline dotted hsl(var(--muted-foreground) / .6);
+  text-underline-offset:3px;}
+.rec-nome-btn:hover{color:#f97316;text-decoration-color:#f97316;}
+.rec-nome-btn:focus-visible{outline:2px solid #f97316;outline-offset:2px;}
+.rec-janela-fundo{position:fixed;inset:0;z-index:90;background:rgba(15,23,42,.5);display:flex;align-items:center;
+  justify-content:center;padding:16px;animation:rec-fade .2s ease both;}
+.rec-janela{width:min(620px,100%);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;
+  background:hsl(var(--card));color:hsl(var(--foreground));border:1px solid hsl(var(--border));border-radius:18px;
+  box-shadow:0 30px 70px rgba(15,23,42,.35);animation:rec-entra .35s cubic-bezier(.16,1,.3,1) both;}
+.rec-janela p{margin:0;}
+.rec-janela-hd{display:flex;align-items:center;gap:14px;padding:16px 18px;border-bottom:1px solid hsl(var(--border));
+  background:linear-gradient(135deg,rgba(245,158,11,.10),rgba(236,72,153,.06) 45%,rgba(99,102,241,.07));}
+.rec-foto--p,.rec-foto--p img,.rec-foto--p .rec-iniciais{width:48px;height:48px;}
+.rec-janela-corpo{overflow-y:auto;padding:6px 18px 12px;}
+.rec-janela-mes{margin:14px 0 6px;font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+  color:hsl(var(--muted-foreground));}
+.rec-janela-item{padding:10px 12px;border:1px solid hsl(var(--border));border-radius:12px;margin-bottom:8px;background:hsl(var(--card));}
+.rec-janela-item .rec-estrelas{margin-top:0;}
+.rec-estrela--fixa{color:#f59e0b;}
+.rec-janela blockquote{margin:6px 0 0;}
+.rec-texto--fixo{animation:none;margin-top:6px;font-size:.88rem;}
 
 @media (max-width:640px){
   .rec-destaque{flex-direction:column;align-items:center;text-align:center;}
