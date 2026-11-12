@@ -13,11 +13,24 @@ describe("planejarTrocaDeIntegrante", () => {
     expect(r.aplicar.map((l) => l.despesa_id)).toEqual(["a", "b"]);
     expect(r.ignoradas).toHaveLength(0);
   });
-  it("só Malote e importação têm integrante: débito automático, cartão, aplicação e conta garantida ficam de fora", () => {
-    const origens: LinhaMassa["origem"][] = ["debito_automatico", "cartao_fatura", "aplicacao_financeira", "conta_garantida"];
+  it("só Malote, Débito Automático e importação têm integrante: cartão, aplicação e conta garantida ficam de fora", () => {
+    const origens: LinhaMassa["origem"][] = ["cartao_fatura", "aplicacao_financeira", "conta_garantida"];
     const r = planejarTrocaDeIntegrante(origens.map((o, i) => linha({ origem: o, despesa_id: `x${i}` })), 1);
     expect(r.aplicar).toHaveLength(0);
-    expect(r.ignoradas.every((i) => /Malote ou lançamento importado/.test(i.motivo))).toBe(true);
+    expect(r.ignoradas.every((i) => /Malote, Débito Automático ou lançamento importado/.test(i.motivo))).toBe(true);
+  });
+  // SIS-2026-0883: DA-… (ex.: DA-2026-1074, classificação consórcio) entra, com ou sem integrante anterior.
+  it("lançamento do Débito Automático entra, com ou sem integrante anterior", () => {
+    const r = planejarTrocaDeIntegrante([
+      linha({ origem: "debito_automatico", despesa_id: "da1" }),
+      linha({ origem: "debito_automatico", despesa_id: "da2", integrante_empregado_id: 7 }),
+    ], 5755);
+    expect(r.aplicar.map((l) => l.despesa_id)).toEqual(["da1", "da2"]);
+    expect(r.ignoradas).toHaveLength(0);
+  });
+  it("Débito Automático que já está com o integrante escolhido fica de fora", () => {
+    const r = planejarTrocaDeIntegrante([linha({ origem: "debito_automatico", integrante_empregado_id: -1 })], -1);
+    expect(r.ignoradas[0].motivo).toBe("Já está com este integrante");
   });
   // SIS-2026-0859: IMP-… (planilha) entra, com ou sem integrante, rateado ou não (a RPC grava em todas as cotas).
   it("lançamento importado da planilha entra, mesmo rateado em várias cotas", () => {
