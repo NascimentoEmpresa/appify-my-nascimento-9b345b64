@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ehComentarioPositivo, filtrarMural, lerNota, mesAnterior, mesDeBrasilia,
+  ehComentarioPositivo, lerNota, mesesDoMural, mesAnterior, mesDeBrasilia,
   notaMinimaPositiva, somarMes, type LinhaMural,
 } from "@/lib/formularios/muralReconhecimento";
 
@@ -53,11 +53,10 @@ describe("mês anterior (Brasília)", () => {
   });
 });
 
-describe("filtrarMural", () => {
-  const hoje = new Date("2026-11-10T12:00:00-03:00");
+describe("mesesDoMural (Início, todos os meses publicados)", () => {
   const base: LinhaMural = { colaborador: "FULANA", nota: 5, escala: 5, comentario: "Sempre disposta a ajudar", enviado_em: "2026-10-20T14:00:00-03:00", status: "liberado" };
 
-  it("fica só liberado + positivo + mês anterior", () => {
+  it("fica só liberado + positivo, e um bloco por mês do mais novo ao mais velho", () => {
     const linhas: LinhaMural[] = [
       base,
       { ...base, colaborador: "PENDENTE", status: "pendente" },
@@ -65,13 +64,24 @@ describe("filtrarMural", () => {
       { ...base, colaborador: "NOTA BAIXA", nota: 2 },
       { ...base, colaborador: "SEM TEXTO", comentario: "" },
       { ...base, colaborador: "MES ATUAL", enviado_em: "2026-11-02T10:00:00-03:00" },
-      { ...base, colaborador: "DOIS MESES", enviado_em: "2026-09-28T10:00:00-03:00" },
+      { ...base, colaborador: "SETEMBRO", enviado_em: "2026-09-28T10:00:00-03:00" },
     ];
-    expect(filtrarMural(linhas, hoje).map((l) => l.colaborador)).toEqual(["FULANA"]);
+    expect(mesesDoMural(linhas).map((m) => [m.mes, m.itens.map((l) => l.colaborador)])).toEqual([
+      ["2026-11", ["MES ATUAL"]], ["2026-10", ["FULANA"]], ["2026-09", ["SETEMBRO"]],
+    ]);
+  });
+
+  it("o bug de 12/11: setembro liberado aparece no Início em novembro", () => {
+    const set = { ...base, enviado_em: "2026-09-10T10:00:00-03:00" };
+    expect(mesesDoMural([set]).map((m) => m.mes)).toEqual(["2026-09"]);
   });
 
   it("voto da noite de 31/10 em Brasília conta em outubro", () => {
     const noite = { ...base, enviado_em: "2026-11-01T02:30:00Z" };   // 31/10 23:30 BRT
-    expect(filtrarMural([noite], hoje)).toHaveLength(1);
+    expect(mesesDoMural([noite]).map((m) => m.mes)).toEqual(["2026-10"]);
+  });
+
+  it("nada liberado = nenhum mês (o cartão some)", () => {
+    expect(mesesDoMural([{ ...base, status: "pendente" }])).toEqual([]);
   });
 });

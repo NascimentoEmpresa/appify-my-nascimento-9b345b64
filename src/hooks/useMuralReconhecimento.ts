@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
-import { filtrarMural, type StatusMural } from "@/lib/formularios/muralReconhecimento";
+import { mesesDoMural, type StatusMural } from "@/lib/formularios/muralReconhecimento";
 
 // RPCs fora do types.ts gerado: mesmo padrão de FormularioRespostas.
 const sb = supabase as unknown as SupabaseClient;
@@ -18,6 +18,8 @@ const sb = supabase as unknown as SupabaseClient;
 
 export interface ItemMuralInicio {
   chave: string;
+  /** "AAAA-MM" do envio, em Brasília (mig 20261112210000). */
+  mes?: string;
   colaborador: string;
   setor: string | null;
   cargo: string | null;
@@ -45,21 +47,25 @@ export interface ItemModeracao {
   decidido_por: string | null;
 }
 
-const CHAVE_INICIO = "mural-reconhecimento-inicio";
+// "-meses": o formato mudou (lista de meses) — chave nova para nenhum cache velho servir o formato antigo.
+const CHAVE_INICIO = "mural-reconhecimento-inicio-meses";
 const CHAVE_MODERACAO = "mural-reconhecimento-moderacao";
 
-/** O que o cartão do Início mostra. Erro (RPC ainda não aplicada) = cartão some. */
+/**
+ * O que o cartão do Início mostra: um bloco por mês publicado, do mais novo
+ * ao mais velho (12/11/2026 — antes era só o mês anterior, e por isso o
+ * setembro liberado em novembro não aparecia). Erro = cartão some.
+ */
 export function useMuralInicio() {
   const { user } = useAuth();
   return useQuery({
     queryKey: [CHAVE_INICIO, user?.id],
     enabled: !!user?.id,
     staleTime: 10 * 60_000,
-    queryFn: async (): Promise<{ mes: string; itens: ItemMuralInicio[] }> => {
+    queryFn: async (): Promise<{ mes: string; itens: ItemMuralInicio[] }[]> => {
       const { data, error } = await sb.rpc("cs_form_mural_inicio");
       if (error) throw error;
-      const itens = (data?.itens ?? []) as ItemMuralInicio[];
-      return { mes: String(data?.mes ?? ""), itens: filtrarMural(itens) };
+      return mesesDoMural((data?.itens ?? []) as ItemMuralInicio[]);
     },
   });
 }
