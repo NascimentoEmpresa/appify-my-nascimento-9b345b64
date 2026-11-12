@@ -77,6 +77,38 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it("envia a inscrição municipal do tomador na ordem do XSD, com zeros e assinatura válidos", async () => {
+    for (const documentoTomador of ["98765432000198", "12345678901"]) {
+      const s = solicitacao();
+      Object.assign(s.dados.parametros.tomador,{documento:documentoTomador,inscricao_municipal:" 00123-A "});
+      const antes = JSON.stringify(s);
+      const xml = documento.gerarDps(s);
+      const tipo = documentoTomador.length === 14 ? "CNPJ" : "CPF";
+      expect(xml).toContain(`<toma><${tipo}>${documentoTomador}</${tipo}><IM>00123-A</IM><xNome>`);
+      expect(xml).toContain("<prest><CNPJ>11222333000181</CNPJ><IM>100</IM>");
+      const assinado = documento.assinarDps(xml,documento.identificadorDps(s),cert,"sha1");
+      await documento.validarEsquema(assinado);
+      const verificador = new SignedXml({publicCert:cert.certPem,getCertFromKeyInfo:()=>null});
+      verificador.loadSignature(documento.elementos(documento.lerXml(assinado),"Signature")[0]);
+      expect(verificador.checkSignature(assinado)).toBe(true);
+      expect(JSON.stringify(s)).toBe(antes);
+    }
+  });
+  it("mantém solicitações antigas sem IM do tomador e impede inscrição inválida antes do envio", async () => {
+    const s = solicitacao();
+    for (const inscricao of [undefined, "", "   "]) {
+      Object.assign(s.dados.parametros.tomador,{inscricao_municipal:inscricao});
+      const xml = documento.gerarDps(s);
+      expect(xml.match(/<toma>(.*?)<\/toma>/)?.[1]).not.toContain("<IM>");
+      await documento.validarEsquema(xml);
+    }
+    for (const inscricao of ["1".repeat(16), "123\u0001", "12\n34", "12\t34"]) {
+      Object.assign(s.dados.parametros.tomador,{inscricao_municipal:inscricao});
+      const deps = dependencias();
+      await expect(executarSolicitacao(s,deps)).rejects.toThrow(/inscrição municipal do tomador/);
+      expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    }
+  });
   it("gera e confere produção separadamente, recusando retorno de homologação", async () => {
     const s = solicitacao(); s.ambiente = "producao";
     expect(() => documento.gerarDps(s)).toThrow(/nota fiscal real/);
