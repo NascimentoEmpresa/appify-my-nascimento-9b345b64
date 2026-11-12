@@ -37,6 +37,7 @@ export interface VagaExport {
   insalubridade_recebe?: string | boolean | null;
   insalubridade_quanto?: string | number | null;
   local_exato?: string | null;
+  endereco_trabalho?: string | null;
   solicitante_nome?: string | null;
   aprovado_por_nome?: string | null;
   analista_nome?: string | null;
@@ -130,7 +131,7 @@ export function montarPlanilhaVagas(vagas: VagaExport[], op: OpcoesExport = {}):
   const cab = [
     "Nº", "Data solicitação", "Status", "Status desde", "Contrato", "Cargo", "Cidade", "Setor", "Administrativa",
     "Qtd. vagas", "Motivo", "Substituído", "Urgência", "Início previsto", "Escala", "Horário", "Salário", "Benefícios",
-    "Insalubridade", "Insalubridade (%)", "Posto / local", "Solicitado por", "Aprovado por", "Analista", "Responsável",
+    "Insalubridade", "Insalubridade (%)", "Posto / local", "Endereço do local de trabalho", "Solicitado por", "Aprovado por", "Analista", "Responsável",
     "Contratado", "Motivo reprovação", "Etiquetas",
     ...(comCandidatos ? ["Candidatos no processo", "Em andamento", "Reprovados", "Desistências", "Etapa mais adiantada"] : []),
   ];
@@ -142,7 +143,7 @@ export function montarPlanilhaVagas(vagas: VagaExport[], op: OpcoesExport = {}):
       v.cidade ?? "", v.setor ?? "", v.administrativa ? "Sim" : "Não",
       qtd != null && Number.isFinite(qtd) ? qtd : (v.quantidade_vagas ?? ""), mot(v.motivo_vaga), v.nome_substituido ?? "",
       v.grau_urgencia ?? "", v.data_inicio_prevista ?? "", v.escala ?? "", v.horario ?? "", salarioNumero(v.salario),
-      v.beneficios ?? "", simNao(v.insalubridade_recebe), v.insalubridade_quanto ?? "", v.local_exato ?? "",
+      v.beneficios ?? "", simNao(v.insalubridade_recebe), v.insalubridade_quanto ?? "", v.local_exato ?? "", v.endereco_trabalho ?? "",
       v.solicitante_nome ?? "", v.aprovado_por_nome ?? "", v.analista_nome ?? "", op.responsaveis?.[v.id] ?? "",
       v.contratado_nome ?? "", v.motivo_reprovacao ?? "", (v.etiquetas ?? []).join(", "),
       ...(comCandidatos ? [r.total, r.ativos, r.reprovados, r.desistencias, r.etapaMaisAdiantada] : []),

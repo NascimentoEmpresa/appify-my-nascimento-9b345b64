@@ -45,6 +45,7 @@ import {
   substituidosComVagaViva, avisoSubstituidoPreso, filtroEmpregadoDaVaga,
   bloqueioSubstituicao, quantitativoAcima, textoQuantitativo,
   ehAdmissao, STATUS_VAGA_GERENTE_OPERACOES, FILTRO_EMPREGADO_VAGA,
+  ENDERECO_TRABALHO_AJUDA, erroEnderecoTrabalho,
   type SituacaoSubstituido, type QuantitativoContrato, type DecisaoQuantitativo,
   cargoForaDasFuncoes, escalaDiferenteDoCadastro,
 } from "@/lib/recrutamento/vagaRegras";
@@ -83,6 +84,8 @@ const VAGA_RESET = {
   motivos_saida: "", recomendacao: "", observacao_importante: "",
   // #0845: contrato acima do cotado → motivo e quem autorizou.
   quantitativo_justificativa: "",
+  // #0849: endereço físico onde a pessoa vai trabalhar (obrigatório na etapa 1).
+  endereco_trabalho: "",
 };
 
 /** Explica o prazo da data escolhida: o que falta ou qual grau saiu dela. */
@@ -645,6 +648,9 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       // contrato tem posto no catálogo — é do posto que vêm o V.A e o V.T.
       if (vaga.contrato_id && catListas.postos.length > 0 && !vaga.posto_id) { toast("Selecione o posto no catálogo de Suprimentos — é dele que vêm o V.A e o V.T da vaga.", "err"); return false; }
       if (vaga.posto_id && catListas.funcoes.length > 0 && !vaga.funcao_id) { toast("Selecione a função do posto no catálogo de Suprimentos.", "err"); return false; }
+      // #0849: depois do posto, o endereço efetivo do local de trabalho.
+      const erroEnd = erroEnderecoTrabalho(vaga.endereco_trabalho);
+      if (erroEnd) { toast(erroEnd, "err"); return false; }
       // Estado e cidade obrigatórios (15/09/2026): é o local da vaga, e sem
       // ele o Recrutamento não sabe onde divulgar nem de onde é o candidato.
       if (!vaga.estado) { toast("Selecione o estado (UF) da vaga.", "err"); return false; }
@@ -730,7 +736,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
       const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp,
-        substituido_situacao, substituido_situacao_texto, quantitativo_ativos, quantitativo_cotado, quantitativo_justificativa, ...semColunasNovas } = payload;
+        endereco_trabalho, substituido_situacao, substituido_situacao_texto, quantitativo_ativos, quantitativo_cotado, quantitativo_justificativa, ...semColunasNovas } = payload;
       ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
@@ -1164,6 +1170,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             onListas={setCatListas}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
+          {/* #0849 (11/11/2026): Contrato → Cargo → Posto → ENDEREÇO EFETIVO →
+              o resto. A Licitação ainda não informa o endereço do posto; quem
+              abre a vaga digita, e o Recrutamento e a Admissão leem daqui. */}
+          <div className="nvg-fg">
+            <label>Endereço efetivo do local de trabalho <span style={{ color: "#dc2626" }}>*</span></label>
+            <input className="nvg-fi" value={vaga.endereco_trabalho} maxLength={300}
+              placeholder={ENDERECO_TRABALHO_AJUDA}
+              onChange={e => setVaga(v => ({ ...v, endereco_trabalho: e.target.value }))} />
+          </div>
           {/* Benefícios e adicionais da vaga (27/10/2026, Convenções Coletivas):
               contrato + posto → CCT/decreto vinculado na Planilha de Custo. */}
           {vaga.contrato_id && postoNomeEscolhido && (
