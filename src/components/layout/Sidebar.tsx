@@ -422,6 +422,8 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0599: resumo financeiro do contrato que vai começar.
         { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Conferência de 13º (12/11/2026, mig 20261112220000): o que o RH liberou, para pagar.
+        { label: "Conferência de 13º", to: "/app/financeiro/conferencia-decimo-terceiro", icon: ClipboardCheck },
         // Ficha Financeira (29/10/2026, mig 20261029004700): tudo o que cada
         // colaborador recebeu na Senior. Nasce sem ninguém liberado.
         { label: "Ficha Financeira", to: "/app/financeiro/ficha-financeira", icon: Receipt },
@@ -612,6 +614,9 @@ const rhModule: ModuleDef = {
         // Documentos solicitados aos encarregados, até voltarem assinados (mig 20261019000040).
         { label: "Documentos", to: "/app/rh/documentos", icon: FileSignature },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
+        // Conferência de 13º (12/11/2026, mig 20261112220000): clone do ponto
+        // sem Operacional nem encarregados — RH confere e libera, Financeiro paga.
+        { label: "Conferência de 13º", to: "/app/rh/conferencia-decimo-terceiro", icon: ClipboardCheck },
         // "Dashboard de Pontos" desde 30/09/2026 (antes dois itens com o mesmo
         // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
         // Operacional, cada um com o seu menu (mig 274).
