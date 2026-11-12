@@ -39,6 +39,8 @@ export interface ViagemDoDia {
   finalizada_em?: string | null;
   nao_utilizado_em?: string | null;
   sem_abastecimento?: boolean | null;
+  /** "Houve abastecimento?" (mig 20261112173000): null = sem resposta. */
+  houve_abastecimento?: boolean | null;
   prestacao_exigida?: boolean | null;
   km_anterior?: number | null;
   km_anterior_em?: string | null;
@@ -47,18 +49,26 @@ export interface ViagemDoDia {
   destino?: string | null;
 }
 
-/** O que falta na prestação — mesma régua de cs_veic_prestacao_faltando(). */
+/**
+ * O que falta na prestação — mesma régua de cs_veic_prestacao_faltando()
+ * (versão da mig 20261112173000).
+ *
+ * 12/11/2026 (Senilton): o vídeo do veículo virou OPCIONAL (fotos/vídeo no
+ * modal da viagem) e a revisão de água e óleo foi para o checklist de SAÍDA,
+ * cobrada no ato — as duas saíram daqui. A nota depende da resposta de
+ * "Houve abastecimento?": sem resposta → responder; Sim → nota; Não → nada.
+ */
 export function faltandoPrestacao(
-  a: Pick<ViagemDoDia, "km_inicial" | "km_final" | "sem_abastecimento">,
-  chegada: Pick<ChecklistVeiculo, "video_veiculo" | "agua_verificada" | "oleo_verificado" | "avaria" | "avaria_descricao"> | null | undefined,
+  a: Pick<ViagemDoDia, "km_inicial" | "km_final" | "sem_abastecimento" | "houve_abastecimento">,
+  chegada: Pick<ChecklistVeiculo, "avaria" | "avaria_descricao"> | null | undefined,
   temNotaCombustivel: boolean,
 ): string[] {
   const f: string[] = [];
   if (a.km_inicial == null) f.push("KM de saída");
   if (a.km_final == null) f.push("KM de retorno");
-  if (!a.sem_abastecimento && !temNotaCombustivel) f.push('Foto da nota do combustível (ou "não abasteci")');
-  if (!chegada?.video_veiculo) f.push("Vídeo completo do veículo");
-  if (!chegada?.agua_verificada || !chegada?.oleo_verificado) f.push("Verificação de água e óleo");
+  if (!temNotaCombustivel && a.houve_abastecimento !== false && !a.sem_abastecimento) {
+    f.push(a.houve_abastecimento ? "Foto da nota do combustível" : "Responder se houve abastecimento");
+  }
   if (chegada?.avaria == null) f.push("Informar se há avaria");
   else if (chegada.avaria && !(chegada.avaria_descricao ?? "").trim()) f.push("Descrição da avaria");
   return f;

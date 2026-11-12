@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,16 +17,36 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
-import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
+import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks, Link2, CopyPlus } from "lucide-react";
 import { prazoSolicitanteValido, sugestaoPrazoSolicitante } from "@/lib/chamados/prazoDesenvolvimento";
 import { abrirChamadoTravado, descreverPendencias, LIMITE_AVALIACOES_PENDENTES, type PendenciaSolicitante } from "./validacaoPresidencia";
 import {
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS, STATUS_CHAMADO,
 } from "./types";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { afetaUsuariosParaBanco, somenteDigitos } from "./afetaUsuarios";
+import {
+  filtrarChamadosParaVincular, formularioBaseadoEm, lerBaseado, MIN_COMPLEMENTO, proximaParte, rotuloParte,
+  type ChamadoBase, type ParteSerie,
+} from "@/lib/chamados/vinculos";
 
 const TITULO_MAX = 120;
+
+// Leituras do vínculo (mig 20261112002000) — as colunas e a RPC novas ainda
+// não estão nos tipos gerados do Supabase. Cliente com o mínimo tipado, em vez
+// de `as any` (a catraca do lint não deixa o arquivo ganhar erro novo).
+type Resposta = { data: unknown; error: { message: string } | null };
+interface Consulta extends PromiseLike<Resposta> {
+  select(colunas: string): Consulta;
+  eq(coluna: string, valor: unknown): Consulta;
+  order(coluna: string, opcoes: { ascending: boolean }): Consulta;
+  limit(n: number): Consulta;
+  maybeSingle(): Consulta;
+}
+const dbVinculo = supabase as unknown as {
+  from(tabela: "CHAMADO_SISTEMA"): Consulta;
+  rpc(fn: "chamado_vinculos", args: { p_chamado_id: string }): PromiseLike<Resposta>;
+};
 const TAMANHO_MAX_MB = 20; // igual ao limite do bucket (mesmo valor do ChatChamado)
 
 // O que uma boa descrição responde — aparece como guia acima do campo, e o
@@ -53,6 +73,10 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const { empregado } = useVinculoEmpregado();
   const { canAbrir, loading: permLoading } = useChamadoPerms();
   const { toast } = useToast();
+  // "Reabrir chamado baseado nesse" (mig 20261112002000): ?baseado=<id> traz o
+  // chamado anterior preenchido e pede "O que é preciso a mais".
+  const { search } = useLocation();
+  const baseadoId = lerBaseado(search);
 
   // Avaliações pendentes: com 3 chamados concluídos sem avaliação não abre
   // outro (desde 20/10/2026; antes travava no primeiro). Com 1 ou 2, só avisa.
@@ -94,6 +118,55 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
+  // Vínculo (mig 20261112002000): o chamado anterior do "baseado nesse" ou
+  // um escolhido aqui. O banco calcula a série e o número da parte.
+  const [complemento, setComplemento] = useState("");
+  const [vincular, setVincular] = useState(false);
+  const [vinculadoA, setVinculadoA] = useState<string | null>(null);
+  const [buscaVinculo, setBuscaVinculo] = useState("");
+
+  const { data: anterior } = useQuery({
+    queryKey: ["chamado-baseado", baseadoId],
+    enabled: !!baseadoId,
+    queryFn: async () => {
+      const { data, error } = await dbVinculo.from("CHAMADO_SISTEMA")
+        .select("id, numero, assunto, categorias, tipo_solicitacao, prioridade, descricao, observacoes_solicitante, impacto_trabalho, urgencia, prazo_solicitante, modulo_sistema, modulo_sistema_outro, ambiente, afeta_usuarios")
+        .eq("id", baseadoId as string).maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      const { data: serie } = await dbVinculo.rpc("chamado_vinculos", { p_chamado_id: baseadoId as string });
+      return { chamado: data as ChamadoBase, parte: proximaParte((serie ?? []) as ParteSerie[]) };
+    },
+  });
+  const chamadoBase = anterior?.chamado ?? null;
+  const parteNova = anterior?.parte ?? 2;
+
+  // Preenche o formulário uma vez, quando o anterior chega.
+  const [preenchidoDe, setPreenchidoDe] = useState<string | null>(null);
+  useEffect(() => {
+    if (!chamadoBase || preenchidoDe === chamadoBase.id) return;
+    const f = formularioBaseadoEm(chamadoBase, parteNova, new Date().toLocaleDateString("sv-SE"));
+    setAssunto(f.assunto); setCategorias(f.categorias); setTipo(f.tipo); setPrioridade(f.prioridade);
+    setDescricao(f.descricao); setObservacoes(f.observacoes); setImpacto(f.impacto); setUrgencia(f.urgencia);
+    setPrazoSolicitante(f.prazoSolicitante || (sugestaoPrazoSolicitante(f.urgencia) ?? "")); setPrazoManual(!!f.prazoSolicitante);
+    setModulo(f.modulo); setModuloOutro(f.moduloOutro); setAmbiente(f.ambiente); setAfetaUsuarios(f.afetaUsuarios);
+    setVinculadoA(chamadoBase.id);
+    setPreenchidoDe(chamadoBase.id);
+  }, [chamadoBase, parteNova, preenchidoDe]);
+
+  // Lista do seletor "Vincular a um chamado existente": o que a pessoa
+  // enxerga (RLS), mais recentes primeiro. Só busca quando ela marca a opção.
+  const { data: paraVincular = [] } = useQuery({
+    queryKey: ["chamados-para-vincular"],
+    enabled: vincular && !baseadoId,
+    queryFn: async () => {
+      const { data } = await dbVinculo.from("CHAMADO_SISTEMA")
+        .select("id, numero, assunto, status").order("created_at", { ascending: false }).limit(300);
+      return (data ?? []) as { id: string; numero: string; assunto: string; status: string }[];
+    },
+  });
+  const filtradosVinculo = useMemo(() => filtrarChamadosParaVincular(paraVincular, buscaVinculo).slice(0, 50), [paraVincular, buscaVinculo]);
+  const escolhidoVinculo = paraVincular.find((c) => c.id === vinculadoA) ?? null;
 
   // Arquivo acima do limite do bucket nem entra na lista (antes o erro só
   // aparecia depois de enviar, como "anexo com falha").
@@ -140,6 +213,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   // o que falta preencher quando o usuário tenta enviar — em vez de só travar.
   const faltando = useMemo(() => {
     const req = [
+      ...(baseadoId ? [{ id: "campo-complemento", label: "O que é preciso a mais", ok: complemento.trim().length >= MIN_COMPLEMENTO }] : []),
       { id: "campo-assunto",     label: "Título",               ok: !!assunto.trim() },
       { id: "campo-categorias",  label: "Categorias",           ok: categorias.length > 0 },
       { id: "campo-tipo",        label: "Tipo de solicitação",  ok: !!tipo },
@@ -152,7 +226,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       { id: "campo-prazo",       label: "Prazo esperado",       ok: prazoSolicitanteValido(prazoSolicitante) },
     ];
     return req.filter((c) => !c.ok);
-  }, [assunto, categorias, tipo, modulo, moduloOutro, prioridade, descricao, impacto, urgencia, prazoSolicitante]);
+  }, [assunto, categorias, tipo, modulo, moduloOutro, prioridade, descricao, impacto, urgencia, prazoSolicitante, baseadoId, complemento]);
   const podeEnviar = faltando.length === 0;
 
   const irParaCampo = (campoId: string) =>
@@ -162,6 +236,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao(""); setObservacoes("");
     setImpacto(""); setUrgencia(""); setPrazoSolicitante(""); setPrazoManual(false); setModulo(""); setModuloOutro(""); setAmbiente("producao");
     setAfetaUsuarios(""); setArquivos([]);
+    // O vínculo do "baseado nesse" fica: limpar é recomeçar o texto, não desfazer a origem.
+    if (!baseadoId) { setVincular(false); setVinculadoA(null); setBuscaVinculo(""); }
+    setComplemento("");
   };
 
   const enviar = async () => {
@@ -193,7 +270,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       afeta_usuarios: afetaUsuariosParaBanco(afetaUsuarios),
       solicitante_nome: nome !== "—" ? nome : null,
       setor: setor !== "—" ? setor : null,
-    }).select("id, numero").single();
+      vinculado_a: baseadoId ? baseadoId : vincular ? vinculadoA : null,
+      complemento: baseadoId ? complemento.trim() : null,
+    }).select("id, numero, parte").single();
 
     if (error) { setSalvando(false); toast({ title: "Erro ao abrir chamado", description: error.message, variant: "destructive" }); return; }
 
@@ -213,7 +292,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
 
     setSalvando(false);
     toast({
-      title: `Chamado ${data.numero} aberto`,
+      title: `Chamado ${data.numero} aberto${data.parte ? ` — ${rotuloParte(data.parte)}` : ""}`,
       description: falhas.length ? `Anexos com falha: ${falhas.join(", ")}` : "Você receberá um número de protocolo para acompanhar.",
     });
     nav(base);
@@ -320,6 +399,35 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               <p className="text-sm font-semibold">{setor}</p>
             </div>
           </Card>
+
+          {baseadoId && (
+            <Card id="campo-complemento" className="scroll-mt-24 space-y-3 border-primary/40 bg-primary/5 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-sm font-bold text-primary">
+                  <CopyPlus className="h-4 w-4" /> {rotuloParte(parteNova)} — baseado no chamado {chamadoBase ? `#${chamadoBase.numero}` : "anterior"}
+                </p>
+                {chamadoBase && (
+                  <Link to={`${base}/${chamadoBase.id}/acompanhar`} target="_blank" className="text-xs font-semibold text-primary hover:underline">
+                    Ver o chamado anterior
+                  </Link>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                As informações do chamado anterior já estão preenchidas abaixo — ajuste se precisar. Os dois ficam vinculados.
+                Os anexos continuam no chamado anterior; anexe aqui só o que for novo.
+              </p>
+              <div>
+                <Label htmlFor="ch-complemento" className="block text-sm font-semibold">O que é preciso a mais <span className="text-destructive">*</span></Label>
+                <p className="mb-2 mt-0.5 text-xs text-muted-foreground">O que mudou ou o que falta em relação ao que já foi entregue.</p>
+                <Textarea
+                  id="ch-complemento" rows={5} autoFocus
+                  className="min-h-[8rem] resize-y text-sm leading-relaxed"
+                  placeholder="Ex.: além da coluna de comissão, o relatório precisa sair separado por vendedor e com o total do mês."
+                  value={complemento} onChange={(e) => setComplemento(e.target.value)}
+                />
+              </div>
+            </Card>
+          )}
 
           {/* ── 1. Título + descrição + prints (28/09/2026) ──────────────────
               Antes o "Assunto" dividia linha com as categorias e a descrição
@@ -550,6 +658,41 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </div>
             </div>
           </Card>
+
+          {!baseadoId && (
+            <Card className="space-y-3 p-5">
+              <label className="flex cursor-pointer flex-wrap items-center gap-2">
+                <Checkbox checked={vincular} onCheckedChange={(v) => { setVincular(!!v); if (!v) setVinculadoA(null); }} />
+                <span className="flex items-center gap-1.5 text-sm font-bold"><Link2 className="h-4 w-4 text-primary" /> Vincular este chamado a algum existente?</span>
+                <span className="text-xs text-muted-foreground">(opcional)</span>
+              </label>
+              {vincular && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Os chamados ficam conectados como partes da mesma demanda (Parte 1, Parte 2…).</p>
+                  {escolhidoVinculo ? (
+                    <div className="flex items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
+                      <span className="min-w-0 truncate"><span className="font-mono text-xs font-semibold">#{escolhidoVinculo.numero}</span> {escolhidoVinculo.assunto}</span>
+                      <button type="button" aria-label="Trocar o chamado vinculado" onClick={() => setVinculadoA(null)} className="text-muted-foreground hover:text-destructive"><X className="h-4 w-4" /></button>
+                    </div>
+                  ) : (
+                    <>
+                      <Input placeholder="Buscar pelo número ou pelo título…" value={buscaVinculo} onChange={(e) => setBuscaVinculo(e.target.value)} />
+                      <div className="max-h-56 space-y-1 overflow-y-auto">
+                        {filtradosVinculo.length === 0 && <p className="px-1 py-2 text-xs text-muted-foreground">Nenhum chamado encontrado.</p>}
+                        {filtradosVinculo.map((c) => (
+                          <button key={c.id} type="button" onClick={() => setVinculadoA(c.id)}
+                            className="flex w-full items-center justify-between gap-2 rounded border border-border px-3 py-1.5 text-left text-sm hover:border-primary/50">
+                            <span className="min-w-0 flex-1 truncate"><span className="font-mono text-xs font-semibold">#{c.numero}</span> {c.assunto}</span>
+                            <span className="shrink-0 text-[11px] text-muted-foreground">{STATUS_CHAMADO[c.status]?.label ?? c.status}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </Card>
+          )}
 
           {faltando.length > 0 && (
             <Card className={`border-warning/40 bg-warning/5 p-3 ${erroValidacao ? "animate-shake" : ""}`}>

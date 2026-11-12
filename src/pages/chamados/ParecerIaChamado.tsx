@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDataHora } from "./types";
 import { fmtHorasGastas } from "@/lib/chamados/horasGastas";
+import { lucroDaEntrega } from "@/lib/sistemas/bonificacaoColetiva";
 import {
   precificarPorHorasGastas, valorMedioMercado, valorRealGasto, HORAS_MES_CLT, SALARIO_MENSAL_DEV,
 } from "@/lib/chamados/parecerHorasGastas";
@@ -210,7 +211,9 @@ export function ResumoParecerIaLinha({ resumo }: { resumo?: ResumoParecerIa }) {
   );
 }
 
-export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstimadas = false }: {
+export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstimadas = false, concluido = true }: {
+  /** 12/11/2026: o parecer sai na conclusão, sem depender de horas gastas. */
+  concluido?: boolean;
   chamadoId: string;
   podeGerar: boolean;
   /** CHAMADO_SISTEMA.horas_gastas — sem elas, não há parecer. */
@@ -243,7 +246,14 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
   const peloEscopo = !!conta?.pelasHorasGastas && conta.precos.some((p) => p.perfil !== "interno" && Number(p.horas) > Number(conta.horas));
   // Com horas gastas, o card "Equipe interna" vira o valor real gasto
   // conosco: hora do salário × horas, sem complexidade (30/10/2026).
-  const real = valorRealGasto(reais);
+  // 12/11/2026: sem horas informadas, o custo real usa as horas que a I.A
+  // estimou para a equipe interna — e o card mostra que são estimadas.
+  const horasInternoIa = Number(conta?.precos.find((p) => p.perfil === "interno")?.horas) || null;
+  const real = valorRealGasto(reais ?? horasInternoIa);
+  const realEstimado = reais == null && real != null;
+  // Lucro para a empresa = valor de mercado (software house) − custo real (12/11/2026).
+  const mercadoSh = Number(conta?.precos.find((p) => p.perfil === "software_house")?.valor);
+  const lucro = conta && Number.isFinite(mercadoSh) ? lucroDaEntrega(mercadoSh, reais, horasInternoIa) : null;
   const fmtCentavos = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   const gerar = async () => {
@@ -265,7 +275,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
   // Valores fixos (29/10/2026, Pablo: "toda vez que clica em gerar de novo
   // altera os valores, perdendo a credibilidade"): o botão só existe enquanto
   // NÃO há parecer pronto — nunca gerou, ou a I.A falhou. Pronto, não muda.
-  const botao = podeGerar && reais != null && parecer?.status !== "pronto" && parecer?.status !== "pendente" && (
+  const botao = podeGerar && concluido && parecer?.status !== "pronto" && parecer?.status !== "pendente" && (
     <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={gerar} disabled={gerando}>
       {gerando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
       Gerar parecer
@@ -291,8 +301,8 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
         <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> A I.A está avaliando o chamado…</p>
       ) : !parecer ? (
         <p className="text-xs text-muted-foreground">
-          {reais == null
-            ? "O parecer da I.A sai quando o desenvolvedor concluir o chamado e informar as horas gastas."
+          {!concluido
+            ? "O parecer da I.A sai quando o chamado é concluído."
             : `Este chamado ainda não tem parecer.${podeGerar ? " Clique em “Gerar parecer”." : ""}`}
         </p>
       ) : parecer.status === "pendente" ? (
@@ -322,18 +332,29 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
               <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Complexidade</p>
               <SeloComplexidade nivel={parecer.complexidade_nivel} rotulo={parecer.complexidade_rotulo} />
             </div>
+            {lucro?.lucro != null && (
+              <div title="Valor de mercado (software house) − custo real conosco">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Lucro para a empresa</p>
+                <p className="text-2xl font-bold text-success">{fmtCentavos(lucro.lucro)}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {fmtCentavos(mercadoSh)} de mercado − {fmtCentavos(lucro.custoInterno ?? 0)} de custo real
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="grid gap-2 md:grid-cols-3">
             {conta!.precos.map((p) => p.perfil === "interno" && real ? (
               <div key={p.perfil} className="rounded-lg border border-success/40 bg-success/10 p-3">
-                <p className="text-xs font-semibold text-success">Valor real gasto (equipe interna)</p>
+                <p className="text-xs font-semibold text-success">Valor real gasto (equipe interna){realEstimado ? " — estimado" : ""}</p>
                 <p className="mt-1 text-lg font-bold text-success">{fmtCentavos(real.valor)}</p>
                 <p className="text-[11px] font-medium text-muted-foreground">
                   {fmtCentavos(real.valor_hora)}/h × {fmtHorasGastas(real.horas)} h
                 </p>
                 <p className="mt-1.5 text-[11px] leading-snug">
-                  O que o chamado custou de fato: as horas gastas pelo valor da hora do nosso salário, sem fator de complexidade.
+                  {realEstimado
+                    ? "Quanto o chamado custou conosco: as horas que a I.A estimou para a equipe interna pelo valor da hora do nosso salário, sem fator de complexidade."
+                    : "O que o chamado custou de fato: as horas gastas pelo valor da hora do nosso salário, sem fator de complexidade."}
                 </p>
                 <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
                   Hora = salário mensal de {fmtCentavos(SALARIO_MENSAL_DEV)} ÷ {HORAS_MES_CLT} h (jornada CLT de 44 h semanais).

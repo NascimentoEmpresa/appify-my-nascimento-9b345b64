@@ -16,6 +16,7 @@
 //     pesos para 100 (com tudo presente, é exatamente Σ nota × peso ÷ 100).
 // A tela mostra as pendências para o gestor completar antes de fechar o mês.
 // =====================================================================
+import { valorRealGasto } from "@/lib/chamados/parecerHorasGastas";
 
 export type Criterio = "qualidade" | "satisfacao" | "prazo" | "dificuldade" | "valor";
 export const CRITERIOS: Criterio[] = ["qualidade", "satisfacao", "prazo", "dificuldade", "valor"];
@@ -526,6 +527,9 @@ export interface LinhaEntregaRpc {
   motivo_exclusao: string | null;
   observacao: string | null;
   avaliado_em: string | null;
+  /** mig 20261112001000: horas supostas (não informadas) e horas da equipe interna estimadas pela I.A. */
+  horas_gastas_estimadas?: boolean | null;
+  ia_horas_interno?: number | string | null;
 }
 
 /** Entrega com a origem de cada dado, para a tela mostrar o que é sugestão. */
@@ -542,6 +546,12 @@ export interface EntregaDetalhada extends EntregaBonificacao {
   motivoExclusao: string | null;
   observacao: string | null;
   avaliadoEm: string | null;
+  /** Horas que a equipe interna levou: as informadas de verdade, senão as que a I.A estimou. */
+  horasInternas: number | null;
+  /** Custo real conosco: horasInternas × hora do salário (sem fator de complexidade). */
+  custoInterno: number | null;
+  /** Lucro para a empresa: valor de mercado − custo real. */
+  lucro: number | null;
 }
 
 const numOuNull = (v: unknown): number | null => {
@@ -594,7 +604,28 @@ export function entregaDaLinha(l: LinhaEntregaRpc): EntregaDetalhada {
     motivoExclusao: l.motivo_exclusao,
     observacao: l.observacao,
     avaliadoEm: l.avaliado_em,
+    ...lucroDaEntrega(
+      valoresAvaliados ? numOuNull(l.valor_mercado) : numOuNull(l.ia_valor_mercado),
+      l.horas_gastas_estimadas ? null : numOuNull(l.horas_gastas),
+      numOuNull(l.ia_horas_interno),
+    ),
   };
+}
+
+/**
+ * LUCRO DA ENTREGA (12/11/2026, Pablo: "quanto vale cada um, quanto de lucro
+ * dá"). Lucro = valor de mercado (o que custaria contratar uma software house)
+ * − custo real conosco. Custo real = horas da equipe interna × hora do nosso
+ * salário (valorRealGasto, a mesma conta do card verde do parecer). Horas: as
+ * informadas pelo dev quando existem de verdade; senão, as que a I.A estimou
+ * para a equipe interna. Sem valor de mercado ou sem horas, não há lucro.
+ */
+export function lucroDaEntrega(valorMercado: number | null, horasInformadas: number | null, horasIa: number | null):
+  { horasInternas: number | null; custoInterno: number | null; lucro: number | null } {
+  const horas = horasInformadas && horasInformadas > 0 ? horasInformadas : horasIa && horasIa > 0 ? horasIa : null;
+  const custo = horas ? valorRealGasto(horas)?.valor ?? null : null;
+  const lucro = valorMercado !== null && custo !== null ? Math.round((valorMercado - custo) * 100) / 100 : null;
+  return { horasInternas: horas, custoInterno: custo, lucro };
 }
 
 /** O que falta para a nota da entrega estar completa (para a lista de pendências). */

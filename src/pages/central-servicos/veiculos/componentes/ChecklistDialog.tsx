@@ -40,6 +40,12 @@ import {
 //   · CHEGADA ganha a prestação: vídeo completo do veículo, água e óleo
 //     verificados, avaria (sim/não + descrição) e "não abasteci" (quando não
 //     há nota de combustível).
+//
+// 12/11/2026 (mig 20261112173000, Senilton): SAÍDA ganha a marcação
+// obrigatória "Revisão de água e óleo OK" (o banco recusa sem ela); na
+// CHEGADA o vídeo virou opcional e água/óleo saíram de lá. O abastecimento
+// passou a ser a pergunta "Houve abastecimento?" no modal da viagem — o
+// "não abasteci" daqui continua valendo como Não.
 // =====================================================================
 
 const agoraLocal = () => {
@@ -142,10 +148,19 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
   const kmDif = ehSaidaAqui && kmNum != null && ultimoKm.data ? kmNum - ultimoKm.data.km : null;
   const faltaPrestacao = !ehSaidaAqui && agendamento && exige
     ? faltandoPrestacao(
-        { km_inicial: agendamento.km_inicial ?? null, km_final: agendamento.km_final ?? (kmNum ?? null), sem_abastecimento: semAbastecimento },
-        { video_veiculo: videoNovo ? "novo" : checklist?.video_veiculo ?? null, agua_verificada: agua, oleo_verificado: oleo, avaria, avaria_descricao: avariaDesc },
+        {
+          km_inicial: agendamento.km_inicial ?? null, km_final: agendamento.km_final ?? (kmNum ?? null), sem_abastecimento: semAbastecimento,
+          // Desmarcar "não abasteci" depois de responder Não volta a "sem resposta" (trigger do banco).
+          houve_abastecimento: semAbastecimento ? false : agendamento.houve_abastecimento === false ? null : agendamento.houve_abastecimento ?? null,
+        },
+        { avaria, avaria_descricao: avariaDesc },
         (notas.data ?? 0) > 0)
     : [];
+  // Revisão de água e óleo OK: obrigatória no checklist de SAÍDA desde
+  // 12/11/2026 (o banco recusa — trg_cs_veic_checklist_agua_oleo). Checklist
+  // de saída antigo (agua_oleo_exigido = false) não é cobrado.
+  const aguaOleoObrigatorio = ehSaidaAqui && exige && (checklist ? checklist.agua_oleo_exigido !== false : true);
+  const aguaOleoFaltando = aguaOleoObrigatorio && !(agua && oleo);
 
   const mudou =
     Object.keys(novasUnicas).length > 0 || interiorNovas.length > 0 || defeitoNovas.length > 0 ||
@@ -174,8 +189,8 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
       defeitoMantidas,
       defeitoNovas,
       videoNovo,
-      extra: ehSaidaAqui ? undefined : {
-        agua_verificada: agua, oleo_verificado: oleo,
+      // Água e óleo moraram na chegada até 12/11/2026; agora a marcação é da saída.
+      extra: ehSaidaAqui ? { agua_verificada: agua, oleo_verificado: oleo } : {
         ...(avaria !== null ? { avaria, avaria_descricao: avariaDesc } : {}),
         sem_abastecimento: semAbastecimento,
       },
@@ -318,6 +333,15 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
               </div>
             </section>
 
+            {ehSaida && (
+              <label className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium",
+                aguaOleoFaltando ? "border-amber-300 bg-amber-50/60 dark:bg-amber-500/10" : "border-emerald-500/40 bg-emerald-500/5")}>
+                <Checkbox checked={agua && oleo} disabled={!podeEditar} aria-label="Revisão de água e óleo OK"
+                          onCheckedChange={(x) => { setAgua(x === true); setOleo(x === true); }} />
+                Revisão de água e óleo OK{aguaOleoObrigatorio && <span className="text-destructive"> *</span>}
+              </label>
+            )}
+
             <section className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="text-sm font-bold">
@@ -343,16 +367,9 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
             {!ehSaida && (
               <section className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
                 <h4 className="text-sm font-bold">Prestação da viagem {exige && <span className="font-normal text-muted-foreground">(obrigatória para o próximo agendamento sair)</span>}</h4>
+                {/* Vídeo opcional desde 12/11/2026; água e óleo foram para a saída. */}
                 <SlotVideo id={`ck-${tipo}-video`} salvo={checklist?.video_veiculo ?? null} novo={videoNovo} podeEditar={podeEditar}
                   onEscolher={(f) => setVideoNovo(f)} />
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    <Checkbox checked={agua} disabled={!podeEditar} onCheckedChange={(v) => setAgua(v === true)} aria-label="Água verificada" /> Verifiquei a água
-                  </label>
-                  <label className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    <Checkbox checked={oleo} disabled={!podeEditar} onCheckedChange={(v) => setOleo(v === true)} aria-label="Óleo verificado" /> Verifiquei o óleo
-                  </label>
-                </div>
                 <div className="space-y-1.5">
                   <p className="text-sm font-medium">O veículo tem alguma possível avaria?</p>
                   <div className="flex gap-2" role="radiogroup" aria-label="Possível avaria">
@@ -371,7 +388,7 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
                 <label className="flex items-start gap-2 text-sm">
                   <Checkbox checked={semAbastecimento} disabled={!podeEditar} onCheckedChange={(v) => setSemAbastecimento(v === true)} className="mt-0.5" aria-label="Não abasteci nesta viagem" />
                   <span>Não abasteci nesta viagem <span className="block text-xs text-muted-foreground">
-                    {(notas.data ?? 0) > 0 ? `${notas.data} nota(s) de combustível anexada(s).` : "Se abasteceu, anexe a foto da nota em Viagem › Abastecimento."}</span></span>
+                    {(notas.data ?? 0) > 0 ? `${notas.data} nota(s) de combustível anexada(s).` : "Se abasteceu, responda Sim em Viagem › Houve abastecimento? e anexe a foto da nota."}</span></span>
                 </label>
                 {exige && (faltaPrestacao.length > 0 ? (
                   <p className="text-xs text-amber-800 dark:text-amber-300"><b>Falta na prestação:</b> {faltaPrestacao.join(", ")}.</p>
@@ -408,7 +425,8 @@ export function ChecklistDialog({ agendamento, tipo, checklist, aberto, onFechar
           <DialogFooter>
             <Button variant="outline" onClick={onFechar}>Fechar</Button>
             {kmObrigatorioFaltando && !bloqueado && <span className="mr-auto self-center text-xs text-destructive">Informe o KM do painel para iniciar.</span>}
-            <Button className="gap-1.5" disabled={!mudou || salvar.isPending || bloqueado || kmObrigatorioFaltando} onClick={enviar}>
+            {!kmObrigatorioFaltando && aguaOleoFaltando && !bloqueado && <span className="mr-auto self-center text-xs text-destructive">Marque a revisão de água e óleo OK.</span>}
+            <Button className="gap-1.5" disabled={!mudou || salvar.isPending || bloqueado || kmObrigatorioFaltando || aguaOleoFaltando} onClick={enviar}>
               {salvar.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {salvar.isPending ? "Enviando fotos…" : "Salvar checklist"}
             </Button>
@@ -484,7 +502,7 @@ function SlotVideo({ id, salvo, novo, podeEditar, onEscolher }: {
         {ok ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <Video className="h-5 w-5 text-muted-foreground" />}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">Vídeo completo do veículo</p>
+        <p className="text-sm font-medium">Vídeo completo do veículo <span className="font-normal text-muted-foreground">(opcional)</span></p>
         <p className="truncate text-xs text-muted-foreground">
           {novo ? `${novo.name} (${(novo.size / 1048576).toFixed(0)} MB, a enviar)` : salvo ? (
             <button type="button" className="font-semibold text-primary underline" onClick={() => abrirFotoChecklist(salvo)}>Enviado — assistir</button>

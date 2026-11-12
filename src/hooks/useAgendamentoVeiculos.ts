@@ -108,6 +108,8 @@ export interface Agendamento {
   km_inicial?: number | null;
   km_final?: number | null;
   sem_abastecimento?: boolean | null;
+  /** "Houve abastecimento?" do modal da viagem (mig 20261112173000): null = sem resposta. */
+  houve_abastecimento?: boolean | null;
   /** false = viagem anterior a 10/11/2026: prestação não cobrada. */
   prestacao_exigida?: boolean | null;
   km_anterior?: number | null;
@@ -516,6 +518,24 @@ export interface Viagem {
   rodados: number | null;
   contratos: ContratoSimples[];
   abastecimentos: Abastecimento[];
+  // ── Ajustes do Senilton (12/11/2026, mig 20261112173000) ──
+  /** KM de chegada da última viagem FECHADA do veículo (qualquer motorista) — sugestão do KM inicial. */
+  km_sugerido?: { km: number; numero: number; condutor: string | null; em: string | null } | null;
+  /** "Houve abastecimento?": true/false; null = sem resposta. Nota anexada vale Sim. */
+  houve_abastecimento?: boolean | null;
+  /** false = viagem anterior a 10/11/2026 (prestação/KM obrigatório não cobrados). */
+  prestacao_exigida?: boolean;
+  /** O que falta para concluir (mesma régua de faltandoPrestacao). */
+  prestacao_faltando?: string[];
+  /** Fotos/vídeo do estado do veículo (opcional). */
+  midias?: MidiaViagem[];
+  /** Observação livre sobre o agendamento. */
+  relato?: string | null; relato_em?: string | null; relato_por_nome?: string | null;
+}
+
+export interface MidiaViagem {
+  id: string; storage_path: string; nome_arquivo: string; tipo: string | null; tamanho: number | null;
+  criado_por_nome: string | null; created_at: string;
 }
 
 export interface KmPendente {
@@ -529,6 +549,32 @@ export async function subirArquivoVeiculo(file: File, pasta: string): Promise<{ 
   const { error } = await supabase.storage.from(BUCKET_VEICULOS).upload(path, file, { contentType: file.type || undefined });
   if (error) throw new Error(`Não deu para enviar "${file.name}": ${error.message}`);
   return { path, nome: file.name, tipo: file.type || "", tamanho: file.size };
+}
+
+/**
+ * Fotos/vídeo do estado do veículo (12/11/2026): vão para o bucket do
+ * checklist (cs-veiculos-checklist aceita vídeo de até 200 MB; o cs-veiculos
+ * para em 25 MB), na pasta <agendamento>/midia/ — a policy do bucket exige
+ * o agendamento no começo do caminho.
+ */
+export const BUCKET_MIDIA_VIAGEM = "cs-veiculos-checklist";
+export const MIDIA_MAX_MB = 200;
+
+export async function subirMidiaViagem(agendamentoId: string, file: File): Promise<{ path: string; nome: string; tipo: string; tamanho: string }> {
+  if (file.size > MIDIA_MAX_MB * 1024 * 1024) {
+    throw new Error(`"${file.name}" tem mais de ${MIDIA_MAX_MB} MB. Grave o vídeo em resolução menor (720p) e tente de novo.`);
+  }
+  const limpo = file.name.replace(/[^\w.-]+/g, "_");
+  const path = `${agendamentoId}/midia/${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${limpo}`;
+  const { error } = await supabase.storage.from(BUCKET_MIDIA_VIAGEM).upload(path, file, { contentType: file.type || undefined });
+  if (error) throw new Error(`Não deu para enviar "${file.name}": ${error.message}`);
+  return { path, nome: file.name, tipo: file.type || "", tamanho: String(file.size) };
+}
+
+export async function abrirMidiaViagem(path: string): Promise<void> {
+  const { data, error } = await supabase.storage.from(BUCKET_MIDIA_VIAGEM).createSignedUrl(path, VALIDADE_LINK_S);
+  if (error || !data?.signedUrl) { toast.error("Não consegui abrir o arquivo."); return; }
+  window.open(data.signedUrl, "_blank", "noopener");
 }
 
 /** Abre foto/nota do bucket privado numa aba. */
@@ -695,5 +741,66 @@ export function useRegistrarAbastecimento() {
     },
     onSuccess: (_d, v) => { invalidar(v.id); toast.success("Nota de abastecimento anexada."); },
     onError: (e: any) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+// =====================================================================
+// Ajustes do modal da viagem pedidos pelo Senilton (12/11/2026,
+// mig 20261112173000): "Houve abastecimento?", fotos/vídeo do estado do
+// veículo e a observação livre. A obrigatoriedade mora nas RPCs.
+// =====================================================================
+
+/** Responde "Houve abastecimento?". Sim → a nota passa a ser cobrada; Não com nota anexada o banco recusa. */
+export function useResponderAbastecimento() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; houve: boolean }) => {
+      const { error } = await sb.rpc("cs_veiculo_abastecimento_responder", { p_agendamento: v.id, p_houve: v.houve });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => {
+      invalidar(v.id);
+      toast.success(v.houve ? "Registrado: houve abastecimento. Anexe a foto da nota." : "Registrado: não houve abastecimento.");
+    },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+/** Fotos/vídeo do estado do veículo (opcional): sobe no bucket do checklist (aceita vídeo) e registra na viagem. */
+export function useAnexarMidiaViagem() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; arquivos: File[] }) => {
+      const enviados = [];
+      for (const f of v.arquivos) enviados.push(await subirMidiaViagem(v.id, f));
+      const { error } = await sb.rpc("cs_veiculo_midia_registrar", { p_agendamento: v.id, p_arquivos: enviados });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success(v.arquivos.length > 1 ? "Arquivos anexados." : "Arquivo anexado."); },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+export function useExcluirMidiaViagem() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; midiaId: string }) => {
+      const { error } = await sb.rpc("cs_veiculo_midia_excluir", { p_midia: v.midiaId });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Arquivo retirado da viagem."); },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+export function useSalvarRelatoViagem() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; texto: string }) => {
+      const { error } = await sb.rpc("cs_veiculo_relato_salvar", { p_agendamento: v.id, p_texto: v.texto });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Observação salva."); },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
   });
 }

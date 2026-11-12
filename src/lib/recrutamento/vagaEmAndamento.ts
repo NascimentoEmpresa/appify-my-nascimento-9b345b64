@@ -19,6 +19,7 @@
 
 /** Pendentes de aprovação (Operacional/Analista/Diretoria) e do RH (conferência do Recrutamento). */
 export const STATUS_VAGA_PENDENTE_APROVACAO = [
+  "Pendente Gerente Operações", // #0848: toda Admissão nova passa pelo Gerente de Operações
   "Pendente Analista", // na tela: "Pendente Operacional"
   "Pendente Operacional", // legado, antes da mig 287
   "Pendente Diretoria",
