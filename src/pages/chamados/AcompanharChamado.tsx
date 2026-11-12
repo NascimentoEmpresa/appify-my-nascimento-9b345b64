@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, CheckCircle2, MessageSquarePlus, Paperclip, RotateCcw, Star, XCircle } from "lucide-react";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { ChamadosVinculados } from "./ChamadosVinculados";
 import { ConfirmarConclusaoDialog } from "./ConfirmarConclusaoDialog";
 import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
@@ -193,6 +194,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Prazo esperado">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
+
+          {/* Parte 1, Parte 2… (mig 20261112002000). */}
+          <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `${base}/${cid}/acompanhar`} />
 
           <InformacoesGithubChamado eventos={eventos} />
 
