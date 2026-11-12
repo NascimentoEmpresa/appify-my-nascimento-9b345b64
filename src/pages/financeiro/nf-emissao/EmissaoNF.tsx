@@ -44,6 +44,7 @@ import {
   useEnviarNfEmissao,
   useReabrirNfCancelada,
   useExcluirNfEmissao,
+  useExcluirNfCancelada,
   useItensNfEmissao,
   useAnexosNfEmissao,
   baixarAnexoNfEmissao,
@@ -933,10 +934,6 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     // preenchimento pulada, apesar de aparecerem como campos normais na tela.
     if (!dataEmissao) return "Informe a Data de Emissão.";
     if (!descricao.trim()) return "Informe a Descrição.";
-    // Pedido do Ruan (Financeiro): Código de Serviço, CNAE e Código NBS são obrigatórios na nota.
-    if (!codigoServico.trim()) return "Informe o Código de Serviço.";
-    if (!cnae.trim()) return "Informe o CNAE.";
-    if (!nbs.trim()) return "Informe o Código NBS.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
     // SIS-2026-0633: linha de faltas por dias precisa de item (local) e de valor do posto.
     if (faltasPorDias) {
@@ -1208,15 +1205,15 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
               <Textarea ref={descricaoRef} rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
             </div>
             <div>
-              <Label>Código de Serviço <span className="text-destructive">*</span></Label>
+              <Label>Código de Serviço</Label>
               <Input value={codigoServico} onChange={(e) => setCodigoServico(e.target.value)} placeholder="Ex: 17.05" />
             </div>
             <div>
-              <Label>CNAE <span className="text-destructive">*</span></Label>
+              <Label>CNAE</Label>
               <Input value={cnae} onChange={(e) => setCnae(e.target.value)} />
             </div>
             <div>
-              <Label>Código NBS <span className="text-destructive">*</span></Label>
+              <Label>Código NBS</Label>
               <Input value={nbs} onChange={(e) => setNbs(e.target.value)} />
             </div>
           </div>
@@ -1397,7 +1394,9 @@ function DetalhesNfDialog({
   const enviar = useEnviarNfEmissao();
   const reabrir = useReabrirNfCancelada();
   const excluir = useExcluirNfEmissao();
+  const excluirCancelada = useExcluirNfCancelada();
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [confirmandoExclusaoCancelada, setConfirmandoExclusaoCancelada] = useState(false);
   const [confirmandoReabertura, setConfirmandoReabertura] = useState(false);
   // Cancelada pelo Financeiro (validação rejeitou) e ainda sem pagamento nem
   // cancelamento/substituição no site/Domínio: a analista pode corrigir e reenviar.
@@ -1440,6 +1439,19 @@ function DetalhesNfDialog({
       onClose();
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao enviar NF.");
+    }
+  }
+
+  // [SEM-CHAMADO] (Ruan): excluir a NF cancelada pelo Financeiro (vai para a lixeira; o Financeiro restaura).
+  async function handleExcluirCancelada() {
+    if (!nf) return;
+    try {
+      await excluirCancelada.mutateAsync(nf.id);
+      toast.success("NF excluída.");
+      setConfirmandoExclusaoCancelada(false);
+      onClose();
+    } catch (e) {
+      toast.error((e as { message?: string })?.message ?? "Erro ao excluir NF.");
     }
   }
 
@@ -1664,6 +1676,11 @@ function DetalhesNfDialog({
             Fechar
           </Button>
           {podeReabrir && (
+            <Button variant="destructive" onClick={() => setConfirmandoExclusaoCancelada(true)} disabled={excluirCancelada.isPending}>
+              Excluir
+            </Button>
+          )}
+          {podeReabrir && (
             <Button onClick={() => setConfirmandoReabertura(true)} disabled={reabrir.isPending}>
               {reabrir.isPending ? "Reabrindo..." : "Corrigir e reenviar"}
             </Button>
@@ -1696,6 +1713,23 @@ function DetalhesNfDialog({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleReabrir}>Reabrir e editar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmandoExclusaoCancelada} onOpenChange={setConfirmandoExclusaoCancelada}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir esta NF cancelada?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A nota some da Emissão e dos relatórios e vai para a lixeira — o Financeiro ainda consegue restaurá-la. Para corrigir e reenviar, use “Corrigir e reenviar” em vez de excluir.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={handleExcluirCancelada}>
+              Excluir
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
