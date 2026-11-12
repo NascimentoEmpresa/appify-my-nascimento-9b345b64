@@ -231,3 +231,8 @@ verify_jwt = true
 # usuário + has_screen_access('email','incluir') dentro da function.
 [functions.email-enviar]
 verify_jwt = true
+
+# Chat da I.A do Comparativo individual da Bonificação (12/11/2026); a
+# permissão (sistemas_bonificacao + visualizar) é conferida lá dentro.
+[functions.bonificacao-ia]
+verify_jwt = true
