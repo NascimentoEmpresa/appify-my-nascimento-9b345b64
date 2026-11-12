@@ -31,6 +31,22 @@ import {
 } from "@/lib/chamados/vinculos";
 
 const TITULO_MAX = 120;
+
+// Leituras do vínculo (mig 20261112002000) — as colunas e a RPC novas ainda
+// não estão nos tipos gerados do Supabase. Cliente com o mínimo tipado, em vez
+// de `as any` (a catraca do lint não deixa o arquivo ganhar erro novo).
+type Resposta = { data: unknown; error: { message: string } | null };
+interface Consulta extends PromiseLike<Resposta> {
+  select(colunas: string): Consulta;
+  eq(coluna: string, valor: unknown): Consulta;
+  order(coluna: string, opcoes: { ascending: boolean }): Consulta;
+  limit(n: number): Consulta;
+  maybeSingle(): Consulta;
+}
+const dbVinculo = supabase as unknown as {
+  from(tabela: "CHAMADO_SISTEMA"): Consulta;
+  rpc(fn: "chamado_vinculos", args: { p_chamado_id: string }): PromiseLike<Resposta>;
+};
 const TAMANHO_MAX_MB = 20; // igual ao limite do bucket (mesmo valor do ChatChamado)
 
 // O que uma boa descrição responde — aparece como guia acima do campo, e o
@@ -113,12 +129,12 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     queryKey: ["chamado-baseado", baseadoId],
     enabled: !!baseadoId,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA")
+      const { data, error } = await dbVinculo.from("CHAMADO_SISTEMA")
         .select("id, numero, assunto, categorias, tipo_solicitacao, prioridade, descricao, observacoes_solicitante, impacto_trabalho, urgencia, prazo_solicitante, modulo_sistema, modulo_sistema_outro, ambiente, afeta_usuarios")
-        .eq("id", baseadoId).maybeSingle();
+        .eq("id", baseadoId as string).maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      const { data: serie } = await (supabase as any).rpc("chamado_vinculos", { p_chamado_id: baseadoId });
+      const { data: serie } = await dbVinculo.rpc("chamado_vinculos", { p_chamado_id: baseadoId as string });
       return { chamado: data as ChamadoBase, parte: proximaParte((serie ?? []) as ParteSerie[]) };
     },
   });
@@ -144,7 +160,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     queryKey: ["chamados-para-vincular"],
     enabled: vincular && !baseadoId,
     queryFn: async () => {
-      const { data } = await (supabase as any).from("CHAMADO_SISTEMA")
+      const { data } = await dbVinculo.from("CHAMADO_SISTEMA")
         .select("id, numero, assunto, status").order("created_at", { ascending: false }).limit(300);
       return (data ?? []) as { id: string; numero: string; assunto: string; status: string }[];
     },

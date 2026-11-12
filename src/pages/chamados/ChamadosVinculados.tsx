@@ -14,13 +14,18 @@ import { rotuloParte, type ParteSerie } from "@/lib/chamados/vinculos";
 // O "O que é preciso a mais" de cada parte fica aqui também — é o que o dev
 // precisa ler além da descrição copiada do chamado anterior.
 // =====================================================================
+// RPC nova (mig 20261112002000), ainda fora dos tipos gerados: tipada aqui em vez de `as any`.
+const rpcVinculos = supabase as unknown as {
+  rpc(fn: "chamado_vinculos", args: { p_chamado_id: string }): PromiseLike<{ data: ParteSerie[] | null; error: { message: string } | null }>;
+};
+
 export function ChamadosVinculados({ chamadoId, hrefDe }: { chamadoId: string; hrefDe: (id: string) => string }) {
   const { data: serie = [] } = useQuery({
     queryKey: ["chamado-vinculos", chamadoId],
     queryFn: async () => {
-      const { data, error } = await (supabase as any).rpc("chamado_vinculos", { p_chamado_id: chamadoId });
+      const { data, error } = await rpcVinculos.rpc("chamado_vinculos", { p_chamado_id: chamadoId });
       if (error) throw error;
-      return (data ?? []) as ParteSerie[];
+      return data ?? [];
     },
   });
   if (serie.length < 2) return null;
