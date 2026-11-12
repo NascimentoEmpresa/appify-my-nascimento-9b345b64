@@ -130,8 +130,11 @@ consumo/dia       = peças pedidas na janela ÷ dias em que o item existia
 segurança         = z(nível de serviço) × oscilação do consumo no prazo de reposição
 pedir quando      = consumo/dia × prazo de reposição + segurança
 alvo saudável     = consumo/dia × (prazo de reposição + intervalo entre compras) + segurança
-comprar           = alvo − o que está em casa − o que já está vindo
+comprar           = alvo + pedidos pendentes por falta − o que está em casa − o que já está em compra
 ```
+
+(Até 12/11/2026 era `alvo − em casa − o que já está vindo`; ver a seção
+"Pedidos pendentes, giro de 3 meses e já em compra" abaixo.)
 
 A I.A **lê** esses números e escreve a leitura: o que priorizar, o que
 liquidar, o que mudou no mês, onde desconfiar. Ela não arredonda nem inventa
@@ -142,6 +145,61 @@ fornecedor. Se tivesse saído de um modelo de linguagem, seria irreprodutível �
 rodaria de novo amanhã e daria outro valor, e não haveria como defender o
 pedido. Cada linha da tabela tem um botão que abre a conta por extenso, com os
 números daquele item. Foi isso que ele chamou de **previsibilidade**.
+
+## Pedidos pendentes, giro de 3 meses e já em compra (Cássio, SIS-2026-0855)
+
+No painel **"Item por item: quanto ter, quanto tem e quanto comprar"**, as
+colunas *Vindo* e *Aguardando compra* viraram três, seguindo o fluxo que ele
+descreveu: ESTOQUE → NECESSIDADE DE GIRO MENSAL → REPOSIÇÃO.
+
+| Coluna | O que soma | O que NÃO entra |
+|---|---|---|
+| **Pedidos pendentes** | Peças que pedidos **já separados** (Aguardando compra, Aguardando envio, Retirado, Despachado parcial) ainda esperam por falta de estoque, somadas de todos os pedidos, sem importar colaborador, posto ou contrato. Desconta o que já saiu e o que está reservado. | Pedido em preparação ou em separação (o estoque ainda pode atender); Despachado sem nenhuma baixa; cancelado; contrato encerrado; pedido anterior ao início da baixa por item. |
+| **Giro 3 meses** | Peças que **de fato saíram** do estoque para pedidos nos últimos 3 meses (janela fixa, não segue o seletor "Histórico usado"). | Saída sem pedido; pedido de contrato encerrado. Devolução não é descontada. |
+| **Já em compra** | Pedido de compra **enviado** ao fornecedor e ainda não recebido + solicitação do **Malote em cotação**. | Malote que já foi para pagamento sem pedido emitido no sistema (ver abaixo). |
+
+E a conta de **Comprar** mudou:
+
+```
+comprar = alvo + pedidos pendentes − em casa − já em compra
+```
+
+- **Pedidos pendentes somam** porque o que chega atende primeiro quem está
+  esperando. Sem isso, a compra repunha o alvo, as peças iam para os pedidos
+  parados e a prateleira nunca chegava ao alvo.
+- **Malote em cotação desconta**, o que revoga a regra de 06/11 ("não altera a
+  compra sugerida"). Cotação reprovada ou cancelada sai do filtro e a compra
+  volta a subir sozinha.
+- Cobertura, situação e ponto de pedido **não mudaram**: continuam olhando só
+  o que está em casa.
+
+A dica da célula *Já em compra* mostra a divisão (pedido enviado × Malote em
+cotação) e o **complemento**: dos N pendentes, quantos ainda não estão em
+compra. É o exemplo dele: dez pedidos somam 4 camisetas M e as 4 já foram
+compradas; os pedidos sobem para quinze e o pendente vai a 6, então só as 2
+de diferença precisam de compra nova.
+
+A coluna *Giro 3 meses* fica **abaixo** do *Consumo/mês* enquanto o estoque
+estiver baixo: ela mede o que o estoque conseguiu entregar, não o que foi
+pedido. Ele mesmo previu isso no chamado; com o estoque ajustado, a distância
+entre as duas mostra quanto ter de mínimo e de máximo.
+
+### O buraco depois da aprovação no Malote
+
+Em 12/11/2026 nenhum pedido de compra do sistema (`/app/suprimentos/pedidos-compra`)
+tinha sido enviado, e nenhum recebimento de NF estava ligado a pedido. As
+compras seguem pelo Malote até o pagamento. O Malote só conta como "já em
+compra" até a cotação aprovada; quando vai para pagamento **sem** o pedido ter
+sido emitido no sistema, a quantidade sai da coluna e o Comprar volta a pedir
+o que já foi pago e ainda não chegou.
+
+O fluxo que fecha a conta é o que o Cássio descreveu no chamado: depois da
+cotação aprovada, **emitir o pedido em Pedidos de Compra**. A partir daí ele
+conta como "a receber" até a NF ser conferida em **Recebimentos**, quando sai
+da coluna e entra no estoque.
+
+Migration: `20261113210000_sis_2026_0855_estoque_saudavel_pendentes_giro_compra.sql`.
+É uma costura sobre a função instalada e não mexe em dado nenhum.
 
 ## Três escolhas que mudam o número
 

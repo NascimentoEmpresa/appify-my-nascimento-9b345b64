@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   Banknote,
@@ -77,6 +77,7 @@ import {
   classeSituacao,
   coberturaComTransito,
   coberturaDeValor,
+  complementoDosPedidos,
   csvDaCompra,
   explicarAlvo,
   explicarCompra,
@@ -357,7 +358,7 @@ export function EstoqueSaudavel({
         <GraficoFaixaPorItem itens={dados.itens} />
         <p className="mt-2 text-[11px] text-slate-500">
           Aguardando compra: aguardando cotação, cotação realizada ou aprovada, até o envio ao fornecedor.
-          Essas quantidades ainda não entram no disponível nem reduzem a compra sugerida.
+          Essas quantidades não entram no disponível, mas já são descontadas da compra sugerida, junto com o comprado aguardando entrega.
           {filtros.almoxarifadoId && " As pendências de compra abrangem todos os almoxarifados da empresa."}
         </p>
       </PainelGrafico>
@@ -909,6 +910,19 @@ function TabelaItens({
         </div>
       }
     >
+      {!dados.pedidos_falta ? (
+        <p className="mb-2 text-xs text-amber-800">
+          Pedidos pendentes, giro de 3 meses e já em compra aparecem quando a atualização do banco for
+          publicada. Até lá, Comprar segue a conta anterior.
+        </p>
+      ) : (
+        dados.pedidos_falta.sem_vinculo > 0 && (
+          <p className="mb-2 text-xs text-amber-800">
+            {formatarNumero(dados.pedidos_falta.sem_vinculo)} peças pendentes estão em linhas de pedido sem
+            item do catálogo e não aparecem em nenhuma linha desta tabela.
+          </p>
+        )
+      )}
       {!linhas.length ? (
         <EstadoVazio texto="Nenhum item nesta situação." />
       ) : (
@@ -922,8 +936,24 @@ function TabelaItens({
                   <CabecalhoTabela alinhar="right">Disponível</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Físico</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Reservado</CabecalhoTabela>
-                  <CabecalhoTabela alinhar="right">Vindo</CabecalhoTabela>
-                  <CabecalhoTabela alinhar="right">Aguardando compra</CabecalhoTabela>
+                  {/* SIS-2026-0855: "Vindo" e "Aguardando compra" viraram as três
+                      colunas do fluxo estoque → necessidade → reposição. */}
+                  <CabecalhoExplicado titulo="Pedidos pendentes">
+                    Peças que pedidos já separados ainda esperam por falta de estoque, somadas de todos os
+                    pedidos, sem importar colaborador, posto ou contrato. Já desconta o que saiu e o que está
+                    reservado. Pedido em preparação ainda não conta. Soma no Comprar.
+                  </CabecalhoExplicado>
+                  <CabecalhoExplicado titulo="Giro 3 meses">
+                    Peças que de fato saíram do estoque para pedidos
+                    {dados.pedidos_falta ? ` desde ${formatarData(dados.pedidos_falta.giro_desde)}` : " nos últimos 3 meses"}.
+                    Mede só o que havia em estoque: enquanto o estoque estiver baixo, fica abaixo do Consumo/mês,
+                    que é o que foi pedido.
+                  </CabecalhoExplicado>
+                  <CabecalhoExplicado titulo="Já em compra">
+                    Pedido de compra enviado ao fornecedor e ainda não recebido, mais solicitação do Malote em
+                    cotação. É descontado do Comprar. Ao receber com a nota fiscal em Recebimentos, sai daqui e
+                    entra no estoque.
+                  </CabecalhoExplicado>
                   <CabecalhoTabela alinhar="right">Consumo/mês</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Cobertura</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Pedir em</CabecalhoTabela>
@@ -950,6 +980,7 @@ function TabelaItens({
                     key={`${i.base_id}-${i.tamanho ?? "sem"}`}
                     item={i}
                     premissas={dados.premissas}
+                    giroDesde={dados.pedidos_falta?.giro_desde ?? null}
                     podeEditar={dados.pode_editar}
                     onEditar={() => setEditando(i)}
                   />
@@ -986,20 +1017,50 @@ function TabelaItens({
   );
 }
 
+function CabecalhoExplicado({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return (
+    <CabecalhoTabela alinhar="right">
+      <Dica>
+        <TooltipTrigger asChild>
+          <span className="cursor-help">{titulo}</span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[320px] text-xs font-normal">{children}</TooltipContent>
+      </Dica>
+    </CabecalhoTabela>
+  );
+}
+
+const formatarData = (valor: string) => new Date(`${valor}T12:00:00`).toLocaleDateString("pt-BR");
+
+/** "—" quando o banco não mandou o campo; zero aparece apagado, mas aparece. */
+function Quantidade({ valor }: { valor: number | undefined }) {
+  if (valor == null) return <span className="text-slate-400">—</span>;
+  return (
+    <span className={valor > 0 ? undefined : "text-slate-300"}>
+      {valor.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}
+    </span>
+  );
+}
+
 function LinhaItem({
   item,
   premissas,
+  giroDesde,
   podeEditar,
   onEditar,
 }: {
   item: ItemEstoqueSaudavel;
   premissas: EstoqueSaudavelDados["premissas"];
+  /** Início do giro de 3 meses; null enquanto o banco não manda. */
+  giroDesde: string | null;
   podeEditar: boolean;
   onEditar: () => void;
 }) {
   const desconfianca = motivosDeDesconfianca(item);
   const atrasado = chegaAtrasado(item);
   const faltaDoItem = rotuloFaltaHistorica(item);
+  const complemento = complementoDosPedidos(item);
+  const numero = (valor: number) => valor.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
 
   return (
     <tr className="border-b last:border-0 align-middle hover:bg-slate-50">
@@ -1010,11 +1071,62 @@ function LinhaItem({
       <td className="px-3 py-1.5 text-right">{formatarNumero(item.disponivel)}</td>
       <td className="px-3 py-1.5 text-right text-slate-500">{formatarNumero(item.fisico)}</td>
       <td className="px-3 py-1.5 text-right text-slate-500">{formatarNumero(item.reservado)}</td>
-      <td className="px-3 py-1.5 text-right text-slate-500">
-        {item.em_transito > 0 ? formatarNumero(item.em_transito) : "—"}
+      <td className="px-3 py-1.5 text-right">
+        {item.pendente_falta != null && item.pendente_falta > 0 ? (
+          <Dica>
+            <TooltipTrigger asChild>
+              <span className="cursor-default font-bold text-rose-700">{numero(item.pendente_falta)}</span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[280px] text-xs">
+              {numero(item.pendente_falta)} {item.pendente_falta === 1 ? "peça esperando" : "peças esperando"} em{" "}
+              {item.pedidos_falta ?? 0} {item.pedidos_falta === 1 ? "pedido" : "pedidos"} que já passaram pela
+              separação e não tiveram estoque.
+            </TooltipContent>
+          </Dica>
+        ) : (
+          <Quantidade valor={item.pendente_falta} />
+        )}
       </td>
-      <td className="px-3 py-1.5 text-right text-violet-700">
-        {item.aguardando_compra == null ? "—" : item.aguardando_compra.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}
+      <td className="px-3 py-1.5 text-right">
+        {item.giro_3m != null && item.giro_3m > 0 ? (
+          <Dica>
+            <TooltipTrigger asChild>
+              <span className="cursor-default">{numero(item.giro_3m)}</span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[280px] text-xs">
+              Saíram {numero(item.giro_3m)} do estoque para pedidos
+              {giroDesde ? ` desde ${formatarData(giroDesde)}` : " nos últimos 3 meses"} —{" "}
+              {formatarNumero(item.giro_3m / 3, 1)} por mês. O consumo pedido é de{" "}
+              {formatarNumero(item.demanda_mensal, 1)} por mês.
+            </TooltipContent>
+          </Dica>
+        ) : (
+          <Quantidade valor={item.giro_3m} />
+        )}
+      </td>
+      <td className="px-3 py-1.5 text-right">
+        {item.ja_em_compra != null && (item.ja_em_compra > 0 || (item.pendente_falta ?? 0) > 0) ? (
+          <Dica>
+            <TooltipTrigger asChild>
+              <span className={cn("cursor-default", item.ja_em_compra > 0 ? "text-violet-700" : "text-slate-300")}>
+                {numero(item.ja_em_compra)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[300px] text-xs">
+              <p>Pedido enviado ao fornecedor, a receber: {numero(item.em_transito)}</p>
+              <p>Em cotação no Malote: {numero(item.aguardando_compra ?? 0)}</p>
+              {complemento !== null && (item.pendente_falta ?? 0) > 0 && (
+                <p className="mt-1 font-semibold">
+                  {complemento > 0
+                    ? `Dos ${numero(item.pendente_falta ?? 0)} pendentes, faltam ${numero(complemento)} para entrar em compra.`
+                    : `Os ${numero(item.pendente_falta ?? 0)} pendentes já estão cobertos pelo que está em compra.`}
+                </p>
+              )}
+            </TooltipContent>
+          </Dica>
+        ) : (
+          <Quantidade valor={item.ja_em_compra} />
+        )}
       </td>
       <td className="px-3 py-1.5 text-right">{formatarNumero(item.demanda_mensal, 1)}</td>
       <td className="px-3 py-1.5 text-right">

@@ -3,6 +3,7 @@ import {
   chegaAtrasado,
   coberturaComTransito,
   coberturaDeValor,
+  complementoDosPedidos,
   csvDaCompra,
   explicarAlvo,
   explicarCompra,
@@ -199,6 +200,45 @@ describe("explicarCompra", () => {
       /já cobre o alvo/,
     );
   });
+
+  // SIS-2026-0855: com o banco novo, os pedidos parados somam e o que já está
+  // em compra (pedido enviado + Malote em cotação) desconta.
+  it("soma os pedidos parados e desconta o que já está em compra", () => {
+    expect(
+      explicarCompra(item({ alvo: 50, pendente_falta: 15, disponivel: 3, ja_em_compra: 20, comprar: 42 })),
+    ).toBe("Alvo 50 + 15 em pedidos parados − 3 em casa − 20 já em compra = comprar 42.");
+  });
+
+  it("não fala de pedido parado nem de compra quando não há", () => {
+    expect(
+      explicarCompra(item({ alvo: 35, pendente_falta: 0, disponivel: 20, ja_em_compra: 0, comprar: 15 })),
+    ).toBe("Alvo 35 − 20 em casa = comprar 15.");
+  });
+
+  it("diz que o que está em compra cobre o alvo e os pedidos parados", () => {
+    expect(
+      explicarCompra(item({ alvo: 5, pendente_falta: 3, disponivel: 0, ja_em_compra: 15, comprar: 0 })),
+    ).toMatch(/cobrem o alvo e os pedidos parados/);
+  });
+});
+
+describe("complementoDosPedidos — o exemplo do Cássio", () => {
+  it("10 pedidos somam 4 camisetas M e as 4 já estão em compra: nada a complementar", () => {
+    expect(complementoDosPedidos({ pendente_falta: 4, ja_em_compra: 4 })).toBe(0);
+  });
+
+  it("os pedidos sobem e o pendente vai a 6: só a diferença precisa de compra nova", () => {
+    expect(complementoDosPedidos({ pendente_falta: 6, ja_em_compra: 4 })).toBe(2);
+  });
+
+  it("compra maior que o pendente não vira complemento negativo", () => {
+    expect(complementoDosPedidos({ pendente_falta: 3, ja_em_compra: 15 })).toBe(0);
+  });
+
+  it("sem os campos do banco não inventa zero", () => {
+    expect(complementoDosPedidos({ pendente_falta: undefined, ja_em_compra: 4 })).toBeNull();
+    expect(complementoDosPedidos({ pendente_falta: 4, ja_em_compra: undefined })).toBeNull();
+  });
 });
 
 describe("recadoDoPainel", () => {
@@ -337,6 +377,21 @@ describe("csvDaCompra", () => {
     const linha = csv.split("\r\n")[1];
     expect(linha).toContain("26,55");
     expect(linha).toContain("1050,5");
+  });
+
+  it("leva pedidos pendentes, já em compra e o que saiu em 3 meses (SIS-2026-0855)", () => {
+    const csv = csvDaCompra([item({ comprar: 15, pendente_falta: 7, ja_em_compra: 10, giro_3m: 3 })]);
+    const [cabecalho, linha] = csv.split("\r\n");
+    expect(cabecalho).toBe(
+      "Item;Tamanho;Em casa;Pedidos pendentes;Já em compra;Saiu p/ pedidos (3 meses);Consumo/mês;" +
+        "Alvo saudável;Comprar;Valor unitário;Valor da compra;Classe;Situação",
+    );
+    expect(linha.split(";").slice(2, 6)).toEqual(["20", "7", "10", "3"]);
+  });
+
+  it("deixa vazio, e não zero, enquanto o banco não manda as colunas novas", () => {
+    const linha = csvDaCompra([item({ comprar: 15 })]).split("\r\n")[1];
+    expect(linha.split(";").slice(3, 6)).toEqual(["", "", ""]);
   });
 });
 
