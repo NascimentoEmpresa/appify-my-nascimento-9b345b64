@@ -312,6 +312,9 @@ interface ValidarNfEmissaoInput {
   id: string;
   numero_nf: string | null;
   data_emissao: string | null;
+  codigo_servico: string | null;
+  cnae: string | null;
+  nbs: string | null;
   observacoes_financeiro: string | null;
   itens: ItemCalculado[];
   totais: TotaisNf;
@@ -335,6 +338,9 @@ export function useValidarNfEmissao() {
         .update({
           numero_nf: input.numero_nf,
           data_emissao: input.data_emissao,
+          codigo_servico: input.codigo_servico,
+          cnae: input.cnae,
+          nbs: input.nbs,
           observacoes_financeiro: input.observacoes_financeiro,
           status: input.status,
           ...input.totais,
