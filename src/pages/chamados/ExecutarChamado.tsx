@@ -24,6 +24,7 @@ import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { ChamadosVinculados } from "./ChamadosVinculados";
 import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
 import {
   SITUACOES_PRAZO, mudouNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, rotuloPrazo, situacaoPrazo,
@@ -298,6 +299,9 @@ export default function ExecutarChamado() {
               <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
+
+          {/* Parte 1, Parte 2… (mig 20261112002000). */}
+          <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `/app/sistemas/chamados/${cid}`} />
 
           <InformacoesGithubChamado eventos={eventos} />
 

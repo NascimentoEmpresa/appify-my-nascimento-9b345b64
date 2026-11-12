@@ -38,6 +38,7 @@ import {
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
+import { ChamadosVinculados } from "./ChamadosVinculados";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
 const DESCRICAO_LONGA_CHARS = 700;
@@ -661,6 +662,9 @@ export default function CoordenarChamado() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
+
+          {/* Parte 1, Parte 2… (mig 20261112002000): a triagem vê a série inteira. */}
+          <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `/app/sistemas/chamados/${cid}/coordenar`} />
 
           {/* Parecer da I.A (mig 20261029000900): preço de mercado e
               complexidade ANTES de escolher o responsável — é para isso que
