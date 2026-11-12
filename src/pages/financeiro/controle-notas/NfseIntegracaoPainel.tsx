@@ -20,7 +20,7 @@ const ESTADOS: Record<EstadoNfse, string> = {
 function parametrosIniciais(nf: NfEmissaoRow): ParametrosNfse {
   return {
     serie: "", municipio_emissor: "3542404", inscricao_municipal: "", opcao_simples: "", regime_especial: "", regime_apuracao: "",
-    local_prestacao: "", codigo_tributacao: nf.codigo_servico ?? "", codigo_municipal: "", codigo_nbs: nf.nbs ?? "", descricao: nf.descricao ?? "",
+    local_prestacao: "", codigo_tributacao: nf.codigo_servico ?? "", codigo_municipal: "", codigo_integracao_municipal: "", codigo_nbs: nf.nbs ?? "", descricao: nf.descricao ?? "",
     iss_retido: "", aliquota_iss: nf.vlr_bruto_total > 0 ? (Number(nf.issqn_total) / Number(nf.vlr_bruto_total) * 100).toFixed(2) : "",
     cst_pis_cofins: "", retencao_pis_cofins: nf.csll_total > 0 ? "3" : "1",
     ibs_cst: "", ibs_classificacao: "", ibs_indicador_operacao: "", consumidor_final: "", tipo_operacao: "", tipo_ente_governamental: "",
@@ -56,6 +56,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   const [parametros, setParametros] = useState(() => parametrosIniciais(nf));
   const [editando, setEditando] = useState(false);
   const [baixando, setBaixando] = useState(false);
+  const exigeCodigoPrefeitura = producao && parametros.municipio_emissor === "4322004" && parametros.codigo_tributacao.replace(/[.\-/\s]/g, "") === "170501";
   const solicitacoes = consulta.data ?? [];
   const atual = solicitacoes[0];
   const existeAtiva = solicitacoes.some(s => s.estado !== "rejeitada");
@@ -65,7 +66,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes) return;
-    try { await solicitar.mutateAsync(validarParametrosNfse(parametros)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
+    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível registrar a solicitação."); }
   }
   async function documento(caminho: string) {
@@ -147,7 +148,9 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Serviço e retenções</legend>
         <Campo titulo="Código nacional do serviço" valor={parametros.codigo_tributacao} alterar={v => salvarCampo("codigo_tributacao",v)} maximo={8} />
         <Campo titulo="NBS" valor={parametros.codigo_nbs} alterar={v => salvarCampo("codigo_nbs",v)} maximo={13} />
-        <Campo titulo="Código municipal, se aplicável" valor={parametros.codigo_municipal} alterar={v => salvarCampo("codigo_municipal",v)} obrigatorio={false} maximo={3} />
+        <Campo titulo="Código do serviço na prefeitura" valor={parametros.codigo_integracao_municipal ?? ""} alterar={v => salvarCampo("codigo_integracao_municipal",v)} obrigatorio={exigeCodigoPrefeitura} maximo={20} />
+        <p className="text-sm text-muted-foreground md:col-span-3">Informe o código municipal usado no portal para esta prestação, conforme o responsável fiscal. Quando a prefeitura indicar mais de um serviço possível, esse código identifica qual deve ser utilizado.</p>
+        <Campo titulo="Desdobramento municipal, se aplicável" valor={parametros.codigo_municipal} alterar={v => salvarCampo("codigo_municipal",v)} obrigatorio={false} maximo={3} />
         <Campo titulo="Local da prestação — código IBGE" valor={parametros.local_prestacao} alterar={v => salvarCampo("local_prestacao",v)} maximo={7} />
         <Campo titulo="Alíquota do ISS (%)" valor={parametros.aliquota_iss} alterar={v => salvarCampo("aliquota_iss",v)} tipo="number" />
         <Escolha titulo="Retenção do ISS" valor={parametros.iss_retido} alterar={v => salvarCampo("iss_retido",v)} opcoes={[["1","Não retido"],["2","Retido pelo tomador"]]} />

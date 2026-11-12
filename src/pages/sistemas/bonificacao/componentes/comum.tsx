@@ -23,6 +23,7 @@ export const AJUDA = {
   qualidadeSemAjustes: "Percentual de entregas que atenderam ao solicitado sem precisar de correções ou retrabalho.",
   satisfacaoMedia: "Média das notas de 1 a 5 atribuídas pelos solicitantes na avaliação do chamado.",
   noPrazo: "Percentual de tarefas concluídas até a data limite registrada no chamado.",
+  lucro: "Valor de mercado das entregas − custo real conosco (horas da equipe interna × hora do nosso salário, R$ 3.138,65 ÷ 220 h). Mostra quanto a empresa deixou de gastar ao fazer dentro de casa. É estimativa.",
   mercadoIa: "Soma dos valores estimados pela Inteligência Artificial (IA) a partir do escopo das tarefas e de referências de preços do mercado de desenvolvimento de software. É uma estimativa, não economia comprovada.",
   qualidade: "Mede se o trabalho atendeu ao pedido e se exigiu correções. Quanto menos ajustes necessários, maior a nota. Sem avaliação do gestor, a sugestão é “atendeu sem ajuste”: reabrir o chamado não conta como erro, porque o solicitante pode reabrir sem querer ou para pedir mais coisa.",
   satisfacao: "Converte a avaliação do solicitante (1 a 5) em nota de 0 a 100 para compor o resultado.",

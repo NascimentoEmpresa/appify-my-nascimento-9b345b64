@@ -29,7 +29,7 @@ export const STATUS_COM_RESPONSAVEL = [
  * Concluído). Por pessoa vale tudo menos estas filas; "sem responsável" segue
  * só nas em andamento (senão entra todo o legado anterior ao responsável).
  */
-export const STATUS_FILA_APROVACAO = ["Pendente Operacional", "Pendente Analista", "Pendente Diretoria"] as const;
+export const STATUS_FILA_APROVACAO = ["Pendente Gerente Operações", "Pendente Operacional", "Pendente Analista", "Pendente Diretoria"] as const;
 export const vagaForaDaFila = (status: string | null | undefined) =>
   !!status && !(STATUS_FILA_APROVACAO as readonly string[]).includes(status);
 

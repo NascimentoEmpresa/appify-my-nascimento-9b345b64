@@ -29,6 +29,7 @@ import {
   SITUACOES_PRAZO, mudouNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, rotuloPrazo, situacaoPrazo,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
+import { NavegacaoListaChamados } from "./NavegacaoListaChamados";
 import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
@@ -178,17 +179,15 @@ export default function ExecutarChamado() {
     invalidar();
   };
 
-  /** Fim do diálogo de concluir: grava o status COM as horas gastas no mesmo
-   *  UPDATE (o banco recusa concluir sem elas e registra "Chamado concluído
-   *  em X h" no histórico — mig 20261029002400). Aqui só fica a nota de que
-   *  a avaliação foi pulada. */
-  const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem", horas: number) => {
+  /** Fim do diálogo de concluir. Desde 12/11/2026 sem horas gastas: a I.A
+   *  avalia o chamado pelo escopo ao concluir (mig 20261112001000). */
+  const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem") => {
     await mudarStatus(
       "concluido",
-      `Chamado concluído em ${fmtHorasGastas(horas)} h`,
+      "Chamado concluído",
       "concluido",
-      { horas_gastas: horas },
-      resultado === "pulou" ? "Conclusão sem avaliar quem pediu" : null,
+      {},
+      resultado === "pulou" ? "Chamado concluído sem avaliar quem pediu" : "Chamado concluído",
     );
   };
 
@@ -263,7 +262,9 @@ export default function ExecutarChamado() {
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 12/11/2026: aberto de uma lista (ex.: Bonificação), setas para o anterior/próximo. */}
+            <NavegacaoListaChamados id={id} />
             <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
             <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>
           </div>
@@ -301,7 +302,7 @@ export default function ExecutarChamado() {
           <InformacoesGithubChamado eventos={eventos} />
 
           {/* Parecer da I.A (mig 20261029000900): preço de mercado + complexidade. */}
-          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} horasReais={chamado.horas_gastas} horasEstimadas={chamado.horas_gastas_estimadas} />
+          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} horasReais={chamado.horas_gastas_estimadas ? null : chamado.horas_gastas} concluido={chamado.status === "concluido"} />
 
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">
@@ -469,6 +470,8 @@ export default function ExecutarChamado() {
                   {/* Horas gastas (mig 20261029002400). Concluído antes da regra = "—".
                       Concluído pelo merge da PR depois dela = pendente, e o
                       responsável (ou a gestão) informa aqui. */}
+                  {/* 12/11/2026: horas não são mais pedidas; só aparecem as já informadas (histórico). */}
+                  {chamado.horas_gastas != null && !chamado.horas_gastas_estimadas && (
                   <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
                     <Clock className="h-3.5 w-3.5" /> Horas gastas: <b className="text-foreground">{chamado.horas_gastas != null ? `${fmtHorasGastas(chamado.horas_gastas)} h` : "—"}</b>
                     {chamado.horas_gastas_estimadas && <span title="Supostas pela complexidade do parecer da I.A, não informadas pelo desenvolvedor">(estimadas)</span>}
@@ -482,6 +485,7 @@ export default function ExecutarChamado() {
                       </button>
                     )}
                   </p>
+                  )}
                   {editandoHoras && (
                     <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
                       <p className="text-xs text-muted-foreground">Corrigir as horas gastas. O parecer da I.A e os valores são refeitos com o número novo.</p>
@@ -491,18 +495,6 @@ export default function ExecutarChamado() {
                           onKeyDown={(e) => { if (e.key === "Enter") informarHorasDepois(); if (e.key === "Escape") { setEditandoHoras(false); setHorasDepois(""); } }} />
                         <Button size="sm" className="h-8" disabled={agindo === "horas"} onClick={informarHorasDepois}>Gravar</Button>
                         <Button size="sm" variant="ghost" className="h-8" onClick={() => { setEditandoHoras(false); setHorasDepois(""); }}>Cancelar</Button>
-                      </div>
-                    </div>
-                  )}
-                  {chamado.horas_gastas == null && !!chamado.concluido_em && new Date(chamado.concluido_em) >= new Date(HORAS_GASTAS_DESDE)
-                    && (gestor || chamado.responsavel_id === user?.id) && (
-                    <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/10 p-2">
-                      <p className="text-xs text-warning">Concluído pela PR: informe quantas horas levou.</p>
-                      <div className="flex gap-1.5">
-                        <Input inputMode="decimal" placeholder="Ex.: 12,5" className="h-8 text-right text-xs"
-                          value={horasDepois} onChange={(e) => setHorasDepois(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") informarHorasDepois(); }} />
-                        <Button size="sm" className="h-8" disabled={agindo === "horas"} onClick={informarHorasDepois}>Gravar</Button>
                       </div>
                     </div>
                   )}
