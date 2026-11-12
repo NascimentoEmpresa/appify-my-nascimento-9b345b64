@@ -87,6 +87,9 @@ export function UsuariosReal() {
   const { user } = useAuth();
   const { can } = usePermissoes();
   const podeEditar = can("alterar", undefined, "administracao");
+  // 11/11/2026: "PODE CRIAR LOGIN (só Encarregados)" — menu fantasma criar_login_encarregados.
+  const podeCriarTudo = can("incluir", undefined, "administracao");
+  const podeCriarEncarregados = can("visualizar", undefined, "criar_login_encarregados");
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const setoresCatalogo = useSetoresDisponiveis();
@@ -180,8 +183,9 @@ export function UsuariosReal() {
             {(profilesQ.data ?? []).length} usuário(s) · {(empresasQ.data ?? []).length} empresa(s)
           </p>
         </div>
-        {podeEditar && (
+        {(podeEditar || podeCriarTudo || podeCriarEncarregados) && (
           <NovoUsuarioDialog
+            soEncarregados={!podeCriarTudo}
             empresas={empresasQ.data ?? []}
             setoresCatalogo={setoresCatalogo}
             onCreated={() => {
@@ -804,12 +808,17 @@ export function ResetSenhaSection({ userId, email }: { userId: string; email: st
   );
 }
 
-function NovoUsuarioDialog({
-  empresas, setoresCatalogo, onCreated,
+/** O setor dos Encarregados (Administração › Setores) — o único de quem só tem "PODE CRIAR LOGIN". */
+export const SETOR_ENCARREGADOS = "Encarregados";
+
+export function NovoUsuarioDialog({
+  empresas, setoresCatalogo, onCreated, soEncarregados = false,
 }: {
   empresas: { id: string; codigo: string; razao_social: string }[];
   setoresCatalogo: string[];
   onCreated: () => void;
+  /** 11/11/2026 (mig 20261111260000): quem tem só "PODE CRIAR LOGIN (Encarregados)" — o setor fica travado; o servidor repete a trava. */
+  soEncarregados?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
@@ -819,7 +828,7 @@ function NovoUsuarioDialog({
   const [showPwd, setShowPwd] = useState(false);
   const [telefone, setTelefone] = useState("");
   const [empresaId, setEmpresaId] = useState<string>("_none");
-  const [selectedSetores, setSelectedSetores] = useState<string[]>([]);
+  const [selectedSetores, setSelectedSetores] = useState<string[]>(soEncarregados ? [SETOR_ENCARREGADOS] : []);
   const [saving, setSaving] = useState(false);
   // Pedido do chamado do organograma: ao criar um usuário, dizer o que ele faz e
   // onde fica. Sem isso a conta não é criada. O colaborador é opcional (há
@@ -841,7 +850,7 @@ function NovoUsuarioDialog({
     setColaborador(p);
     setDisplayName(p.nome);
     if (p.cargo) setCargo(p.cargo);
-    if (p.setor && setoresCatalogo.includes(p.setor)) setSelectedSetores((s) => (s.includes(p.setor!) ? s : [...s, p.setor!]));
+    if (!soEncarregados && p.setor && setoresCatalogo.includes(p.setor)) setSelectedSetores((s) => (s.includes(p.setor!) ? s : [...s, p.setor!]));
     try {
       setPosicao(await carregarPosicao({ empregado: p.empregado_id }));
     } catch (e) {
@@ -858,7 +867,7 @@ function NovoUsuarioDialog({
 
   const reset = () => {
     setDisplayName(""); setCargo(""); setEmail(""); setPassword(""); setTelefone("");
-    setEmpresaId("_none"); setSelectedSetores([]); setShowPwd(false);
+    setEmpresaId("_none"); setSelectedSetores(soEncarregados ? [SETOR_ENCARREGADOS] : []); setShowPwd(false);
     setColaborador(null); setOQueFaz(""); setPosicao(posicaoVazia());
   };
 
@@ -908,6 +917,7 @@ function NovoUsuarioDialog({
           bio: oQueFaz.trim(),
           empresa_id: empresaId === "_none" ? null : empresaId,
           telefone: telefone.trim() || null,
+          setores: soEncarregados ? [SETOR_ENCARREGADOS] : selectedSetores,
           organograma: {
             empregado_id: posicao.empregadoId,
             parent_id: params.p_parent,
@@ -935,7 +945,8 @@ function NovoUsuarioDialog({
       // Setor é só rótulo — gravado à parte, depois que o usuário já existe
       // (user_setor referencia auth.users, não dá pra gravar antes de criar).
       const newUserId = (data as any)?.user_id as string | undefined;
-      if (newUserId && selectedSetores.length > 0) {
+      // Desde 11/11/2026 a Edge grava o setor (setores_gravados); a tela só grava se a Edge for a antiga.
+      if (newUserId && selectedSetores.length > 0 && !(data as { setores_gravados?: boolean } | null)?.setores_gravados) {
         const { error: setorErr } = await sbSemTipos
           .from("user_setor")
           .insert(selectedSetores.map((s) => ({ user_id: newUserId, setor: s })));
@@ -980,7 +991,9 @@ function NovoUsuarioDialog({
           <DialogHeader>
             <DialogTitle>Novo usuário</DialogTitle>
             <DialogDescription>
-              Cria o acesso, diz o que a pessoa faz e onde ela fica no organograma. Apenas administradores.
+              {soEncarregados
+                ? "Cria o login de um ENCARREGADO: o setor é sempre Encarregados e o acesso é o básico (as telas se liberam em Acesso por Usuário)."
+                : "Cria o acesso, diz o que a pessoa faz e onde ela fica no organograma. Apenas administradores."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1060,6 +1073,9 @@ function NovoUsuarioDialog({
             </div>
             <div>
               <Label>Setor</Label>
+              {soEncarregados ? (
+                <p className="mt-1 rounded-md border bg-muted/40 px-2.5 py-1.5 text-sm font-semibold">{SETOR_ENCARREGADOS} <span className="text-[11px] font-normal text-muted-foreground">· com a sua permissão, só este setor</span></p>
+              ) : (<>
               <p className="text-[11px] text-muted-foreground mb-2">
                 Departamento da pessoa — sozinho não concede acesso, mas é por ele (e pelo nível do cargo) que se libera acesso em massa em Módulos &amp; Menus → Por Setor / Cargo. Pra criar, renomear ou excluir um setor, use Administração → Setores.
               </p>
@@ -1075,6 +1091,7 @@ function NovoUsuarioDialog({
                   ))}
                 </div>
               )}
+              </>)}
             </div>
           </div>
           <DialogFooter>
@@ -1089,14 +1106,17 @@ function NovoUsuarioDialog({
       <CredenciaisDialog
         creds={credenciaisCriadas}
         onClose={() => setCredenciaisCriadas(null)}
+        semModelo={soEncarregados}
       />
     </>
   );
 }
 
 function CredenciaisDialog({
-  creds, onClose,
+  creds, onClose, semModelo = false,
 }: {
+  /** Quem só cria Encarregados não aplica acesso de modelo (não tem a escrita de permissões). */
+  semModelo?: boolean;
   creds: {
     email: string; password: string; display_name: string | null;
     user_id: string | null; setores: string[]; cargo: string | null;
@@ -1177,7 +1197,7 @@ function CredenciaisDialog({
               </p>
             </div>
 
-            {creds.user_id && (
+            {creds.user_id && !semModelo && (
               <AplicarModeloNovoUsuario userId={creds.user_id} setores={creds.setores} cargo={limparNomeCargo(creds.cargo)} />
             )}
           </div>
