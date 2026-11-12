@@ -10,19 +10,22 @@
 --   atualizem obrigatoriamente".
 --
 -- O DESENHO
---   Um contador único, "SISTEMA_RECARGA_GERAL".versao. Cada aba do ERP
---   lembra o número que viu ao abrir e pergunta de novo a cada ~2 min
---   (src/lib/recargaGeral.ts). Número maior → a aba recarrega: a visível
---   depois de um sorteio de até 30 s (nada de manada — post-mortem 03/11), a
---   escondida só quando a pessoa voltar a ela.
---   Quem sobe o número: sistema_forcar_recarga(), com a capacidade própria
+--   Uma linha só, "SISTEMA_RECARGA_GERAL", com a hora do último pedido.
+--   SEM temporizador (o QA de telas reprova qualquer requisição de tela
+--   parada, e com razão — post-mortem de 03/11): cada aba confere quando a
+--   PESSOA usa a tela — clique, tecla, rolagem, troca de tela, volta para a
+--   aba —, no máximo 1x por minuto (src/lib/recargaGeral.ts).
+--   sistema_recarga_idade() devolve há quantos SEGUNDOS foi o último pedido
+--   (relógio do banco). A aba compara com há quanto tempo ELA foi aberta
+--   (performance.now, relógio dela): pedido mais novo que a aba → recarrega,
+--   depois de um sorteio de até 30 s. Nenhum relógio precisa bater com o
+--   outro, e abrir a tela não custa requisição nenhuma.
+--   Quem pede: sistema_forcar_recarga(), com a capacidade própria
 --   'sistema_forcar_recarga' (ação alterar), concedida em Administração ›
 --   Acesso por Usuário. Semeada para o Pablo.
---   A leitura (sistema_recarga_versao) é de qualquer logado e devolve só um
---   número.
 --
---   ⚠ Só alcança abas que já carregaram o código novo — as que estavam
---   abertas antes do deploy não têm o temporizador.
+--   ⚠ Só alcança abas que já carregaram o código novo, e só quando a pessoa
+--   mexe na tela — aba esquecida aberta recarrega no primeiro uso.
 --
 -- Idempotente. ROLLBACK no fim.
 -- =========================================================================
@@ -58,13 +61,15 @@ SELECT p.id, 'sistema_forcar_recarga', 'alterar'::app_acao, true,
                     WHERE x.user_id = p.id AND x.menu_codigo = 'sistema_forcar_recarga'
                       AND x.acao = 'alterar'::app_acao);
 
--- ── Leitura: o número atual (qualquer logado) ────────────────────────────
-CREATE OR REPLACE FUNCTION public.sistema_recarga_versao()
-RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-  SELECT coalesce((SELECT versao FROM public."SISTEMA_RECARGA_GERAL" WHERE id = 1), 0);
+-- ── Leitura: há quantos segundos foi o último pedido (qualquer logado) ───
+-- NULL = nunca pediram.
+CREATE OR REPLACE FUNCTION public.sistema_recarga_idade()
+RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT round(extract(epoch FROM (now() - pedido_em))::numeric, 1)
+    FROM public."SISTEMA_RECARGA_GERAL" WHERE id = 1 AND pedido_em IS NOT NULL;
 $$;
-REVOKE ALL ON FUNCTION public.sistema_recarga_versao() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.sistema_recarga_versao() TO authenticated;
+REVOKE ALL ON FUNCTION public.sistema_recarga_idade() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sistema_recarga_idade() TO authenticated;
 
 -- ── Escrita: sobe o número (quem tem a capacidade) ───────────────────────
 CREATE OR REPLACE FUNCTION public.sistema_forcar_recarga(p_motivo text DEFAULT NULL)
@@ -90,7 +95,7 @@ NOTIFY pgrst, 'reload schema';
 -- =========================================================================
 -- ROLLBACK
 --   DROP FUNCTION IF EXISTS public.sistema_forcar_recarga(text);
---   DROP FUNCTION IF EXISTS public.sistema_recarga_versao();
+--   DROP FUNCTION IF EXISTS public.sistema_recarga_idade();
 --   DELETE FROM public.screen_permission_user WHERE menu_codigo = 'sistema_forcar_recarga';
 --   DELETE FROM public.app_menu_acao WHERE menu_codigo = 'sistema_forcar_recarga';
 --   DELETE FROM public.app_menu WHERE codigo = 'sistema_forcar_recarga';

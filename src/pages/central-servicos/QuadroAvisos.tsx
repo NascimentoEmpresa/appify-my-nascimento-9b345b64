@@ -91,12 +91,12 @@ export default function QuadroAvisos() {
   const [forcando, setForcando] = useState(false);
   const forcarRecarga = async () => {
     if (!window.confirm(
-      "Todas as abas abertas do ERP, de todos os usuários, vão recarregar sozinhas em até 3 minutos.\n\n" +
+      "Todas as abas abertas do ERP, de todos os usuários, vão recarregar assim que a pessoa mexer na tela (clicar, rolar, digitar ou trocar de tela).\n\n" +
       "Quem estiver no meio de um formulário pode perder o que não salvou. Continuar?")) return;
     setForcando(true);
     try {
       await forcarRecargaGeral(supabase as any, "Quadro de Avisos");
-      toast.success("Pedido enviado: as abas abertas recarregam em até 3 minutos (esta também).");
+      toast.success("Pedido enviado: cada aba aberta recarrega no próximo clique, rolagem ou troca de tela (esta também).");
     } catch (e) {
       toast.error("Não deu para forçar a recarga: " + ((e as { message?: string })?.message ?? String(e)));
     } finally {

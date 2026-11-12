@@ -17,7 +17,7 @@ import { useModoExterno } from "@/hooks/useModoExterno";
 import { AlertaUrgenteAdmissao } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 import { PainelOnline, LARGURA_PAINEL_ONLINE } from "./PainelOnline";
 import { supabase } from "@/integrations/supabase/client";
-import { instalarRecargaGeral } from "@/lib/recargaGeral";
+import { conferirRecarga, instalarRecargaGeral } from "@/lib/recargaGeral";
 
 export function AppShell() {
   // Encarregado externo (sessão anônima) não tem cadastro em EMPREGADOS para
@@ -62,6 +62,10 @@ export function AppShell() {
   useEffect(() => {
     instalarRecargaGeral(supabase as any);
   }, []);
+  // Trocar de tela também é "usar o sistema": confere (no máximo 1x/min).
+  useEffect(() => {
+    void conferirRecarga();
+  }, [location.pathname]);
 
   // Fecha drawer mobile ao mudar de rota
   useEffect(() => {

@@ -6,35 +6,47 @@
 // sozinho desde 03/11 (App.tsx: refetchOnWindowFocus off) e não havia como
 // mandar as abas abertas recarregarem.
 //
-// Agora cada aba guarda o número de "SISTEMA_RECARGA_GERAL".versao que viu
-// ao abrir (mig 20261113110100) e pergunta de novo a cada ~2 min, só com a
-// aba visível. Número maior que o visto → recarrega:
-//   · aba visível: avisa e recarrega depois de um sorteio de até 30 s — as
-//     abas não voltam todas no mesmo segundo (post-mortem de 03/11: a
-//     manada de recargas derrubava o servidor que tinha acabado de voltar);
-//   · aba escondida: não pergunta nem recarrega; confere quando a pessoa
-//     voltar a ela.
-// O número sobe pelo botão "Forçar todos a recarregar" (Quadro de Avisos),
-// com a capacidade sistema_forcar_recarga.
+// SEM TEMPORIZADOR. O QA de telas deixa cada tela parada 10 min e reprova
+// qualquer requisição que saia sozinha (post-mortem de 03/11: polling
+// derrubou o servidor). Então a aba só confere quando a PESSOA usa a tela —
+// clique, tecla, rolagem, toque, troca de tela, volta para a aba —, no
+// máximo 1x por minuto. Quem está lendo o Início rola a página e é pego;
+// aba esquecida aberta não custa nada e recarrega no primeiro uso.
+//
+// Abrir a tela também não custa requisição: o banco devolve há quantos
+// SEGUNDOS foi o último pedido (sistema_recarga_idade, mig 20261113110100)
+// e a aba compara com há quanto tempo ELA foi aberta (performance.now).
+// Pedido mais novo que a aba → recarrega, depois de um sorteio de até 30 s
+// (as abas não voltam todas no mesmo segundo). Nenhum relógio precisa bater
+// com o outro.
+//
+// O pedido sai do botão "Forçar todos a recarregar" (Quadro de Avisos), com
+// a capacidade sistema_forcar_recarga.
 // =====================================================================
 
 import { toast } from "sonner";
 
-export const INTERVALO_MS = 120_000;
+/** Entre duas conferências, no mínimo isto — mesmo com a pessoa mexendo sem parar. */
+export const INTERVALO_MIN_MS = 60_000;
 export const ATRASO_MAX_MS = 30_000;
+/** Folga para o tempo da própria requisição e arredondamentos. */
+const FOLGA_MS = 5_000;
 
-/** O que fazer com a versão lida do servidor. Puro, para o teste. */
-export function decidirRecarga(vista: number | null, atual: number | null): "guardar" | "recarregar" | "nada" {
-  if (atual == null || !Number.isFinite(atual)) return "nada";
-  if (vista == null) return "guardar";
-  return atual > vista ? "recarregar" : "nada";
+/**
+ * O pedido de recarga é mais novo que esta aba? Puro, para o teste.
+ * `idadePedidoSeg`: há quantos segundos o banco registrou o último pedido
+ * (null = nunca). `idadeAbaMs`: há quantos ms esta aba foi aberta.
+ */
+export function precisaRecarregar(idadePedidoSeg: number | null, idadeAbaMs: number): boolean {
+  if (idadePedidoSeg == null || !Number.isFinite(idadePedidoSeg) || idadePedidoSeg < 0) return false;
+  return idadePedidoSeg * 1000 + FOLGA_MS < idadeAbaMs;
 }
 
 type Rpc = { rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> };
 
-let vista: number | null = null;
+let sb: Rpc | null = null;
 let recarregando = false;
-let instalado = false;
+let consultando = false;
 let ultimaConsulta = 0;
 
 const escondida = () => typeof document !== "undefined" && document.visibilityState === "hidden";
@@ -47,39 +59,42 @@ function recarregar() {
   setTimeout(() => window.location.reload(), atraso);
 }
 
-async function verificar(sb: Rpc) {
-  if (recarregando || escondida()) return;
+/** Chamado a cada uso da tela; consulta no máximo 1x por minuto. */
+export async function conferirRecarga() {
+  if (!sb || recarregando || consultando || escondida()) return;
+  if (Date.now() - ultimaConsulta < INTERVALO_MIN_MS) return;
+  consultando = true;
   ultimaConsulta = Date.now();
   try {
-    const { data, error } = await sb.rpc("sistema_recarga_versao");
-    if (error) return; // migration ainda não no banco, queda: tenta na próxima
-    const atual = data == null ? null : Number(data);
-    const d = decidirRecarga(vista, atual);
-    if (d === "guardar") vista = atual;
-    else if (d === "recarregar") recarregar();
+    const { data, error } = await sb.rpc("sistema_recarga_idade");
+    if (error) return; // migration ainda não no banco, queda: tenta no próximo uso
+    if (precisaRecarregar(data == null ? null : Number(data), performance.now())) recarregar();
   } catch {
-    /* rede: tenta na próxima */
+    /* rede: tenta no próximo uso */
+  } finally {
+    consultando = false;
   }
 }
 
-/** Uma vez por carga de página, depois do login (AppShell). */
-export function instalarRecargaGeral(sb: Rpc) {
-  if (instalado || typeof window === "undefined") return;
-  instalado = true;
-  void verificar(sb);
-  // Intervalo sorteado por aba (±20 %), para não perguntarem todas juntas.
-  const passo = Math.round(INTERVALO_MS * (0.8 + Math.random() * 0.4));
-  // guardiao-ok: único polling deliberado do ERP — é o que alcança aba parada (incidente do Mural 12/11/2026); 1 RPC STABLE de 1 número a cada ~2 min, só com a aba visível (0,5 req/min/aba, contra 13 req/min do caso de 03/11)
-  window.setInterval(() => void verificar(sb), passo);
-  // Voltou para a aba: confere na hora (no máximo 1x a cada 20 s).
-  document.addEventListener("visibilitychange", () => {
-    if (!escondida() && Date.now() - ultimaConsulta > 20_000) void verificar(sb);
-  });
+/**
+ * Uma vez por carga de página, depois do login (AppShell). A primeira
+ * conferência só acontece no primeiro uso depois de um minuto de aba aberta
+ * — abrir a tela não faz requisição.
+ */
+export function instalarRecargaGeral(cliente: Rpc) {
+  if (sb || typeof window === "undefined") return;
+  sb = cliente;
+  ultimaConsulta = Date.now();
+  const uso = () => void conferirRecarga();
+  for (const ev of ["pointerdown", "keydown", "wheel", "touchstart", "scroll"] as const) {
+    window.addEventListener(ev, uso, { passive: true, capture: true });
+  }
+  document.addEventListener("visibilitychange", uso);
 }
 
-/** Sobe o número: todas as abas abertas (com este código) recarregam. */
-export async function forcarRecargaGeral(sb: Rpc, motivo?: string): Promise<number> {
-  const { data, error } = await sb.rpc("sistema_forcar_recarga", { p_motivo: motivo ?? null });
+/** Registra o pedido: as abas abertas (com este código) recarregam no próximo uso. */
+export async function forcarRecargaGeral(cliente: Rpc, motivo?: string): Promise<number> {
+  const { data, error } = await cliente.rpc("sistema_forcar_recarga", { p_motivo: motivo ?? null });
   if (error) throw error;
   return Number(data);
 }
