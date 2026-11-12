@@ -44,6 +44,7 @@ export const SINONIMOS: string[][] = [
   ["carro", "veiculo", "frota", "km", "quilometragem", "agendamento de veiculos"],
   ["salario", "holerite", "contracheque", "ficha financeira", "remuneracao"],
   ["ponto", "marcacao", "batida", "espelho", "frequencia", "conferencia de ponto"],
+  ["13 salario", "13o", "decimo", "decimo terceiro", "gratificacao natalina", "conferencia de 13"],
   ["hora extra", "he", "horas extras", "liberacao de he"],
   ["falta", "efetividade", "cobertura", "diaria", "diarista", "substituicao", "presenca"],
   ["advertencia", "suspensao", "medida disciplinar", "punicao"],
