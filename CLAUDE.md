@@ -55,7 +55,7 @@ enquanto o backend de permissões era construído.
 - **Dois arquivos com o mesmo número de versão travam o aplicador inteiro** —
   ele para antes de aplicar qualquer coisa, porque uma das duas nunca entraria
   e sem erro nenhum. Antes de numerar, rode `git fetch` e confira também
-  `origin/joao` e `origin/pablo`; se colidir depois do merge, renumere com
+  `origin/joao`, `origin/pablo` e `origin/otavio`; se colidir depois do merge, renumere com
   `git mv` **a que entrou por último** (a primeira já pode estar registrada no
   banco sob aquele número). Não há `supabase start`/banco local; para provar
   uma migration antes, suba um cluster PostgreSQL 18 descartável.
@@ -80,13 +80,14 @@ enquanto o backend de permissões era construído.
 - Testes (`Vitest`, `npm run test`) focam em lógica de negócio/regras
   (`src/test/*.test.ts`), não em rendering de componente.
 
-## Branches — quatro, e só
+## Branches — cinco, e só
 
 **NUNCA crie branch nova. Nem temporária, nem `fix/`, `ci/`, `chore/`, nem
-"só pra isolar um teste".** Existem exatamente quatro: `eduardo`, `joao`,
-`pablo` e `main`. Cada dev trabalha na branch com o próprio nome e abre PR
+"só pra isolar um teste".** Existem exatamente cinco: `eduardo`, `joao`,
+`pablo`, `otavio` e `main`. Cada dev trabalha na branch com o próprio nome e abre PR
 para a `main` a partir dela. Trabalho novo vai **na branch pessoal que já
-está em uso** — em sessão de agente, `pablo`.
+está em uso** — em sessão de agente, a do dev que está usando a sessão
+(confira com `git branch --show-current`).
 
 Isso não é preferência de estilo: é a **R8**, regra absoluta verificada por
 `.github/scripts/portaria-pr.mjs` (ver [`.github/REGRAS-PR.md`](.github/REGRAS-PR.md)).
@@ -97,7 +98,7 @@ aceitava branch temporária com justificativa, e a exceção virou porta usada d
 novo.
 
 Se você se pegar querendo uma branch nova, a resposta certa é commitar na
-`pablo` mesmo. Se achar que o caso é especial, **pergunte antes** — não crie
+sua branch pessoal mesmo. Se achar que o caso é especial, **pergunte antes** — não crie
 e avise depois.
 
 ## Automação de chamados de desenvolvimento
