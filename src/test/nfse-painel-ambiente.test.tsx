@@ -30,6 +30,28 @@ afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; es
   estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("pede a IM correta após P4016 e exige nova revisão sem retransmitir a DPS rejeitada", async () => {
+    estado.habilitado = true;
+    const parametros = parametrosNfse(); parametros.codigo_integracao_municipal = "8111700";
+    estado.solicitacoes = [{id:"dps-4",ambiente:"producao",estado:"rejeitada",serie:1041,numero_dps:4,
+      atualizado_em:"2026-11-12T14:04:26Z",envio_iniciado_em:"2026-11-12T14:03:24Z",mensagem:"P4016: Necessário especificar a Inscrição Municipal do Tomador",dados:{parametros}} as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const campo = screen.getByLabelText("Inscrição municipal do tomador");
+    expect(campo).toHaveValue(""); expect(campo).toBeRequired();
+    const solicitar = screen.getByRole("button",{name:"Solicitar emissão em produção"});
+    const revisar = () => {
+      fireEvent.click(screen.getByRole("checkbox",{name:"Revisei os dados fiscais, as retenções e a série liberada."}));
+      fireEvent.click(screen.getByRole("checkbox",{name:"Autorizo a emissão de uma nota fiscal real em produção para esta preparação."}));
+    };
+    revisar(); fireEvent.submit(solicitar.closest("form")!);
+    expect(estado.enviar).not.toHaveBeenCalled(); expect(estado.erro).toHaveBeenCalledWith(expect.stringContaining("inscrição municipal do tomador"));
+    fireEvent.change(campo,{target:{value:"00123-A"}}); expect(solicitar).toBeDisabled();
+    revisar(); fireEvent.submit(solicitar.closest("form")!);
+    await waitFor(()=>expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({inscricao_municipal:"100",tomador:{inscricao_municipal:"00123-A"},confirmacao_fiscal:true,confirmacao_producao:true});
+    expect(estado.reprocessar).not.toHaveBeenCalled();
+  });
   it("oferece homologação por padrão e impede preparar produção sem liberação", () => {
     render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
     expect(screen.getByRole("button", { name: "Preparar emissão em homologação" })).toBeInTheDocument();

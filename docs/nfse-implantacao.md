@@ -246,6 +246,25 @@ valores salvos; uma divergência não é aceita automaticamente. A DPS 3 permane
 rejeitada no histórico. Após publicar o ajuste, o operador deve revisar e
 confirmar uma nova solicitação; não zerar os valores para contornar a rejeição.
 
+## Inscrição municipal do tomador e rejeição P4016
+
+A DPS 4 de produção foi rejeitada por P4016: o tomador possui mais de um
+cadastro de contribuinte no município, e o provedor exige sua inscrição
+municipal para identificar o cadastro correto. O formulário e o XML ainda
+não transportavam esse dado do tomador.
+
+O grupo **Tomador** passa a oferecer **Inscrição municipal do tomador**,
+enviada em `toma/IM`, antes de `xNome`, conforme o XSD nacional. Preservar
+zeros iniciais e o identificador confirmado pelo Financeiro no cadastro da
+prefeitura; não copiar a inscrição do prestador. O campo aceita até 15
+caracteres e continua opcional nos casos em que a prefeitura não o exige.
+Após uma rejeição P4016, o painel exige seu preenchimento e nova revisão.
+
+Após a publicação, abrir a preparação em Validação de Notas, selecionar
+Produção e Preparar emissão em produção. Preencher a inscrição correta no
+grupo Tomador, revisar os dados e confirmar uma nova solicitação. A DPS 4
+rejeitada permanece no histórico e não é retransmitida automaticamente.
+
 ## Confirmações antes de habilitar
 
 - A documentação pública do provedor e o teste realizado confirmam
