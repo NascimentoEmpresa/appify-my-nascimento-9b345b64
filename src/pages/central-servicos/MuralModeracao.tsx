@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   useDecidirMural, useHabilitarTriagem, useMuralModeracao, useTriagemMural, type ItemModeracao,
@@ -100,6 +100,22 @@ const paraCartao = (i: ItemModeracao): ItemCartao => ({
 });
 const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
 
+/**
+ * Caixinha do checklist (12/11/2026, Pablo: "deixa selecionar quais eu quero
+ * liberar, como se fosse checklist"). `parcial` = alguns da pessoa marcados.
+ */
+function Caixa({ marcado, parcial = false, onChange, rotulo }: {
+  marcado: boolean; parcial?: boolean; onChange: () => void; rotulo: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = parcial && !marcado; }, [parcial, marcado]);
+  return (
+    <input ref={ref} type="checkbox" checked={marcado} onChange={onChange} aria-label={rotulo} title={rotulo}
+      onClick={(e) => e.stopPropagation()}
+      style={{ width: 17, height: 17, accentColor: "#16a34a", cursor: "pointer", flexShrink: 0 }} />
+  );
+}
+
 export default function MuralModeracao({ formId, onFechar }: { formId: string; onFechar: () => void }) {
   const noInicio = mesAnterior();
   const [mes, setMes] = useState(noInicio);
@@ -113,6 +129,9 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   const [cardIAAberto, setCardIAAberto] = useState(true);
   // "Tirar do Início": o que já está publicado volta a pendente (uma confirmação).
   const [tirar, setTirar] = useState<{ lista: ItemModeracao[]; quem?: string } | null>(null);
+  // Checklist: chaves dos pendentes marcados para liberar/recusar juntos.
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  useEffect(() => { setMarcados(new Set()); }, [mes]);
   const { data: itens = [], isLoading, error } = useMuralModeracao(formId, mes, true);
   const decidir = useDecidirMural();
   // Triagem por IA: só depois que a fila carregou e se há pendente.
@@ -142,11 +161,21 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   const naoLidos = triagemQ.data ? semTriagem(pendentes, mapaTriagem, chaveItem).length : 0;
   // Reabilitados à mão continuam no card (com "Desabilitar"), para dar para voltar atrás.
   const sinalizadosIA = pendentes.filter((i) => sinalizadoPelaIA(i, triagemDe(i)));
+  // Só entra na seleção o que pode ser liberado: pendente e não segurado pela
+  // IA. O que mudou de status (ou a IA desabilitou) sai sozinho da contagem.
+  const selecionados = pendentesLiberaveis.filter((i) => marcados.has(chaveItem(i)));
+  const alternarMarcado = (lista: ItemModeracao[]) => setMarcados((s) => {
+    const n = new Set(s);
+    const todos = lista.every((i) => n.has(chaveItem(i)));
+    lista.forEach((i) => { if (todos) n.delete(chaveItem(i)); else n.add(chaveItem(i)); });
+    return n;
+  });
 
   const aplicar = (lista: ItemModeracao[], status: StatusMural) => {
     if (!lista.length) return;
     decidir.mutate({ itens: lista, status }, {
       onSuccess: () => {
+        setMarcados((s) => { const n = new Set(s); lista.forEach((i) => n.delete(chaveItem(i))); return n; });
         if (lista.length > 1) toast.success(`${lista.length} comentário(s) ${status === "liberado" ? "liberados para o mural" : "atualizados"}.`);
       },
       onError: (e: Error) => toast.error(e?.message ?? "Não foi possível salvar."),
@@ -183,7 +212,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               </div>
               <ul style={{ fontSize: 11.5, opacity: .9, margin: "6px 0 0", paddingLeft: 16, lineHeight: 1.5 }}>
                 <li><b>Ranking:</b> do 1º ao último pela quantidade de comentários positivos no mês; empate vai para a nota média.</li>
-                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e todo mundo logado vê, sem precisar de permissão. <b>⤺ Tirar do Início</b> devolve o publicado para pendente.</li>
+                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e todo mundo logado vê, sem precisar de permissão. <b>⤺ Tirar do Início</b> devolve o publicado para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
                 <li><b>Triagem por IA:</b> comentários que não cabem num mural público (comparação com o líder, crítica a terceiros, assunto pessoal…) já vêm <b>desabilitados</b>; habilite se quiser enviar.</li>
               </ul>
             </div>
@@ -297,11 +326,17 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             // "Liberar os N" conta só o que a IA não segurou (ou que foi habilitado).
             const { liberaveis: pend, bloqueados: pendForaIA } = separarPelaTriagem(pendTodos, mapaTriagem, chaveItem);
             const med = MEDALHA[p.posicao];
+            const nMarcados = pend.filter((i) => marcados.has(chaveItem(i))).length;
             return (
               // flexShrink 0: com overflow hidden o cartão perde o min-height
               // automático e a coluna espremia as 55 pessoas em tracinhos (03/11/2026).
               <div key={p.colaborador} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 4px 14px rgba(15,23,42,.05)", overflow: "hidden", flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", flexWrap: "wrap" }}>
+                  {pend.length > 0 && (
+                    <Caixa marcado={nMarcados === pend.length} parcial={nMarcados > 0}
+                      onChange={() => alternarMarcado(pend)}
+                      rotulo={`Selecionar os ${pend.length} pendente(s) de ${p.colaborador}`} />
+                  )}
                   <span title={`${p.posicao}º lugar`}
                     style={{ minWidth: 38, textAlign: "center", fontSize: 13, fontWeight: 900, padding: "4px 6px", borderRadius: 9, background: med?.bg ?? "#f1f5f9", color: med?.c ?? "#475569" }}>
                     {p.posicao}º
@@ -320,6 +355,9 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                         style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#fee2e2", color: "#b91c1c" }}>
                         🤖 {pendForaIA.length} desabilitado(s)
                       </span>
+                    )}
+                    {nMarcados > 0 && (
+                      <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#dcfce7", color: "#15803d" }}>☑ {nMarcados} selecionado(s)</span>
                     )}
                     <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{aberto ? "▾ fechar" : "▸ ver comentários"}</span>
                   </button>
@@ -356,6 +394,10 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                       return (
                         <div key={chaveItem(i)} style={{ borderLeft: `3px solid ${bloq ? "#ef4444" : st.c}`, padding: "6px 10px", background: bloq ? "#fafafa" : "#fff", borderRadius: 8, border: "1px solid #eef2f7" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            {i.status === "pendente" && !bloq && (
+                              <Caixa marcado={marcados.has(chaveItem(i))} onChange={() => alternarMarcado([i])}
+                                rotulo="Selecionar este comentário" />
+                            )}
                             <span style={{ fontSize: 11, fontWeight: 800, color: "#f59e0b" }}>★ {i.nota}/{i.escala}</span>
                             <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: st.bg, color: st.c }}>{st.rot}</span>
                             {sinal && (
@@ -422,12 +464,26 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               ⤺ Tirar do Início ({contagem.liberado})
             </button>
           )}
+          {selecionados.length > 0 ? (
+            <>
+              <button onClick={() => setMarcados(new Set())} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Limpar seleção</button>
+              <button disabled={ocupado} onClick={() => aplicar(selecionados, "recusado")}
+                style={btn("#fff", "#b91c1c", "1px solid #fecaca")}>Recusar selecionados ({selecionados.length})</button>
+              {/* Mesmas duas confirmações do "Liberar". */}
+              <button disabled={travaLiberar} onClick={() => pedirLiberacao(selecionados)}
+                title={triando ? "Aguarde a triagem da IA" : undefined}
+                style={triando ? btnApagado : btn("#16a34a")}>
+                ✓ Liberar selecionados ({selecionados.length})
+              </button>
+            </>
+          ) : (
           <button disabled={!pendentesLiberaveis.length || travaLiberar}
             onClick={() => pedirLiberacao(pendentesLiberaveis, undefined, bloqueadosIA.length)}
             title={triando ? "Aguarde a triagem da IA" : undefined}
             style={pendentesLiberaveis.length && !triando ? btn("#16a34a") : btnApagado}>
             ✓ Liberar todos os pendentes{bloqueadosIA.length > 0 ? ` (${pendentesLiberaveis.length})` : ""}
           </button>
+          )}
         </div>
 
         {confirmar && (
