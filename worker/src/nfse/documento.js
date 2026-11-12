@@ -63,6 +63,8 @@ function validarSolicitacao(s) {
   exigir(['1','2'].includes(p.iss_retido), 'O piloto aceita ISS não retido ou retido pelo tomador, sem intermediário.');
   exigir(Number.isFinite(Number(p.aliquota_iss)) && Number(p.aliquota_iss) >= 0 && Number(p.aliquota_iss) <= 5, 'Alíquota de ISS inválida.');
   const t = p.tomador || {};
+  const inscricaoTomador = String(t.inscricao_municipal ?? '').trim();
+  exigir(inscricaoTomador.length <= 15 && ![...inscricaoTomador].some(caractere => caractere.charCodeAt(0) < 32), 'Confira a inscrição municipal do tomador (até 15 caracteres válidos).');
   exigir(/^(\d{11}|\d{14})$/.test(digitos(t.documento)), 'Informe CPF/CNPJ do tomador.');
   texto(t.nome, 150, 'o nome do tomador'); codigo(t.municipio, 7, 'o município do tomador'); codigo(t.cep, 8, 'o CEP do tomador');
   texto(t.logradouro, 255, 'o logradouro do tomador'); texto(t.numero, 60, 'o número do endereço'); texto(t.bairro, 60, 'o bairro do tomador');
@@ -101,6 +103,8 @@ function gerarDps(s) {
   const { p, n, cnpj } = validarSolicitacao(s);
   const t = p.tomador;
   const documento = digitos(t.documento);
+  const identificacaoTomador = tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento) +
+    (String(t.inscricao_municipal ?? '').trim() ? tag('IM',String(t.inscricao_municipal).trim()) : '');
   const endereco = `<end><endNac>${tag('cMun',digitos(t.municipio))}${tag('CEP',digitos(t.cep))}</endNac>${tag('xLgr',t.logradouro.trim())}${tag('nro',t.numero.trim())}${t.complemento ? tag('xCpl',t.complemento.trim()) : ''}${tag('xBairro',t.bairro.trim())}</end>`;
   const regTrib = `<regTrib>${tag('opSimpNac',p.opcao_simples)}${p.opcao_simples === '3' ? tag('regApTribSN',p.regime_apuracao) : ''}${tag('regEspTrib',p.regime_especial)}</regTrib>`;
   const integracaoMunicipal = String(p.codigo_integracao_municipal ?? '').trim();
@@ -123,7 +127,7 @@ function gerarDps(s) {
   const i = p.imovel;
   const imovel = p.informar_imovel ? `<imovel>${i.inscricao ? tag('inscImobFisc',i.inscricao) : ''}<end>${tag('CEP',digitos(i.cep))}${tag('xLgr',i.logradouro)}${tag('nro',i.numero)}${i.complemento ? tag('xCpl',i.complemento) : ''}${tag('xBairro',i.bairro)}</end></imovel>` : '';
   const ibsCbs = `<IBSCBS>${tag('finNFSe','0')}${tag('indFinal',p.consumidor_final)}${tag('cIndOp',p.ibs_indicador_operacao)}${p.tipo_operacao ? tag('tpOper',p.tipo_operacao) : ''}${p.tipo_ente_governamental ? tag('tpEnteGov',p.tipo_ente_governamental) : ''}${tag('indDest','0')}${imovel}<valores><trib><gIBSCBS>${tag('CST',p.ibs_cst)}${tag('cClassTrib',p.ibs_classificacao)}</gIBSCBS></trib></valores></IBSCBS>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento)}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${identificacaoTomador}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
 }
 
 function abrirCertificado(caminho, senha, cnpj, agora = new Date()) {

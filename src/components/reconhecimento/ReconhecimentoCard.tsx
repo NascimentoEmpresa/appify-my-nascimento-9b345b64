@@ -7,8 +7,9 @@ import { lerNota, rotuloMes } from "@/lib/formularios/muralReconhecimento";
  * Cartão "Reconhecimento e Convivência Profissional" do Início (30/10/2026).
  *
  * Mostra os recados POSITIVOS que os colegas deixaram uns para os outros na
- * Avaliação de Reconhecimento (pergunta "colegas" dos Formulários), sempre do
- * MÊS ANTERIOR e só depois que quem cuida do formulário LIBEROU — a regra
+ * Avaliação de Reconhecimento (pergunta "colegas" dos Formulários), um mês por
+ * vez com setas para passar os meses publicados (12/11/2026; antes era só o
+ * mês anterior), e só depois que quem cuida do formulário LIBEROU — a regra
  * inteira está em lib/formularios/muralReconhecimento e na migration
  * 20261030003200. Aqui é só vitrine.
  *
@@ -32,9 +33,25 @@ export type ItemCartao = Pick<ItemMuralInicio, "chave" | "colaborador" | "setor"
 
 export function ReconhecimentoCard() {
   const { data, isLoading, isError } = useMuralInicio();
-  const itens = useMemo(() => data?.itens ?? [], [data]);
-  if (isLoading || isError || !itens.length) return null;
-  return <CartaoReconhecimento mes={data!.mes} itens={itens} />;
+  const meses = useMemo(() => data ?? [], [data]);
+  // 12/11/2026 (Pablo): com mais de um mês publicado, dá para passar os
+  // meses. Abre no mais novo (índice 0); "‹" vai para o mais velho.
+  const [indice, setIndice] = useState(0);
+  if (isLoading || isError || !meses.length) return null;
+  const i = Math.min(indice, meses.length - 1);
+  const bloco = meses[i];
+  return (
+    <CartaoReconhecimento
+      // key: trocar de mês recomeça o carrossel do primeiro recado.
+      key={bloco.mes}
+      mes={bloco.mes}
+      itens={bloco.itens}
+      navMes={meses.length > 1 ? {
+        anterior: i < meses.length - 1 ? () => setIndice(i + 1) : undefined,
+        proximo: i > 0 ? () => setIndice(i - 1) : undefined,
+      } : undefined}
+    />
+  );
 }
 
 /**
@@ -43,7 +60,11 @@ export function ReconhecimentoCard() {
  * como fica antes de ser publicado") — o mesmo componente, para a prévia
  * nunca ficar diferente do que vai ao ar.
  */
-export function CartaoReconhecimento({ mes, itens, rodape }: { mes: string; itens: ItemCartao[]; rodape?: string }) {
+export function CartaoReconhecimento({ mes, itens, rodape, navMes }: {
+  mes: string; itens: ItemCartao[]; rodape?: string;
+  /** Setas de mês (só no Início, com mais de um mês publicado). Sem a função = seta desabilitada. */
+  navMes?: { anterior?: () => void; proximo?: () => void };
+}) {
   useEstiloReconhecimento();
   const [atual, setAtual] = useState(0);
   const [pausado, setPausado] = useState(false);
@@ -93,7 +114,16 @@ export function CartaoReconhecimento({ mes, itens, rodape }: { mes: string; iten
         <div className="ini-hd-tx">
           <h3><Award className="ini-hd-ic rec-trofeu" aria-hidden /> Reconhecimento e Convivência Profissional</h3>
           <p>
-            O que os colegas disseram uns dos outros em <b>{rotuloMes(mes)}</b> ·{" "}
+            O que os colegas disseram uns dos outros em{" "}
+            {navMes ? (
+              <span className="rec-mes-nav">
+                <button type="button" className="rec-mes-seta" onClick={navMes.anterior} disabled={!navMes.anterior}
+                  aria-label="Mês anterior" title="Mês anterior"><ChevronLeft size={13} /></button>
+                <b>{rotuloMes(mes)}</b>
+                <button type="button" className="rec-mes-seta" onClick={navMes.proximo} disabled={!navMes.proximo}
+                  aria-label="Próximo mês" title="Próximo mês"><ChevronRight size={13} /></button>
+              </span>
+            ) : <b>{rotuloMes(mes)}</b>} ·{" "}
             {itens.length} {itens.length === 1 ? "recado" : "recados"} para {pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"}
           </p>
         </div>
@@ -226,6 +256,12 @@ const CSS_RECONHECIMENTO = `
   border:1px solid hsl(var(--border));background:hsl(var(--card));color:hsl(var(--foreground));
   transition:transform .2s cubic-bezier(.34,1.56,.64,1),background .2s;}
 .rec-seta:hover{transform:scale(1.1);background:hsl(var(--muted));}
+/* Setas de mês no subtítulo (12/11/2026): pequenas, para não competir com as do recado. */
+.rec-mes-nav{display:inline-flex;align-items:center;gap:4px;vertical-align:middle;}
+.rec-mes-seta{display:inline-grid;place-items:center;width:20px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+  border:1px solid hsl(var(--border));background:hsl(var(--card));color:hsl(var(--foreground));}
+.rec-mes-seta:hover:not(:disabled){background:hsl(var(--muted));}
+.rec-mes-seta:disabled{opacity:.35;cursor:default;}
 .rec-contador{font-size:.72rem;font-weight:800;color:hsl(var(--muted-foreground));min-width:34px;text-align:center;}
 
 .ini-card-body.rec-body{padding:16px 20px 14px;}

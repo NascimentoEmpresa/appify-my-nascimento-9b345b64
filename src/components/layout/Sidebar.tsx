@@ -71,6 +71,9 @@ import {
   CalendarCheck2,
   AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest, X as XIcon } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
+import {
+  resolverModuloAtivo, lembradoAindaVale, lerModuloLembrado, gravarModuloLembrado,
+} from "@/lib/menuLateral/moduloAtivo";
 import { useAccessibleMenus, rotaVisivelNoMenu } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
 import { useGradeAtivaCount } from "@/hooks/useGradeAtivaCount";
@@ -422,6 +425,8 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0599: resumo financeiro do contrato que vai começar.
         { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Conferência de 13º (12/11/2026, mig 20261112220000): o que o RH liberou, para pagar.
+        { label: "Conferência de 13º", to: "/app/financeiro/conferencia-decimo-terceiro", icon: ClipboardCheck },
         // Ficha Financeira (29/10/2026, mig 20261029004700): tudo o que cada
         // colaborador recebeu na Senior. Nasce sem ninguém liberado.
         { label: "Ficha Financeira", to: "/app/financeiro/ficha-financeira", icon: Receipt },
@@ -612,6 +617,9 @@ const rhModule: ModuleDef = {
         // Documentos solicitados aos encarregados, até voltarem assinados (mig 20261019000040).
         { label: "Documentos", to: "/app/rh/documentos", icon: FileSignature },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
+        // Conferência de 13º (12/11/2026, mig 20261112220000): clone do ponto
+        // sem Operacional nem encarregados — RH confere e libera, Financeiro paga.
+        { label: "Conferência de 13º", to: "/app/rh/conferencia-decimo-terceiro", icon: ClipboardCheck },
         // "Dashboard de Pontos" desde 30/09/2026 (antes dois itens com o mesmo
         // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
         // Operacional, cada um com o seu menu (mig 274).
@@ -1719,35 +1727,33 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"
   // (colide com a página Início) e outros módulos se aninham (/app/rh ⊃ /app/rh/recrutamento).
   // Vence o item de caminho mais específico (mais longo). null = nenhum módulo (ex.: Início).
-  const activeModuleId = useMemo(() => {
-    let bestId: string | null = null;
-    let bestLen = -1;
-    for (const m of visibleModules) {
-      if (m.status !== "active") continue;
-      // Página-hub do módulo (headerLink) ativa o módulo, mesmo sem submódulos (ex.: /app/central-servicos).
-      if (m.headerLink && m.headerLink !== "/app") {
-        const matchesHub =
-          location.pathname === m.headerLink || location.pathname.startsWith(m.headerLink + "/");
-        if (matchesHub && m.headerLink.length > bestLen) {
-          bestLen = m.headerLink.length;
-          bestId = m.id;
-        }
-      }
-      if (!m.groups) continue;
-      for (const g of m.groups) {
-        for (const item of g.items) {
-          if (item.to === "/app") continue; // Início é página própria, não ativa nenhum módulo
-          const matches =
-            location.pathname === item.to || location.pathname.startsWith(item.to + "/");
-          if (matches && item.to.length > bestLen) {
-            bestLen = item.to.length;
-            bestId = m.id;
-          }
-        }
-      }
-    }
-    return bestId;
-  }, [visibleModules, location.pathname]);
+  //
+  // 12/11/2026: tela em mais de um módulo (Relatório de Serviços em Contábil
+  // e Financeiro, Conferência de Ponto em RH/Financeiro/Operacional) acendia
+  // sempre o primeiro da lista — empate no comprimento, desempate alfabético.
+  // Agora o empate vai para o módulo por onde a pessoa ENTROU (clique no item
+  // do painel, guardado por aba no sessionStorage). Regra inteira e testes em
+  // src/lib/menuLateral/moduloAtivo.ts / src/test/sidebar-modulo-ativo.test.ts.
+  const [moduloLembrado, setModuloLembrado] = useState<string | null>(() => lerModuloLembrado());
+  const lembrarModulo = useCallback((id: string) => {
+    setModuloLembrado(id);
+    gravarModuloLembrado(id);
+  }, []);
+  const activeModuleId = useMemo(
+    () => resolverModuloAtivo(visibleModules, location.pathname, moduloLembrado),
+    [visibleModules, location.pathname, moduloLembrado],
+  );
+  // Saiu para uma tela que não é do módulo lembrado: esquece, para a próxima
+  // tela compartilhada aberta pela busca/link não herdar um módulo antigo.
+  // Só esquece com o módulo já carregado — no F5 os acessos chegam depois, e
+  // a barra vazia do primeiro render não pode apagar a memória da aba.
+  useEffect(() => {
+    if (!moduloLembrado) return;
+    if (!visibleModules.some((m) => m.id === moduloLembrado)) return;
+    if (lembradoAindaVale(visibleModules, location.pathname, moduloLembrado)) return;
+    setModuloLembrado(null);
+    gravarModuloLembrado(null);
+  }, [visibleModules, location.pathname, moduloLembrado]);
 
   // SIS-2026-0772 (modelo 2 do Iury): os submódulos abrem num PAINEL à
   // direita da barra, não mais em acordeão para baixo. `painel` é o módulo
@@ -1964,7 +1970,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
 
       <nav className="sb-scroll relative z-10 mt-2 flex-1 overflow-y-auto px-2 py-1">
         {!telaGrande && moduloAberto ? (
-          <ListaSubmodulosMobile mod={moduloAberto} onVoltar={() => setPainel(null)} />
+          <ListaSubmodulosMobile mod={moduloAberto} onVoltar={() => setPainel(null)} onEscolher={lembrarModulo} />
         ) : (
           visibleModules.map((mod) => (
             <ModuloLinha
@@ -1988,6 +1994,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           ativo={moduloNoPainel.id === activeModuleId}
           fechando={!moduloAberto}
           primeiroLinkRef={primeiroLinkRef}
+          onEscolher={lembrarModulo}
           onMouseEnter={cancelarTimer}
           onMouseLeave={fecharComAtraso}
           onFechar={() => {
@@ -2158,7 +2165,7 @@ function CabecalhoModulo({ mod, ativo }: { mod: ModuleDef; ativo: boolean }) {
  * deslize, só a cascata (key no conteúdo). `fechando` = saída tocando.
  */
 function PainelSubmodulos({
-  mod, ativo, fechando, primeiroLinkRef, onMouseEnter, onMouseLeave, onFechar,
+  mod, ativo, fechando, primeiroLinkRef, onMouseEnter, onMouseLeave, onFechar, onEscolher,
 }: {
   mod: ModuleDef;
   ativo: boolean;
@@ -2167,6 +2174,7 @@ function PainelSubmodulos({
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   onFechar: () => void;
+  onEscolher: (moduloId: string) => void;
 }) {
   return (
     <div
@@ -2188,7 +2196,7 @@ function PainelSubmodulos({
         {/* sb-scroll (06/11/2026): sem a barra de rolagem, igual à lista
             principal — rola pela roda do mouse, toque e teclado. */}
         <div className="sb-scroll flex-1 overflow-y-auto px-3 py-3">
-          <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} desativado={fechando} />
+          <GruposDoModulo mod={mod} primeiroLinkRef={primeiroLinkRef} desativado={fechando} onEscolher={onEscolher} />
         </div>
       </div>
     </div>
@@ -2196,7 +2204,7 @@ function PainelSubmodulos({
 }
 
 /** Celular (drawer): a lista de submódulos toma o lugar da lista de módulos. */
-function ListaSubmodulosMobile({ mod, onVoltar }: { mod: ModuleDef; onVoltar: () => void }) {
+function ListaSubmodulosMobile({ mod, onVoltar, onEscolher }: { mod: ModuleDef; onVoltar: () => void; onEscolher: (moduloId: string) => void }) {
   // A lista de módulos herdava a rolagem: abrir um módulo do fim da lista
   // deixava o "‹ Voltar" e o cabeçalho escondidos lá em cima.
   const voltarRef = useRef<HTMLButtonElement>(null);
@@ -2214,7 +2222,7 @@ function ListaSubmodulosMobile({ mod, onVoltar }: { mod: ModuleDef; onVoltar: ()
       <div className="mb-3 px-2">
         <CabecalhoModulo mod={mod} ativo={false} />
       </div>
-      <GruposDoModulo mod={mod} />
+      <GruposDoModulo mod={mod} onEscolher={onEscolher} />
     </div>
   );
 }
@@ -2231,7 +2239,7 @@ const passo = (n: number) => Math.min(n, PASSO_MAX);
  */
 const atraso = (n: number): React.CSSProperties => ({ animationDelay: `${30 + n * 40}ms` });
 
-function GruposDoModulo({ mod, primeiroLinkRef, desativado }: { mod: ModuleDef; primeiroLinkRef?: React.RefObject<HTMLAnchorElement>; desativado?: boolean }) {
+function GruposDoModulo({ mod, primeiroLinkRef, desativado, onEscolher }: { mod: ModuleDef; primeiroLinkRef?: React.RefObject<HTMLAnchorElement>; desativado?: boolean; onEscolher?: (moduloId: string) => void }) {
   const location = useLocation();
   const rotasDoModulo = useMemo(() => (mod.groups ?? []).flatMap((g) => g.items.map((i) => i.to)), [mod.groups]);
   const rotaAcesa = rotaMaisProxima(location.pathname, rotasDoModulo);
@@ -2270,6 +2278,9 @@ function GruposDoModulo({ mod, primeiroLinkRef, desativado }: { mod: ModuleDef; 
                     to={item.to}
                     end
                     tabIndex={desativado ? -1 : undefined}
+                    // Lembra por qual módulo a pessoa entrou: decide o
+                    // módulo aceso quando a tela mora em mais de um.
+                    onClick={() => onEscolher?.(mod.id)}
                     style={atraso(passo(bases[gi] + 1 + ii))}
                     className={cn(
                       "sb-item sb-cai flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px]",

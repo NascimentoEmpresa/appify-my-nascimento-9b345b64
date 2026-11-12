@@ -3,6 +3,18 @@ import { validarParametrosNfse } from "@/pages/financeiro/controle-notas/validar
 import { parametrosNfse } from "./fixtures/parametrosNfse";
 
 describe("NFS-e: revisão antes de entrar na fila", () => {
+  it("preserva a inscrição municipal do tomador e exige preenchimento somente após P4016", () => {
+    const p = parametrosNfse();
+    expect(validarParametrosNfse(p).tomador.inscricao_municipal).toBe("");
+    expect(() => validarParametrosNfse(p, "homologacao", true)).toThrow(/inscrição municipal do tomador.*P4016/);
+    p.tomador.inscricao_municipal = " 00123-A ";
+    expect(validarParametrosNfse(p, "homologacao", true).tomador.inscricao_municipal).toBe("00123-A");
+    expect(p.tomador.inscricao_municipal).toBe(" 00123-A ");
+    for (const invalida of ["1".repeat(16), "123\u0001", "12\n34", "12\t34"]) {
+      p.tomador.inscricao_municipal = invalida;
+      expect(() => validarParametrosNfse(p)).toThrow(/Inscrição municipal do tomador: informe até 15 caracteres/);
+    }
+  });
   it("aceita CEP completo com máscara e normaliza os códigos sem alterar o formulário", () => {
     const original = parametrosNfse(); const normalizado = validarParametrosNfse(original);
     expect(normalizado.tomador.cep).toBe("95840000");

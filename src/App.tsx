@@ -297,6 +297,8 @@ import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasC
 import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
 import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
+import ConferenciaDecimoTerceiro from "./pages/rh/ConferenciaDecimoTerceiro";
+import FinanceiroConferenciaDecimoTerceiro from "./pages/financeiro/ConferenciaDecimoTerceiro";
 import FichaFinanceira from "./pages/financeiro/FichaFinanceira";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
@@ -1051,6 +1053,9 @@ const App = () => (
                 o que muda é a permissão de cada um (ver conferencia.ts). */}
             <Route path="rh/conferencia-ponto" element={<ConferenciaPonto />} />
             <Route path="rh/conferencia-ponto/painel" element={<ConferenciaPontoPainel />} />
+            {/* Conferência de 13º (mig 20261112220000): clone do ponto só com RH → Financeiro. */}
+            <Route path="rh/conferencia-decimo-terceiro" element={<ConferenciaDecimoTerceiro />} />
+            <Route path="financeiro/conferencia-decimo-terceiro" element={<FinanceiroConferenciaDecimoTerceiro />} />
             {/* As outras duas portas do MESMO sistema — o fluxo atravessa os
                 três setores e ninguém troca de módulo para ver o seu. */}
             <Route path="operacional/conferencia-ponto" element={<OperacionalConferenciaPonto />} />
