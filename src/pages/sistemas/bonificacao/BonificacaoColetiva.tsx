@@ -48,6 +48,9 @@ import {
 } from "@/lib/sistemas/bonificacaoColetiva";
 import { AbaRegras } from "./componentes/AbaRegras";
 import { AvaliarEntregaDialog } from "./componentes/AvaliarEntregaDialog";
+import { ChatBonificacaoIa } from "./componentes/ChatBonificacaoIa";
+import { ValorDetalhado } from "./componentes/ValorDetalhado";
+import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import { AJUDA, Ajuda, BarraCriterio, Kpi, Titulo, Vazio, dataBr, moeda, num } from "./componentes/comum";
 
 const MENU = "sistemas_bonificacao";
@@ -340,8 +343,10 @@ function AbaEquipe({ filtradas, validas, cfg, notaEquipe, notaFiltro, filtrando,
   );
 }
 
-function TabelaDevs({ devs, acao, extras = false, clt }: {
+function TabelaDevs({ devs, acao, extras = false, clt, rotuloMes }: {
   devs: ResumoDev[]; acao?: (d: ResumoDev) => ReactNode; extras?: boolean;
+  /** Mês do filtro, para o título do detalhe dos valores (12/11/2026). */
+  rotuloMes?: string;
   /** Substitui o "CLT IA" pelo salário do mês (Comparativo individual). */
   clt?: (d: ResumoDev) => number | null;
 }) {
@@ -366,7 +371,7 @@ function TabelaDevs({ devs, acao, extras = false, clt }: {
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell>{moeda(d.mercado)}</TableCell><TableCell className="font-semibold tabular-nums">{d.entregas.length ? moeda(Math.round((d.mercado / d.entregas.length) * 100) / 100) : "—"}</TableCell><TableCell>{moeda(d.freelancer)}</TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell><ValorDetalhado entregas={d.entregas} campo="valorMercado" valor={d.mercado} titulo={`Mercado IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold tabular-nums"><ValorDetalhado entregas={d.entregas} campo="valorMercado" media valor={d.entregas.length ? Math.round((d.mercado / d.entregas.length) * 100) / 100 : null} titulo={`Média por entrega — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell><ValorDetalhado entregas={d.entregas} campo="valorFreelancer" valor={d.freelancer} titulo={`Freelancer IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}
@@ -389,8 +394,10 @@ function AbaIndividual({ devs, cfg, mes, hoje }: { devs: ResumoDev[]; cfg: Confi
       <Card className="p-5">
         <Titulo ajuda="Apresenta a nota por critério de cada profissional e os valores estimados das tarefas que executou.">Comparativo individual</Titulo>
         <p className="mb-3 text-sm text-muted-foreground">Selecione um desenvolvedor no filtro para ver só ele. As notas individuais não alteram a cota da bonificação.</p>
-        <TabelaDevs devs={devs} extras clt={clt} />
+        <p className="mb-3 text-xs text-muted-foreground">Passe o mouse sobre um valor para ver os chamados que o compõem; clique num chamado para abri-lo.</p>
+        <TabelaDevs devs={devs} extras clt={clt} rotuloMes={rotuloCompetencia(mes)} />
       </Card>
+      <ChatBonificacaoIa devs={devs} rotuloMes={rotuloCompetencia(mes)} />
       <Card className="p-5">
         <Titulo ajuda="Detalhamento dos cinco componentes da nota individual, antes e depois da aplicação dos pesos.">Pontuação por critério do profissional</Titulo>
         {devs.length ? devs.map((d) => {
@@ -420,7 +427,7 @@ function AbaTarefas({ filtradas, excluidas, cfg, totalPeriodo, podeAvaliar, aval
         {podeAvaliar && " Use “Avaliar” para confirmar a qualidade e ajustar dificuldade e valores."}
       </p>
       {filtradas.length ? filtradas.map((e) => (
-        <CartaoTarefa key={e.chamadoId} e={e} cfg={cfg} totalPeriodo={totalPeriodo} podeAvaliar={podeAvaliar} avaliar={avaliar} />
+        <CartaoTarefa key={e.chamadoId} e={e} cfg={cfg} totalPeriodo={totalPeriodo} podeAvaliar={podeAvaliar} avaliar={avaliar} lista={filtradas.map((x) => x.chamadoId)} />
       )) : <Vazio>Nenhuma entrega concluída no filtro.</Vazio>}
       {excluidas.length > 0 && (
         <>
@@ -438,7 +445,9 @@ function AbaTarefas({ filtradas, excluidas, cfg, totalPeriodo, podeAvaliar, aval
   );
 }
 
-function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
+function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar, lista = [] }: {
+  /** Ordem das tarefas na tela: no chamado, as setas andam por ela (12/11/2026). */
+  lista?: string[];
   e: EntregaDetalhada; cfg: ConfigBonificacao; totalPeriodo: number; podeAvaliar: boolean; avaliar: (e: EntregaDetalhada) => void;
 }) {
   const notas = notasDaEntrega(e, cfg);
@@ -528,7 +537,7 @@ function CartaoTarefa({ e, cfg, totalPeriodo, podeAvaliar, avaliar }: {
         <div className="flex flex-wrap gap-2">
           {podeAvaliar && <Button size="sm" onClick={() => avaliar(e)}><Scale className="mr-1.5 h-4 w-4" /> Avaliar</Button>}
           <Button size="sm" variant="outline" asChild>
-            <Link to={`/app/sistemas/chamados/${e.chamadoId}`}><ExternalLink className="mr-1.5 h-4 w-4" /> Abrir chamado</Link>
+            <Link to={hrefNaLista(e.chamadoId, lista)}><ExternalLink className="mr-1.5 h-4 w-4" /> Abrir chamado</Link>
           </Button>
         </div>
       </CollapsibleContent>

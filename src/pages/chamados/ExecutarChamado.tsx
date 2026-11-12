@@ -29,6 +29,7 @@ import {
   SITUACOES_PRAZO, mudouNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, rotuloPrazo, situacaoPrazo,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
+import { NavegacaoListaChamados } from "./NavegacaoListaChamados";
 import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
@@ -263,7 +264,9 @@ export default function ExecutarChamado() {
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 12/11/2026: aberto de uma lista (ex.: Bonificação), setas para o anterior/próximo. */}
+            <NavegacaoListaChamados id={id} />
             <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
             <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>
           </div>
