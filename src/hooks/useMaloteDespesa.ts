@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { comIntegranteEmpresa } from "@/lib/integranteEmpresa";
 import { novoUuid } from "@/lib/utils";
 import {
   STATUS_BADGE_CLASS,
@@ -444,7 +445,8 @@ export function useIntegrantes() {
         todos.push(...lote);
         if (lote.length < PAGE) break;
       }
-      return todos;
+      // SIS-2026-0873: "Empresa" (ID fixo -1, não existe em EMPREGADOS) no topo — ver src/lib/integranteEmpresa.ts.
+      return comIntegranteEmpresa(todos);
     },
   });
 }
