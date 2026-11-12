@@ -26,6 +26,13 @@ export interface FinanceiroTv {
   receita: Record<string, number>;
   /** Saídas do Fluxo de Caixa por "contratoId|YYYY-MM", do começo do ano até a competência. */
   custo_por_mes: Record<string, number>;
+  /**
+   * A linha do mês no Faturamento da Empresa: Valor Líquido − Despesas de
+   * TODOS os contratos (mig 20261113005000). É o que o cartão "Lucratividade"
+   * mostra — antes ele somava só os contratos com receita ≥ R$ 10 mil e custo
+   * lançado, e deu 19,5% na TV contra 10,43% no Faturamento (set/26).
+   */
+  empresa?: { liquido: number; despesas: number; lucro: number; margem: number | null };
 }
 
 export type DadosOpeContratosTv = DadosContratosRpc & { financeiro: FinanceiroTv };
@@ -102,9 +109,17 @@ export function totaisOpe(d: DadosOpeContratosTv, linhas: LinhaContrato[] = linh
   const cobertos = comPosto.reduce((a, c) => a + Math.min(c.postos?.cobertos ?? 0, c.postos?.contratados ?? 0), 0);
   const pPostos = contratados > 0 ? r1t((cobertos / contratados) * 100) : null;
 
-  let rec = 0, cus = 0;
-  cs.forEach((c) => { const f = fin.doMes?.get(c.id); if (f && f.receita >= PISO_RECEITA && f.custo > 0) { rec += f.receita; cus += f.custo; } });
-  const margem = rec > 0 ? r1t(((rec - cus) / rec) * 100) : null;
+  // A margem do cartão é a do Faturamento da Empresa (bloco `empresa` do banco).
+  // Sem ele (banco ainda sem a mig 20261113005000), a conta antiga por contrato.
+  let margem: number | null;
+  const emp = d.financeiro?.empresa;
+  if (emp) {
+    margem = emp.margem == null ? null : r1t(emp.margem);
+  } else {
+    let rec = 0, cus = 0;
+    cs.forEach((c) => { const f = fin.doMes?.get(c.id); if (f && f.receita >= PISO_RECEITA && f.custo > 0) { rec += f.receita; cus += f.custo; } });
+    margem = rec > 0 ? r1t(((rec - cus) / rec) * 100) : null;
+  }
 
   let orc = 0, real = 0;
   const ano = d.competencia.slice(0, 4);

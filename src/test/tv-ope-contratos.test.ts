@@ -80,6 +80,17 @@ describe("TV da Gerência Operacional — totais", () => {
     expect(t.lucratividade.status).toBe("atencao");
   });
 
+  it("com o bloco `empresa` do banco, a margem é a do Faturamento da Empresa (12/11/2026)", () => {
+    // set/26: 8.265.226,90 − 7.403.207,24 → 10,43% no Faturamento; a TV mostrava 19,5%.
+    const comEmpresa = { ...d, financeiro: { ...d.financeiro, empresa: { liquido: 8_265_226.9, despesas: 7_403_207.24, lucro: 862_019.66, margem: 10.43 } } };
+    const t = totaisOpe(comEmpresa);
+    expect(t.lucratividade.margem).toBe(10.4);
+    expect(t.lucratividade.status).toBe("ok");
+    // prejuízo no mês fica crítico
+    const neg = { ...d, financeiro: { ...d.financeiro, empresa: { liquido: 100, despesas: 200, lucro: -100, margem: -100 } } };
+    expect(totaisOpe(neg).lucratividade.status).toBe("critico");
+  });
+
   it("alerta principal: crítico primeiro; prejuízo tem nome próprio", () => {
     const linhas = linhasDaTv(d);
     expect(alertaPrincipal(linhas.find((l) => l.id === "prejuizo")!)?.texto).toBe("Prejuízo no contrato");
