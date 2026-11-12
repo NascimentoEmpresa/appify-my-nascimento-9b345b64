@@ -546,11 +546,11 @@ function CartaoLimiteMes({ mes, colaboradorId }: { mes: string; colaboradorId?: 
         <>
           <Progress value={Math.min(100, (resumo.total / LIMITE_HE_MES_MIN) * 100)} className="mt-2 h-2" />
           <p className="mt-2 text-xs text-slate-600">
-            Ponto da Senior, com feriados: <strong>{formatarDuracao(resumo.minutosPonto, true)}</strong>
+            Ponto da Senior até ontem, com feriados: <strong>{formatarDuracao(resumo.minutosPonto, true)}</strong>
             {resumo.minutosForaDoPonto > 0 && (
               <>
                 {" "}
-                · Solicitadas e ainda fora do ponto: <strong>{formatarDuracao(resumo.minutosForaDoPonto, true)}</strong>
+                · HEs de hoje em diante ou de dia sem ponto fechado: <strong>{formatarDuracao(resumo.minutosForaDoPonto, true)}</strong>
               </>
             )}
           </p>
