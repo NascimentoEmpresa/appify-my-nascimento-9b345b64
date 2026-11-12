@@ -40,6 +40,7 @@ import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { atribuirContaAosLancamentos, useContasBanco, useContasDosLancamentos, useInvalidarContasDosLancamentos } from "@/hooks/useContasBanco";
 import { comContaBanco, rotuloConta } from "@/lib/contaBanco";
+import { INTEGRANTE_EMPRESA } from "@/lib/integranteEmpresa";
 import { useExcluirDespesaSoft, useRestaurarDespesa, useDespesasLixeira } from "@/hooks/useMaloteDespesa";
 import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from "@/hooks/useDebitoAutomatico";
 import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira } from "@/hooks/useCartaoFatura";
@@ -576,7 +577,10 @@ export default function FluxoCaixaGestao() {
   const integrantesDisponiveis = useMemo(() => {
     const map = new Map<string, string>();
     linhasBrutas.forEach((l) => l.integrante_empregado_id != null && l.integrante_nome && map.set(String(l.integrante_empregado_id), l.integrante_nome));
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+    // SIS-2026-0873: "Empresa" (ID fixo -1) fica sempre logo abaixo de "Sem integrante", mesmo antes de alguma linha recebê-lo.
+    map.delete(String(INTEGRANTE_EMPRESA.id));
+    const pessoas = Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+    return [[String(INTEGRANTE_EMPRESA.id), INTEGRANTE_EMPRESA.nome] as [string, string], ...pessoas];
   }, [linhasBrutas]);
 
   // Todas as classificações (entrada e saída) — usada para os nomes no resumo da planilha.
