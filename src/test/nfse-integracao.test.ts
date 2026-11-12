@@ -77,6 +77,21 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it("preserva a assinatura da DPS nos namespaces herdados da NFSe municipal", async () => {
+    const s = solicitacao();
+    for (const algoritmo of ["sha1", "sha256"]) {
+      const assinada = documento.assinarDps(documento.gerarDps(s),documento.identificadorDps(s),cert,algoritmo);
+      await documento.validarEsquema(assinada);
+      const envolvida = `<NFSe xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infNFSe>${assinada.replace(/<\?xml[^>]*>/, "")}</infNFSe></NFSe>`;
+      for (const xml of [assinada, envolvida]) {
+        const verificador = new SignedXml({publicCert:cert.certPem,getCertFromKeyInfo:()=>null});
+        verificador.loadSignature(documento.elementos(documento.lerXml(xml),"Signature")[0]);
+        expect(verificador.checkSignature(xml),`${algoritmo}: assinatura separada e dentro da NFSe`).toBe(true);
+      }
+      expect(envolvida).toContain("Limpeza &amp; conservação &lt;teste&gt;");
+      expect(envolvida).not.toMatch(/[\r\n\t]/);
+    }
+  });
   it("envia a inscrição municipal do tomador na ordem do XSD, com zeros e assinatura válidos", async () => {
     for (const documentoTomador of ["98765432000198", "12345678901"]) {
       const s = solicitacao();

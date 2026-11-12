@@ -265,6 +265,30 @@ Produção e Preparar emissão em produção. Preencher a inscrição correta no
 grupo Tomador, revisar os dados e confirmar uma nova solicitação. A DPS 4
 rejeitada permanece no histórico e não é retransmitida automaticamente.
 
+## Assinatura da DPS dentro da NFS-e e consulta no ADN
+
+A C14N inclusiva considera os namespaces dos elementos ancestrais. A GOVBR
+inclui `xmlns:xsd` e `xmlns:xsi` no elemento NFSe. Sem declarar esses mesmos
+namespaces antes de assinar a DPS, sua assinatura pode conferir isoladamente
+e falhar dentro da NFS-e, embora a assinatura municipal externa seja válida.
+O assinador agora declara os dois namespaces antes de calcular digest e
+SignedInfo. Mantém os algoritmos SHA-1/SHA-256 configurados e os dados fiscais.
+O teste de regressão confere ambos os algoritmos com a DPS separada e aninhada
+no mesmo contexto XML usado pelo provedor.
+
+Autorização municipal não comprova, por si só, o recebimento pelo Ambiente
+de Dados Nacional. A API de envio de Triunfo retorna protocolo e sucesso
+municipal; `dadosExtras` oferece somente notificações por e-mail, sem opção
+de compartilhamento ao ADN. A confirmação nacional deve ser obtida por
+consulta oficial, com certificado do próprio contribuinte, ou por comprovante
+de compartilhamento fornecido pelo município/provedor.
+
+A correção vale para novos documentos assinados. Não alterar ou reassinar uma
+NFS-e já emitida no armazenamento do ERP. Em caso de ausência no ADN, solicitar
+ao município/provedor o recibo ou a rejeição do compartilhamento e a análise
+do reprocessamento da mesma nota. Não retransmitir uma nova DPS para suprir
+essa pendência, pois isso pode criar outra nota fiscal.
+
 ## Confirmações antes de habilitar
 
 - A documentação pública do provedor e o teste realizado confirmam

@@ -152,11 +152,17 @@ function abrirCertificado(caminho, senha, cnpj, agora = new Date()) {
 }
 function assinarDps(xml, id, cert, algoritmo) {
   exigir(['sha1','sha256'].includes(algoritmo), 'Configure o algoritmo de assinatura confirmado pelo provedor.');
+  // A GOVBR inclui xsd/xsi no ancestral NFSe. A C14N inclusiva herda esses
+  // namespaces; declará-los antes de assinar mantém digest e SignedInfo
+  // válidos tanto na DPS isolada quanto no documento municipal completo.
+  const contexto = lerXml(xml);
+  contexto.documentElement.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xsd', 'http://www.w3.org/2001/XMLSchema');
+  contexto.documentElement.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance');
   const assinador = new SignedXml({ privateKey: cert.chavePem, publicCert: cert.certPem,
     signatureAlgorithm: algoritmo === 'sha1' ? `${PREFIXO_DS}rsa-sha1` : 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256', canonicalizationAlgorithm: C14N });
   assinador.addReference({ xpath: `//*[@Id='${id}']`, uri: `#${id}`, transforms: [`${PREFIXO_DS}enveloped-signature`,C14N],
     digestAlgorithm: algoritmo === 'sha1' ? `${PREFIXO_DS}sha1` : 'http://www.w3.org/2001/04/xmlenc#sha256' });
-  assinador.computeSignature(xml, { location: { reference: "/*[local-name()='DPS']", action: 'append' } });
+  assinador.computeSignature(contexto.toString(), { location: { reference: "/*[local-name()='DPS']", action: 'append' } });
   return assinador.getSignedXml();
 }
 let esquemas;
