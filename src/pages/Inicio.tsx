@@ -497,7 +497,7 @@ export default function Inicio() {
           <AvisosCard />
 
           {/* ════════ Reconhecimento e Convivência Profissional ════════ */}
-          {/* Recados positivos do mês anterior, liberados no formulário
+          {/* Recados positivos liberados no formulário, um mês por vez com setas (12/11/2026)
               (30/10/2026). Some sem nada liberado; fora do [data-reveal]
               pelo mesmo motivo do Quadro de Avisos — e anima a própria
               entrada. Encarregado externo não vota, não vê. */}

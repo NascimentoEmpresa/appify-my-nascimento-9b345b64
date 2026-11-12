@@ -16,6 +16,14 @@
 //      confirmado, o recibo já anexado, classificação FÉRIAS, empresa da
 //      Senior, contrato da filial e o colaborador como integrante. O envio
 //      pede uma última confirmação.
+//
+// ANEXO OPCIONAL (12/11/2026, mig 20261112203700): "Enviar sem o documento"
+// (o "Programar no malote" da Gestão de Férias abre direto aqui) pula os
+// passos 1 e 2 — o RH digita o líquido no painel e a despesa vai ao Malote
+// sem o recibo, marcada PENDENTE DE ANEXO DE DOCUMENTO. O PAGAMENTO é que
+// fica travado, no banco (gatilho em malote_despesa/parcela), até alguém
+// anexar o recibo pelo bloco "Anexar o recibo" (AnexarDepois, abaixo): o
+// arquivo vai para a solicitação E para a despesa no Malote.
 // =====================================================================
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -130,10 +138,12 @@ function Passos({ atual }: { atual: 1 | 2 | 3 }) {
   );
 }
 
-export function EnviarFeriasMalote({ aberto, sol, malote, podeEnviar, onFechar, onMudou }: {
+export function EnviarFeriasMalote({ aberto, sol, malote, podeEnviar, semDocumentoInicial = false, onFechar, onMudou }: {
   aberto: boolean;
   sol: FeriasParaMalote;
   malote: MaloteDaFerias | null;
+  /** Abre direto no envio SEM o recibo ("Programar no malote"). */
+  semDocumentoInicial?: boolean;
   /** Ação "Enviar ao Malote" do menu rh_ferias (anexar/confirmar só pedem o "alterar"). */
   podeEnviar: boolean;
   onFechar: () => void;
@@ -154,8 +164,11 @@ export function EnviarFeriasMalote({ aberto, sol, malote, podeEnviar, onFechar, 
 
   // Passo atual sai do que está gravado; "trocar recibo" volta ao 1.
   const [trocando, setTrocando] = useState(false);
+  // Sem o recibo: vai direto ao passo do Malote, valor digitado no painel.
+  const [semDoc, setSemDoc] = useState(semDocumentoInicial && podeEnviar);
   const enviada = !!malote?.ativo;
-  const passo: 1 | 2 | 3 = trocando || !sol.recibo_path ? 1 : !sol.valor_confirmado_em ? 2 : 3;
+  const semDocAgora = semDoc && !sol.recibo_path && !trocando;
+  const passo: 1 | 2 | 3 = semDocAgora ? 3 : trocando || !sol.recibo_path ? 1 : !sol.valor_confirmado_em ? 2 : 3;
 
   // O arquivo fica em memória entre os passos (não baixa de novo para ler).
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -171,7 +184,16 @@ export function EnviarFeriasMalote({ aberto, sol, malote, podeEnviar, onFechar, 
         </DialogHeader>
         <Passos atual={enviada ? 3 : passo} />
 
-        {enviada ? (
+        {enviada && !sol.recibo_path ? (
+          <div className="space-y-3">
+            <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <div className="font-semibold">📦 No Malote — despesa {malote?.numero ?? ""} · <span className="text-amber-800">PENDENTE DE ANEXO DE DOCUMENTO</span></div>
+              <div className="mt-1">Valor R$ {fmtReais(Number(sol.valor_liquido))} (informado sem o recibo) · status no Malote: {malote?.status}</div>
+              <div className="mt-1 font-semibold">O pagamento fica bloqueado até o recibo da Senior ser anexado aqui.</div>
+            </div>
+            <AnexarDepois sol={sol} malote={malote!} onAnexado={async () => { await onMudou(); }} />
+          </div>
+        ) : enviada ? (
           <div className="rounded-lg border border-green-300 bg-green-50 p-4 text-sm text-green-900">
             <div className="font-semibold">✅ Enviada ao Malote — despesa {malote?.numero ?? ""}</div>
             <div className="mt-1">Valor R$ {fmtReais(Number(sol.valor_liquido))} · status no Malote: {malote?.status}</div>
@@ -179,13 +201,14 @@ export function EnviarFeriasMalote({ aberto, sol, malote, podeEnviar, onFechar, 
           </div>
         ) : passo === 1 ? (
           <PassoRecibo sol={sol} trocando={trocando} onCancelarTroca={() => setTrocando(false)}
-            onAnexado={async (f) => { setArquivo(f); setTrocando(false); await onMudou(); }} />
+            onSemDocumento={podeEnviar && !sol.recibo_path ? () => setSemDoc(true) : undefined}
+            onAnexado={async (f) => { setArquivo(f); setTrocando(false); setSemDoc(false); await onMudou(); }} />
         ) : passo === 2 ? (
           <PassoValor sol={sol} ctx={ctx} arquivo={arquivo} onArquivo={setArquivo}
             onTrocar={() => setTrocando(true)} onConfirmado={async () => { await onMudou(); }} />
         ) : (
-          <PassoMalote sol={sol} ctx={ctx} arquivo={arquivo} onArquivo={setArquivo} podeEnviar={podeEnviar}
-            onTrocar={() => setTrocando(true)} onEnviado={async () => { await onMudou(); }} />
+          <PassoMalote sol={sol} ctx={ctx} arquivo={arquivo} onArquivo={setArquivo} podeEnviar={podeEnviar} semDoc={semDocAgora}
+            onTrocar={() => { setSemDoc(false); setTrocando(!!sol.recibo_path); }} onEnviado={async () => { await onMudou(); }} />
         )}
 
         <DialogFooter>
@@ -197,8 +220,10 @@ export function EnviarFeriasMalote({ aberto, sol, malote, podeEnviar, onFechar, 
 }
 
 // ── Passo 1 ──────────────────────────────────────────────────────────
-function PassoRecibo({ sol, trocando, onCancelarTroca, onAnexado }: {
+function PassoRecibo({ sol, trocando, onCancelarTroca, onAnexado, onSemDocumento }: {
   sol: FeriasParaMalote; trocando: boolean; onCancelarTroca: () => void; onAnexado: (f: File) => Promise<void>;
+  /** Pular o anexo: envia ao Malote sem o recibo (pendente de anexo). */
+  onSemDocumento?: () => void;
 }) {
   const [escolhido, setEscolhido] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -242,6 +267,12 @@ function PassoRecibo({ sol, trocando, onCancelarTroca, onAnexado }: {
           <input ref={input} type="file" accept="application/pdf,image/png,image/jpeg" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) setEscolhido(f); e.target.value = ""; }} />
           <Button onClick={() => input.current?.click()} className="gap-1.5"><FileUp className="h-4 w-4" /> Escolher o arquivo do recibo</Button>
+          {onSemDocumento && (
+            <div className="mt-4 rounded-md border border-dashed p-3 text-sm">
+              <div className="text-muted-foreground">Ainda não tem o recibo? O anexo é opcional para enviar: a despesa vai ao Malote e entra na aprovação, marcada <b>PENDENTE DE ANEXO DE DOCUMENTO</b> — o <b>pagamento</b> só libera depois que o recibo for anexado.</div>
+              <Button variant="outline" size="sm" className="mt-2 gap-1.5" onClick={onSemDocumento}><Send className="h-3.5 w-3.5" /> Enviar ao Malote sem o documento</Button>
+            </div>
+          )}
         </div>
       ) : (
         <Confirmacao titulo="Confirmar o anexo" rotulo="Confirmar anexo" ocupado={enviando}
@@ -407,9 +438,10 @@ function PassoValor({ sol, ctx, arquivo, onArquivo, onTrocar, onConfirmado }: {
 }
 
 // ── Passo 3 ──────────────────────────────────────────────────────────
-function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnviado }: {
+function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, semDoc, onTrocar, onEnviado }: {
   sol: FeriasParaMalote; ctx: Contexto | null; arquivo: File | null; onArquivo: (f: File) => void;
-  podeEnviar: boolean; onTrocar: () => void; onEnviado: () => Promise<void>;
+  /** Sem o recibo: o valor é digitado no painel e a despesa nasce pendente de anexo. */
+  podeEnviar: boolean; semDoc: boolean; onTrocar: () => void; onEnviado: () => Promise<void>;
 }) {
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const { data: empresas = [] } = useEmpresasGrupo();
@@ -439,7 +471,7 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
   }, [sol.recibo_path, arquivo]);
 
   const classificacao = classificacoes.find((c) => c.id === classificacaoId) ?? null;
-  const pronto = !!classificacao && !!empresaId && !!ctx && !!arquivo;
+  const pronto = !!classificacao && !!empresaId && !!ctx && (semDoc || !!arquivo);
   const pagamentoLido = sol.valor_leitura?.pagamento ?? null;
   const nomeInicial = nomeDespesaFerias(ctx?.contrato_nome ?? sol.colaborador_filial, sol.colaborador_nome);
 
@@ -457,7 +489,10 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
       const { error } = await db.rpc("ferias_enviar_malote", { p_id: sol.id, p_despesa_id: despesaId, p_despesa: { ...despesa, arquivos: paths } });
       if (error) throw error;
       const { data: info } = await db.rpc("ferias_malote_info", { p_ids: [sol.id] });
-      toast.success(`Despesa ${(info as MaloteDaFerias[] | null)?.[0]?.numero ?? ""} criada no Malote — entrou na fila de aprovação.`);
+      const numero = (info as MaloteDaFerias[] | null)?.[0]?.numero ?? "";
+      toast.success(semDoc
+        ? `Despesa ${numero} criada no Malote — PENDENTE DE ANEXO DE DOCUMENTO: o pagamento libera quando o recibo for anexado.`
+        : `Despesa ${numero} criada no Malote — entrou na fila de aprovação.`);
       pendente.fim();
       setPendente(null);
       await onEnviado();
@@ -472,11 +507,19 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
 
   return (
     <div className="space-y-3">
+      {semDoc ? (
+      <div className="rounded-md border-2 border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+        <div className="font-semibold">Enviando SEM o recibo da Senior — vai como PENDENTE DE ANEXO DE DOCUMENTO</div>
+        <div className="mt-1">Digite o <b>valor líquido</b> das férias no painel. A despesa entra na aprovação normalmente; o <b>pagamento</b> fica bloqueado até o recibo ser anexado (pelo botão das férias, depois). Arquivo posto no painel não conta como o recibo.</div>
+        <Button variant="link" size="sm" className="h-auto p-0" onClick={onTrocar}>Tenho o recibo — anexar agora</Button>
+      </div>
+      ) : (
       <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/40 p-3 text-sm">
         <span>Valor confirmado: <b>R$ {fmtReais(valor)}</b> ({sol.valor_origem === "leitura" ? "lido do recibo" : "digitado"}) por {sol.valor_confirmado_por} em {fmtDataHora(sol.valor_confirmado_em)}</span>
         {sol.recibo_path && <Button variant="outline" size="sm" className="gap-1" onClick={() => abrirReciboFerias(sol.recibo_path!)}><ExternalLink className="h-3.5 w-3.5" /> Recibo</Button>}
         <Button variant="link" size="sm" className="h-auto p-0" onClick={onTrocar}>Trocar o recibo</Button>
       </div>
+      )}
 
       {!podeEnviar ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -507,12 +550,13 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
               onConfirmar={enviarDeVerdade} onVoltar={desistir}>
               <p>Criar a despesa <b>{pendente.payload.nome}</b> de <b>R$ {fmtReais(Number(pendente.payload.valor_total))}</b> no Malote?</p>
               <p>Pagamento em {fmtData(pendente.payload.data_pagamento)} · {pendente.payload.forma_pagamento} · competência {pendente.payload.competencia?.slice(0, 7).split("-").reverse().join("/")}. Ela entra na fila de aprovação e a data do malote destas férias fica registrada como hoje.</p>
+              {semDoc && <p><b>Sem o recibo:</b> fica PENDENTE DE ANEXO DE DOCUMENTO e o pagamento não pode ser feito até o recibo ser anexado.</p>}
             </Confirmacao>
           )}
 
           {!pronto ? (
             <div className="py-6 text-center text-sm text-muted-foreground">
-              {!ctx || (!arquivo && !erroArquivo)
+              {!ctx || (!semDoc && !arquivo && !erroArquivo)
                 ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Preparando…</span>
                 : "Escolha a classificação e a empresa pagadora."}
             </div>
@@ -525,7 +569,7 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
                 empresaId={empresaId}
                 ativo
                 nomeInicial={nomeInicial}
-                valorInicial={valor}
+                valorInicial={semDoc ? undefined : valor}
                 inicial={{
                   competencia: sol.data_saida ? sol.data_saida.slice(0, 7) : undefined,
                   dataPagamento: pagamentoLido && pagamentoLido >= hojeIso() ? pagamentoLido : undefined,
@@ -533,7 +577,7 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
                 }}
                 linhaRateioPadrao={{ contrato_id: ctx?.contrato_id ?? null, integrante_empregado_id: sol.colaborador_id ?? null }}
                 fornecedorPadraoNome="0 - Dispensa 1"
-                arquivosIniciais={arquivo ? [arquivo] : []}
+                arquivosIniciais={!semDoc && arquivo ? [arquivo] : []}
                 aoSalvar={aoSalvar}
                 rotuloEnviar="Enviar ao Malote"
               />
@@ -547,5 +591,59 @@ function PassoMalote({ sol, ctx, arquivo, onArquivo, podeEnviar, onTrocar, onEnv
         </>
       )}
     </div>
+  );
+}
+
+// ── Pendente de anexo: anexar o recibo depois ────────────────────────
+// O mesmo arquivo vai para a solicitação (ferias-recibos) e para a despesa
+// (malote-anexos/<despesa>/), e a RPC grava os dois numa transação; é ela
+// que tira a marca e libera o pagamento. O valor não muda.
+function AnexarDepois({ sol, malote, onAnexado }: {
+  sol: FeriasParaMalote; malote: MaloteDaFerias; onAnexado: () => Promise<void>;
+}) {
+  const [escolhido, setEscolhido] = useState<File | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+
+  const anexar = async () => {
+    if (!escolhido) return;
+    setEnviando(true);
+    const limpo = escolhido.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w.\- ()]/g, "_");
+    const pathRecibo = `${sol.id}/${Date.now()}-${limpo}`;
+    let pathsMalote: string[] = [];
+    let subiuRecibo = false;
+    try {
+      const up = await supabase.storage.from(BUCKET_RECIBO_FERIAS).upload(pathRecibo, escolhido, { upsert: false, contentType: escolhido.type || undefined });
+      if (up.error) throw up.error;
+      subiuRecibo = true;
+      pathsMalote = await uploadAnexosMalote([escolhido], malote.malote_despesa_id, `RECIBO FERIAS ${sol.colaborador_nome ?? sol.id}`);
+      const { error } = await db.rpc("ferias_malote_anexar_documento", {
+        p_id: sol.id, p_recibo_path: pathRecibo, p_recibo_nome: escolhido.name, p_malote_path: pathsMalote[0],
+      });
+      if (error) throw error;
+      toast.success("Recibo anexado — pendência resolvida, o pagamento no Malote está liberado.");
+      setEscolhido(null);
+      await onAnexado();
+    } catch (e) {
+      if (subiuRecibo) await supabase.storage.from(BUCKET_RECIBO_FERIAS).remove([pathRecibo]).catch(() => undefined);
+      if (pathsMalote.length) await supabase.storage.from("malote-anexos").remove(pathsMalote).catch(() => undefined);
+      toast.error("Não foi possível anexar: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return !escolhido ? (
+    <div>
+      <input ref={input} type="file" accept="application/pdf,image/png,image/jpeg" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) setEscolhido(f); e.target.value = ""; }} />
+      <Button onClick={() => input.current?.click()} className="gap-1.5"><FileUp className="h-4 w-4" /> Anexar o recibo da Senior</Button>
+    </div>
+  ) : (
+    <Confirmacao titulo="Confirmar o anexo" rotulo="Anexar e liberar o pagamento" ocupado={enviando}
+      onConfirmar={anexar} onVoltar={() => setEscolhido(null)}>
+      <p>Anexar <b>{escolhido.name}</b> ({(escolhido.size / 1024).toFixed(0)} KB) como recibo de férias da Senior de <b>{sol.colaborador_nome}</b>?</p>
+      <p>Ele vai também para a despesa {malote.numero ?? ""} no Malote, o status Senior passa para <b>Gerado</b> e o pagamento fica liberado. O valor (R$ {fmtReais(Number(sol.valor_liquido))}) não muda.</p>
+    </Confirmacao>
   );
 }
