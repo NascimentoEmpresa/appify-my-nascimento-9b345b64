@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { aguardandoGestorSistemas, podeFinalizarGestao } from "./validacaoPresidencia";
-import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil } from "lucide-react";
+import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil, ArrowRightLeft } from "lucide-react";
 import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
@@ -25,6 +25,8 @@ import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChamadosVinculados } from "./ChamadosVinculados";
+import { CardReaberturaChamado, CardTransferenciaChamado, PedirTransferenciaDialog } from "./ReaberturaTransferenciaChamado";
+import { podeDecidir } from "@/lib/chamados/reabertura";
 import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
 import {
   SITUACOES_PRAZO, mudouNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, rotuloPrazo, situacaoPrazo,
@@ -58,6 +60,7 @@ export default function ExecutarChamado() {
   const [motivo, setMotivo] = useState("");
   const [excluindoOpen, setExcluindoOpen] = useState(false);
   const [reabrindoOpen, setReabrindoOpen] = useState(false);
+  const [transferindoOpen, setTransferindoOpen] = useState(false); // dev pede transferência (mig 20261112190000)
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
   // Concluir passa pela avaliação de quem pediu (mig 20261020000070) — com
@@ -299,6 +302,11 @@ export default function ExecutarChamado() {
               <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
+
+          {/* CHAMADO REABERTO / pedido de transferência (mig 20261112190000):
+              o dev atual acompanha o mesmo card que o Gestor decide. */}
+          <CardReaberturaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
+          <CardTransferenciaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
 
           {/* Parte 1, Parte 2… (mig 20261112002000). */}
           <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `/app/sistemas/chamados/${cid}`} />
@@ -603,6 +611,13 @@ export default function ExecutarChamado() {
                   {agindo === "cancelar_info" ? "Cancelando…" : "Cancelar solicitação de informações"}
                 </Button>
               )}
+              {/* Só o responsável pede; o Gestor de Sistemas aprova ou recusa
+                  (chamado_transferencia_solicitar, mig 20261112190000). */}
+              {ehResponsavel && !chamadoEncerrado(chamado.status) && (
+                <Button variant="outline" className="w-full justify-start gap-2 transition-transform active:scale-95" onClick={() => setTransferindoOpen(true)}>
+                  <ArrowRightLeft className="h-4 w-4 text-primary" /> Pedir transferência para outro dev
+                </Button>
+              )}
               {canAprovar && !chamadoEncerrado(chamado.status) && (
                 <Button variant="outline" className="w-full justify-start gap-2 text-destructive transition-transform active:scale-95" onClick={() => setReprovando(true)}>
                   <XCircle className="h-4 w-4" /> Reprovar chamado
@@ -653,6 +668,8 @@ export default function ExecutarChamado() {
         chamado={chamado}
         onReaberto={invalidar}
       />
+
+      <PedirTransferenciaDialog open={transferindoOpen} onOpenChange={setTransferindoOpen} chamado={chamado} />
 
       <IniciarDesenvolvimentoDialog
         open={prazoOpen}

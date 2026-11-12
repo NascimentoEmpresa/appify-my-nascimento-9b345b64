@@ -15,7 +15,7 @@ export const MOTIVOS_REABERTURA: { valor: MotivoReabertura; rotulo: string; ajud
   {
     valor: "nao_atendeu",
     rotulo: "Não atendeu o solicitado",
-    ajuda: "A entrega não faz o que foi pedido. O chamado volta para o Gestor de Sistemas verificar e enviar para um desenvolvedor de novo.",
+    ajuda: "A entrega não faz o que foi pedido. O Gestor de Sistemas verifica, confirma a reabertura e envia para um desenvolvedor de novo.",
   },
   {
     valor: "modificacoes",

@@ -13,6 +13,7 @@ import { ArrowLeft, CheckCircle2, MessageSquarePlus, Paperclip, RotateCcw, Star,
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChamadosVinculados } from "./ChamadosVinculados";
+import { CardReaberturaChamado, useReaberturaChamado } from "./ReaberturaTransferenciaChamado";
 import { ConfirmarConclusaoDialog } from "./ConfirmarConclusaoDialog";
 import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
@@ -52,6 +53,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   // Gestão de chamados (inclusive o Gestor de Sistemas, mig 20261110009000)
   // intermedia a conversa: escreve aqui também, não só lê.
   const { gestor } = useChamadoPerms();
+  // Pedido de reabertura com o Gestor de Sistemas (mig 20261112190000): some o
+  // "Reabrir chamado" — o banco recusaria um segundo pedido.
+  const { data: reabertura } = useReaberturaChamado(id);
+  const reaberturaPendente = reabertura?.status === "pendente";
 
   const [avaliarAberto, setAvaliarAberto] = useState(false);
   const [reabrirAberto, setReabrirAberto] = useState(false);
@@ -194,6 +199,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Prazo esperado">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
+
+          {/* CHAMADO REABERTO (mig 20261112190000): o solicitante acompanha
+              o pedido e, decidido, vê se foi confirmado ou negado (e por quê). */}
+          <CardReaberturaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={false} />
 
           {/* Parte 1, Parte 2… (mig 20261112002000). */}
           <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `${base}/${cid}/acompanhar`} />
@@ -355,7 +364,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
           {/* Reabrir (28/09/2026, mig 255): o solicitante reabre o próprio
               chamado encerrado, com motivo — em vez de abrir outro e recontar. */}
-          {encerrado && (
+          {encerrado && !reaberturaPendente && (
             ehSolicitante ? (
               <Card className="space-y-2 p-4">
                 <p className="flex items-center gap-1.5 text-sm font-bold"><RotateCcw className="h-4 w-4 text-primary" /> Não resolveu?</p>
