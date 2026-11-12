@@ -4,10 +4,11 @@ import { test } from "node:test";
 import { consolidarOrcamentos, descobrirRotas, selecionarFatia } from "./fatias.mjs";
 
 const rotas = descobrirRotas(fs.readFileSync(new URL("../../src/App.tsx", import.meta.url), "utf8"));
-const relatorios = () => [1, 2, 3].map((indice) => ({
+const total = 6;
+const relatorios = () => Array.from({ length: total }, (_, i) => i + 1).map((indice) => ({
   base: "http://127.0.0.1:4173",
-  fatia: { indice, total: 3 },
-  resultados: selecionarFatia(rotas, `${indice}/3`).rotas.map((rota) => ({ rota, abertura: 40, parada: 0, problemas: [] })),
+  fatia: { indice, total },
+  resultados: selecionarFatia(rotas, `${indice}/${total}`).rotas.map((rota) => ({ rota, abertura: 40, parada: 0, problemas: [] })),
 }));
 
 test("as fatias cobrem todas as rotas reais uma única vez e têm tamanho equilibrado", () => {

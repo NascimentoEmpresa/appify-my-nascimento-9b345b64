@@ -295,6 +295,9 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
   const [numeroNf, setNumeroNf] = useState("");
   const [dataEmissao, setDataEmissao] = useState("");
   const [observacoesFinanceiro, setObservacoesFinanceiro] = useState("");
+  const [codigoServico, setCodigoServico] = useState("");
+  const [cnae, setCnae] = useState("");
+  const [nbs, setNbs] = useState("");
   const [itens, setItens] = useState<ItemForm[]>([]);
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set());
   const [unitariosPorItem, setUnitariosPorItem] = useState<(number | null)[]>([]);
@@ -307,6 +310,9 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
     setNumeroNf(nf.numero_nf ?? "");
     setDataEmissao(nf.data_emissao ?? "");
     setObservacoesFinanceiro(nf.observacoes_financeiro ?? "");
+    setCodigoServico(nf.codigo_servico ?? "");
+    setCnae(nf.cnae ?? "");
+    setNbs(nf.nbs ?? "");
   }, [nf?.id]);
 
   useEffect(() => {
@@ -394,11 +400,18 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
       toast.error("Informe o número da NF para validar.");
       return;
     }
+    // Pedido do Ruan: Código de Serviço, CNAE e NBS são obrigatórios para concluir (cancelar segue sem eles).
+    if (status === "concluida" && !codigoServico.trim()) { toast.error("Informe o Código de Serviço para validar."); return; }
+    if (status === "concluida" && !cnae.trim()) { toast.error("Informe o CNAE para validar."); return; }
+    if (status === "concluida" && !nbs.trim()) { toast.error("Informe o Código NBS para validar."); return; }
     try {
       await validar.mutateAsync({
         id: nf.id,
         numero_nf: numeroNf.trim() || null,
         data_emissao: dataEmissao || null,
+        codigo_servico: codigoServico.trim() || null,
+        cnae: cnae.trim() || null,
+        nbs: nbs.trim() || null,
         observacoes_financeiro: observacoesFinanceiro || null,
         itens: itensCalculados,
         totais,
@@ -474,6 +487,20 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
                 <Label className="text-xs">Observações do Analista</Label>
                 <div className="flex min-h-10 items-center rounded-md border border-input bg-muted px-3 py-2 text-sm">
                   {nf.observacoes || "-"}
+                </div>
+              </div>
+              <div className="col-span-4 grid grid-cols-3 gap-3">
+                <div>
+                  <Label>Código de Serviço{!readOnly && <span className="text-destructive"> *</span>}</Label>
+                  <Input value={codigoServico} onChange={(e) => setCodigoServico(e.target.value)} placeholder="Ex: 17.05" disabled={readOnly} />
+                </div>
+                <div>
+                  <Label>CNAE{!readOnly && <span className="text-destructive"> *</span>}</Label>
+                  <Input value={cnae} onChange={(e) => setCnae(e.target.value)} disabled={readOnly} />
+                </div>
+                <div>
+                  <Label>Código NBS{!readOnly && <span className="text-destructive"> *</span>}</Label>
+                  <Input value={nbs} onChange={(e) => setNbs(e.target.value)} disabled={readOnly} />
                 </div>
               </div>
               <div className="col-span-4">

@@ -34,6 +34,7 @@ import { useAnexoChamado, useImagensAnexo } from "./useAnexoChamado";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { TextoComLinks } from "@/components/notificacoes/ConteudoAviso";
 import { cn } from "@/lib/utils";
+import { fraseEventoReabertura } from "@/lib/chamados/reabertura";
 
 export interface Participante {
   user_id: string;
@@ -128,6 +129,9 @@ function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Avis
     if ((m = t.match(/^Chamado direcionado a (.+?)(?:\s*—\s*(\d+)º lugar na fila.*)?$/i)))
       return `${quem} designou o chamado para ${m[1]}${m[2] ? ` · ${m[2]}º na fila` : ""}`;
     if ((m = t.match(/^Chamado reprovado:\s*(.+)$/is))) return `${quem} reprovou o chamado — ${m[1]}`;
+    // Pedido/negativa de reabertura e "Transferido para <dev>" (mig 20261112190000).
+    const reabertura = fraseEventoReabertura(t, quem);
+    if (reabertura) return reabertura;
     // Reabertura: com e sem motivo. O `:` do motivo é opcional, então o teste
     // sem motivo vem antes de qualquer coisa que aceite sufixo.
     if ((m = t.match(/^Chamado cancelado:\s*(.+)$/is))) return `${quem} cancelou o chamado — ${m[1]}`;

@@ -811,7 +811,15 @@ export default function ContratosERP() {
           extras — são funcionalidade real (Emissão de NF) que não estava
           no mockup, mas precisa continuar existindo em algum lugar. */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-5xl max-h-[88vh] overflow-y-auto">
+        {/* Largo (quase a tela toda) e SÓ com rolagem vertical (12/11/2026,
+            pedido do Pablo com print: em max-w-5xl aparecia barra horizontal e
+            os valores dos Totais/indicadores saíam cortados à direita).
+            A barra não era só falta de largura: o DialogContent é `grid`, e a
+            trilha `auto` de um grid cresce até o min-content dos filhos — os
+            nomes de posto do Quadro (com `truncate` = nowrap) empurravam a
+            trilha além do modal. `grid-cols-[minmax(0,1fr)]` prende a trilha
+            na largura do modal; `overflow-x-hidden` é só cinto de segurança. */}
+        <DialogContent className="w-[95vw] max-w-[95vw] max-h-[92vh] grid-cols-[minmax(0,1fr)] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>{editando ? "Editar Contrato" : "Novo Contrato"}</DialogTitle>
           </DialogHeader>
@@ -825,7 +833,7 @@ export default function ContratosERP() {
               gruda no topo da área visível dele. `items-start` é o que dá à
               <aside> a altura do próprio conteúdo — sem isso ela estica até o
               fim do flex e o sticky não tem folga para deslizar. */}
-          <div className="flex flex-col gap-4 md:flex-row md:items-start">
+          <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start">
             <aside className="md:sticky md:top-0 md:w-60 md:shrink-0 lg:w-64">
               <CardObrigatorios
                 itens={itensObrigatorios}
@@ -929,7 +937,7 @@ export default function ContratosERP() {
             Campos calculados automaticamente — os valores abaixo são calculados com base nos dados informados
             (exceto "Custo anual de insumos", que é manual).
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
             <CalculoField label="Valor Mão de Obra / Valor Mensal" value={fmt(valorExecMensalCalc)} />
             {field("Custo Anual de Insumos", "custo_anual_insumos", { type: "number" })}
             <CalculoField label="Custo Ind. Mensal" value={fmt(custoIndiretoMensalCalc)} />
@@ -965,7 +973,7 @@ export default function ContratosERP() {
             fallback={null}
           >
             <SectionHeader n={7} title="Quadro de Postos e Vagas" />
-            <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700 [overflow-wrap:anywhere]">
               Declare quantas pessoas o contrato exige, por <b>posto</b> e <b>função</b> — a mesma
               cascata do Catálogo de Materiais. Cada colaborador vira uma solicitação de vaga no
               Recrutamento (com salário, benefícios, escala e local já preenchidos, e vinculada à
@@ -1190,10 +1198,12 @@ function SectionHeader({ n, title }: { n: number; title: string }) {
 // permitir edição direta (a fonte é planilha_custo, não `contratos`).
 function CalculoField({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span className="font-mono text-xs font-medium">{value}</span>
-      {hint && <span className="text-[10px] italic text-muted-foreground">{hint}</span>}
+    // min-w-0 + quebra: rótulo e dica quebram linha dentro da célula da grade
+    // em vez de alargá-la; o valor (R$) não quebra no meio — fica inteiro.
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground [overflow-wrap:anywhere]">{label}</span>
+      <span className="font-mono text-xs font-medium whitespace-nowrap">{value}</span>
+      {hint && <span className="text-[10px] italic text-muted-foreground [overflow-wrap:anywhere]">{hint}</span>}
     </div>
   );
 }
