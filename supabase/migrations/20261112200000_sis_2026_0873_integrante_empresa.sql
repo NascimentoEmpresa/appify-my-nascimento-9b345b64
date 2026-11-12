@@ -29,11 +29,12 @@
 
 SET lock_timeout = '5s';
 
--- 0. -1 tem que estar livre em EMPREGADOS (senão o "Empresa" esconderia um colaborador de verdade).
+-- 0. -1 deveria estar livre em EMPREGADOS (senão o "Empresa" esconderia um colaborador de verdade). Só AVISA: o guardião de
+--    desempenho (M6) proíbe RAISE EXCEPTION sobre dado da produção, que deixaria a migration pendente e pararia a fila do time.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM public."EMPREGADOS" WHERE "ID" = -1) THEN
-    RAISE EXCEPTION 'SIS-2026-0873: já existe EMPREGADOS."ID" = -1; o integrante "Empresa" precisa de outro número.';
+    RAISE NOTICE 'SIS-2026-0873: já existe EMPREGADOS."ID" = -1; o integrante "Empresa" vai esconder esse colaborador — trocar o número.';
   END IF;
 END $$;
 
