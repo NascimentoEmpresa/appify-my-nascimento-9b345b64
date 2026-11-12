@@ -147,7 +147,7 @@ export interface FluxoCaixaMaloteLinha {
   // SIS-2026-0777: conta do banco (ex.: Sicredi HAGG 119) atribuída ao lançamento em financeiro_fluxo_caixa_conta. Não vem das views:
   // as telas carimbam com comContaBanco(). Ausente = sem conta definida.
   conta_banco_id?: string | null;
-  // SIS-2026-0823: integrante (colaborador) da linha de rateio do Malote; SIS-2026-0859: a view da importação também devolve. Nulo nas demais origens e na fatura consolidada.
+  // SIS-2026-0823: integrante (colaborador) da linha de rateio do Malote; SIS-2026-0859: a view da importação também devolve. SIS-2026-0883: e a do Débito Automático. Nulo nas demais origens e na fatura consolidada.
   integrante_empregado_id?: number | null;
   integrante_nome?: string | null;
   // SIS-2026-0569: só a view da importação histórica devolve — texto com o
@@ -427,6 +427,7 @@ export async function trocarContratoFluxoCaixa({ origem, despesaId, contratoId }
 
 // SIS-2026-0823: troca o integrante da despesa do Malote pelo Fluxo (grava na linha de rateio de origem). Ver a migration 20261110000200.
 // SIS-2026-0859: também na importação da planilha (grava em fluxo_caixa_importado, todas as cotas). Migration 20261111150000.
+// SIS-2026-0883: também no Débito Automático (grava em "DEBITO_AUTOMATICO"). Migration 20261113003000.
 export async function trocarIntegranteFluxoCaixa({ origem, despesaId, empregadoId }: { origem: string; despesaId: string; empregadoId: number }): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any).rpc("fluxo_caixa_trocar_integrante", {
