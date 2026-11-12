@@ -1,7 +1,7 @@
 // SIS-2026-0870: anexos no chat de justificativa dos contratos não faturados (Controle de Faturamento).
 //
 // Um lugar só para o bucket, o caminho do arquivo no storage, os limites e o texto que a tabela mostra quando a
-// última mensagem só tem anexo. O banco confere tudo de novo (migration 20261111235000): o caminho precisa estar
+// última mensagem só tem anexo. O banco confere tudo de novo (migration 20261112180000): o caminho precisa estar
 // na pasta do contrato + competência e o arquivo precisa ter sido enviado por quem manda a mensagem.
 
 import { fmtTamanho, nomeSeguro, type AnexoRef } from "@/lib/solicitacoes/anexos";

@@ -4,7 +4,7 @@ import { BUCKET_JUSTIFICATIVA, caminhoAnexoJustificativa, type AnexoJustificativ
 
 // SIS-2026-0808: chat de justificativa dos contratos não faturados (migration 20261105007000).
 // Leitura pela RLS ('controle-faturamento' › visualizar); quem escreve é a RPC faturamento_justificativa_enviar ('responder').
-// SIS-2026-0870 (migration 20261111235000): a mensagem leva anexos — sobem para o bucket antes e a RPC confere cada um.
+// SIS-2026-0870 (migration 20261112180000): a mensagem leva anexos — sobem para o bucket antes e a RPC confere cada um.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tabelas/RPCs fora do types.ts gerado
 const db = supabase as any;
@@ -81,7 +81,7 @@ export function useEnviarMensagemFaturamento() {
           anexos.push({ nome: f.name, path, tipo: f.type || null, tamanho: f.size });
         }
         // _anexos só vai quando há arquivo: mensagem de texto continua chamando a RPC como antes, então a tela
-        // segue funcionando se o frontend for publicado antes da migration 20261111235000 rodar no banco.
+        // segue funcionando se o frontend for publicado antes da migration 20261112180000 rodar no banco.
         const { error } = await db.rpc("faturamento_justificativa_enviar", {
           _contrato_id: i.contratoId, _competencia: i.competencia, _texto: i.texto, _destinatario_id: i.destinatarioId,
           ...(anexos.length ? { _anexos: anexos } : {}),
