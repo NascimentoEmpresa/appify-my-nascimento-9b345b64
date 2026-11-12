@@ -88,7 +88,11 @@ export function planejarTrocaDeClassificacao(linhas: LinhaMassa[], novaClassific
   return { aplicar, ignoradas };
 }
 
-// SIS-2026-0823: troca o integrante da despesa do Malote (SIS-2026-0859: e do lançamento importado da planilha). No Malote o integrante (linha de rateio); despesa rateada em várias linhas fica de fora
+// SIS-2026-0883: origens em que fluxo_caixa_trocar_integrante() grava. Cartão (o integrante é de cada despesa, no Malote), aplicação e conta garantida não têm.
+export const ORIGENS_COM_INTEGRANTE: LinhaMassa["origem"][] = ["malote", "importacao_historica", "debito_automatico"];
+export const MOTIVO_ORIGEM_SEM_INTEGRANTE = "Integrante só em despesa do Malote, Débito Automático ou lançamento importado da planilha";
+
+// SIS-2026-0823: troca o integrante da despesa do Malote (SIS-2026-0859: e do lançamento importado da planilha; SIS-2026-0883: e do Débito Automático). No Malote o integrante (linha de rateio); despesa rateada em várias linhas fica de fora
 // (o integrante é de cada linha: ajuste na grade de rateio do Malote). Fornecedor e Integrante podem coexistir na mesma linha, então nada é limpo.
 export function planejarTrocaDeIntegrante(linhas: LinhaMassa[], novoEmpregadoId: number): PlanoMassa {
   const aplicar: LinhaMassa[] = [];
@@ -97,9 +101,9 @@ export function planejarTrocaDeIntegrante(linhas: LinhaMassa[], novoEmpregadoId:
   for (const l of linhas) {
     const ignora = (motivo: string) => ignoradas.push({ linha: l, motivo });
     // SIS-2026-0859: lançamento importado da planilha também tem integrante (grava em todas as cotas do lançamento, rateado ou não).
-    const importado = l.origem === "importacao_historica";
-    if (l.origem !== "malote" && !importado) { ignora("Integrante só em despesa do Malote ou lançamento importado da planilha"); continue; }
-    if (!importado) {
+    // SIS-2026-0883: e o Débito Automático (DA-…), que grava no próprio débito (uma linha só no Fluxo, sem rateio).
+    if (!ORIGENS_COM_INTEGRANTE.includes(l.origem)) { ignora(MOTIVO_ORIGEM_SEM_INTEGRANTE); continue; }
+    if (l.origem === "malote") {
       if (l.fatura_cartao_id) { ignora("Fatura de cartão: o integrante é de cada despesa, no Malote"); continue; }
       if ((l.qtdLinhasRateio ?? 1) > 1) { ignora("Rateada em várias linhas: ajuste o integrante de cada uma na grade de rateio do Malote"); continue; }
       if ((l.qtdLinhasRateio ?? 1) === 0) { ignora("Despesa sem linha de rateio: ajuste direto no Malote"); continue; }

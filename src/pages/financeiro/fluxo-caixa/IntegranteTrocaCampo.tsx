@@ -3,32 +3,35 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { AlertTriangle, Info } from "lucide-react";
 import { useIntegrantesFluxo, type FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
+import { MOTIVO_ORIGEM_SEM_INTEGRANTE } from "@/pages/financeiro/fluxo-caixa/alteracaoEmMassa";
 
 // Campo "Integrante" dentro do diálogo de edição (lápis) do Fluxo de Caixa. Como o Contrato, a troca grava na ORIGEM
 // (RPC fluxo_caixa_trocar_integrante → linha de rateio da despesa do Malote, com histórico na despesa); os demais campos só ajustam a cópia do Fluxo.
 // A mesma regra da alteração em massa (planejarTrocaDeIntegrante): despesa do Malote fora de fatura de cartão, com UMA linha de rateio.
 // SIS-2026-0859: lançamento importado da planilha (IMP-…) também — grava em fluxo_caixa_importado, em todas as cotas do lançamento.
+// SIS-2026-0883: Débito Automático (DA-…) também — grava no próprio débito ("DEBITO_AUTOMATICO"), com histórico no débito.
 type LinhaFluxo = FluxoCaixaMaloteLinha & { qtdLinhasRateio?: number };
 
 export function IntegranteTrocaCampo({ linha, novoId, onNovoId }: { linha: LinhaFluxo; novoId: string; onNovoId: (id: string) => void }) {
   const ehMalote = linha.origem === "malote" && !linha.fatura_cartao_id;
   const ehImportado = linha.origem === "importacao_historica";
+  const ehDebito = linha.origem === "debito_automatico";
   const qtd = linha.qtdLinhasRateio ?? 1;
-  const editavel = ehImportado || (ehMalote && qtd === 1);
+  const editavel = ehImportado || ehDebito || (ehMalote && qtd === 1);
   const { data: integrantes = [] } = useIntegrantesFluxo(editavel);
   const opcoes = useMemo(
     () => integrantes.filter((i) => i.id !== linha.integrante_empregado_id).map((i) => ({ value: String(i.id), label: i.nome })),
     [integrantes, linha.integrante_empregado_id],
   );
 
-  if (!ehMalote && !ehImportado) {
+  if (!ehMalote && !ehImportado && !ehDebito) {
     return (
       <div className="flex gap-2 rounded-md border border-sky-200 bg-sky-50 p-2.5 text-xs text-sky-900">
         <Info className="h-4 w-4 mt-0.5 shrink-0" />
         <span>
           {linha.fatura_cartao_id
             ? "Fatura de cartão: o integrante é de cada despesa, no Malote."
-            : "Integrante só em despesa do Malote ou lançamento importado da planilha."}
+            : `${MOTIVO_ORIGEM_SEM_INTEGRANTE}.`}
         </span>
       </div>
     );
@@ -61,7 +64,11 @@ export function IntegranteTrocaCampo({ linha, novoId, onNovoId }: { linha: Linha
         className="w-full"
         triggerClassName="h-9 bg-background text-sm"
       />
-      {ehImportado ? (
+      {ehDebito ? (
+        <p className="text-[11px] text-muted-foreground">
+          Grava no <strong>Débito Automático</strong> de origem, sem mexer em valor, centro de custo nem classificação, e fica registrado no histórico do débito.
+        </p>
+      ) : ehImportado ? (
         <p className="text-[11px] text-muted-foreground">
           Grava no <strong>lançamento importado</strong>{qtd > 1 && " (vale para todas as cotas do rateio)"}, sem mexer em valor, centro de custo nem classificação, e fica registrado no histórico da linha.
         </p>
