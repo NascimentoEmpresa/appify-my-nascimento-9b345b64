@@ -92,6 +92,10 @@ interface NovaNfSeed {
   pctFiscais: PercentuaisFiscais;
   pctFiscaisConfigurado: boolean;
   descricao: string;
+  /** códigos padrão da variação (modelo); vazio = usa o do contrato (Código de Serviço/CNAE) ou fica em branco (NBS) */
+  codigoServico?: string | null;
+  cnae?: string | null;
+  nbs?: string | null;
 }
 
 const PCT_FISCAIS_ZERO: PercentuaisFiscais = { issqn_pct: 0, ir_pct: 0, cofins_pct: 0, pis_pct: 0, csll_pct: 0 };
@@ -249,6 +253,9 @@ export default function EmissaoNF() {
       pctFiscais,
       pctFiscaisConfigurado: !!pctFiscaisContrato || notaTemRetencaoPropria,
       descricao: modelo.descricao_padrao ?? "",
+      codigoServico: modelo.codigo_servico ?? null,
+      cnae: modelo.cnae ?? null,
+      nbs: modelo.nbs ?? null,
     });
     setNovaNfContratoId(contratoSel);
     setModalOpen(true);
@@ -754,8 +761,9 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
       setPctFiscaisConfigurado(seed.pctFiscaisConfigurado);
       setDescricao(seed.descricao);
       const cSeed = contratos.find((x) => x.id === contratoIdInicial);
-      setCodigoServico(cSeed?.codigo_servico_lc116 ?? "");
-      setCnae(cSeed?.codigo_servico_municipal_cnae ?? "");
+      setCodigoServico(seed.codigoServico || (cSeed?.codigo_servico_lc116 ?? ""));
+      setCnae(seed.cnae || (cSeed?.codigo_servico_municipal_cnae ?? ""));
+      setNbs(seed.nbs ?? "");
     } else if (contratoIdInicial) {
       setContratoId(contratoIdInicial);
       const c = contratos.find((x) => x.id === contratoIdInicial);

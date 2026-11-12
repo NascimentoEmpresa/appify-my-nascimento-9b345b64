@@ -81,6 +81,9 @@ interface VariacaoForm {
   pisPct: string;
   csllPct: string;
   descricao: string;
+  codigoServico: string;
+  cnae: string;
+  nbs: string;
 }
 
 const EMPTY_VARIACAO: VariacaoForm = {
@@ -93,6 +96,9 @@ const EMPTY_VARIACAO: VariacaoForm = {
   pisPct: "",
   csllPct: "",
   descricao: "",
+  codigoServico: "",
+  cnae: "",
+  nbs: "",
 };
 
 // Retenção do modelo é opcional (nulo = usa o padrão do contrato), então "%"
@@ -190,6 +196,9 @@ export function ModeloNfDialog({
       pisPct: pctToStr(m.pis_pct),
       csllPct: pctToStr(m.csll_pct),
       descricao: m.descricao_padrao ?? "",
+      codigoServico: m.codigo_servico ?? "",
+      cnae: m.cnae ?? "",
+      nbs: m.nbs ?? "",
     });
   }
 
@@ -338,6 +347,9 @@ export function ModeloNfDialog({
         pis_pct: pctToNum(form.pisPct),
         csll_pct: pctToNum(form.csllPct),
         descricao_padrao: form.descricao.trim() || null,
+        codigo_servico: form.codigoServico.trim() || null,
+        cnae: form.cnae.trim() || null,
+        nbs: form.nbs.trim() || null,
       });
       await salvarItens.mutateAsync({
         modeloId,
@@ -590,6 +602,26 @@ export function ModeloNfDialog({
             </p>
           </div>
 
+          <div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Código de Serviço</Label>
+                <Input value={form.codigoServico} onChange={(e) => setForm((f) => ({ ...f, codigoServico: e.target.value }))} placeholder="Ex: 17.05" />
+              </div>
+              <div>
+                <Label className="text-xs">CNAE</Label>
+                <Input value={form.cnae} onChange={(e) => setForm((f) => ({ ...f, cnae: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Código NBS</Label>
+                <Input value={form.nbs} onChange={(e) => setForm((f) => ({ ...f, nbs: e.target.value }))} />
+              </div>
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Opcionais — pré-preenchem a NF ao abrir esta variação. Em branco, Código de Serviço e CNAE usam os do contrato.
+            </p>
+          </div>
+
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Itens (postos que compõem esta nota)</Label>
@@ -772,6 +804,9 @@ export function ModeloNfDialog({
                           pis_pct: m.pis_pct,
                           csll_pct: m.csll_pct,
                           descricao_padrao: m.descricao_padrao,
+                          codigo_servico: m.codigo_servico,
+                          cnae: m.cnae,
+                          nbs: m.nbs,
                         })
                       }
                     />

@@ -25,6 +25,11 @@ const fmtMoney = (n: number) => new Intl.NumberFormat("pt-BR", { style: "currenc
 const fmtDia = (iso: string | null) => (iso ? new Date(iso.length <= 10 ? iso + "T00:00:00" : iso).toLocaleDateString("pt-BR") : "—");
 const fmtHora = (iso: string) => new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
+interface EnvioLinha {
+  id: string; contrato_nome: string; empresa_codigo: string | null; faixa: string; modo: string; status: string; qtd_notas: number; valor_total: number;
+  destinatarios: string[] | null; cc: string[] | null; assunto: string; erro: string | null; criado_em: string;
+}
+
 type Decisao = "enviar" | "aguardar" | "judicial" | "manual" | "sem_destinatario";
 type Modo = "desligado" | "simulacao" | "piloto" | "producao";
 
@@ -106,6 +111,9 @@ export default function AutomacaoTab() {
   const [previa, setPrevia] = useState<{ contrato: string; assunto: string; corpo: string; para: string[]; cc: string[] } | null>(null);
   const [aberto, setAberto] = useState<PlanoLinha | null>(null);
   const [configAberta, setConfigAberta] = useState(false);
+  // Histórico de envios: busca e o e-mail aberto (o corpo só é lido ao abrir — são 100+ HTMLs).
+  const [buscaEnvio, setBuscaEnvio] = useState("");
+  const [envioAberto, setEnvioAberto] = useState<EnvioLinha | null>(null);
   const [confirmarProducao, setConfirmarProducao] = useState(false);
 
   const { data: simulacao, isLoading, isFetching, error, refetch } = useQuery<Simulacao>({
@@ -128,18 +136,43 @@ export default function AutomacaoTab() {
     },
   });
 
-  const { data: envios = [] } = useQuery<any[]>({
+  // Histórico completo: lê de 1.000 em 1.000 (limite do PostgREST) até acabar. Sem o corpo do e-mail (pesado) — ele é lido só ao abrir a linha.
+  const { data: envios = [] } = useQuery<EnvioLinha[]>({
     queryKey: ["cobranca-auto-envios"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("cobranca_auto_envio")
-        .select("id, contrato_nome, empresa_codigo, faixa, modo, status, qtd_notas, valor_total, destinatarios, cc, assunto, erro, criado_em")
-        .order("criado_em", { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      return data ?? [];
+      const todos: EnvioLinha[] = [];
+      for (let inicio = 0; ; inicio += 1000) {
+        const { data, error } = await (supabase as any)
+          .from("cobranca_auto_envio")
+          .select("id, contrato_nome, empresa_codigo, faixa, modo, status, qtd_notas, valor_total, destinatarios, cc, assunto, erro, criado_em")
+          .order("criado_em", { ascending: false })
+          .order("id")
+          .range(inicio, inicio + 999);
+        if (error) throw error;
+        todos.push(...((data ?? []) as EnvioLinha[]));
+        if ((data ?? []).length < 1000) break;
+      }
+      return todos;
     },
   });
+
+  const { data: corpoEnvio, isLoading: carregandoCorpo } = useQuery<string>({
+    queryKey: ["cobranca-auto-envio-corpo", envioAberto?.id],
+    enabled: !!envioAberto?.id,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const cliente = supabase as unknown as { from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { single: () => Promise<{ data: { corpo?: string } | null; error: { message: string } | null }> } } } };
+      const { data, error } = await cliente.from("cobranca_auto_envio").select("corpo").eq("id", envioAberto!.id).single();
+      if (error) throw error;
+      return data?.corpo ?? "";
+    },
+  });
+
+  const enviosFiltrados = useMemo(() => {
+    const q = buscaEnvio.trim().toLowerCase();
+    if (!q) return envios;
+    return envios.filter((e) => [e.contrato_nome, e.assunto, (e.destinatarios ?? []).join(" "), (e.cc ?? []).join(" ")].join(" ").toLowerCase().includes(q));
+  }, [envios, buscaEnvio]);
 
   const salvarConfig = useMutation({
     mutationFn: async (c: Partial<Config>) => {
@@ -261,22 +294,31 @@ export default function AutomacaoTab() {
       </Card>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Envios automáticos (últimos 100)</CardTitle></CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
+          <div>
+            <CardTitle className="text-sm font-semibold">Histórico de envios automáticos ({buscaEnvio.trim() ? `${enviosFiltrados.length} de ${envios.length}` : envios.length})</CardTitle>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Os e-mails saem pela conta de envio do sistema, não pelo Outlook de ninguém — por isso não aparecem em "Itens enviados". Clique em uma linha para ver o e-mail exatamente como foi enviado.
+            </p>
+          </div>
+          <Input className="h-8 w-64 text-xs" placeholder="Buscar contrato, destinatário ou assunto" value={buscaEnvio} onChange={(e) => setBuscaEnvio(e.target.value)} />
+        </CardHeader>
         <CardContent className="p-0">
-          <div className="max-h-[40vh] overflow-auto">
+          <div className="max-h-[60vh] overflow-auto">
             <Table className="text-xs">
               <TableHeader className="sticky top-0 bg-muted/50">
-                <TableRow><TableHead>Quando</TableHead><TableHead>Contrato</TableHead><TableHead>Faixa</TableHead><TableHead>Modo</TableHead><TableHead>Para</TableHead><TableHead>Resultado</TableHead></TableRow>
+                <TableRow><TableHead>Quando</TableHead><TableHead>Contrato</TableHead><TableHead>Faixa</TableHead><TableHead>Modo</TableHead><TableHead>Para</TableHead><TableHead>Cópia</TableHead><TableHead>Resultado</TableHead></TableRow>
               </TableHeader>
               <TableBody>
-                {envios.length === 0 && <TableRow><TableCell colSpan={6} className="py-6 text-center text-muted-foreground">Nenhum envio automático ainda.</TableCell></TableRow>}
-                {envios.map((e) => (
-                  <TableRow key={e.id}>
+                {envios.length === 0 && <TableRow><TableCell colSpan={7} className="py-6 text-center text-muted-foreground">{envios.length === 0 ? "Nenhum envio automático ainda." : "Nenhum envio encontrado para a busca."}</TableCell></TableRow>}
+                {enviosFiltrados.map((e) => (
+                  <TableRow key={e.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEnvioAberto(e)}>
                     <TableCell className="whitespace-nowrap">{fmtHora(e.criado_em)}</TableCell>
                     <TableCell className="max-w-[240px] truncate" title={e.contrato_nome}>{e.contrato_nome}</TableCell>
                     <TableCell><span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${FAIXA_COR[e.faixa] ?? ""}`}>{FAIXA_ROTULO[e.faixa] ?? e.faixa}</span></TableCell>
                     <TableCell>{e.modo === "piloto" ? <Badge variant="outline" className="text-[10px]">piloto</Badge> : "produção"}</TableCell>
                     <TableCell className="max-w-[240px] truncate" title={(e.destinatarios ?? []).join("; ")}>{(e.destinatarios ?? []).join("; ")}</TableCell>
+                    <TableCell className="max-w-[180px] truncate" title={(e.cc ?? []).join("; ")}>{(e.cc ?? []).join("; ") || "—"}</TableCell>
                     <TableCell>{e.status === "enviado" ? <span className="text-emerald-600 dark:text-emerald-400">Enviado ({e.qtd_notas} nota(s), {fmtMoney(e.valor_total)})</span> : <span className="text-red-600" title={e.erro ?? ""}>Falhou</span>}</TableCell>
                   </TableRow>
                 ))}
@@ -338,6 +380,31 @@ export default function AutomacaoTab() {
               </div>
               {/* iframe sem permissões: o HTML do e-mail (nome de contrato, modelo) nunca executa script na tela */}
               <iframe title="Prévia do e-mail" sandbox="" srcDoc={previa.corpo} className="h-[50vh] w-full rounded border bg-white" />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* E-mail enviado (histórico) */}
+      <Dialog open={!!envioAberto} onOpenChange={(o) => !o && setEnvioAberto(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          {envioAberto && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{envioAberto.contrato_nome}</DialogTitle>
+                <DialogDescription>
+                  {envioAberto.status === "enviado" ? "Enviado" : "Falhou"} em {fmtHora(envioAberto.criado_em)} · {envioAberto.modo === "piloto" ? "modo piloto (foi para o e-mail de teste)" : "produção"}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p><strong>Para:</strong> {(envioAberto.destinatarios ?? []).join("; ") || "—"}</p>
+                <p><strong>Cópia:</strong> {(envioAberto.cc ?? []).join("; ") || "—"}</p>
+                <p><strong>Assunto:</strong> {envioAberto.assunto}</p>
+                {envioAberto.status !== "enviado" && <p className="text-red-600"><strong>Erro:</strong> {envioAberto.erro ?? "—"}</p>}
+              </div>
+              {carregandoCorpo
+                ? <p className="text-sm text-muted-foreground">Carregando o e-mail...</p>
+                : <iframe title="E-mail enviado" sandbox="" srcDoc={corpoEnvio ?? ""} className="h-[50vh] w-full rounded border bg-white" />}
             </>
           )}
         </DialogContent>

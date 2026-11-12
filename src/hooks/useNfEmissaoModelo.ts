@@ -18,6 +18,9 @@ export interface NfEmissaoModeloRow {
   pis_pct: number | null;
   csll_pct: number | null;
   descricao_padrao: string | null;
+  codigo_servico?: string | null;
+  cnae?: string | null;
+  nbs?: string | null;
 }
 
 export interface NfEmissaoModeloItemRow {
@@ -93,6 +96,9 @@ interface SalvarModeloNfInput {
   pis_pct?: number | null;
   csll_pct?: number | null;
   descricao_padrao?: string | null;
+  codigo_servico?: string | null;
+  cnae?: string | null;
+  nbs?: string | null;
 }
 
 export function useSalvarModeloNf() {
@@ -115,6 +121,9 @@ export function useSalvarModeloNf() {
             ordem: input.ordem,
             ativo: input.ativo,
             descricao_padrao: input.descricao_padrao ?? null,
+            codigo_servico: input.codigo_servico ?? null,
+            cnae: input.cnae ?? null,
+            nbs: input.nbs ?? null,
             updated_by: userId,
             ...retencoes,
           })
@@ -131,6 +140,9 @@ export function useSalvarModeloNf() {
           ordem: input.ordem,
           ativo: input.ativo,
           descricao_padrao: input.descricao_padrao ?? null,
+          codigo_servico: input.codigo_servico ?? null,
+          cnae: input.cnae ?? null,
+          nbs: input.nbs ?? null,
           created_by: userId,
           updated_by: userId,
           ...retencoes,
