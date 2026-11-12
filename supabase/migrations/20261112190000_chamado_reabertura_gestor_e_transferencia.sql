@@ -64,6 +64,11 @@ CREATE INDEX IF NOT EXISTS idx_chamado_reabertura_chamado
   ON public."CHAMADO_SISTEMA_REABERTURA"(chamado_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_chamado_reabertura_pendente
   ON public."CHAMADO_SISTEMA_REABERTURA"(chamado_id) WHERE status = 'pendente';
+-- FK sem índice varre a tabela inteira em todo JOIN e em todo DELETE de usuário.
+CREATE INDEX IF NOT EXISTS chamado_sistema_reabertura_solicitado_por_idx ON public."CHAMADO_SISTEMA_REABERTURA" (solicitado_por);
+CREATE INDEX IF NOT EXISTS chamado_sistema_reabertura_responsavel_anterior_idx ON public."CHAMADO_SISTEMA_REABERTURA" (responsavel_anterior);
+CREATE INDEX IF NOT EXISTS chamado_sistema_reabertura_responsavel_novo_idx ON public."CHAMADO_SISTEMA_REABERTURA" (responsavel_novo);
+CREATE INDEX IF NOT EXISTS chamado_sistema_reabertura_decidido_por_idx ON public."CHAMADO_SISTEMA_REABERTURA" (decidido_por);
 
 CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA_TRANSFERENCIA" (
   id               bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -83,6 +88,10 @@ CREATE INDEX IF NOT EXISTS idx_chamado_transferencia_chamado
   ON public."CHAMADO_SISTEMA_TRANSFERENCIA"(chamado_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_chamado_transferencia_pendente
   ON public."CHAMADO_SISTEMA_TRANSFERENCIA"(chamado_id) WHERE status = 'pendente';
+CREATE INDEX IF NOT EXISTS chamado_sistema_transferencia_solicitado_por_idx ON public."CHAMADO_SISTEMA_TRANSFERENCIA" (solicitado_por);
+CREATE INDEX IF NOT EXISTS chamado_sistema_transferencia_de_responsavel_idx ON public."CHAMADO_SISTEMA_TRANSFERENCIA" (de_responsavel);
+CREATE INDEX IF NOT EXISTS chamado_sistema_transferencia_para_responsavel_idx ON public."CHAMADO_SISTEMA_TRANSFERENCIA" (para_responsavel);
+CREATE INDEX IF NOT EXISTS chamado_sistema_transferencia_decidido_por_idx ON public."CHAMADO_SISTEMA_TRANSFERENCIA" (decidido_por);
 
 -- ── 2. Quem decide / quem é dev ──────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.chamado_pode_decidir()
@@ -192,10 +201,11 @@ CREATE POLICY chamado_reabertura_select ON public."CHAMADO_SISTEMA_REABERTURA" F
 -- Transferência: assunto da equipe — gestão, o dev atual e os dois do pedido.
 DROP POLICY IF EXISTS chamado_transferencia_select ON public."CHAMADO_SISTEMA_TRANSFERENCIA";
 CREATE POLICY chamado_transferencia_select ON public."CHAMADO_SISTEMA_TRANSFERENCIA" FOR SELECT TO authenticated
-  USING (public.chamado_sistema_gestor()
-         OR solicitado_por = auth.uid() OR de_responsavel = auth.uid() OR para_responsavel = auth.uid()
+  -- (SELECT …): avaliado uma vez por consulta, não em cada linha.
+  USING ((SELECT public.chamado_sistema_gestor())
+         OR solicitado_por = (SELECT auth.uid()) OR de_responsavel = (SELECT auth.uid()) OR para_responsavel = (SELECT auth.uid())
          OR EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c
-                     WHERE c.id = "CHAMADO_SISTEMA_TRANSFERENCIA".chamado_id AND c.responsavel_id = auth.uid()));
+                     WHERE c.id = "CHAMADO_SISTEMA_TRANSFERENCIA".chamado_id AND c.responsavel_id = (SELECT auth.uid())));
 
 REVOKE ALL ON public."CHAMADO_SISTEMA_REABERTURA" FROM PUBLIC, anon;
 REVOKE ALL ON public."CHAMADO_SISTEMA_TRANSFERENCIA" FROM PUBLIC, anon;

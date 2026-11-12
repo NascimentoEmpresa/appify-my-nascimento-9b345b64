@@ -421,8 +421,9 @@ type Pendencia = {
  */
 export function AvisoPendenciasGestao({ onAbrir, nomeDe }: { onAbrir: (chamadoId: string) => void; nomeDe: NomeDe }) {
   const { data: pendencias = [] } = useQuery({
+    // Sem refetchInterval (regra do ERP, guardião D1): recarrega ao abrir a
+    // tela e quando uma decisão invalida as chaves "chamado*".
     queryKey: ["chamado-pendencias-gestao"],
-    refetchInterval: 60_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any).rpc("chamado_pendencias_gestao");
       if (error) return [];  // migration ainda não entrou: sem aviso
