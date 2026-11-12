@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import { chaveSetor } from "@/lib/formularios/setorChave";
 
 // =====================================================================
 // NASCIMENTO FORMULARIOS - capacidades do usuario logado
@@ -59,7 +60,8 @@ export function useFormPerms() {
       .forEach((r: any) => {
         const id = String(r.formulario_id);
         const atual = porForm.get(id) ?? { caps: new Set<string>(), setores: new Set<string>() };
-        if (r.papel === "ver_setor" && r.setor) atual.setores.add(String(r.setor).trim().toUpperCase());
+        // Chave SEM acento (JURIDICO == JURÍDICO), como cs_form_chave_setor.
+        if (r.papel === "ver_setor" && r.setor) atual.setores.add(chaveSetor(r.setor));
         else if (r.papel !== MARCADOR_FORM) atual.caps.add(r.papel);
         porForm.set(id, atual);
       });
@@ -82,12 +84,18 @@ export function useFormPerms() {
   const canVerAlguma = VIEW_CAPS.some((c) => caps.has(c)) || setoresVer.size > 0 || setoresCriar.size > 0;
   // Escopo efetivo "so as proprias": tem ver_proprias e nada mais amplo.
   const soProprias = caps.has("ver_proprias") && !caps.has("ver_tudo") && setoresVer.size === 0 && setoresCriar.size === 0;
+  // setoresVer/setoresCriar guardam a GRAFIA gravada (Formularios usa
+  // setoresCriar para carimbar o setor de formulario novo). A comparacao e
+  // pela chave sem acento — senao "ver por setor = JURIDICO" nao abria as
+  // respostas JURÍDICO (12/11/2026, mig 20261113003000).
+  const chavesVer = new Set([...setoresVer].map(chaveSetor));
+  const chavesCriar = new Set([...setoresCriar].map(chaveSetor));
   // Espelha public.cs_form_cap_setor (a autoridade e a RLS).
   const canVerSetor = (s?: string | null) =>
-    !!s && setoresVer.has(String(s).trim().toUpperCase());
+    !!s && chavesVer.has(chaveSetor(s));
   // Espelha public.cs_form_pode_criar_setor: dono do setor do formulario.
   const canCriarSetor = (s?: string | null) =>
-    !!s && setoresCriar.has(String(s).trim().toUpperCase());
+    !!s && chavesCriar.has(chaveSetor(s));
   // -- Por formulario ------------------------------------------------
   // A autoridade continua sendo a RLS; estes helpers so evitam que a tela
   // prometa (ou esconda) o que o banco vai decidir de outro jeito.
@@ -103,7 +111,7 @@ export function useFormPerms() {
   };
   const canVerSetorNoForm = (formId: string | null | undefined, s?: string | null) =>
     temRegraNoForm(formId)
-      ? !!s && !!regrasForm.get(String(formId))?.setores.has(String(s).trim().toUpperCase())
+      ? !!s && !!regrasForm.get(String(formId))?.setores.has(chaveSetor(s))
       : canVerSetor(s);
   /** Ve alguma resposta DESTE formulario? (esconde abas e botoes) */
   const canVerAlgumaNoForm = (formId?: string | null) => {
