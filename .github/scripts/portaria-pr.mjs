@@ -360,16 +360,18 @@ if (/^\[SEM-CHAMADO\]/.test(tituloPR)) {
   }
 }
 
-// --- R8: só as 4 branches combinadas, sem exceção ----------------------------
-// O time tem 3 devs, cada um com a sua branch, e a main. Zero-tolerância: só
-// essas 4 nomes existem, nunca mais. A versão anterior desta regra abria
+// --- R8: só as 5 branches combinadas, sem exceção ----------------------------
+// O time tem 4 devs, cada um com a sua branch, e a main. Zero-tolerância: só
+// esses 5 nomes existem. (12/11/2026: entrou a `otavio` quando o Otávio chegou
+// ao time — a lista é de pessoas, não de exceções; branch temporária continua
+// proibida.) A versão anterior desta regra abria
 // exceção para branch temporária com prefixo ci/fix/chore — foi apertada
 // depois que uma dessas exceções (fix/aviso-veredito-causa-certa) ficou aberta
 // como PR ao mesmo tempo que a própria regra que a permitia estava sendo
 // revista, o que deixou claro que qualquer exceção é uma porta que se abre de
 // novo. Nomenclatura é verificável, então não tem por que deixar isso no
 // julgamento do modelo.
-const BRANCHES_FIXAS = ["eduardo", "joao", "pablo", "main"];
+const BRANCHES_FIXAS = ["eduardo", "joao", "pablo", "otavio", "main"];
 
 // GITHUB_HEAD_REF é a branch de origem da PR; fora do CI, a branch atual.
 let branch = process.env.GITHUB_HEAD_REF || "";
@@ -383,7 +385,7 @@ if (!branch) {
 
 if (branch && !BRANCHES_FIXAS.includes(branch)) {
   reprovar("R8", ".github/REGRAS-PR.md", 1,
-    `A branch "${branch}" não está no combinado. Só existem eduardo, joao, pablo e main — ` +
+    `A branch "${branch}" não está no combinado. Só existem eduardo, joao, pablo, otavio e main — ` +
     `sem exceção, nem para correção de workflow ou infraestrutura. Cada dev trabalha na ` +
     `própria branch e abre PR para a main a partir dela.`,
     "");
@@ -430,8 +432,8 @@ const COMO_RESOLVER = {
       "para o bundle do navegador, então a chave viraria pública para qualquer visitante.",
   R7: "Abra um chamado no ERP e use o número no título da PR (`SIS-XXXX-XXXX: ...`). " +
       "Funções `admin_*` mexem em vínculo de usuário, empresa e sessão — precisam de rastro.",
-  R8: "Mova o trabalho para a sua branch pessoal (`eduardo`, `joao` ou `pablo`) e abra a PR " +
-      "a partir dela. Só essas três e a `main` existem, sem exceção.",
+  R8: "Mova o trabalho para a sua branch pessoal (`eduardo`, `joao`, `pablo` ou `otavio`) e abra a PR " +
+      "a partir dela. Só essas quatro e a `main` existem, sem exceção.",
 };
 
 if (violacoes.length > 0) {

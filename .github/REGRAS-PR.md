@@ -52,7 +52,7 @@ ERP interno multiempresa em React + Vite + Supabase (Postgres com RLS).
 | R5 | Nenhum segredo real no diff: chave `service_role`, chave da Anthropic, token do GitHub, credencial de banco. |
 | R6 | `service_role` só em `supabase/functions/**`, nunca em `src/**`. |
 | R7 | Função `admin_*` alterada exige chamado no título (não pode ser `[SEM-CHAMADO]`). |
-| R8 | Só existem quatro branches: `eduardo`, `joao`, `pablo`, `main`. Sem exceção. |
+| R8 | Só existem cinco branches: `eduardo`, `joao`, `pablo`, `otavio`, `main`. Sem exceção. |
 
 ### Notas sobre as absolutas
 
@@ -72,8 +72,8 @@ rotacione em Supabase → Settings → API **antes de qualquer outra coisa**.
 Tirar do diff não resolve: o valor já está no histórico do git. A chave ignora
 toda a RLS — é o superusuário do banco.
 
-**R8 — o time tem 3 devs e 4 branches, sem exceção.** Eduardo, João e Pablo
-trabalham cada um na branch com o seu nome e abrem PR para a `main` (Iury é
+**R8 — o time tem 4 devs e 5 branches, sem exceção.** Eduardo, João, Pablo e
+Otávio trabalham cada um na branch com o seu nome e abrem PR para a `main` (Iury é
 gerente e não mexe em código). Não existe branch temporária, nem para
 corrigir workflow ou infraestrutura — nem `ci/*`, `fix/*` ou `chore/*`.
 
@@ -83,6 +83,9 @@ PR (`fix/aviso-veredito-causa-certa`) bem na hora em que a própria regra que a
 permitia estava sendo revista — ficou claro que qualquer exceção escrita no
 papel vira porta usada de novo. Zero é mais simples de aplicar e de lembrar do
 que "com justificativa".
+
+A lista só cresce quando entra uma **pessoa** no time: em 12/11/2026 entrou a
+`otavio`. Isso não reabre a porta das branches temporárias.
 
 ### Justificar uma ocorrência (R2 e R3)
 
