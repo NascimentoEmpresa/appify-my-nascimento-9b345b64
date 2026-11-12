@@ -242,13 +242,27 @@ export interface LinhaParaTotais {
   situacao_base?: "aberto" | "cancelado" | null;
   /** SIS-2026-0777 */
   conta_banco_id?: string | null;
+  /** SIS-2026-0857: para separar o "SALDO ANTERIOR" (abertura das contas) da movimentação do período. */
+  classificacao_nome?: string | null;
+}
+
+// SIS-2026-0857: `entradas`/`saidas` são a MOVIMENTAÇÃO do período (o que aparece no extrato) — o "SALDO ANTERIOR" (abertura das contas, lançado no Fluxo
+// como entrada) NÃO entra aqui: é posição que já estava nas contas antes do período. Ele vem à parte em `saldoAnterior`, e `totalEntradas`/`totalSaidas`
+// são a conta inteira do Fluxo (movimentação + saldo anterior), igual a "Entradas/Saídas (filtro atual)" da tela do Fluxo de Caixa.
+export interface TotaisMovimentacao {
+  entradas: number;
+  saidas: number;
+  lancamentos: number;
+  saldoAnterior: { entradas: number; saidas: number };
+  totalEntradas: number;
+  totalSaidas: number;
 }
 
 export function totaisDeMovimentacao(
   linhas: LinhaParaTotais[],
   f: { dataDe: string; dataAte: string; empresaId: string | null; bancoId: string | null },
   hoje: string,
-): { entradas: number; saidas: number; lancamentos: number } {
+): TotaisMovimentacao {
   const grupos = new Map<string, { base: LinhaParaTotais; valor: number }>();
   for (const l of linhas) {
     const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
@@ -256,7 +270,7 @@ export function totaisDeMovimentacao(
     if (g) g.valor += Number(l.valor) || 0;
     else grupos.set(chave, { base: l, valor: Number(l.valor) || 0 });
   }
-  let entradas = 0, saidas = 0, lancamentos = 0;
+  let entradas = 0, saidas = 0, lancamentos = 0, saldoAntEntradas = 0, saldoAntSaidas = 0;
   for (const { base, valor } of grupos.values()) {
     const data = base.data_pagamento?.slice(0, 10) ?? null;
     if (base.situacao_base || (data && data > hoje)) continue; // ainda não aconteceu: é do Projetado
@@ -265,9 +279,17 @@ export function totaisDeMovimentacao(
     if (f.empresaId && base.empresa_id !== f.empresaId) continue;
     if (f.bancoId && base.banco_id !== f.bancoId) continue;
     lancamentos += 1;
+    if (ehSaldoAnterior({ classificacao_nome: base.classificacao_nome ?? null })) {
+      if (base.tipo === "entrada") saldoAntEntradas += valor; else saldoAntSaidas += valor;
+      continue;
+    }
     if (base.tipo === "entrada") entradas += valor; else saidas += valor;
   }
-  return { entradas: r2(entradas), saidas: r2(saidas), lancamentos };
+  return {
+    entradas: r2(entradas), saidas: r2(saidas), lancamentos,
+    saldoAnterior: { entradas: r2(saldoAntEntradas), saidas: r2(saldoAntSaidas) },
+    totalEntradas: r2(entradas + saldoAntEntradas), totalSaidas: r2(saidas + saldoAntSaidas),
+  };
 }
 
 // SIS-2026-0720: valores gravados em UMA conciliação (Fluxo, extrato e conciliado, entradas e saídas), sem o saldo de abertura. Conciliações
