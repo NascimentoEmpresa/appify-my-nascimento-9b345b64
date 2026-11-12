@@ -56,6 +56,7 @@ import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrut
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
 import { erroDataInicio, hojeIso, inicioTrabalho, linhaInicioPedido, sugestaoDataInicio } from "@/lib/recrutamento/inicioTrabalho";
 import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
+import { AprovacaoGerenteOperacoes } from "@/components/recrutamento/AprovacaoGerenteOperacoes";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -78,6 +79,8 @@ interface Solicitacao {
   insalubridade_recebe?: string;
   insalubridade_quanto?: string;
   local_exato?: string;
+  /** #0849: endereço efetivo do local de trabalho, digitado ao abrir a vaga. */
+  endereco_trabalho?: string | null;
   /** Posto do catálogo (sup_posto) — é ele o "Posto de Trabalho"; ver lib/recrutamento/postoDaVaga. */
   posto_id?: string | null;
   data_inicio_prevista?: string;
@@ -2721,6 +2724,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {/* Sem posto do catálogo (vaga antiga/manual) segue o local_exato, como antes. */}
           {di("Posto de Trabalho", postoLocal.posto || s.local_exato)}
           {postoLocal.posto && postoLocal.local ? di("Local exato", postoLocal.local) : null}
+          {s.endereco_trabalho ? di("Endereço efetivo do local de trabalho", s.endereco_trabalho) : null}
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
           {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}
@@ -3433,6 +3437,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
             simplesmente não desenhar botão: sem a frase, quem abre o card fica
             procurando onde clicar para aprovar. */}
+        {/* #0848 (11/11/2026): admissões novas aguardando o Gerente de
+            Operações — só para quem tem a capacidade; em qualquer escopo. */}
+        <AprovacaoGerenteOperacoes onToast={toast} onDecidido={() => { loadStats(); loadLista(); }} />
+
         {/* 02/10/2026: com "APROVA VAGAS" marcado o Operacional decide, e o
             aviso de "só acompanhamento" sai. */}
         {escopo === "operacional" && !podeAprovarAnalista && (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, CheckCircle2, FileText, Fuel, Gauge, History, Loader2, Paperclip, Plus, Save } from "lucide-react";
+import { Camera, CheckCircle2, FileText, Fuel, Gauge, History, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, Save, Video, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -10,8 +10,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  LABEL_TURNO, abrirArquivoVeiculo, formatarData, hojeISO,
-  useConcluirAgendamento, useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useViagem,
+  LABEL_TURNO, MIDIA_MAX_MB, abrirArquivoVeiculo, abrirMidiaViagem, formatarData, hojeISO,
+  useAnexarMidiaViagem, useConcluirAgendamento, useContratosParaAgendamento, useDefinirContratosDaViagem, useExcluirMidiaViagem, useFecharKm,
+  useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useResponderAbastecimento, useSalvarRelatoViagem, useViagem,
   type ContratoSimples,
 } from "@/hooks/useAgendamentoVeiculos";
 import { podeConcluirAgendamento } from "@/lib/veiculos/concluirAgendamento";
@@ -25,6 +26,16 @@ import { podeConcluirAgendamento } from "@/lib/veiculos/concluirAgendamento";
 //     o mesmo carro atende vários contratos na mesma saída;
 //   • as notas de abastecimento, cada uma com descrição, valor e OS
 //     CONTRATOS que ela atende (os da viagem já vêm marcados).
+//
+// 12/11/2026 — ajustes do Senilton (mig 20261112173000):
+//   • KM inicial vem preenchido com o KM de chegada da última viagem
+//     FECHADA do carro (qualquer motorista); quem sai confere e registra;
+//   • KM de saída e de retorno obrigatórios, foto do painel opcional nos
+//     dois (a RPC garante);
+//   • "Notas de abastecimento" virou "Houve abastecimento? Sim/Não" — Sim
+//     exige a foto da nota (cobrada ao concluir e na prestação);
+//   • fotos ou vídeo do estado do veículo (opcional) e observação livre;
+//   • concluir mostra o que falta (o banco recusa enquanto faltar).
 // =====================================================================
 
 const moeda = (v: number | null | undefined) =>
@@ -39,6 +50,11 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
   const registrarKmInicial = useRegistrarKmInicial();
   const salvarContratos = useDefinirContratosDaViagem();
   const registrar = useRegistrarAbastecimento();
+  const responder = useResponderAbastecimento();
+  const anexarMidia = useAnexarMidiaViagem();
+  const excluirMidia = useExcluirMidiaViagem();
+  const salvarRelato = useSalvarRelatoViagem();
+  const [relato, setRelato] = useState("");
   const [incluirInativos, setIncluirInativos] = useState(false);
   const contratos = useContratosParaAgendamento(incluirInativos);
 
@@ -84,12 +100,38 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
   // — quem decide é controle_km (fallback no sinal antigo enquanto a
   // 20260930000219 não estiver aplicada no banco).
   const legado = v ? (v.controle_km == null ? v.km_inicial == null : !v.controle_km) : false;
+  // 12/11/2026 (Senilton): o NÚMERO do KM é obrigatório na saída e no
+  // retorno; a foto do painel é opcional nos dois. Quem garante é a RPC
+  // (cs_veiculo_km_inicial / cs_veiculo_km_final, mig 20261112173000), só
+  // para viagem com prestacao_exigida — fallback no sinal antigo enquanto a
+  // migration não entrou.
+  const kmObrigatorio = v ? (v.prestacao_exigida ?? !legado) : false;
   // Viagem nova sem KM inicial não fecha: primeiro registra o inicial.
   const faltaKmInicial = !legado && v?.km_inicial == null;
-  const podeEnviarKm = legado ? !!(kmFinal || fotoFinal) : !!(kmFinal && fotoFinal) && !faltaKmInicial;
+  const podeEnviarKm = legado ? !!(kmFinal || fotoFinal) : (kmObrigatorio ? !!kmFinal : !!(kmFinal || fotoFinal)) && !faltaKmInicial;
+  const podeEnviarKmInicial = v?.km_inicial == null
+    ? (kmObrigatorio ? !!kmInicial : !!(kmInicial || fotoInicial))
+    : !!fotoInicial;
+
+  // KM inicial puxado da viagem anterior (12/11/2026): o KM de chegada da
+  // última viagem FECHADA do veículo, qualquer que seja o motorista. Vem
+  // preenchido no campo; quem sai confere no painel e registra.
+  const kmSugerido = v?.km_inicial == null ? v?.km_sugerido ?? null : null;
+  useEffect(() => {
+    if (aberto && kmSugerido) setKmInicial((atual) => atual || String(kmSugerido.km));
+  }, [aberto, kmSugerido?.km]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resposta de "Houve abastecimento?" — nota anexada vale Sim.
+  const houve: boolean | null = v ? (v.abastecimentos.length > 0 ? true : v.houve_abastecimento ?? null) : null;
+  // O que o banco cobra para concluir (cs_veiculo_concluir).
+  const faltaParaConcluir = v?.prestacao_faltando ?? [];
+
+  useEffect(() => {
+    if (aberto) setRelato(v?.relato ?? "");
+  }, [aberto, v?.relato]);
 
   const enviarKmInicial = async () => {
-    if (!agendamentoId || !(kmInicial || fotoInicial)) return;
+    if (!agendamentoId || !podeEnviarKmInicial) return;
     await registrarKmInicial.mutateAsync({ id: agendamentoId, km: kmInicial ? Number(kmInicial) : null, foto: fotoInicial });
     setKmInicial(""); setFotoInicial(null);
   };
@@ -152,9 +194,13 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3">
                 <div>
                   <p className="text-sm font-semibold">Viagem finalizada</p>
-                  <p className="text-xs text-muted-foreground">Confira contratos e notas e conclua o agendamento. Dá para anexar nota depois.</p>
+                  {faltaParaConcluir.length > 0 ? (
+                    <p className="text-xs text-amber-800 dark:text-amber-300"><b>Para concluir, falta:</b> {faltaParaConcluir.join(", ")}.</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Confira contratos e abastecimento e conclua o agendamento.</p>
+                  )}
                 </div>
-                <Button size="sm" className="gap-1.5" disabled={concluir.isPending}
+                <Button size="sm" className="gap-1.5" disabled={concluir.isPending || faltaParaConcluir.length > 0}
                         onClick={() => agendamentoId && concluir.mutate({ id: agendamentoId })}>
                   {concluir.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                   Concluir agendamento
@@ -166,11 +212,19 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
             <section className="rounded-xl border border-border p-4">
               <h4 className="mb-3 flex items-center gap-2 text-sm font-bold"><Gauge className="h-4 w-4 text-primary" /> Quilometragem</h4>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Campo rotulo="KM inicial" valor={v.km_inicial != null ? `${v.km_inicial.toLocaleString("pt-BR")} km` : "—"}
+                <Campo rotulo="KM inicial"
+                       valor={v.km_inicial != null ? `${v.km_inicial.toLocaleString("pt-BR")} km` : kmSugerido ? `${kmSugerido.km.toLocaleString("pt-BR")} km (a confirmar)` : "—"}
                        acao={v.km_inicial_foto ? () => abrirArquivoVeiculo(v.km_inicial_foto!) : undefined} />
                 <Campo rotulo="KM final" valor={v.km_final != null ? `${v.km_final.toLocaleString("pt-BR")} km` : "pendente"}
                        acao={v.km_final_foto ? () => abrirArquivoVeiculo(v.km_final_foto!) : undefined} />
               </div>
+              {kmSugerido && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Puxado da chegada da viagem nº {kmSugerido.numero}
+                  {[kmSugerido.condutor, kmSugerido.em && new Date(kmSugerido.em).toLocaleDateString("pt-BR")].filter(Boolean).map((x) => ` · ${x}`).join("")}
+                  {" "}— a última viagem fechada deste carro. Confira no painel e registre abaixo.
+                </p>
+              )}
               {v.rodados != null && (
                 <p className="mt-2 text-sm text-muted-foreground">Rodou <b className="text-foreground">{v.rodados.toLocaleString("pt-BR")} km</b> nesta viagem.</p>
               )}
@@ -182,20 +236,22 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                   <div>
                     <p className="text-sm font-semibold">Registrar o KM inicial</p>
                     <p className="text-xs text-muted-foreground">
-                      Ficou para depois do agendamento. O KM inicial é necessário para fechar a viagem; a foto pode vir quando der.
+                      {kmObrigatorio
+                        ? "O número do KM de saída é obrigatório; a foto do painel é opcional."
+                        : "Ficou para depois do agendamento. O KM inicial é necessário para fechar a viagem; a foto pode vir quando der."}
                     </p>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     {v.km_inicial == null && (
                       <div className="space-y-1.5">
-                        <Label htmlFor="km-inicial-depois">KM inicial (painel)</Label>
+                        <Label htmlFor="km-inicial-depois">KM inicial (painel){kmObrigatorio && " *"}</Label>
                         <Input id="km-inicial-depois" inputMode="numeric" value={kmInicial} placeholder="Ex.: 84512"
                                onChange={(e) => setKmInicial(e.target.value.replace(/\D/g, ""))} />
                       </div>
                     )}
                     {!v.km_inicial_foto && (
                       <div className="space-y-1.5">
-                        <Label htmlFor="foto-inicial-depois">Foto do painel</Label>
+                        <Label htmlFor="foto-inicial-depois">Foto do painel (opcional)</Label>
                         <label htmlFor="foto-inicial-depois" className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
                           <Camera className="h-4 w-4 shrink-0 text-amber-600" />
                           <span className="truncate">{fotoInicial ? fotoInicial.name : "Tirar foto / escolher"}</span>
@@ -205,7 +261,7 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                       </div>
                     )}
                   </div>
-                  <Button size="sm" className="gap-1.5" disabled={!(kmInicial || fotoInicial) || registrarKmInicial.isPending} onClick={enviarKmInicial}>
+                  <Button size="sm" className="gap-1.5" disabled={!podeEnviarKmInicial || registrarKmInicial.isPending} onClick={enviarKmInicial}>
                     {registrarKmInicial.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     Registrar KM inicial
                   </Button>
@@ -227,14 +283,14 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="km-final">KM final (painel){!legado && " *"}</Label>
+                      <Label htmlFor="km-final">KM final (painel){kmObrigatorio && " *"}</Label>
                       <Input id="km-final" inputMode="numeric" value={kmFinal} placeholder={v.km_inicial ? `maior que ${v.km_inicial}` : "Ex.: 84980"}
                              onChange={(e) => setKmFinal(e.target.value.replace(/\D/g, ""))} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="foto-final">Foto do painel{legado ? " (opcional)" : " *"}</Label>
+                      <Label htmlFor="foto-final">Foto do painel (opcional)</Label>
                       <label htmlFor="foto-final" className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
-                        <Camera className={`h-4 w-4 shrink-0 ${legado ? "text-muted-foreground" : "text-amber-600"}`} />
+                        <Camera className="h-4 w-4 shrink-0 text-muted-foreground" />
                         <span className="truncate">{fotoFinal ? fotoFinal.name : "Tirar foto / escolher"}</span>
                       </label>
                       <input id="foto-final" type="file" accept="image/*" capture="environment" className="hidden"
@@ -286,20 +342,43 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                 e cada checklist salvo — antes o log só ia para o relatório. */}
             <HistoricoDaViagem agendamentoId={agendamentoId} />
 
-            {/* ── Notas de abastecimento ─────────────────────────── */}
+            {/* ── Abastecimento (12/11/2026) ─────────────────────────
+                Antes: lista de "Notas de abastecimento" que ninguém era
+                obrigado a responder. Agora a pergunta "Houve abastecimento?";
+                Sim → a foto da nota é obrigatória (cobrada pelo banco na
+                prestação e ao concluir). Nota anexada já vale Sim. */}
             <section className="rounded-xl border border-border p-4">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h4 className="flex items-center gap-2 text-sm font-bold"><Fuel className="h-4 w-4 text-primary" /> Notas de abastecimento</h4>
-                {souDono && !notaAberta && (
-                  <Button size="sm" className="gap-1.5" onClick={() => { setNotaContratos(nomesDaViagem); setNotaAberta(true); }}>
-                    <Plus className="h-4 w-4" /> Anexar nota de gasolina
+              <h4 className="mb-3 flex items-center gap-2 text-sm font-bold"><Fuel className="h-4 w-4 text-primary" /> Houve abastecimento?{kmObrigatorio && <span className="text-destructive"> *</span>}</h4>
+              <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Houve abastecimento?">
+                {([[true, "Sim"], [false, "Não"]] as const).map(([valor, rotulo]) => {
+                  const marcado = houve === valor;
+                  // Com nota anexada a resposta é Sim — o banco recusa "Não".
+                  const travado = !souDono || responder.isPending || (valor === false && v.abastecimentos.length > 0);
+                  return (
+                    <button key={rotulo} type="button" role="radio" aria-checked={marcado} disabled={travado}
+                      onClick={() => {
+                        if (!agendamentoId) return;
+                        if (valor) { setNotaContratos(nomesDaViagem); setNotaAberta(true); }
+                        else setNotaAberta(false);
+                        if (!marcado) responder.mutate({ id: agendamentoId, houve: valor });
+                      }}
+                      className={`h-9 rounded-lg border px-5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${marcado ? "border-primary bg-primary/10 text-primary" : "border-border bg-background"}`}>
+                      {rotulo}
+                    </button>
+                  );
+                })}
+                {houve == null && <span className="text-xs text-muted-foreground">Sem resposta ainda.</span>}
+                {houve === true && souDono && !notaAberta && (
+                  <Button size="sm" variant="outline" className="ml-auto gap-1.5" onClick={() => { setNotaContratos(nomesDaViagem); setNotaAberta(true); }}>
+                    <Plus className="h-4 w-4" /> {v.abastecimentos.length ? "Anexar outra nota" : "Anexar foto da nota"}
                   </Button>
                 )}
               </div>
 
-              {v.abastecimentos.length === 0 && !notaAberta && (
-                <p className="text-sm text-muted-foreground">Nenhuma nota anexada nesta viagem.</p>
+              {houve === true && v.abastecimentos.length === 0 && !notaAberta && (
+                <p className="mt-2 text-sm font-semibold text-destructive">Houve abastecimento: a foto da nota é obrigatória.</p>
               )}
+              {v.abastecimentos.length > 0 && <div className="mt-3" />}
 
               <ul className="space-y-2">
                 {v.abastecimentos.map((b) => (
@@ -327,7 +406,7 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                 <div className="mt-3 space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="nota-arquivo">Nota do abastecimento *</Label>
+                      <Label htmlFor="nota-arquivo">Foto da nota do abastecimento *</Label>
                       <label htmlFor="nota-arquivo" className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
                         <Camera className="h-4 w-4 shrink-0 text-primary" />
                         <span className="truncate">{nota.arquivo ? nota.arquivo.name : "Foto da notinha ou PDF"}</span>
@@ -379,6 +458,79 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                 </div>
               )}
             </section>
+
+            {/* ── Fotos/vídeo do estado do veículo (12/11/2026) ──────
+                Opcional: resguarda o motorista (como o carro foi pego/devolvido). */}
+            <section className="rounded-xl border border-border p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h4 className="flex items-center gap-2 text-sm font-bold">
+                  <Video className="h-4 w-4 text-primary" /> Fotos ou vídeo do veículo <span className="font-normal text-muted-foreground">(opcional)</span>
+                </h4>
+                {souDono && v.status !== "cancelado" && (
+                  <>
+                    <label htmlFor="midia-veiculo" className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted/50 ${anexarMidia.isPending ? "pointer-events-none opacity-60" : ""}`}>
+                      {anexarMidia.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+                      {anexarMidia.isPending ? "Enviando…" : "Anexar fotos/vídeo"}
+                    </label>
+                    <input id="midia-veiculo" type="file" accept="image/*,video/*" multiple className="hidden"
+                           onChange={(e) => {
+                             const fs = Array.from(e.target.files ?? []);
+                             e.target.value = "";
+                             if (fs.length && agendamentoId) anexarMidia.mutate({ id: agendamentoId, arquivos: fs });
+                           }} />
+                  </>
+                )}
+              </div>
+              <p className="mb-2 text-xs text-muted-foreground">Registre o estado do carro (riscos, amassados, limpeza) para resguardar o motorista. Vídeo até {MIDIA_MAX_MB} MB.</p>
+              {(v.midias ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhum arquivo anexado.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {(v.midias ?? []).map((m) => (
+                    <li key={m.id} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+                      {m.tipo?.startsWith("video/") ? <Video className="h-4 w-4 shrink-0 text-muted-foreground" /> : <Camera className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                      <button type="button" onClick={() => abrirMidiaViagem(m.storage_path)} className="min-w-0 flex-1 truncate text-left font-semibold text-primary hover:underline">
+                        {m.nome_arquivo}
+                      </button>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {m.criado_por_nome ? `${m.criado_por_nome} · ` : ""}{new Date(m.created_at).toLocaleDateString("pt-BR")}
+                      </span>
+                      {souDono && (
+                        <button type="button" title="Tirar da viagem" disabled={excluirMidia.isPending}
+                                onClick={() => agendamentoId && excluirMidia.mutate({ id: agendamentoId, midiaId: m.id })}
+                                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {/* ── Observação livre (12/11/2026) ───────────────────── */}
+            <section className="rounded-xl border border-border p-4">
+              <h4 className="mb-2 flex items-center gap-2 text-sm font-bold"><MessageSquareText className="h-4 w-4 text-primary" /> Observação</h4>
+              {souDono ? (
+                <div className="space-y-2">
+                  <Textarea rows={3} maxLength={4000} value={relato} onChange={(e) => setRelato(e.target.value)}
+                            placeholder="Algo a relatar sobre este agendamento (ex.: pneu murcho, barulho no motor, atraso, trânsito)." />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      {v.relato_em ? `Salva por ${v.relato_por_nome ?? "—"} em ${new Date(v.relato_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : ""}
+                    </span>
+                    <Button size="sm" className="gap-1.5" disabled={relato.trim() === (v.relato ?? "").trim() || salvarRelato.isPending}
+                            onClick={() => agendamentoId && salvarRelato.mutate({ id: agendamentoId, texto: relato })}>
+                      {salvarRelato.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar observação
+                    </Button>
+                  </div>
+                </div>
+              ) : v.relato ? (
+                <p className="whitespace-pre-wrap text-sm">{v.relato}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nenhuma observação.</p>
+              )}
+            </section>
           </div>
         )}
       </DialogContent>
@@ -390,6 +542,7 @@ const ROTULO_ACAO: Record<string, string> = {
   criado: "Agendado", cancelado: "Cancelado", confirmado: "Confirmado", concluido: "Concluído",
   km_inicial: "KM inicial", km_final: "Finalização", checklist_saida: "Checklist de saída",
   checklist_chegada: "Checklist de chegada", checklist_pendente: "Checklist não preenchido",
+  abastecimento: "Abastecimento", midia: "Fotos/vídeo do veículo", relato: "Observação",
 };
 
 function HistoricoDaViagem({ agendamentoId }: { agendamentoId: string | null }) {

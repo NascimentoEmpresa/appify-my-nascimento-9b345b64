@@ -134,10 +134,10 @@ jobs:
   # 06/11/2026: no run 42315466250, --with-deps gastou 3min53s baixando
   # FONTES do Ubuntu. As bibliotecas do Chromium já existem no runner 24.04.
   # Instalamos só o headless shell, sem apt, com versão presa no lock próprio.
-  # Três runners dividem TODAS as rotas; não aumentamos a disputa por CPU no
-  # mesmo runner nem encurtamos os 10 minutos simulados de observação.
+  # Seis runners dividem TODAS as rotas, com quatro páginas por runner.
+  # O relógio e as verificações de cada tela continuam iguais.
   qa-telas:
-    name: QA de telas (${{ matrix.fatia }}/3)
+    name: QA de telas (${{ matrix.fatia }}/${{ strategy.job-total }})
     needs: qa-preparar
     if: needs.qa-preparar.outputs.executar == '1'
     runs-on: ubuntu-24.04
@@ -147,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fatia: [1, 2, 3]
+        fatia: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -191,6 +191,8 @@ jobs:
             orcamento-main-
 
       - name: Abrir cada tela e contar requisições
+        env:
+          FATIA: ${{ matrix.fatia }}/${{ strategy.job-total }}
         run: |
           node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4173 --strictPort &
           PREVIEW_PID=$!
@@ -200,7 +202,7 @@ jobs:
           CATRACA=()
           [ ! -f orcamento-main.json ] || CATRACA=(--baseline orcamento-main.json)
           node infra/qa/orcamento-requisicoes.mjs \
-            --base http://127.0.0.1:4173 --paralelo 4 --fatia ${{ matrix.fatia }}/3 \
+            --base http://127.0.0.1:4173 --paralelo 4 --fatia "$FATIA" \
             --saida orcamento.json "${CATRACA[@]}"
 
       - uses: actions/upload-artifact@v4
@@ -211,8 +213,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Este nome é obrigatório na proteção da main. Sucesso só depois das três
-  # fatias verdes E da conferência de cobertura (sem rota faltando/repetida).
+  # Este nome é obrigatório na proteção da main. Sucesso só depois de todas
+  # as fatias verdes e da conferência de cobertura (sem rota faltando/repetida).
   qa-requisicoes:
     name: qa-requisicoes
     needs: [qa-preparar, qa-telas]

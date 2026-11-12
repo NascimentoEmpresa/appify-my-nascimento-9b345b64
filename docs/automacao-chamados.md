@@ -90,9 +90,13 @@ Claude Code interativo (manual, sempre)
 O título da PR **precisa** começar com `SIS-AAAA-NNNN: <resumo>` (sem
 colchetes) — sem chamado relacionado, usa `[SEM-CHAMADO]:` (com colchetes).
 Isso já é validado por CI hoje (`.github/workflows/chamado_pr_sync.yml`,
-required status check que bloqueia merge) e, quando a PR é mergeada,
-`.github/workflows/chamado_concluir_no_merge.yml` **conclui o chamado
-sozinho** — nenhum passo manual extra é necessário depois do merge.
+required status check que bloqueia merge) e, quando a PR é aberta (fora de
+rascunho), `.github/workflows/chamado_concluir_no_merge.yml` **conclui o
+chamado sozinho** e a Edge `chamado-concluir-pr` põe no chat do chamado um
+resumo da entrega escrito pela I.A para o solicitante, com as URLs das telas
+alteradas (calculadas por `.github/scripts/rotas-da-pr.cjs`). O merge continua
+concluindo como reserva, sem passar por cima de uma reabertura do solicitante
+(desde 12/11/2026).
 
 ## Modelo por complexidade (mesma classificação alimenta os dois agentes)
 

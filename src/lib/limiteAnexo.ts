@@ -25,7 +25,7 @@ export const LIMITE_POR_BUCKET_MB: Record<string, number> = {
   "copiloto-audios": 10, "cotacoes-arquivos": 10, "cs-formularios": 25,
   "cs-veiculos": 25, "curriculos": 25, "debito-automatico-anexos": 20,
   "demissoes-docs": 10, "denuncia-evidencias": 25, "diarias": 10, "doc-canaa": 20,
-  "extrator-beneficios": 25, "fcr-uploads": 25, "grade-atas": 10, "hora-extra": 10,
+  "extrator-beneficios": 25, "faturamento-justificativa-anexos": 25, "fcr-uploads": 25, "grade-atas": 10, "hora-extra": 10,
   "identidade-visual": 10, "integration-uploads": 10, "juridico-comprovantes": 25,
   "juridico-docs": 25, "juridico-notificacoes": 25, "malote-anexos": 25,
   "migracao-zero": 25, "nf-emissao": 25, "nfe-xml": 10, "org-processos": 20,

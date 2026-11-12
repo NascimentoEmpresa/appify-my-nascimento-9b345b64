@@ -2008,7 +2008,10 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           // 20261020000100): o escritório que redefine a senha dos
           // encarregados cai direto na tela enxuta, que é TUDO o que ele vê
           // em Configurações. Quem enxerga a Administração segue para ela.
-          to={!canSee("/app/administracao") && canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados" : "/app/administracao"}
+          // 11/11/2026: idem para quem só tem "PODE CRIAR LOGIN (Encarregados)" (mig 20261111260000).
+          to={canSee("/app/administracao") ? "/app/administracao"
+            : canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados"
+            : canSee("/app/logins-encarregados") ? "/app/logins-encarregados" : "/app/administracao"}
           className={({ isActive }) =>
             cn(
               "sb-item flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
