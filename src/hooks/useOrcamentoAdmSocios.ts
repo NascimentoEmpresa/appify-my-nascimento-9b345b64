@@ -1,77 +1,61 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { LinhaOrcamento, TipoOrcamento } from "@/pages/malote/orcamento-adm-socios/regras";
+import type { ConfigPessoa, PessoaOrcamento, TipoOrcamento } from "@/pages/malote/orcamento-adm-socios/regras";
 
-// SIS-2026-0702: configuração do novo Orçamento Administrativo / Sócios (tabela orcamento_adm_socios_linha). Só a configuração é gravada;
-// valor orçado, saldo e utilizado são calculados ao vivo em regras.ts.
-const KEY = "orcamento_adm_socios_linha";
+// SIS-2026-0858: Orçamento ADM e Sócios por integrante (migration 20261111120000). Só a configuração é gravada (aba, classificação de origem e
+// contratos de cada pessoa); o saldo da classificação é calculado ao vivo em regras.ts.
+const KEY_LINHAS = "orcamento_adm_socios_integrante";
+const KEY_PESSOAS = "orcamento_adm_socios_pessoas";
 
-interface LinhaDb {
-  classificacao_malote_id: string;
-  descricao: string;
-  modo: "percentual" | "manual";
-  percentual: number | string;
-  origem_classificacao_ids: string[];
-  valor_manual: number | string;
-  distribuicao_empresas: Record<string, number> | null;
-}
+export interface IntegranteDb { userId: string; tipo: TipoOrcamento; config: ConfigPessoa }
 
-export function useLinhasOrcamentoAdmSocios(tipo: TipoOrcamento) {
+interface LinhaDb { user_id: string; tipo: TipoOrcamento; classificacao_malote_id: string | null; contrato_ids: string[] | null }
+
+/** Quem aparece na lista: usuários ativos do ERP e o(s) setor(es) do Gerenciamento de Acesso (RPC, porque user_setor tem RLS própria). */
+export function usePessoasOrcamento() {
   return useQuery({
-    queryKey: [KEY, tipo],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from(KEY)
-        .select("classificacao_malote_id, descricao, modo, percentual, origem_classificacao_ids, valor_manual, distribuicao_empresas")
-        .eq("tipo", tipo)
-        .order("created_at");
+    queryKey: [KEY_PESSOAS],
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<PessoaOrcamento[]> => {
+      const { data, error } = await (supabase as any).rpc("orcamento_adm_socios_pessoas");
       if (error) throw error;
-      return ((data ?? []) as LinhaDb[]).map<LinhaOrcamento>((l) => ({
-        classificacaoMaloteId: l.classificacao_malote_id,
-        descricao: l.descricao ?? "",
-        modo: l.modo,
-        percentual: Number(l.percentual) || 0,
-        origemIds: l.origem_classificacao_ids ?? [],
-        valorManual: Number(l.valor_manual) || 0,
-        distribuicao: l.distribuicao_empresas ?? {},
+      return ((data ?? []) as { user_id: string; nome: string; setores: string[] | null }[]).map((p) => ({
+        userId: p.user_id, nome: p.nome, setores: p.setores ?? [],
       }));
     },
   });
 }
 
-/** "Salvar distribuição": grava as linhas da aba e remove as que o usuário tirou da lista. */
-export function useSalvarOrcamentoAdmSocios(tipo: TipoOrcamento) {
+export function useIntegrantesOrcamento() {
+  return useQuery({
+    queryKey: [KEY_LINHAS],
+    queryFn: async (): Promise<IntegranteDb[]> => {
+      const { data, error } = await (supabase as any).from(KEY_LINHAS).select("user_id, tipo, classificacao_malote_id, contrato_ids");
+      if (error) throw error;
+      return ((data ?? []) as LinhaDb[]).map((l) => ({
+        userId: l.user_id, tipo: l.tipo, config: { classificacaoId: l.classificacao_malote_id, contratoIds: l.contrato_ids ?? [] },
+      }));
+    },
+  });
+}
+
+/** "Salvar distribuição": grava as pessoas informadas (aba + configuração) e apaga a linha de quem voltou ao Administrativo sem configuração. */
+export function useSalvarIntegrantesOrcamento() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (linhas: LinhaOrcamento[]) => {
-      const tabela = (supabase as any).from(KEY);
-      const { data: existentes, error: erroLer } = await (supabase as any).from(KEY).select("classificacao_malote_id").eq("tipo", tipo);
-      if (erroLer) throw erroLer;
-      const mantidas = new Set(linhas.map((l) => l.classificacaoMaloteId));
-      const remover = ((existentes ?? []) as { classificacao_malote_id: string }[])
-        .map((e) => e.classificacao_malote_id)
-        .filter((id) => !mantidas.has(id));
-      if (remover.length > 0) {
-        const { error } = await (supabase as any).from(KEY).delete().eq("tipo", tipo).in("classificacao_malote_id", remover);
+    mutationFn: async ({ gravar, apagar }: { gravar: IntegranteDb[]; apagar: string[] }) => {
+      if (apagar.length > 0) {
+        const { error } = await (supabase as any).from(KEY_LINHAS).delete().in("user_id", apagar);
         if (error) throw error;
       }
-      if (linhas.length > 0) {
-        const { error } = await tabela.upsert(
-          linhas.map((l) => ({
-            tipo,
-            classificacao_malote_id: l.classificacaoMaloteId,
-            descricao: l.descricao,
-            modo: l.modo,
-            percentual: l.percentual,
-            origem_classificacao_ids: l.origemIds,
-            valor_manual: l.valorManual,
-            distribuicao_empresas: l.distribuicao,
-          })),
-          { onConflict: "tipo,classificacao_malote_id" },
+      if (gravar.length > 0) {
+        const { error } = await (supabase as any).from(KEY_LINHAS).upsert(
+          gravar.map((g) => ({ user_id: g.userId, tipo: g.tipo, classificacao_malote_id: g.config.classificacaoId, contrato_ids: g.config.contratoIds })),
+          { onConflict: "user_id" },
         );
         if (error) throw error;
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, tipo] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_LINHAS] }),
   });
 }

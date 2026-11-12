@@ -65,6 +65,12 @@ export interface ChecklistVeiculo {
   /** Possível avaria: true/false; null = não respondido. */
   avaria?: boolean | null;
   avaria_descricao?: string | null;
+  /**
+   * Checklist de SAÍDA criado desde 12/11/2026 (mig 20261112173000): exige
+   * "revisão de água e óleo OK" (agua_verificada + oleo_verificado). O
+   * banco recusa salvar sem a marcação. false nos que já existiam.
+   */
+  agua_oleo_exigido?: boolean | null;
 }
 
 /** O mínimo do agendamento que a régua precisa. */

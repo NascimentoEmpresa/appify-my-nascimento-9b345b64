@@ -1,10 +1,12 @@
 # NFS-e de Triunfo — implantação do piloto SIS-2026-0841
 
 O piloto integra **Financeiro → Controle de Notas → Validação de Notas** ao
-processamento no worker. Somente homologação é aceita. O resultado fiscal de
-teste não altera número, valores ou estado de `nf_emissao`.
+processamento no worker. Homologação e produção têm fila, configuração e
+numeração separadas. Homologação está habilitada; produção depende da configuração
+técnica e da revisão fiscal pelo operador. O resultado fiscal de teste não
+altera número, valores ou estado de `nf_emissao`.
 
-## Instância preparada para teste local — 10/11/2026
+## Instâncias e hospedagem — 11/11/2026
 
 - ERP local: `http://127.0.0.1:5184/`. Entrar com a conta habitual do ERP.
 - Caminho: **Financeiro → Controle de Notas → Validação de Notas**; abrir uma
@@ -15,11 +17,13 @@ teste não altera número, valores ou estado de `nf_emissao`.
 - O certificado atualizado está configurado em pasta privada fora do Git.
   A série configurada para esse teste é **1041**, município emissor **3542404**,
   IM da HAAG **3761**. Os demais dados devem ser revisados na preparação.
-- O processador exclusivo de homologação está em execução nesta máquina,
-  consultando a fila a cada 60 segundos. **Atualizar** na tela apenas consulta
-  o resultado; uma solicitação nova exige a confirmação fiscal do formulário.
-- A integração foi publicada pela PR #1188 em `https://app.grpnascimento.com.br`.
-  A correção complementar de navegação precisa de publicação própria.
+- O processador de homologação foi transferido ao GitHub Actions pela PR
+  #1199. O primeiro ciclo remoto foi concluído com sucesso e o processo local
+  foi encerrado. **Atualizar** apenas consulta o resultado salvo; uma nova
+  solicitação exige as confirmações fiscais do formulário.
+- ERP online: `https://app.grpnascimento.com.br`. A integração foi publicada
+  pela PR #1188 e a navegação pela PR #1191; os nomes dos menus já foram
+  conferidos no cluster. A renumeração da migration está nesta atualização.
 
 A instância local usa o banco real do ERP e envia documentos somente à API
 de testes GOVBR. Preparações internas continuam sendo registros reais do ERP;
@@ -41,7 +45,7 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
    O complemento `20261110150000_sis_2026_0841_nfse_acoes_painel.sql` cadastra
    visualizar/incluir/alterar/exportar no Gerenciamento de Acesso.
    Ela entra pelo aplicador do cluster após merge, conforme `CLAUDE.md`.
-   O complemento `20261110190000_sis_2026_0841_controle_notas_navegacao.sql`
+   O complemento `20261110203100_sis_2026_0841_controle_notas_navegacao.sql`
    alinha os nomes e a entrada das telas, preservando permissões existentes.
 2. Publicar o frontend e instalar as dependências do worker com `npm ci` na
    pasta `worker`. O ciclo existente chama o novo processador; não há serviço
@@ -55,11 +59,192 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
 5. Reiniciar o worker. Sem `NFSE_HABILITADO=1`, o módulo permanece inativo e
    não consulta a fila. Não copiar certificado ou senha para `VITE_*`/banco/Git.
 
+## Processamento temporário pelo GitHub Actions
+
+O workflow **NFS-e - fila automática** (`nfse_homologacao.yml`) agenda
+uma execução por hora, exclusivamente na `main` do
+repositório oficial. Usa o mesmo processamento, reservas e proteção contra
+duplicidade do worker local. Não inicia WhatsApp, e-mail ou os outros workers.
+O estado e os documentos persistem no banco/storage do ERP; o runner é descartável.
+Cada job fica ativo por até 340 minutos, com ciclos a cada 60 segundos, seguindo
+o modelo de `espelho-mysql/rapida-continua.sh`. A próxima execução aguarda no
+grupo; uma publicação substitui o processo anterior. Reservas e marcas de envio
+persistidas preservam a reconciliação após uma interrupção.
+
+O ambiente GitHub `nfse-homologacao` deve permitir implantação somente da
+branch `main`. A variável de repositório `NFSE_ACTIONS_HABILITADO=1` habilita
+o job. Os secrets desse ambiente são:
+
+| Secret | Conteúdo |
+| --- | --- |
+| `NFSE_SUPABASE_URL` | Endereço da API do cluster. |
+| `NFSE_SUPABASE_SERVICE_ROLE_KEY` | Credencial de servidor usada pelo processador. |
+| `NFSE_CONFIG_JSON` | Configuração da única empresa habilitada, série, algoritmo e URL de homologação. |
+| `NFSE_CERTIFICADO_PFX_B64` | PFX codificado em base64, armazenado como secret. |
+| `NFSE_CERTIFICADO_SENHA` | Senha do PFX. |
+
+O processador substitui caminhos locais por arquivos privados no `RUNNER_TEMP`
+e os remove ao terminar, inclusive em caso de erro. Certificado e senha não
+entram no repositório, cache npm ou artefatos. A configuração e o próprio
+conector exigem configuração separada para produção.
+
+Depois do merge, conferir em **Actions → NFS-e - fila automática**.
+**Run workflow**, com **continuo** marcado, inicia o processador na `main`.
+Desmarcado, executa um diagnóstico de até dois ciclos quando a execução puder
+entrar no grupo de concorrência. O workflow também
+executa após publicação de alterações no próprio workflow ou no processador.
+Uma execução verde confirma que o ciclo rodou; o resultado
+fiscal de cada pedido deve ser conferido no painel do ERP.
+
+Enquanto o job está ativo, novos pedidos, protocolos e PDFs pendentes são
+processados nos ciclos de 60 segundos, respeitando a reserva e o prazo do banco.
+Falhas de infraestrutura avulsas não encerram o serviço; três consecutivas
+encerram com erro. Ao atingir o prazo, o job termina e remove os arquivos privados.
+**Atualizar** no ERP apenas relê o resultado salvo; não dispara o Actions.
+O [GitHub documenta intervalo mínimo de cinco minutos e possíveis atrasos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+Na conferência de 11/11, o disparo após merge autorizou a DPS 2 de homologação,
+mas não foram observadas execuções fiscais do tipo `schedule`, inclusive após
+reativar o workflow. O próprio espelho do ponto já documenta atrasos de horas
+nesse repositório. O modo contínuo reduz a dependência do cron durante o job;
+não garante disponibilidade sem interrupção se não houver outra execução na
+fila quando ele terminar. Conferir os jobs ativos/pendentes em Actions e usar
+**Run workflow** se necessário. A hospedagem definitiva continua sendo o servidor.
+
+O primeiro ciclo remoto já foi conferido; o processador local foi encerrado.
+A reserva no banco protege contra disputa caso duas instâncias se sobreponham.
+Para migrar depois ao servidor do ERP: configurar os mesmos arquivos privados,
+iniciar somente o processador NFS-e como serviço, verificar o ciclo e definir
+as duas variáveis `NFSE_ACTIONS_HABILITADO=0` e
+`NFSE_ACTIONS_PRODUCAO_HABILITADO=0`, cancelando também execuções ativas do Actions.
+As variáveis impedem novos jobs; não encerram um job contínuo já em andamento.
+A migração de hospedagem não habilita emissão real.
+
+## ERP online e ambiente fiscal de produção
+
+O ERP online já é o sistema de uso da empresa. O ambiente fiscal selecionado
+pelo piloto continua sendo a homologação GOVBR; publicar uma PR não transforma
+os documentos de teste em notas reais de Triunfo.
+
+O fluxo definitivo de emissão real será: operador revisa no ERP → processador
+transmite à API de produção → consulta protocolo/DPS → ERP mostra autorização
+ou rejeição, número/chave e XML/PDF oficiais. Receber um lote ou HTTP 200 não
+equivale a autorizar a nota. A resposta fiscal vem da API oficial, sem automação
+do login do portal. O código separa os dois ambientes, mas a habilitação real
+depende da configuração fiscal e da validação operacional abaixo.
+
+Para liberar produção, parametrizar a série reservada ao ERP para a empresa.
+O Financeiro escolhe a preparação e confirma a emissão real diretamente no ERP;
+não precisa informar antecipadamente sua identificação à equipe técnica.
+O ambiente GitHub `nfse-producao`, restrito à main,
+usa os mesmos cinco nomes de secrets, mas a configuração JSON contém
+`ambiente: producao`, `producao_confirmada: true`, a série real e os campos
+`municipio_emissor`/`inscricao_municipal` conferidos. A URL é exclusivamente
+`https://webapp1-triunfo.cidade360.cloud/NFSe.Api`.
+
+A migration `20261111140000_sis_2026_0841_nfse_producao.sql` cria a configuração
+por empresa/ambiente e mantém produção desabilitada por padrão. A equipe técnica
+deve preencher a série antes de habilitar a empresa. `nf_piloto_id` é opcional;
+nulo permite ao Financeiro escolher qualquer preparação apta da empresa.
+A variável GitHub
+`NFSE_ACTIONS_PRODUCAO_HABILITADO=1` libera o job de produção; esse job também
+exige `NFSE_PRODUCAO_HABILITADA=1` no processo. O usuário revisa os dados e marca
+as duas confirmações no formulário. A produção recusa preparações que já têm
+número de NF informado, prevenindo reenvio inadvertido de documento anterior.
+
+Validar a primeira emissão real de um serviço efetivo, conferindo a mesma
+chave/documento no ERP e na consulta da prefeitura.
+O certificado já permitiu consultar documentos antigos em produção, mas
+nenhuma DPS foi enviada em produção. Não reutilizar automaticamente o município
+emissor genérico 3542404 nem a série de teste como configuração de Triunfo.
+
+O acompanhamento implementado cobre o processamento da emissão e a recuperação
+dos documentos. Ainda não monitora cancelamento/substituição realizados no
+portal, nem importa todo o histórico externo. O resultado fiscal de homologação
+permanece separado do número e da conclusão interna da preparação do ERP.
+
+## Retorno do primeiro pedido pela tela — 11/11/2026
+
+A primeira solicitação do Financeiro, DPS 1 / série 1041 em homologação,
+tinha o local da prestação como nome da cidade e CEP com sete dígitos.
+O desenvolvedor confirmou o CEP **95840-000**. Antes do envio, a correção
+técnica foi registrada no snapshot com auditoria: local da prestação 4322004,
+município emissor de testes 3542404 e CEP 95840000. Valores e enquadramentos
+fiscais foram preservados.
+
+O lote foi recebido e o protocolo consultado. O retorno oficial foi
+**P9022: O XML deve ser enviado sem quebras de linha (sem identação)**, com
+`id: null`. A solicitação foi reconciliada como rejeitada, sem retransmissão.
+O adaptador agora substitui quebras nos textos por espaços **antes** de assinar,
+mantendo assinatura e XSD válidos. Erro sem Id só é associado ao protocolo já
+persistido quando há um único item rejeitado sem chave/XML; não autoriza nota.
+
+O formulário passa a validar CEP e formatos dos códigos antes de criar o
+pedido. Série, município emissor e IM configurados são somente leitura.
+Em erro anterior ao envio, **Corrigir dados** encerra a tentativa sem transmissão
+e reabre seus campos para revisão; exige alterar e incluir. Após início do
+envio, continua disponível somente a consulta. Rejeição definitiva permite
+preparar outro pedido com nova DPS, preservando o histórico anterior.
+
+Após o merge da PR #1208, a DPS 2 foi autorizada como NFS-e 4 em homologação.
+O job 43059515284 foi disparado automaticamente pelo merge e recuperou XML/PDF,
+com bruto R$ 1.500,00 e líquido R$ 1.188,00 conferidos. O PDF enviado pelo
+Financeiro é idêntico ao arquivo do provedor e identifica homologação, sem
+validade jurídica. A validação real de produção ainda não foi feita.
+
+Em 11/11, o processador de produção foi preparado para HAAG, série 1041,
+município 4322004 e IM 3761. O job 43066664230 passou com a fila vazia, validando
+certificado/configuração e acesso ao banco. A consulta de DPS 1 / série 1041
+em produção não encontrou nota. Isso não é uma auditoria completa de histórico.
+A configuração do ERP permanece desabilitada até publicar o modo contínuo e
+conferir o processador ativo; nenhuma solicitação real foi criada nessa etapa.
+
 O arquivo atualizado da HAAG já passou na validação de titular/chave/validade,
 na consulta autenticada de XML/PDF em produção e no envio assíncrono de DPS
 no ambiente genérico de testes GOVBR. As notas de homologação 1 e 3 tiveram
 XML/PDF recuperados e valores conferidos. Isso não configura automaticamente
 o worker nem libera emissão real em Triunfo.
+
+## Serviço municipal e rejeição P5006
+
+A DPS 2 de produção, série 1041, foi recebida e rejeitada por P5006: o serviço
+nacional 170501 tem mais de uma correspondência municipal vigente em Triunfo.
+O retorno indicou 7830200, 8111700 e 8630502 e exigiu o campo `cIntContrib`.
+Nenhuma NFS-e foi autorizada nessa tentativa.
+
+O campo **Código do serviço na prefeitura** envia `codigo_integracao_municipal`
+para `cServ/cIntContrib`, após `cNBS`, conforme o XSD nacional. Aceita de 1 a
+20 letras/números, sem separadores. O campo anterior foi renomeado para
+**Desdobramento municipal, se aplicável** e continua enviando `cTribMun`, de
+três dígitos. Os dois códigos são distintos e não devem ser substituídos um
+pelo outro. Para serviço 170501, município emissor 4322004, em produção, o
+formulário e o processador exigem o código do serviço da prefeitura antes do envio.
+
+O código não é escolhido automaticamente. A nota anterior 1442 da HAAG traz
+170501 com `cIntContrib=8111700`, mas é de outro contrato. O Financeiro deve
+confirmar o enquadramento da prestação atual no portal ou com o responsável
+fiscal. Após publicar a correção, usar **Preparar emissão em produção** na
+mesma preparação apta, informar o código confirmado, revisar e confirmar uma
+nova solicitação/DPS. Preservar a tentativa rejeitada e não retransmiti-la.
+
+O ensaio desta correção usa XML e assinaturas locais, sem criar pedido nem
+transmitir outra DPS fiscal.
+
+## Alíquota parametrizada e rejeição P3070
+
+Na DPS 3 de produção, o código municipal 8111700 foi informado e o provedor
+retornou P3070, vedando a alíquota explícita no cenário declarado: não optante,
+regime especial nenhum e municípios de emissão, prestação e tomador em Triunfo.
+O gerador passa a omitir somente `pAliq` nessa combinação local em produção.
+O XSD nacional declara o campo opcional e informa que a alíquota do município
+participante é fornecida pelo sistema. Homologação, Simples Nacional e cenários
+com prestação ou tomador fora de Triunfo mantêm o comportamento anterior.
+
+A alíquota de conferência de 5%, o ISS de R$ 75,00 e o líquido de R$ 1.188,00
+permanecem no snapshot. O retorno oficial continua sendo confrontado com os
+valores salvos; uma divergência não é aceita automaticamente. A DPS 3 permanece
+rejeitada no histórico. Após publicar o ajuste, o operador deve revisar e
+confirmar uma nova solicitação; não zerar os valores para contornar a rejeição.
 
 ## Confirmações antes de habilitar
 
@@ -91,7 +276,7 @@ o worker nem libera emissão real em Triunfo.
 
 ## Uso
 
-Após publicar a correção de navegação, abrir
+Abrir
 `https://app.grpnascimento.com.br/app/financeiro/emissao-nf/` apresenta as opções
 **Emissão de NF** e **Validação de Notas** autorizadas para o usuário. As duas
 telas também oferecem botões no topo para alternar entre as etapas.
@@ -100,7 +285,7 @@ de Acesso, procurar **Controle de Notas**, **Emissão de NF** e **Validação de
 no módulo Financeiro. O endereço da validação continua sendo
 `/app/financeiro/emissao-nf/controle-notas`.
 
-O administrador controla a permissão `NFS-e — integração e homologação` no
+O administrador controla a permissão `NFS-e — integração com a prefeitura` no
 Financeiro. Visualização, inclusão, alteração e exportação são verificadas
 também no banco. O perfil do módulo Financeiro recebe as ações pelo mesmo
 padrão das outras funcionalidades desse módulo; exceções individuais continuam
@@ -114,8 +299,9 @@ No diálogo de conferência de uma preparação enviada ao Financeiro:
    salva no banco, não de totais enviados pelo navegador.
 2. Confirmar a revisão fiscal e solicitar. Se houve alterações locais nos
    valores da conferência, salvar a preparação na tela de Emissão antes.
-3. Usar **Atualizar** para acompanhar. O worker processa uma solicitação por
-   ciclo de 60 segundos e consulta o resultado no ciclo seguinte.
+3. Usar **Atualizar** para acompanhar. No Actions, o agendamento é a cada
+   cinco minutos; no processador contínuo local, a cada 60 segundos. O envio
+   e a consulta de resultado podem ocorrer em ciclos diferentes.
 4. Baixar XML/PDF oficiais quando disponíveis, mediante permissão de exportar.
 
 O piloto cobre emissão regular de serviços nacionais para tomador identificado,
@@ -143,8 +329,8 @@ devem permanecer no portal até a próxima etapa da integração.
   consulta/revisão; não é associado automaticamente como autorização válida.
 
 Para parar a integração, desabilitar `NFSE_HABILITADO`. Preservar fila,
-numeração e documentos para auditoria. A produção exige uma próxima liberação
-explícita: SQL, geração e cliente HTTP atualmente bloqueiam esse ambiente.
+numeração e documentos para auditoria. A produção exige configuração explícita
+por empresa e no processador; mudar apenas a URL não habilita emissão real.
 
 ## Verificação
 

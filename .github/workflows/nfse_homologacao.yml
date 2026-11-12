@@ -1,0 +1,83 @@
+name: NFS-e - fila automática
+
+on:
+  schedule:
+    # O cron do GitHub pode atrasar horas; o runner mantém ciclos de 60 s por 340 min.
+    # A próxima execução aguarda no grupo, como no espelho_mysql.yml.
+    - cron: '17 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nfse_homologacao.yml'
+      - 'worker/src/nfse/**'
+      - 'worker/package-lock.json'
+  workflow_dispatch:
+    inputs:
+      continuo:
+        description: 'Manter a fila ativa por até 5h40? Desmarque para diagnóstico de até dois ciclos.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nfse-fila
+  # Publicação troca o processador antigo; a reserva persistida reconcilia envios.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  processar:
+    name: Processar homologação
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' && github.ref == 'refs/heads/main' && vars.NFSE_ACTIONS_HABILITADO == '1'
+    runs-on: ubuntu-latest
+    environment: nfse-homologacao
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Instalar dependências do processador
+        run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
+      - name: Processar fila de homologação
+        run: node worker/src/nfse/github-actions.js
+        env:
+          NFSE_ACTIONS_CONTINUO: ${{ (github.event_name != 'workflow_dispatch' || inputs.continuo) && '1' || '0' }}
+          NFSE_SUPABASE_URL: ${{ secrets.NFSE_SUPABASE_URL }}
+          NFSE_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NFSE_SUPABASE_SERVICE_ROLE_KEY }}
+          NFSE_CONFIG_JSON: ${{ secrets.NFSE_CONFIG_JSON }}
+          NFSE_CERTIFICADO_PFX_B64: ${{ secrets.NFSE_CERTIFICADO_PFX_B64 }}
+          NFSE_CERTIFICADO_SENHA: ${{ secrets.NFSE_CERTIFICADO_SENHA }}
+  producao:
+    name: Processar produção
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' && github.ref == 'refs/heads/main' && vars.NFSE_ACTIONS_PRODUCAO_HABILITADO == '1'
+    runs-on: ubuntu-latest
+    environment: nfse-producao
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Instalar dependências do processador
+        run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
+      - name: Processar fila de produção
+        run: node worker/src/nfse/github-actions.js
+        env:
+          NFSE_ACTIONS_CONTINUO: ${{ (github.event_name != 'workflow_dispatch' || inputs.continuo) && '1' || '0' }}
+          NFSE_AMBIENTE: producao
+          NFSE_PRODUCAO_HABILITADA: '1'
+          NFSE_SUPABASE_URL: ${{ secrets.NFSE_SUPABASE_URL }}
+          NFSE_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NFSE_SUPABASE_SERVICE_ROLE_KEY }}
+          NFSE_CONFIG_JSON: ${{ secrets.NFSE_CONFIG_JSON }}
+          NFSE_CERTIFICADO_PFX_B64: ${{ secrets.NFSE_CERTIFICADO_PFX_B64 }}
+          NFSE_CERTIFICADO_SENHA: ${{ secrets.NFSE_CERTIFICADO_SENHA }}

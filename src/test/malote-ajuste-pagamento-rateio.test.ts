@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rateioMudouValor, rateioMudouEmpresa } from "@/pages/malote/DespesaVisualizar";
+import { rateioMudou } from "@/pages/malote/rateioMudou";
 import type { RateioLinha } from "@/hooks/useMaloteDespesa";
 
 // DM-2026-0268 (financeiro, via Iury): em ajuste_pagamento (correção pedida
@@ -66,5 +67,29 @@ describe("rateioMudouEmpresa", () => {
 
   it("trata null e undefined como equivalentes (sem empresa)", () => {
     expect(rateioMudouEmpresa([linha({ empresa_id: null })], [linha({ empresa_id: null })])).toBe(false);
+  });
+});
+
+// SIS-2026-0856: em ajuste_pagamento o Rateio inteiro é editável e QUALQUER mudança nele refaz a aprovação (decisão com o Iury).
+describe("rateioMudou (qualquer mudança no Rateio refaz a aprovação)", () => {
+  it("nada mudou: false", () => {
+    expect(rateioMudou([linha()], [linha()])).toBe(false);
+  });
+  it("só a Empresa (antes podia salvar direto): agora conta", () => {
+    expect(rateioMudou([linha({ empresa_id: "emp1" })], [linha({ empresa_id: "emp2" })])).toBe(true);
+  });
+  it("contrato (centro de custo), fornecedor, integrante e valor contam", () => {
+    expect(rateioMudou([linha({ contrato_id: "c1" })], [linha({ contrato_id: "c2" })])).toBe(true);
+    expect(rateioMudou([linha({ fornecedor_id: "f1" })], [linha({ fornecedor_id: "f2" })])).toBe(true);
+    expect(rateioMudou([linha({ integrante_empregado_id: 1 })], [linha({ integrante_empregado_id: 2 })])).toBe(true);
+    expect(rateioMudou([linha({ valor: 1000 })], [linha({ valor: 1200 })])).toBe(true);
+  });
+  it("linha adicionada, removida ou ainda sem id conta", () => {
+    expect(rateioMudou([linha({ id: "l1" })], [linha({ id: "l1" }), linha({ id: "l2", valor: 500 })])).toBe(true);
+    expect(rateioMudou([linha({ id: "l1" }), linha({ id: "l2", valor: 500 })], [linha({ id: "l1" })])).toBe(true);
+    expect(rateioMudou([linha({ id: "l1" })], [linha({ id: undefined })])).toBe(true);
+  });
+  it("null e ausente são a mesma coisa (não acende aviso à toa)", () => {
+    expect(rateioMudou([linha({ contrato_id: null })], [linha({ contrato_id: null, fornecedor_id: null })])).toBe(false);
   });
 });

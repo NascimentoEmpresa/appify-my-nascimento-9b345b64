@@ -13,11 +13,24 @@ describe("planejarTrocaDeIntegrante", () => {
     expect(r.aplicar.map((l) => l.despesa_id)).toEqual(["a", "b"]);
     expect(r.ignoradas).toHaveLength(0);
   });
-  it("só o Malote tem integrante: débito automático, importada, cartão e aplicação ficam de fora", () => {
-    const origens: LinhaMassa["origem"][] = ["debito_automatico", "importacao_historica", "cartao_fatura", "aplicacao_financeira", "conta_garantida"];
+  it("só Malote e importação têm integrante: débito automático, cartão, aplicação e conta garantida ficam de fora", () => {
+    const origens: LinhaMassa["origem"][] = ["debito_automatico", "cartao_fatura", "aplicacao_financeira", "conta_garantida"];
     const r = planejarTrocaDeIntegrante(origens.map((o, i) => linha({ origem: o, despesa_id: `x${i}` })), 1);
     expect(r.aplicar).toHaveLength(0);
-    expect(r.ignoradas.every((i) => /Malote/.test(i.motivo))).toBe(true);
+    expect(r.ignoradas.every((i) => /Malote ou lançamento importado/.test(i.motivo))).toBe(true);
+  });
+  // SIS-2026-0859: IMP-… (planilha) entra, com ou sem integrante, rateado ou não (a RPC grava em todas as cotas).
+  it("lançamento importado da planilha entra, mesmo rateado em várias cotas", () => {
+    const r = planejarTrocaDeIntegrante([
+      linha({ origem: "importacao_historica", despesa_id: "imp1" }),
+      linha({ origem: "importacao_historica", despesa_id: "imp2", qtdLinhasRateio: 3, integrante_empregado_id: 7 }),
+    ], 5755);
+    expect(r.aplicar.map((l) => l.despesa_id)).toEqual(["imp1", "imp2"]);
+    expect(r.ignoradas).toHaveLength(0);
+  });
+  it("importado que já está com o integrante escolhido fica de fora", () => {
+    const r = planejarTrocaDeIntegrante([linha({ origem: "importacao_historica", integrante_empregado_id: 5755 })], 5755);
+    expect(r.ignoradas[0].motivo).toBe("Já está com este integrante");
   });
   it("despesa rateada em várias linhas e fatura de cartão do Malote ficam de fora", () => {
     const r = planejarTrocaDeIntegrante([linha({ despesa_id: "r", qtdLinhasRateio: 3 }), linha({ despesa_id: "f", fatura_cartao_id: "cartao" })], 1);

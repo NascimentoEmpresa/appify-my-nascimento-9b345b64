@@ -2,6 +2,7 @@
   "empresas": [
     {
       "cnpj": "00000000000000",
+      "ambiente": "homologacao",
       "url": "https://reformatributaria.cidade360.cloud/NFSe.Api.Teste",
       "serie": 1,
       "homologacao_confirmada": false,

@@ -6,10 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CheckCircle2, Clock, Send, SkipForward, Star, UserCheck } from "lucide-react";
-import { lerHorasGastas } from "@/lib/chamados/horasGastas";
+import { CheckCircle2, Send, SkipForward, Star, UserCheck } from "lucide-react";
 import { CRITERIOS_AVALIACAO_SOLICITANTE, iniciais, type CriterioSolicitanteKey } from "./types";
 
 // =====================================================================
@@ -32,11 +30,10 @@ import { CRITERIOS_AVALIACAO_SOLICITANTE, iniciais, type CriterioSolicitanteKey 
 //   · "avaliar"  — chamado já concluído (ex.: concluído sozinho pelo merge
 //     da PR) que ainda não teve a avaliação.
 //
-// HORAS GASTAS (29/10/2026, mig 20261029002400 — Pablo: "quando o
-// desenvolvedor for CONCLUIR O CHAMADO ele informe quantas horas levou pra
-// finalizar"): no modo concluir, o campo vem antes de tudo e é obrigatório
-// em QUALQUER saída (avaliar e concluir, concluir sem avaliar, concluir sem
-// ninguém). O banco repete a regra e recusa concluir sem horas.
+// HORAS GASTAS: pedidas ao concluir de 29/10 a 12/11/2026 (mig
+// 20261029002400). Saíram em 12/11/2026 (Pablo: "não precisa mais informar
+// as horas gastas pro desenvolvimento, uma i.a vai avaliar") — a I.A estima
+// pelo escopo (mig 20261112001000).
 // =====================================================================
 
 type Notas = Partial<Record<CriterioSolicitanteKey, number>>;
@@ -49,9 +46,8 @@ export function AvaliarSolicitanteDialog({
   onOpenChange: (v: boolean) => void;
   chamado: { id: string; numero?: string | null };
   modo: "concluir" | "avaliar";
-  /** Modo concluir: depois de gravar, ao pular, ou quando não havia ninguém
-   *  para avaliar — sempre com as horas gastas já validadas (> 0). */
-  onConcluir?: (resultado: "avaliou" | "pulou" | "ninguem", horas: number) => Promise<void> | void;
+  /** Modo concluir: depois de gravar, ao pular, ou quando não havia ninguém para avaliar. */
+  onConcluir?: (resultado: "avaliou" | "pulou" | "ninguem") => Promise<void> | void;
   onAvaliado?: () => void;
 }) {
   const qc = useQueryClient();
@@ -63,8 +59,6 @@ export function AvaliarSolicitanteDialog({
   const [aba, setAba] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [tremer, setTremer] = useState(false);
-  const [horasTexto, setHorasTexto] = useState("");
-  const [horasErro, setHorasErro] = useState(false);
 
   // Quem pode ser avaliado: solicitante + participantes extras, menos eu
   // (dev que abriu o próprio chamado não se avalia) e menos quem já tem nota.
@@ -88,7 +82,7 @@ export function AvaliarSolicitanteDialog({
 
   // Zera ao abrir; a primeira aba é o solicitante (a RPC já ordena assim).
   useEffect(() => {
-    if (open) { setNotas({}); setComentarios({}); setEnviando(false); setHorasTexto(""); setHorasErro(false); }
+    if (open) { setNotas({}); setComentarios({}); setEnviando(false); }
   }, [open, chamado.id]);
   useEffect(() => {
     if (open && lista.length && (!aba || !lista.some((p) => p.user_id === aba))) setAba(lista[0].user_id);
@@ -121,20 +115,8 @@ export function AvaliarSolicitanteDialog({
     qc.invalidateQueries({ queryKey: ["chamados-ranking-solicitantes"] });
   };
 
-  /** Modo concluir: horas válidas, ou null depois de avisar no campo. */
-  const exigirHoras = (): number | null => {
-    const h = lerHorasGastas(horasTexto);
-    if (h == null) {
-      setHorasErro(true); sacudir();
-      toast({ title: "Informe as horas gastas", description: "Quantas horas levou para concluir — maior que zero (aceita meia hora, ex.: 12,5).", variant: "destructive" });
-    }
-    return h;
-  };
-
   const enviar = async () => {
     if (enviando) return;
-    const horas = modo === "concluir" ? exigirHoras() : 0;
-    if (horas == null) return;
     // Começou a avaliar alguém e parou no meio: leva até a aba e explica.
     if (pendentesDeAcerto.length) {
       const p = pendentesDeAcerto[0];
@@ -169,17 +151,15 @@ export function AvaliarSolicitanteDialog({
     invalidar();
     toast({ title: prontas.length === 1 ? "Avaliação registrada" : `${prontas.length} avaliações registradas` });
     onAvaliado?.();
-    if (modo === "concluir") await onConcluir?.("avaliou", horas);
+    if (modo === "concluir") await onConcluir?.("avaliou");
     setEnviando(false);
     onOpenChange(false);
   };
 
   const pular = async (resultado: "pulou" | "ninguem" = "pulou") => {
     if (enviando) return;
-    const horas = exigirHoras();
-    if (horas == null) return;
     setEnviando(true);
-    await onConcluir?.(resultado, horas);
+    await onConcluir?.(resultado);
     setEnviando(false);
     onOpenChange(false);
   };
@@ -203,24 +183,6 @@ export function AvaliarSolicitanteDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {modo === "concluir" && (
-          <div className={`flex flex-col gap-1.5 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-3 ${horasErro ? "border-destructive/50 bg-destructive/5" : "border-border"}`}>
-            <div className="min-w-0 flex-1">
-              <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${horasErro ? "text-destructive" : ""}`}>
-                <Clock className="h-4 w-4" /> Horas gastas <span className="text-destructive">(obrigatório)</span>
-              </p>
-              <p className="text-[11px] text-muted-foreground">Quantas horas você levou para concluir este chamado. Aceita meia hora, ex.: 12,5.</p>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Input
-                autoFocus inputMode="decimal" placeholder="Ex.: 12,5" className="h-9 w-28 text-right"
-                value={horasTexto}
-                onChange={(e) => { setHorasTexto(e.target.value); if (horasErro && lerHorasGastas(e.target.value) != null) setHorasErro(false); }}
-              />
-              <span className="text-sm text-muted-foreground">h</span>
-            </div>
-          </div>
-        )}
 
         {isLoading ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>

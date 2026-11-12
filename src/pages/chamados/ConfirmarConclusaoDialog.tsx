@@ -24,7 +24,9 @@ import type { Chamado } from "./types";
 // Vai pela RPC chamado_confirmar_conclusao — o gatilho
 // chamado_sistema_confirmacao não deixa marcar a confirmação por UPDATE.
 // "Não resolveu" é o reabrir que já existe (ReabrirChamadoDialog no modo
-// solicitante, mig 255): motivo obrigatório e o chamado volta para o dev.
+// solicitante, mig 255). Desde 12/11/2026 (mig 20261112002000) ele pede o
+// motivo: "não atendeu" volta para a triagem do Gestor de Sistemas;
+// "precisa de modificações" abre outro chamado baseado neste (Parte 2…).
 // Confirmado, a tela que abriu este diálogo oferece a avaliação
 // (onConfirmado) — a avaliação só entra depois da confirmação.
 // =====================================================================

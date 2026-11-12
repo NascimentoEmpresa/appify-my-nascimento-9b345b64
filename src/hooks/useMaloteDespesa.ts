@@ -1086,11 +1086,14 @@ export function useMandarParaAprovacaoNovamente() {
     // vira despesaFields no useSalvarDespesa).
     mutationFn: async (input: SalvarDespesaInput & { descricaoEvento?: string | null }) => {
       const { descricaoEvento, ...resto } = input;
+      // SIS-2026-0856: status, nível e motivo_ajuste vão no MESMO update. Antes eram dois (o 2º só zerava o nível/motivo): para o lançador da
+      // Classificação (que só pode gravar enquanto a despesa está em ajuste), o 2º update já não passava na regra de acesso e ficava sem efeito.
       const despesaId = await salvar.mutateAsync({
         ...resto,
         status: "pendente_aprovacao",
+        nivel_aprovacao_atual: 1,
+        motivo_ajuste: null,
       });
-      await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1, motivo_ajuste: null }).eq("id", despesaId);
       await registrarEventoDespesa(despesaId, "reenvio_aprovacao", descricaoEvento ?? null, 1);
       return despesaId;
     },
@@ -1134,6 +1137,26 @@ export function useSalvarEdicaoPosAprovacao() {
       return despesaId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// [SEM-CHAMADO] (SD-2026-0211): em ajuste_pagamento quem corrige a despesa pode reordenar as linhas do Rateio (a 1ª linha é a que as listas mostram
+// como empresa/contrato/classificação). Só regrava `ordem` (RPC malote_reordenar_rateio_ajuste) — não mexe em valor nem em aprovação, então não
+// reinicia o fluxo; vale também para despesa parcelada, cujo rateio a RLS trava em fase de pagamento.
+export function useReordenarRateioAjuste() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ despesaId, linhaIds, descricao }: { despesaId: string; linhaIds: string[]; descricao: string }) => {
+      // RPC fora dos tipos gerados; cast tipado (sem `any`) para não aumentar a contagem do catraca-lint
+      const cliente = supabase as unknown as { rpc: (nome: string, args: object) => Promise<{ error: { message: string } | null }> };
+      const { error } = await cliente.rpc("malote_reordenar_rateio_ajuste", { p_despesa_id: despesaId, p_linha_ids: linhaIds });
+      if (error) throw error;
+      await registrarEventoDespesa(despesaId, "edicao", descricao);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [DESPESA_KEY] });
+      qc.invalidateQueries({ queryKey: ["malote_rateio_primeira_linha"] });
+    },
   });
 }
 

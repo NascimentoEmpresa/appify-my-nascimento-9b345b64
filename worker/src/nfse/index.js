@@ -24,22 +24,28 @@ async function recuperarNota(s,nota,deps) {
     const pdf=descompactar(await deps.cliente.baixarPdf(identificacao.chave),15*1024*1024);
     exigir(pdf.subarray(0,5).toString('ascii') === '%PDF-','O provedor não retornou um PDF válido.');
     resultado.pdf_path=await deps.guardar('nota.pdf',pdf,'application/pdf');
-    resultado.mensagem='NFS-e autorizada em homologação. XML e PDF disponíveis.';
+    resultado.mensagem=`NFS-e autorizada em ${s.ambiente === 'producao' ? 'produção' : 'homologação'}. XML e PDF disponíveis.`;
   } catch {
-    resultado.mensagem='NFS-e autorizada em homologação. XML disponível; obtenção do PDF será retomada.';
+    resultado.mensagem=`NFS-e autorizada em ${s.ambiente === 'producao' ? 'produção' : 'homologação'}. XML disponível; obtenção do PDF será retomada.`;
   }
   return resultado;
 }
-function conferirAmbiente(retorno) {
-  exigir(retorno.tipoAmbiente === 'HOMOLOGACAO','O retorno do provedor não confirma o ambiente de homologação.');
+function conferirAmbiente(retorno, ambiente) {
+  exigir(retorno.tipoAmbiente === (ambiente === 'producao' ? 'PRODUCAO' : 'HOMOLOGACAO'),`O retorno do provedor não confirma o ambiente de ${ambiente === 'producao' ? 'produção' : 'homologação'}.`);
 }
 async function tratarLote(s,lote,deps) {
-  conferirAmbiente(lote);
+  conferirAmbiente(lote,s.ambiente);
   if(lote.processado !== true) {
     exigir(typeof lote.protocolo === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lote.protocolo),'Retorno sem protocolo de acompanhamento válido.');
     return {estado:'aguardando',protocolo:lote.protocolo,mensagem:'Lote recebido. Aguardando processamento na prefeitura.'};
   }
-  const item=lote.lote?.find(i => i.id === identificadorDps(s));
+  if (s.protocolo) exigir(lote.protocolo === s.protocolo, 'O retorno não corresponde ao protocolo solicitado.');
+  const itens=Array.isArray(lote.lote) ? lote.lote : [];
+  let item=itens.find(i => i.id === identificadorDps(s));
+  // A GOVBR pode rejeitar o XML antes de ler o Id (ex.: P9022). Só aceitamos
+  // esse erro sem Id no protocolo persistido, com um único item e sem nota.
+  if (!item && s.protocolo && itens.length === 1 && itens[0].id == null &&
+      itens[0].statusProcessamento === 'ERRO' && !itens[0].chaveAcesso && !itens[0].xmlGZipB64) item=itens[0];
   exigir(item,'O lote processado não identifica a DPS solicitada.');
   if(item.statusProcessamento === 'ERRO') {
     const mensagens=Array.isArray(item.erros) ? item.erros.slice(0,8).map(e=>`${e.codigo}: ${e.descricao}`).join(' | ') : 'Rejeição sem detalhes';
@@ -52,11 +58,11 @@ async function tratarLote(s,lote,deps) {
 // Dependências explícitas permitem provar recuperação de timeout/reinício sem
 // enviar documentos reais e sem usar qualquer credencial nos testes.
 async function executarSolicitacao(s,deps) {
-  exigir(s.ambiente === 'homologacao','Produção não está liberada neste piloto.');
+  exigir(['homologacao','producao'].includes(s.ambiente),'Ambiente fiscal inválido.');
   if(s.estado === 'autorizada') {
     const pdf=descompactar(await deps.cliente.baixarPdf(s.chave),15*1024*1024);
     exigir(pdf.subarray(0,5).toString('ascii') === '%PDF-','PDF oficial inválido.');
-    return {estado:'autorizada',pdf_path:await deps.guardar('nota.pdf',pdf,'application/pdf'),mensagem:'XML e PDF de homologação disponíveis.'};
+    return {estado:'autorizada',pdf_path:await deps.guardar('nota.pdf',pdf,'application/pdf'),mensagem:'XML e PDF oficiais disponíveis.'};
   }
   if(s.envio_iniciado_em) {
     if(s.protocolo) {
@@ -82,15 +88,22 @@ async function executarSolicitacao(s,deps) {
   return tratarLote(s,retorno,deps);
 }
 
-async function processarFilaNfse(supabase) {
-  if(process.env.NFSE_HABILITADO !== '1') return;
-  const trabalhos=await rpc(supabase,'nfse_reservar_trabalho');
+async function processarFilaNfse(supabase, ambiente = process.env) {
+  if(ambiente.NFSE_HABILITADO !== '1') return;
+  const fiscal=ambiente.NFSE_AMBIENTE || 'homologacao';
+  exigir(['homologacao','producao'].includes(fiscal),'Ambiente fiscal inválido.');
+  if(fiscal === 'producao') exigir(ambiente.NFSE_PRODUCAO_HABILITADA === '1','Produção não habilitada no processador.');
+  const trabalhos=await rpc(supabase,fiscal === 'producao' ? 'nfse_reservar_trabalho_ambiente' : 'nfse_reservar_trabalho',fiscal === 'producao' ? {_ambiente:fiscal} : undefined);
   const s=trabalhos?.[0];
   if(!s) return;
+  exigir(s.ambiente === fiscal,'A fila retornou uma solicitação de outro ambiente fiscal.');
   let config;
   let resultado;
   try {
-    config=carregarConfiguracao(s.dados.empresa.cnpj,s.serie);
+    config=carregarConfiguracao(s.dados.empresa.cnpj,s.serie,ambiente);
+    if(fiscal === 'producao') exigir(config.municipio_emissor === s.dados.parametros.municipio_emissor &&
+      config.inscricao_municipal === s.dados.parametros.inscricao_municipal,
+      'Município e inscrição municipal divergem da configuração de produção no processador.');
     const prefixo=`${s.empresa_id}/${s.id}`;
     resultado=await executarSolicitacao(s,{
       cert:config.cert,algoritmo:config.algoritmo_assinatura,cliente:criarCliente(config),validarEsquema,
@@ -108,5 +121,7 @@ async function processarFilaNfse(supabase) {
   }
   const atualizado=await rpc(supabase,'nfse_registrar_resultado',{_id:s.id,_reserva:s.reserva,_resultado:resultado});
   if(!atualizado) console.warn('[nfse] Reserva expirada; o próximo ciclo reconciliará a solicitação.');
+  return { aguardarConsulta: Boolean(atualizado && (['aguardando','incerta'].includes(resultado.estado) ||
+    (resultado.estado === 'autorizada' && !resultado.pdf_path))) };
 }
 module.exports={ processarFilaNfse, executarSolicitacao, tratarLote, recuperarNota };

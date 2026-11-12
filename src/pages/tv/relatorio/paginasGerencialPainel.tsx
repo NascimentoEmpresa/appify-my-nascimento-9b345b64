@@ -1,3 +1,4 @@
+import { LogoTv } from "./base";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, CircleDashed, Eye, MapPin, Target, UserCheck, type LucideIcon } from "lucide-react";
 import {
@@ -82,9 +83,7 @@ export function FaixaGerencial({ cor, sobre, titulo, pergunta, placarTv, altura 
             <p className="font-black leading-none tabular-nums" style={{ fontSize: 62 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
             <p className="mt-1.5 font-semibold" style={{ fontSize: 18, opacity: 0.9 }}>{inicialMaiuscula(agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }))}</p>
           </div>
-          <div className="rounded-2xl px-4 py-2.5 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 17, background: "#f97316", color: "#fff", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.2)" }}>
-            Grupo<br />Nascimento
-          </div>
+          <LogoTv />
         </div>
         {placarTv && (
           <div className="flex gap-2">
@@ -137,9 +136,7 @@ export function TelaPainelGerencial({ p, cor, visual, chave, paginas, pagina, du
               <p className="font-black leading-none tabular-nums" style={{ fontSize: 66 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
               <p className="mt-1.5 font-semibold" style={{ fontSize: 18, opacity: 0.9 }}>{inicialMaiuscula(agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }))}</p>
             </div>
-            <div className="rounded-2xl px-4 py-2.5 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 17, background: "#f97316", color: "#fff", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.2)" }}>
-              Grupo<br />Nascimento
-            </div>
+            <LogoTv />
           </div>
           <div className="flex gap-2">
             {(["vermelho", "amarelo", "verde"] as const).map((s) => (

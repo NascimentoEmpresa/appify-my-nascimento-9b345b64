@@ -23,11 +23,14 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users, ExternalLink, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { ReordenarRateio } from "./ReordenarRateio";
+import { useReordenarRateioAjuste } from "@/hooks/useMaloteDespesa";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { diasAguardandoComprovante, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
 import { destinoAposAprovar } from "./retornoAprovacao";
+import { rateioMudou } from "./rateioMudou";
 import { classificacaoPorRateio } from "./classificacaoRateio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { AvisoPontoIndisponivel, CardPontoDiaria } from "./PontoDiariaMalote";
@@ -348,6 +351,9 @@ export default function DespesaVisualizar() {
   const [ajusteAdminMotivo, setAjusteAdminMotivo] = useState("");
   const reenviar = useMandarParaAprovacaoNovamente();
   const salvarEdicaoPosAprovacao = useSalvarEdicaoPosAprovacao();
+  const reordenarRateio = useReordenarRateioAjuste();
+  // ordem das linhas do Rateio arrastada e ainda não salva (ReordenarRateio): o Salvar/Reenviar da tela grava junto
+  const [ordemRateioPendente, setOrdemRateioPendente] = useState<string[] | null>(null);
   const atualizarDatasParcelas = useAtualizarDatasParcelas();
   const atualizarValoresParcelas = useAtualizarValoresParcelas();
   const aprovar = useAprovarDespesa();
@@ -436,6 +442,8 @@ export default function DespesaVisualizar() {
   // (reaproveitado) — null = pagamento é da despesa inteira (não parcelada).
   const [parcelaEmPagamento, setParcelaEmPagamento] = useState<Parcela | null>(null);
   const [confirmarAprovarParceladoAberto, setConfirmarAprovarParceladoAberto] = useState(false);
+  // SIS-2026-0856: aviso antes de reenviar com o Rateio alterado (a aprovação recomeça).
+  const [confirmarReenvioRateioAberto, setConfirmarReenvioRateioAberto] = useState(false);
 
   const despesa = data?.despesa;
   // SIS-2026-0758: compra no cartão com Fluxo Especial (Sicredi) já foi feita — data vencida e chave do N1 não travam a aprovação.
@@ -749,8 +757,8 @@ export default function DespesaVisualizar() {
   // Só calculado quando de fato editável nesse modo restrito, pra não
   // comparar linhasRateio "só reescalado localmente" (handleValorTotalChange)
   // de outros status como se fosse edição real do usuário.
-  const rateioValorMudouNestaEdicao = rateioRestritoEditavel && rateioMudouValor(data?.rateio ?? [], linhasRateio);
-  const rateioEmpresaMudouNestaEdicao = rateioRestritoEditavel && rateioMudouEmpresa(data?.rateio ?? [], linhasRateio);
+  // SIS-2026-0856: qualquer mudança no Rateio (não só Valor) em ajuste_pagamento exige reenvio e refaz a aprovação inteira.
+  const rateioMudouNestaEdicao = rateioRestritoEditavel && rateioMudou(data?.rateio ?? [], linhasRateio);
   // [SEM-CHAMADO] (DM-2026-0515, achado do usuário): em pendente_aprovacao/
   // aguardando_pagamento o Valor Total virou editável (SIS-2026-0339) mas o
   // Rateio ficava congelado — mudar o valor e reenviar deixava a despesa com
@@ -807,8 +815,7 @@ export default function DespesaVisualizar() {
       despesa.excecao !== excecao ||
       // DM-2026-0268: mudança só no Rateio (Valor/Empresa da linha), sem
       // mudar nenhum dos campos de cima, também precisa acender o aviso.
-      rateioValorMudouNestaEdicao ||
-      rateioEmpresaMudouNestaEdicao);
+      rateioMudouNestaEdicao);
   // SIS-2026-0292: opções do combobox de Classificação (corrigir erro de
   // digitação) — inclui a atual mesmo se estiver inativa, pra não "sumir"
   // a seleção já salva (mesmo critério de tiposFormaPagamentoAtivos acima).
@@ -1528,6 +1535,23 @@ export default function DespesaVisualizar() {
         descricaoEvento: partesResumo.length > 0 ? partesResumo.join("\n") : null,
       };
 
+      // Ordem das linhas do Rateio arrastada e não salva (só em ajuste_pagamento). Se o Rateio vai ser regravado (delete + insert, ordem = posição no
+      // array), a ordem entra no próprio array; senão grava pela RPC AGORA, enquanto a despesa ainda está em ajuste_pagamento (ela exige esse status).
+      const regravaRateio = modo === "reenviar" && (rateioBaseEditavel || rateioRestritoEditavel || valorTotalMudouNaFaseCongelada);
+      let linhasParaGravar = linhasRateio;
+      if (ordemRateioPendente && despesa!.status === "ajuste_pagamento") {
+        if (regravaRateio) {
+          const posicao = new Map(ordemRateioPendente.map((id, i) => [id, i]));
+          linhasParaGravar = [...linhasRateio].sort((a, b) => (posicao.get(a.id ?? "") ?? 9999) - (posicao.get(b.id ?? "") ?? 9999));
+        } else {
+          await reordenarRateio.mutateAsync({
+            despesaId: despesa!.id,
+            linhaIds: ordemRateioPendente,
+            descricao: "Ordem do rateio alterada.",
+          });
+        }
+      }
+
       if (modo === "reenviar") {
         // Rascunho/necessidade_de_ajuste: único botão, sempre esse caminho.
         // Pendente_aprovacao/aguardando_pagamento: solicitante escolheu
@@ -1538,7 +1562,7 @@ export default function DespesaVisualizar() {
         // travado e intocado mesmo reenviando.
         await reenviar.mutateAsync(
           rateioBaseEditavel || rateioRestritoEditavel || valorTotalMudouNaFaseCongelada
-            ? { ...payloadBase, rateio: linhasRateio }
+            ? { ...payloadBase, rateio: linhasParaGravar }
             : payloadBase
         );
         toast.success("Enviado para aprovação novamente (reiniciado em N1).");
@@ -1548,15 +1572,9 @@ export default function DespesaVisualizar() {
         // (useSalvarEdicaoPosAprovacao sempre registra, mesmo sem diff
         // detectado). Só existe como opção fora de rascunho/ajuste.
         //
-        // DM-2026-0268: Rateio entra aqui SÓ quando for exclusivamente
-        // correção de Empresa (rateioEmpresaMudouNestaEdicao) — mudar Valor
-        // força o botão "Reenviar" acima (ver disabled do botão "Salvar"),
-        // então na prática este ramo nunca deveria ver Valor alterado; a
-        // dupla checagem aqui (!rateioValorMudouNestaEdicao) é defesa em
-        // profundidade, não o gate principal.
-        await salvarEdicaoPosAprovacao.mutateAsync(
-          rateioRestritoEditavel && !rateioValorMudouNestaEdicao ? { ...payloadBase, rateio: linhasRateio } : payloadBase
-        );
+        // SIS-2026-0856 (antes DM-2026-0268): o Rateio NUNCA vai neste caminho. Qualquer mudança nele (rateioMudouNestaEdicao) troca o botão "Salvar"
+        // por "Reenviar para aprovação" (refaz a aprovação inteira, com aviso); sem mudança no Rateio não há o que regravar.
+        await salvarEdicaoPosAprovacao.mutateAsync(payloadBase);
         toast.success(
           statusAlvoSalvar !== despesa!.status
             ? "Alterações salvas. Ajuste de pagamento corrigido — devolvida para a fila de pagamento."
@@ -1904,10 +1922,11 @@ export default function DespesaVisualizar() {
               <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <p>
-                  {rateioValorMudouNestaEdicao ? (
+                  {rateioMudouNestaEdicao ? (
                     <>
-                      Você alterou o <strong>Valor</strong> de uma linha do Rateio — isso muda o orçamento consumido,
-                      por isso só dá pra <strong>"Reenviar para aprovação"</strong>, que reinicia em N1.
+                      Você alterou o <strong>Rateio</strong> (empresa, centro de custo, valor ou linhas). Isso muda o orçamento
+                      utilizado, por isso a despesa <strong>passa de novo por toda a aprovação</strong> (volta ao N1 e segue até o
+                      pagamento). Só dá pra <strong>"Reenviar para aprovação"</strong>.
                     </>
                   ) : valorTotalMudouNaFaseCongelada ? (
                     <>
@@ -1918,7 +1937,7 @@ export default function DespesaVisualizar() {
                   ) : (
                     <>
                       Você alterou dados desta despesa. Se for só uma correção sem impacto (ex. nomenclatura, dados de
-                      pagamento{rateioEmpresaMudouNestaEdicao ? ", Empresa do Rateio" : ""}), use{" "}
+                      pagamento), use{" "}
                       <strong>"Salvar"</strong> — mantém a aprovação de onde estava. Se a mudança precisa ser
                       reavaliada (ex. valor, orçamento), use <strong>"Reenviar para aprovação"</strong> — reinicia em
                       N1.
@@ -1943,7 +1962,7 @@ export default function DespesaVisualizar() {
                       // (Valor/Empresa) só quando de fato liberado (não-parcelada).
                       `Corrija o que a conferência de pagamento pediu. "Salvar" devolve a despesa direto pra fila de pagamento (sem reiniciar aprovação). "Reenviar para aprovação" reinicia em N1 — use se a correção for grande o bastante pra merecer reavaliação completa.${
                         rateioRestritoEditavel
-                          ? " O Rateio agora também é editável (Valor e Empresa de cada linha): mudar a Empresa pode ser salvo direto; mudar o Valor exige Reenviar, porque afeta o orçamento já consumido."
+                          ? " O Rateio também é editável (empresa, centro de custo, valor e linhas): qualquer mudança nele exige Reenviar e a despesa passa de novo por toda a aprovação até o pagamento, porque afeta o orçamento utilizado."
                           : ""
                       }`
                     : // SIS-2026-0339: já aprovada até este nível/aguardando pagamento —
@@ -2468,9 +2487,8 @@ export default function DespesaVisualizar() {
                 aviso de "Parcelado" acima. */}
             {rateioRestritoEditavel && (
               <p className="text-xs text-muted-foreground mt-0.5">
-                Correção pedida pela conferência de pagamento: dá pra ajustar o <span className="font-medium text-foreground">Valor</span> e a{" "}
-                <span className="font-medium text-foreground">Empresa</span> de cada linha — sem adicionar/remover linha, mudar Contrato,
-                Fornecedor ou Integrante.
+                Correção pedida pela conferência de pagamento: dá pra ajustar o Rateio inteiro (empresa, contrato, fornecedor, integrante, valor e linhas).{" "}
+                <span className="font-medium text-foreground">Qualquer mudança aqui faz a despesa começar o fluxo de aprovação de novo, até o pagamento.</span>
               </p>
             )}
           </div>
@@ -2497,7 +2515,6 @@ export default function DespesaVisualizar() {
               mostrarValorParcela1={despesa.parcelado}
               podeJustificarComoAprovador={configurado}
               souSolicitante={souSolicitante}
-              apenasValorEEmpresa={rateioRestritoEditavel}
             />
           ) : despesaParceladaComParcelas ? (
             <RateioParceladoTable
@@ -2525,6 +2542,10 @@ export default function DespesaVisualizar() {
               podeJustificarComoAprovador={configurado}
               souSolicitante={souSolicitante}
             />
+          )}
+          {/* [SEM-CHAMADO] SD-2026-0211: reordenar as linhas (a 1ª é a que as listas mostram), inclusive em despesa parcelada com rateio travado. */}
+          {podeCorrigirNecessidadeDeAjuste && despesa.status === "ajuste_pagamento" && (
+            <ReordenarRateio despesaId={despesa.id} linhas={data?.rateio ?? []} contratos={contratos} empresas={empresas} onPendente={setOrdemRateioPendente} />
           )}
         </CardContent>
       </Card>
@@ -2915,6 +2936,32 @@ export default function DespesaVisualizar() {
         </DialogContent>
       </Dialog>
 
+      {/* SIS-2026-0856: avisa antes de reenviar uma despesa devolvida pela Conferência de Pagamento com o Rateio alterado. */}
+      <AlertDialog open={confirmarReenvioRateioAberto} onOpenChange={setConfirmarReenvioRateioAberto}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reenviar a despesa para aprovação?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Você alterou o Rateio (empresa, centro de custo, valor ou linhas). Essa mudança afeta o orçamento utilizado, então a despesa vai{" "}
+              <strong>começar o fluxo de aprovação de novo</strong>: volta ao Nível 1 e passa por toda a aprovação até o pagamento.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={enviando !== null}>Voltar e revisar</AlertDialogCancel>
+            <Button
+              className="gap-1.5"
+              disabled={enviando !== null}
+              onClick={() => {
+                setConfirmarReenvioRateioAberto(false);
+                void handleSalvarAlteracoes("reenviar");
+              }}
+            >
+              <RotateCcw className="h-4 w-4" /> Reenviar para aprovação
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={confirmarAprovarParceladoAberto} onOpenChange={setConfirmarAprovarParceladoAberto}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -2960,7 +3007,7 @@ export default function DespesaVisualizar() {
             <Button variant="outline" className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5" onClick={() => handleSalvarAlteracoes("reenviar")} disabled={enviando !== null || !dadosDespesaPagamentoEditaveis}>
               <RotateCcw className="h-4 w-4" /> {enviando === "reenviar" ? "Salvando..." : "Mandar para aprovação novamente"}
             </Button>
-          ) : rateioValorMudouNestaEdicao || valorTotalMudouNaFaseCongelada ? (
+          ) : rateioMudouNestaEdicao || valorTotalMudouNaFaseCongelada ? (
             // DM-2026-0268: mudou o Valor de uma linha do Rateio em
             // ajuste_pagamento. DM-2026-0515: ou mudou o Valor Total em
             // pendente_aprovacao/aguardando_pagamento (não-parcelada) — os
@@ -2969,9 +3016,9 @@ export default function DespesaVisualizar() {
             <Button
               variant="outline"
               className="text-amber-700 border-amber-400 hover:bg-amber-50 gap-1.5"
-              onClick={() => handleSalvarAlteracoes("reenviar")}
+              onClick={() => (rateioMudouNestaEdicao ? setConfirmarReenvioRateioAberto(true) : handleSalvarAlteracoes("reenviar"))}
               disabled={enviando !== null || !dadosDespesaPagamentoEditaveis}
-              title="Você alterou o Valor de uma linha do Rateio — isso muda o orçamento consumido, por isso é preciso reenviar para nova aprovação (reinicia em N1)."
+              title="Você alterou o Rateio — isso muda o orçamento utilizado, por isso a despesa passa de novo por toda a aprovação (volta ao N1 e segue até o pagamento)."
             >
               <RotateCcw className="h-4 w-4" /> {enviando === "reenviar" ? "Enviando..." : "Reenviar para aprovação"}
             </Button>

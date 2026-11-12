@@ -24,6 +24,32 @@ export const motivoLabel = (m?: string | null): string =>
 export const ehSubstituicao = (m?: string | null): boolean =>
   String(m ?? "").trim() === MOTIVO_SUBSTITUICAO;
 
+// ── Admissão (chamado #0848, Fernanda, 11/11/2026) ──────────────────────
+// Admissão não usa colaborador de exemplo: escolhe o CONTRATO e depois um dos
+// CARGOS vinculados a ele; escolhido o cargo, vale o quantitativo do contrato
+// (o mesmo do #0845). E TODA admissão nova nasce aguardando o Gerente de
+// Operações — o banco põe o status (trg_rec_vaga_admissao_gerente, mig
+// 20261111235500); aprovada, segue para a fila que teria sem a regra.
+export const MOTIVO_ADMISSAO = "Admissão";
+// ── Endereço efetivo do local de trabalho (chamado #0849, 11/11/2026) ──
+// Obrigatório na etapa 1, logo depois do posto. A Licitação ainda não manda
+// o endereço do posto, então quem abre a vaga digita. "Rua, número, bairro,
+// cidade e UF" — a regra mínima é ter texto de verdade (10+ caracteres), não
+// adivinhar formato de endereço.
+export const ENDERECO_TRABALHO_AJUDA = "Informe o endereço completo do posto de trabalho (rua, número, bairro, cidade e UF).";
+export function erroEnderecoTrabalho(v?: string | null): string | null {
+  const t = String(v ?? "").trim().replace(/\s+/g, " ");
+  if (!t) return "Informe o endereço efetivo do local de trabalho.";
+  if (t.length < 10) return "Endereço muito curto — informe rua, número, bairro, cidade e UF.";
+  return null;
+}
+
+export const ehAdmissao = (m?: string | null): boolean =>
+  String(m ?? "").trim() === MOTIVO_ADMISSAO;
+export const STATUS_VAGA_GERENTE_OPERACOES = "Pendente Gerente Operações";
+/** Menu fantasma (Operacional) de quem aprova as admissões. */
+export const MENU_GERENTE_APROVA_ADMISSAO = "operacional_gerente_aprova_admissao";
+
 /**
  * Quantas vagas o motivo permite pedir.
  *
@@ -77,7 +103,7 @@ export function nomeCompletoValido(v?: string | null): boolean {
 }
 
 /** A vaga ainda espera a aprovação da etapa 1 (Operacional/analista ou Diretoria). */
-export const STATUS_AGUARDANDO_APROVACAO = ["Pendente Analista", "Pendente Operacional", "Pendente Diretoria"];
+export const STATUS_AGUARDANDO_APROVACAO = ["Pendente Gerente Operações", "Pendente Analista", "Pendente Operacional", "Pendente Diretoria"];
 
 /**
  * "PODE CONCLUIR DIRETO" (02/10/2026, mig 289): a vaga conclui direto só
@@ -166,6 +192,75 @@ export const SITUACOES_FORA_DA_VAGA = [3, 7];
 export const FILTRO_EMPREGADO_VAGA =
   `"Cod Situacao".not.in.(${SITUACOES_FORA_DA_VAGA.join(",")}),` +
   `and("Cod Situacao".is.null,"Situação".eq.Trabalhando)`;
+
+// Substituição (chamado #0845, 11/11/2026): "isso deve funcionar para TODOS
+// os motivos de afastamento existentes no sistema" — o auxílio-doença (3)
+// volta para a lista. Só o DEMITIDO (7) fica de fora; cadastro sem código
+// aparece em qualquer situação que não seja de saída.
+export const SITUACOES_FORA_DA_SUBSTITUICAO = [7];
+export const FILTRO_EMPREGADO_SUBSTITUICAO =
+  `"Cod Situacao".not.in.(${SITUACOES_FORA_DA_SUBSTITUICAO.join(",")}),` +
+  `and("Cod Situacao".is.null,"Situação".not.ilike.demit*)`;
+
+export const filtroEmpregadoDaVaga = (motivo?: string | null): string =>
+  ehSubstituicao(motivo) ? FILTRO_EMPREGADO_SUBSTITUICAO : FILTRO_EMPREGADO_VAGA;
+
+// ── Substituição: situação de quem sai × quantitativo do contrato ───────
+// Chamado #0845 (Fernanda, 11/11/2026). Quem responde é o banco
+// (rec_vaga_substituicao_checar, mig 20261111235000); aqui fica só a regra
+// da tela, para o teste e o modal lerem do mesmo lugar.
+//
+// São DUAS validações separadas (item 6 do chamado): a situação diz se a
+// pessoa pode ser substituída (demissão, afastamento ou atestado liberam;
+// trabalhando barra); o quantitativo diz como está o contrato — e acima do
+// cotado exige "Sim" + justificativa, mesmo com a substituição liberada.
+export type SituacaoSubstituido = {
+  situacao: "demissao" | "afastado" | "atestado" | "trabalhando" | "nao_encontrado";
+  permite: boolean;
+  texto: string;
+  demissao_id?: number | null;
+  desligamento_previsto?: string | null;
+  motivo?: string | null;
+  dias?: number | null;
+};
+
+export type QuantitativoContrato = {
+  contrato_id: string | null;
+  contrato_nome?: string | null;
+  ativos?: number | null;
+  /** NULL = contrato sem Planilha de Custo: não há cotado para comparar. */
+  cotado?: number | null;
+};
+
+export type DecisaoQuantitativo = "" | "sim" | "nao";
+
+/** Ativos acima do cotado? Só com os dois números de verdade. */
+export const quantitativoAcima = (q: QuantitativoContrato | null | undefined): boolean =>
+  !!q && q.ativos != null && q.cotado != null && q.ativos > q.cotado;
+
+export const textoQuantitativo = (q: QuantitativoContrato): string =>
+  `O contrato consta com ${q.ativos ?? 0} colaborador${q.ativos === 1 ? "" : "es"} ativo${q.ativos === 1 ? "" : "s"}, ` +
+  `enquanto o quantitativo cotado é de ${q.cotado}.`;
+
+/**
+ * O que ainda impede avançar a etapa 1 de uma Substituição (null = nada).
+ * A ordem é a do chamado: primeiro a situação da pessoa, depois o contrato.
+ */
+export function bloqueioSubstituicao(args: {
+  situacao: SituacaoSubstituido | null;
+  quantitativo: QuantitativoContrato | null;
+  decisao: DecisaoQuantitativo;
+  justificativa: string;
+}): string | null {
+  const { situacao, quantitativo, decisao, justificativa } = args;
+  if (situacao && !situacao.permite) return situacao.texto;
+  if (quantitativoAcima(quantitativo)) {
+    if (decisao === "") return "O contrato está acima do quantitativo cotado: responda se deseja prosseguir com a contratação.";
+    if (decisao === "nao") return "Você respondeu que não deseja prosseguir com a contratação acima do quantitativo cotado.";
+    if (!justificativa.trim()) return "Informe a justificativa e o nome de quem autorizou a contratação.";
+  }
+  return null;
+}
 
 // ── Substituído só pode estar em UMA vaga ───────────────────────────────
 // Um colaborador não pode ser escolhido para substituição se já existe vaga
@@ -310,6 +405,7 @@ export const ehStatusConcluidoLegado = (status: string | null | undefined): bool
 
 export const rotuloStatusVaga = (status: string | null | undefined): string =>
   status === "Pendente Analista" ? "Pendente Operacional"
+    : status === STATUS_VAGA_GERENTE_OPERACOES ? "Aguardando aprovação do Gerente de Operações"
     : ehStatusConcluidoLegado(status) ? "Contratado"
     : String(status ?? "");
 

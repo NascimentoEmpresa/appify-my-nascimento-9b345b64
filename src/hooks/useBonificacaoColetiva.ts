@@ -168,3 +168,25 @@ export function useSalariosBonificacao(ids: string[], ativo: boolean) {
     },
   });
 }
+
+/**
+ * Pergunta à I.A sobre o Comparativo individual (Edge bonificacao-ia,
+ * 12/11/2026). O contexto é o que a tela mostra; o portão é o da tela
+ * (sistemas_bonificacao/visualizar), conferido na Edge.
+ */
+export function usePerguntarBonificacaoIa() {
+  return useMutation({
+    mutationFn: async (p: { mensagens: { role: "user" | "assistant"; content: string }[]; contexto: string; rotuloMes: string }) => {
+      const { data, error } = await supabase.functions.invoke("bonificacao-ia", {
+        body: { mensagens: p.mensagens, contexto: p.contexto, rotulo_mes: p.rotuloMes },
+      });
+      if (error) {
+        const ctx = (error as { context?: Response }).context;
+        const corpo = ctx && typeof ctx.json === "function" ? await ctx.json().catch(() => null) : null;
+        throw new Error(corpo?.error ?? error.message);
+      }
+      if (data?.error) throw new Error(data.error);
+      return String(data?.resposta ?? "");
+    },
+  });
+}

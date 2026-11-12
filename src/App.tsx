@@ -290,6 +290,7 @@ import IndicadoresFaturamento from "./pages/operacional/indicadores/FaturamentoR
 import IndicadoresLucratividade from "./pages/operacional/indicadores/LucratividadeOrcamento";
 import IndicadoresPessoas from "./pages/operacional/indicadores/PessoasCapacidade";
 import IndicadoresKaizen from "./pages/operacional/indicadores/KaizenEfetividade";
+import IndicadoresContratos from "./pages/operacional/indicadores/IndicadoresContratos";
 import EfetividadeControlePostos from "./pages/operacional/efetividade/ControlePostos";
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
@@ -813,6 +814,8 @@ const App = () => (
             <Route path="historico" element={<Historico />} />
             <Route path="administracao" element={<Administracao />} />
             <Route path="senhas-encarregados" element={<TrocarSenhaEncarregados />} />
+            {/* 11/11/2026 (mig 20261111260000): a mesma tela para "PODE CRIAR LOGIN (Encarregados)" — cada rota tem um menu só. */}
+            <Route path="logins-encarregados" element={<TrocarSenhaEncarregados />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
             {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord
@@ -887,6 +890,9 @@ const App = () => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}
             <Route path="diretoria/relatorios" element={<Navigate to="/app/relatorios" replace />} />
+            {/* 11/11/2026: o relatório Colaboradores saiu do sistema — o link antigo cai no Relatório Geral. */}
+            <Route path="relatorios/colaboradores" element={<Navigate to="/app/relatorios" replace />} />
+            <Route path="diretoria/relatorios/colaboradores" element={<Navigate to="/app/relatorios" replace />} />
             {RELATORIOS.map((s) => (
               <Route key={`antiga-${s.slug}`} path={`diretoria/relatorios/${s.slug}`} element={<Navigate to={`/app/relatorios/${s.slug}`} replace />} />
             ))}
@@ -1055,6 +1061,8 @@ const App = () => (
             <Route path="operacional/indicadores/lucratividade-orcamento" element={<IndicadoresLucratividade />} />
             <Route path="operacional/indicadores/pessoas-capacidade" element={<IndicadoresPessoas />} />
             <Route path="operacional/indicadores/kaizen-efetividade" element={<IndicadoresKaizen />} />
+            {/* Indicadores por Contrato (11/11/2026, mig 20261111100000): os 7 da Gerência Operacional. */}
+            <Route path="operacional/indicadores/contratos" element={<IndicadoresContratos />} />
             <Route path="operacional/efetividade" element={<EfetividadePainelDia />} />
             <Route path="operacional/efetividade/postos" element={<EfetividadeControlePostos />} />
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />

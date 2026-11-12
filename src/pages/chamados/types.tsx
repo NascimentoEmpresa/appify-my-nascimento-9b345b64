@@ -161,6 +161,12 @@ export interface Chamado {
   definicao?: "reuniao" | "extra" | null;
   definicao_em?: string | null;
   definicao_por?: string | null;
+  /** Vínculo (mig 20261112002000): chamado em que foi pendurado ao abrir, série (Parte 1 = serie_id NULL) e parte. */
+  vinculado_a?: string | null;
+  serie_id?: string | null;
+  parte?: number | null;
+  /** "O que é preciso a mais" do Reabrir chamado baseado nesse. */
+  complemento?: string | null;
   created_at: string;
   updated_at: string;
 }

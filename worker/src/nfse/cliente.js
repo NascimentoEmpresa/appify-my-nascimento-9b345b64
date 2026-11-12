@@ -8,29 +8,35 @@ function carregarConfiguracao(cnpj, serie, ambiente = process.env) {
   let configuracoes;
   try { configuracoes = JSON.parse(fs.readFileSync(ambiente.NFSE_CONFIG_ARQUIVO,'utf8')); }
   catch { throw new ErroNfse('CONFIGURACAO_INVALIDA','Não foi possível ler a configuração da integração no servidor.'); }
-  const config = configuracoes.empresas?.find(c => c.cnpj === cnpj);
+  const fiscal = ambiente.NFSE_AMBIENTE || 'homologacao';
+  exigir(['homologacao','producao'].includes(fiscal), 'Ambiente fiscal inválido.');
+  if (fiscal === 'producao') exigir(ambiente.NFSE_PRODUCAO_HABILITADA === '1', 'Produção não habilitada no processador.');
+  const config = configuracoes.empresas?.find(c => c.cnpj === cnpj && (c.ambiente || 'homologacao') === fiscal);
   exigir(config, 'O certificado desta empresa ainda não está configurado no servidor.');
-  exigir(config.homologacao_confirmada === true && config.serie_confirmada === true,
-    'O responsável pela integração deve confirmar o ambiente e a série de homologação antes de habilitar envios.');
+  exigir((fiscal === 'producao' ? config.producao_confirmada : config.homologacao_confirmada) === true && config.serie_confirmada === true,
+    'O responsável pela integração deve confirmar o ambiente e a série antes de habilitar envios.');
   exigir(String(config.serie) === String(serie), 'A série informada não corresponde à série liberada no servidor.');
   exigir(['sha1','sha256'].includes(config.algoritmo_assinatura), 'Configure o algoritmo de assinatura confirmado pelo provedor.');
-  const url = validarUrlHomologacao(config.url);
+  const url = validarUrlFiscal(config.url, fiscal);
   const senha = ambiente[config.senha_variavel];
   exigir(typeof senha === 'string' && senha.length > 0, 'Senha do certificado ausente no servidor.');
   const cert = abrirCertificado(path.resolve(path.dirname(ambiente.NFSE_CONFIG_ARQUIVO),config.certificado_caminho),senha,cnpj);
-  return { ...config, url, cert, senha };
+  return { ...config, ambiente: fiscal, url, cert, senha };
 }
-function validarUrlHomologacao(endereco) {
+function validarUrlFiscal(endereco, fiscal = 'homologacao') {
   let url;
   try { url = new URL(endereco); } catch { throw new ErroNfse('URL_INVALIDA','Endereço de homologação inválido.'); }
   exigir(url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && (!url.port || url.port === '443'), 'Use um endereço HTTPS do provedor sem credenciais ou parâmetros.');
-  exigir(url.hostname.endsWith('.cidade360.cloud') && /^\/NFSe\.Api\.(Teste|Homologacao)\/?$/i.test(url.pathname),
-    'Este piloto só se conecta à API de homologação Cidade360. O endereço de produção está bloqueado.');
+  exigir(['homologacao','producao'].includes(fiscal), 'Ambiente fiscal inválido.');
+  if (fiscal === 'producao') exigir(url.hostname === 'webapp1-triunfo.cidade360.cloud' && /^\/NFSe\.Api\/?$/.test(url.pathname), 'Use exclusivamente a API oficial de produção de Triunfo.');
+  else exigir(url.hostname.endsWith('.cidade360.cloud') && /^\/NFSe\.Api\.(Teste|Homologacao)\/?$/i.test(url.pathname),
+    'O endereço de produção não pode ser utilizado como homologação.');
   url.pathname = url.pathname.replace(/\/$/,'');
   return url;
 }
+function validarUrlHomologacao(endereco) { return validarUrlFiscal(endereco, 'homologacao'); }
 function criarCliente(config, transporte = https.request) {
-  const url = validarUrlHomologacao(config.url.toString());
+  const url = validarUrlFiscal(config.url.toString(), config.ambiente || 'homologacao');
   async function requisitar(metodo, rota, dados) {
     exigir((metodo === 'POST' && rota === '/NotaNacional/EnviarAssincrono') || (metodo === 'GET' && /^\/NotaNacional\/(ConsultarProtocolo|ConsultarDPS|DownloadPDFChave)\/[0-9a-fA-F\-/]+$/.test(rota)), 'Operação não permitida no piloto.');
     const corpo = dados ? Buffer.from(JSON.stringify(dados)) : null;
@@ -76,4 +82,4 @@ function criarCliente(config, transporte = https.request) {
     },
   };
 }
-module.exports = { carregarConfiguracao, validarUrlHomologacao, criarCliente };
+module.exports = { carregarConfiguracao, validarUrlHomologacao, validarUrlFiscal, criarCliente };

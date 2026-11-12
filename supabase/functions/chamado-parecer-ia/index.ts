@@ -25,6 +25,15 @@
 // troca de um parecer pronto é o feito ANTES das horas serem informadas
 // (horas_gastas_em mais novo que gerado_em) — sobra de antes da regra.
 //
+// SEM HORAS (12/11/2026, Pablo: "não precisa mais informar as horas gastas
+// pro desenvolvimento, uma i.a vai avaliar de acordo com o chamado, vendo a
+// complexidade dele"): SUBSTITUI a regra acima. Basta o chamado estar
+// concluído; a I.A estima as horas pelo escopo e pela entrega real (PRs).
+// Horas informadas de verdade ainda entram como piso; as SUPOSTAS pela mig
+// 20261105005500 (horas_gastas_estimadas) não entram — não são dado real.
+// A fila aceita `reavaliar` (mig 20261112000100): refaz um parecer pronto,
+// para trazer os chamados do mês para a régua nova uma única vez.
+//
 // Dois jeitos de GERAR o parecer:
 //   · worker/fila_http (Bearer = service_role): enfileirado pelo banco quando
 //     as horas são gravadas (trg_chamado_horas_gastas_parecer_ia).
@@ -47,7 +56,7 @@ import {
   type ChamadoParaParecer, type EntregaReal, type EventoGithub, type ParecerParaChat,
 } from "../_shared/chamado-parecer-ia.ts";
 
-const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao, status, created_at, concluido_em, horas_gastas, horas_gastas_em";
+const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao, status, created_at, concluido_em, horas_gastas, horas_gastas_em, horas_gastas_estimadas";
 
 /** O que foi entregue de fato: PRs e métricas gravadas pelo vínculo/merge do
  *  GitHub (chamado-vincular-pr / chamado-concluir-pr). Sem PR, null. */
@@ -231,7 +240,7 @@ Deno.serve(async (req) => {
       // depois de concluído é o definitivo.
       const { data: atual } = await admin.from("CHAMADO_SISTEMA_PARECER_IA")
         .select("status, gerado_em").eq("chamado_id", chamadoId).maybeSingle();
-      if (atual?.status === "pronto") {
+      if (atual?.status === "pronto" && corpo?.reavaliar !== true) {
         if (corpo?.forcar !== true) return respostaJson({ ok: true, pulado: "já pronto" });
         const { data: cc } = await admin.from("CHAMADO_SISTEMA").select("horas_gastas_em").eq("id", chamadoId).maybeSingle();
         const anteriorAsHoras = !!cc?.horas_gastas_em &&
@@ -247,14 +256,17 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (cErr) { await registrarErro(cErr.message); return respostaJson({ error: cErr.message }, 500); }
     if (!c) { chamadoId = ""; return respostaJson({ ok: true, pulado: "chamado não encontrado" }); }
-    // Sem conclusão com horas, não há parecer — nem pela fila, nem pelo botão.
-    const cc = c as unknown as ChamadoParaParecer;
-    if (cc.status !== "concluido" || !(Number(cc.horas_gastas) > 0)) {
+    // Sem conclusão, não há parecer — nem pela fila, nem pelo botão. Horas
+    // não são mais exigidas (12/11/2026): a I.A estima pelo escopo.
+    const cc = c as unknown as ChamadoParaParecer & { horas_gastas_estimadas?: boolean | null };
+    if (cc.status !== "concluido") {
       chamadoId = "";
       return viaFila
-        ? respostaJson({ ok: true, pulado: "sem horas informadas" })
-        : respostaJson({ error: "O parecer da I.A só sai depois que o chamado é concluído com as horas gastas informadas." }, 409);
+        ? respostaJson({ ok: true, pulado: "não concluído" })
+        : respostaJson({ error: "O parecer da I.A só sai depois que o chamado é concluído." }, 409);
     }
+    // Horas supostas (mig 20261105005500) não são dado: a I.A não as recebe.
+    if (cc.horas_gastas_estimadas) cc.horas_gastas = null;
 
     const provs = provedores();
     if (!provs.length) {

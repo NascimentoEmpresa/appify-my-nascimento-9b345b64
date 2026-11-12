@@ -15,7 +15,8 @@ class ErroNfse extends Error {
 }
 function exigir(condicao, mensagem) { if (!condicao) throw new ErroNfse('DADOS_INVALIDOS', mensagem); }
 const digitos = valor => String(valor ?? '').replace(/[.\-/\s]/g, '');
-const escapar = valor => String(valor).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+// P9022 da GOVBR: até quebras dentro da descrição devem sair antes da assinatura.
+const escapar = valor => String(valor).replace(/\r\n|[\r\n\t]/g, ' ').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
 const tag = (nome, valor) => `<${nome}>${escapar(valor)}</${nome}>`;
 function centavos(valor) {
   exigir(valor !== null && valor !== undefined && valor !== '' && Number.isFinite(Number(valor)), 'Valor monetário ausente ou inválido.');
@@ -35,10 +36,11 @@ function texto(valor, maximo, nome) {
   return resultado;
 }
 function validarSolicitacao(s) {
-  exigir(s.ambiente === 'homologacao', 'Este piloto aceita somente homologação.');
+  exigir(['homologacao','producao'].includes(s.ambiente), 'Ambiente fiscal inválido.');
   const p = s.dados?.parametros;
   const n = s.dados?.nota;
   exigir(p && n && p.confirmacao_fiscal === true, 'Confirme a revisão dos dados fiscais antes de solicitar.');
+  if (s.ambiente === 'producao') exigir(p.confirmacao_producao === true, 'Confirme a emissão de uma nota fiscal real.');
   const cnpj = codigo(s.dados.empresa?.cnpj, 14, 'o CNPJ do prestador');
   exigir(Number.isSafeInteger(Number(s.numero_dps)) && Number(s.numero_dps) > 0 && Number(s.numero_dps) <= 999999999999999, 'Número de DPS inválido.');
   exigir(Number.isInteger(Number(s.serie)) && Number(s.serie) >= 1 && Number(s.serie) <= 49999, 'Série inválida.');
@@ -48,6 +50,11 @@ function validarSolicitacao(s) {
   codigo(p.local_prestacao, 7, 'o local da prestação');
   codigo(p.codigo_tributacao, 6, 'o código nacional do serviço');
   codigo(p.codigo_nbs, 9, 'a NBS');
+  const integracaoMunicipal = String(p.codigo_integracao_municipal ?? '').trim();
+  exigir(!integracaoMunicipal || /^[a-zA-Z0-9]{1,20}$/.test(integracaoMunicipal), 'Código do serviço na prefeitura inválido: use até 20 letras ou números, sem separadores.');
+  if (s.ambiente === 'producao' && !s.envio_iniciado_em && digitos(p.municipio_emissor) === '4322004' && digitos(p.codigo_tributacao) === '170501') {
+    exigir(integracaoMunicipal, 'Informe o Código do serviço na prefeitura para o serviço 170501 de Triunfo. Confirme o código usado no portal com o responsável fiscal.');
+  }
   texto(p.inscricao_municipal, 15, 'a inscrição municipal');
   texto(p.descricao || n.descricao, 2000, 'a descrição do serviço');
   exigir(['1','2','3'].includes(p.opcao_simples), 'Informe a opção pelo Simples Nacional.');
@@ -96,7 +103,8 @@ function gerarDps(s) {
   const documento = digitos(t.documento);
   const endereco = `<end><endNac>${tag('cMun',digitos(t.municipio))}${tag('CEP',digitos(t.cep))}</endNac>${tag('xLgr',t.logradouro.trim())}${tag('nro',t.numero.trim())}${t.complemento ? tag('xCpl',t.complemento.trim()) : ''}${tag('xBairro',t.bairro.trim())}</end>`;
   const regTrib = `<regTrib>${tag('opSimpNac',p.opcao_simples)}${p.opcao_simples === '3' ? tag('regApTribSN',p.regime_apuracao) : ''}${tag('regEspTrib',p.regime_especial)}</regTrib>`;
-  const servico = `<serv><locPrest>${tag('cLocPrestacao',digitos(p.local_prestacao))}</locPrest><cServ>${tag('cTribNac',digitos(p.codigo_tributacao))}${p.codigo_municipal ? tag('cTribMun',p.codigo_municipal) : ''}${tag('xDescServ',p.descricao || n.descricao)}${tag('cNBS',digitos(p.codigo_nbs))}</cServ></serv>`;
+  const integracaoMunicipal = String(p.codigo_integracao_municipal ?? '').trim();
+  const servico = `<serv><locPrest>${tag('cLocPrestacao',digitos(p.local_prestacao))}</locPrest><cServ>${tag('cTribNac',digitos(p.codigo_tributacao))}${p.codigo_municipal ? tag('cTribMun',p.codigo_municipal) : ''}${tag('xDescServ',p.descricao || n.descricao)}${tag('cNBS',digitos(p.codigo_nbs))}${integracaoMunicipal ? tag('cIntContrib',integracaoMunicipal) : ''}</cServ></serv>`;
   const pisCofins = centavos(n.pis_total) + centavos(n.cofins_total) > 0
     ? `<piscofins>${tag('CST',p.cst_pis_cofins)}${tag('vBCPisCofins',moeda(n.vlr_bruto_total))}${tag('pAliqPis',(Number(n.pis_total) / Number(n.vlr_bruto_total) * 100).toFixed(2))}${tag('pAliqCofins',(Number(n.cofins_total) / Number(n.vlr_bruto_total) * 100).toFixed(2))}${tag('vPis',moeda(n.pis_total))}${tag('vCofins',moeda(n.cofins_total))}${tag('tpRetPisCofins',p.retencao_pis_cofins)}</piscofins>` : '';
   // Compatibilidade GOVBR comprovada em homologação e nos XMLs de Triunfo:
@@ -104,11 +112,18 @@ function gerarDps(s) {
   // detalhados. Enviar apenas CSLL faz o provedor ignorar PIS/COFINS no líquido.
   const contribuicoesRetidas = (centavos(n.pis_total) + centavos(n.cofins_total) + centavos(n.csll_total)) / 100;
   const federais = pisCofins + [['vRetCP',n.inss_total],['vRetIRRF',n.ir_total],['vRetCSLL',contribuicoesRetidas]].filter(([,v]) => centavos(v) > 0).map(([nome,v]) => tag(nome,moeda(v))).join('');
-  const valores = `<valores><vServPrest>${tag('vServ',moeda(n.vlr_bruto_total))}</vServPrest><trib><tribMun>${tag('tribISSQN','1')}${tag('tpRetISSQN',p.iss_retido)}${tag('pAliq',Number(p.aliquota_iss).toFixed(2))}</tribMun>${federais ? `<tribFed>${federais}</tribFed>` : ''}<totTrib><vTotTrib>${tag('vTotTribFed',moeda(p.tributos_aproximados_federais))}${tag('vTotTribEst',moeda(p.tributos_aproximados_estaduais))}${tag('vTotTribMun',moeda(p.tributos_aproximados_municipais))}</vTotTrib></totTrib></trib></valores>`;
+  // P3070 GOVBR: no cenário local de Triunfo, não optante e sem regime especial,
+  // a prefeitura fornece a alíquota. TribISSQN é 1 e não emitimos benefício BM.
+  // Só omitimos pAliq; a taxa e as retenções salvas continuam sendo conferidas.
+  const aliquotaPelaPrefeitura = s.ambiente === 'producao' && digitos(p.municipio_emissor) === '4322004' &&
+    p.opcao_simples === '1' && p.regime_especial === '0' &&
+    digitos(p.local_prestacao) === '4322004' && digitos(t.municipio) === '4322004';
+  const aliquotaXml = aliquotaPelaPrefeitura ? '' : tag('pAliq',Number(p.aliquota_iss).toFixed(2));
+  const valores = `<valores><vServPrest>${tag('vServ',moeda(n.vlr_bruto_total))}</vServPrest><trib><tribMun>${tag('tribISSQN','1')}${tag('tpRetISSQN',p.iss_retido)}${aliquotaXml}</tribMun>${federais ? `<tribFed>${federais}</tribFed>` : ''}<totTrib><vTotTrib>${tag('vTotTribFed',moeda(p.tributos_aproximados_federais))}${tag('vTotTribEst',moeda(p.tributos_aproximados_estaduais))}${tag('vTotTribMun',moeda(p.tributos_aproximados_municipais))}</vTotTrib></totTrib></trib></valores>`;
   const i = p.imovel;
   const imovel = p.informar_imovel ? `<imovel>${i.inscricao ? tag('inscImobFisc',i.inscricao) : ''}<end>${tag('CEP',digitos(i.cep))}${tag('xLgr',i.logradouro)}${tag('nro',i.numero)}${i.complemento ? tag('xCpl',i.complemento) : ''}${tag('xBairro',i.bairro)}</end></imovel>` : '';
   const ibsCbs = `<IBSCBS>${tag('finNFSe','0')}${tag('indFinal',p.consumidor_final)}${tag('cIndOp',p.ibs_indicador_operacao)}${p.tipo_operacao ? tag('tpOper',p.tipo_operacao) : ''}${p.tipo_ente_governamental ? tag('tpEnteGov',p.tipo_ente_governamental) : ''}${tag('indDest','0')}${imovel}<valores><trib><gIBSCBS>${tag('CST',p.ibs_cst)}${tag('cClassTrib',p.ibs_classificacao)}</gIBSCBS></trib></valores></IBSCBS>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb','2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento)}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento)}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
 }
 
 function abrirCertificado(caminho, senha, cnpj, agora = new Date()) {
@@ -177,7 +192,7 @@ function conferirNota(xml, s, chave) {
   exigir(dps.length === 1, 'Retorno sem uma única DPS identificada.');
   const info = elementos(dps[0],'infDPS')[0];
   exigir(info?.getAttribute('Id') === identificadorDps(s), 'A DPS retornada não corresponde à solicitação.');
-  exigir(valor(info,'tpAmb') === '2', 'O provedor retornou um documento fora de homologação.');
+  exigir(valor(info,'tpAmb') === (s.ambiente === 'producao' ? '1' : '2'), 'O provedor retornou um documento de outro ambiente fiscal.');
   const emit = elementos(doc,'emit')[0];
   exigir(emit && valor(emit,'CNPJ') === s.dados.empresa.cnpj, 'O CNPJ do documento retornado diverge do prestador.');
   exigir(/^\d{50}$/.test(chave) && elementos(doc,'infNFSe')[0]?.getAttribute('Id') === `NFS${chave}`, 'Chave de NFS-e inconsistente.');

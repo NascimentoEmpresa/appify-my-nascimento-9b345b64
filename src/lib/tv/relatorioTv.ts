@@ -23,6 +23,11 @@ import type { Dashboard as DashboardTreinamentos } from "@/pages/treinamentos/pl
 import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
 import { painelGerencial, paginasPainel, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 import type { PainelBiTv } from "@/pages/tv/relatorio/paginasBi";
+import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
+import type { DadosSupPainelTv } from "@/lib/tv/supPainelTv";
+import type { DadosRecPainelTv } from "@/lib/tv/recPainelTv";
+import type { DadosRhSalariosTv } from "@/lib/tv/rhSalariosTv";
+import type { DadosCtlPainelTv, DadosFinPainelTv, DadosPrePainelTv } from "@/lib/tv/gestaoTv";
 
 /** A cor da faixa de cada relatório: a dos Relatórios; Geral, Vagas, Licitações e Treinamentos têm a sua. */
 export function corDoRelatorioTv(slug: string | null | undefined): string {
@@ -31,6 +36,12 @@ export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "licitacoes") return "#0e7490";
   if (slug === "treinamentos") return "#f26522"; // o laranja do módulo
   if (slug?.startsWith("bi:")) return "#2a78d6"; // a cor do Estúdio de BI
+  if (slug === "ope-contratos") return "#0f3171"; // o azul do Operacional
+  if (slug === "sup-painel") return "#0e7490"; // Suprimentos
+  if (slug === "rec-painel" || slug === "rh-salarios") return "#4f46e5"; // Recrutamento/RH (o roxo do modelo)
+  if (slug === "fin-painel") return "#047857";
+  if (slug === "ctl-painel") return "#1e3a8a";
+  if (slug === "pre-painel") return "#7c2d12";
   const ger = painelGerencial(slug);
   if (ger) return ger.cor; // TVs gerenciais (mig 20261012000001)
 
@@ -83,7 +94,19 @@ export type DadosRelTv =
   /** Um indicador gerencial sozinho (item "ind:<codigo>", mig 20261014000012). */
   | { tipo: "indicador"; painel: PainelGerencial["painel"]; indicador: IndicadorGerencial | null; contrato: null; gerado_em?: string }
   /** Um painel do Estúdio de BI (item "bi:<id>", mig 20261014000012). */
-  | ({ tipo: "bi"; contrato: null; gerado_em?: string } & PainelBiTv);
+  | ({ tipo: "bi"; contrato: null; gerado_em?: string } & PainelBiTv)
+  /** Operacional › Indicadores por Contrato (item "ope-contratos", mig 20261111130000). */
+  | ({ tipo: "ope-contratos"; contrato: null } & DadosOpeContratosTv)
+  /** Compras › Suprimentos (item "sup-painel", mig 20261111180000). */
+  | ({ tipo: "sup-painel"; contrato: null } & DadosSupPainelTv)
+  /** Recrutamento e Seleção (item "rec-painel", mig 20261111190000). */
+  | ({ tipo: "rec-painel"; contrato: null } & DadosRecPainelTv)
+  /** RH: salários e benefícios × orçamento (item "rh-salarios", mig 20261111220000). */
+  | ({ tipo: "rh-salarios"; contrato: null } & DadosRhSalariosTv)
+  /** Financeiro, Controladoria e Presidência (mig 20261111230000). */
+  | ({ tipo: "fin-painel"; contrato: null } & DadosFinPainelTv)
+  | ({ tipo: "ctl-painel"; contrato: null } & DadosCtlPainelTv)
+  | ({ tipo: "pre-painel"; contrato: null } & DadosPrePainelTv);
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
@@ -115,6 +138,24 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
       return [{ chave: "indicador", titulo: "Indicador" }];
     case "bi":
       return [{ chave: "bi", titulo: "B.I" }];
+    case "ope-contratos":
+      // Uma página para o item: a troca de contrato (10 s) é da própria tela
+      // (TelaOpeContratos), que não depende da duração do item.
+      return [{ chave: "ope-contratos", titulo: "Indicadores por Contrato" }];
+    case "sup-painel":
+      // Idem: as páginas (15 s cada) giram dentro de TelaSupPainel.
+      return [{ chave: "sup-painel", titulo: "Suprimentos" }];
+    case "rec-painel":
+      // Idem: os blocos de contratos (10 s) giram dentro de TelaRecPainel.
+      return [{ chave: "rec-painel", titulo: "Recrutamento e Seleção" }];
+    case "rh-salarios":
+      return [{ chave: "rh-salarios", titulo: "Salários e benefícios × orçamento" }];
+    case "fin-painel":
+      return [{ chave: "fin-painel", titulo: "Controle de Faturamento" }];
+    case "ctl-painel":
+      return [{ chave: "ctl-painel", titulo: "Faturamento da Empresa" }];
+    case "pre-painel":
+      return [{ chave: "pre-painel", titulo: "Presidência" }];
     case "turnover": {
       const ps = [{ chave: "turnover-resumo", titulo: "Resumo do ano" }];
       if (d.painel.por_contrato.some((c) => c.demissoes > 0)) ps.push({ chave: "turnover-contratos", titulo: "Por contrato" });

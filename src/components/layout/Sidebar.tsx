@@ -1345,6 +1345,8 @@ const operacionalModule: ModuleDef = {
         { label: "Lucratividade e Orçamento", to: "/app/operacional/indicadores/lucratividade-orcamento", icon: TrendingUp },
         { label: "Pessoas e Capacidade", to: "/app/operacional/indicadores/pessoas-capacidade", icon: Users2 },
         { label: "Kaizen e Efetividade", to: "/app/operacional/indicadores/kaizen-efetividade", icon: ClipboardCheck },
+        // Indicadores por Contrato (11/11/2026, mig 20261111100000): os 7 da Gerência Operacional por contrato.
+        { label: "Indicadores por Contrato", to: "/app/operacional/indicadores/contratos", icon: Building2 },
       ],
     },
     {
@@ -2006,7 +2008,10 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           // 20261020000100): o escritório que redefine a senha dos
           // encarregados cai direto na tela enxuta, que é TUDO o que ele vê
           // em Configurações. Quem enxerga a Administração segue para ela.
-          to={!canSee("/app/administracao") && canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados" : "/app/administracao"}
+          // 11/11/2026: idem para quem só tem "PODE CRIAR LOGIN (Encarregados)" (mig 20261111260000).
+          to={canSee("/app/administracao") ? "/app/administracao"
+            : canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados"
+            : canSee("/app/logins-encarregados") ? "/app/logins-encarregados" : "/app/administracao"}
           className={({ isActive }) =>
             cn(
               "sb-item flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",

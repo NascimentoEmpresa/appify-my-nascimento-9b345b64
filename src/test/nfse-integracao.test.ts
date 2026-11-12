@@ -33,7 +33,7 @@ function solicitacao() {
         local_prestacao: "4314902", codigo_tributacao: "071002", codigo_municipal: "", codigo_nbs: "118031000", descricao: "Limpeza & conservação <teste>",
         iss_retido: "2", aliquota_iss: "2.00", cst_pis_cofins: "01", retencao_pis_cofins: "3", ibs_cst: "000", ibs_classificacao: "000001", ibs_indicador_operacao: "100301",
         consumidor_final: "0", tipo_operacao: "", tipo_ente_governamental: "", tributos_aproximados_federais: "0", tributos_aproximados_estaduais: "0", tributos_aproximados_municipais: "2",
-        confirmacao_fiscal: true,
+        confirmacao_fiscal: true, confirmacao_producao: false,
         informar_imovel: false, imovel: { cep: "", logradouro: "", numero: "", bairro: "", complemento: "", inscricao: "" },
         tomador: { documento: "98765432000198", nome: "TOMADOR DE TESTES", municipio: "4314902", cep: "90000000", logradouro: "Rua de teste", numero: "1", bairro: "Centro", complemento: "", email: "" },
       },
@@ -53,7 +53,7 @@ function dependencias() {
 }
 function retornoXml(s = solicitacao(), alteracoes: { cnpj?: string; liquido?: string; ambiente?: string } = {}) {
   const chave = "4".repeat(50);
-  const dps = documento.gerarDps(s).replace(/<\?xml[^>]*>/, "").replace("<tpAmb>2</tpAmb>", `<tpAmb>${alteracoes.ambiente ?? "2"}</tpAmb>`);
+  const dps = documento.gerarDps(s).replace(/<\?xml[^>]*>/, "").replace(/<tpAmb>[12]<\/tpAmb>/, `<tpAmb>${alteracoes.ambiente ?? (s.ambiente === "producao" ? "1" : "2")}</tpAmb>`);
   return {
     chave,
     xmlGZipB64: gzipSync(Buffer.from(`<NFSe xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infNFSe Id="NFS${chave}"><nNFSe>900</nNFSe><emit><CNPJ>${alteracoes.cnpj ?? CNPJ}</CNPJ></emit><valores><vLiq>${alteracoes.liquido ?? "82.20"}</vLiq></valores>${dps}</infNFSe></NFSe>`)).toString("base64"),
@@ -77,6 +77,19 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it("gera e confere produção separadamente, recusando retorno de homologação", async () => {
+    const s = solicitacao(); s.ambiente = "producao";
+    expect(() => documento.gerarDps(s)).toThrow(/nota fiscal real/);
+    s.dados.parametros.confirmacao_producao = true;
+    const xml = documento.gerarDps(s);
+    expect(xml).toContain("<tpAmb>1</tpAmb>");
+    await documento.validarEsquema(documento.assinarDps(xml, documento.identificadorDps(s), cert, "sha1"));
+    const nota = retornoXml(s);
+    expect(documento.conferirNota(documento.descompactar(nota.xmlGZipB64).toString(), s, nota.chave).numero).toBe("900");
+    const outro = retornoXml(s, { ambiente: "2" });
+    expect(() => documento.conferirNota(documento.descompactar(outro.xmlGZipB64).toString(), s, outro.chave)).toThrow(/outro ambiente/);
+    await expect(tratarLote(s, { tipoAmbiente: "HOMOLOGACAO", processado: false }, dependencias())).rejects.toThrow(/produção/);
+  });
   it("monta a identificação da DPS e passa no XSD oficial antes e depois da assinatura", async () => {
     const s = solicitacao();
     const xml = documento.gerarDps(s);
@@ -96,6 +109,19 @@ describe("NFS-e: documento fiscal e certificado", () => {
     expect(() => documento.abrirCertificado(arquivo, "senha-sintetica", "99999999000199")).toThrow(/CNPJ/);
     expect(() => documento.abrirCertificado(arquivo, "senha-sintetica", CNPJ, new Date("2100-01-01"))).toThrow(/validade/);
     expect(() => documento.abrirCertificado(arquivo, "senha-incorreta", CNPJ)).toThrow(/arquivo e a senha/);
+  });
+  it("remove quebras dos textos antes de assinar, preserva valores e mantém a assinatura válida", async () => {
+    const s = solicitacao();
+    s.dados.parametros.descricao = "Limpeza & conservação\r\nCompetência: 10/2026\nValor: R$ 100,00\rFim\tOK";
+    const assinado = documento.assinarDps(documento.gerarDps(s), documento.identificadorDps(s), cert, "sha1");
+    expect(assinado).not.toMatch(/[\r\n\t]/);
+    expect(assinado).toContain("Limpeza &amp; conservação Competência: 10/2026 Valor: R$ 100,00 Fim OK");
+    expect(assinado).toContain("<vServ>100.00</vServ>");
+    expect(s.dados.parametros.descricao).toContain("\r\n");
+    await documento.validarEsquema(assinado);
+    const verificador = new SignedXml({ publicCert: cert.certPem, getCertFromKeyInfo: () => null });
+    verificador.loadSignature(documento.elementos(documento.lerXml(assinado), "Signature")[0]);
+    expect(verificador.checkSignature(assinado)).toBe(true);
   });
   it("impede envio com líquido inconsistente, revisão ausente e dados incompatíveis com o XSD", async () => {
     const s = solicitacao(); s.dados.nota.vlr_liquido_total = 99;
@@ -123,6 +149,77 @@ describe("NFS-e: documento fiscal e certificado", () => {
     const xml = documento.gerarDps(s);
     expect(xml).toContain("<imovel><end><CEP>90000000</CEP>");
     await documento.validarEsquema(xml);
+  });
+  it("envia o código da prefeitura em cIntContrib sem confundir com cTribMun e passa no XSD assinado", async () => {
+    for (const codigo of ["7830200", "8111700", "8630502"]) {
+      const s = solicitacao();
+      const p = s.dados.parametros as typeof s.dados.parametros & { codigo_integracao_municipal?: string };
+      p.codigo_tributacao = "170501"; p.codigo_municipal = "123"; p.codigo_integracao_municipal = codigo;
+      const xml = documento.gerarDps(s);
+      expect(xml).toContain(`<cTribMun>123</cTribMun>`);
+      expect(xml).toContain(`<cNBS>118031000</cNBS><cIntContrib>${codigo}</cIntContrib>`);
+      await documento.validarEsquema(documento.assinarDps(xml, documento.identificadorDps(s), cert, "sha1"));
+    }
+    expect(documento.gerarDps(solicitacao())).not.toContain("<cIntContrib>");
+  });
+  it("bloqueia serviço ambíguo em produção antes de enviar e recusa código fora do esquema", async () => {
+    const s = solicitacao(); s.ambiente = "producao"; s.dados.parametros.confirmacao_producao = true;
+    s.dados.parametros.codigo_tributacao = "170501";
+    const deps = dependencias();
+    await expect(executarSolicitacao(s, deps)).rejects.toThrow(/Código do serviço na prefeitura/);
+    expect(deps.marcarEnvio).not.toHaveBeenCalled(); expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    const p = s.dados.parametros as typeof s.dados.parametros & { codigo_integracao_municipal?: string };
+    for (const invalido of ["x".repeat(21), "8111700<"]){
+      p.codigo_integracao_municipal = invalido;
+      expect(() => documento.gerarDps(s)).toThrow(/Código do serviço na prefeitura inválido/);
+    }
+    p.codigo_integracao_municipal = "8111700";
+    await documento.validarEsquema(documento.gerarDps(s));
+  });
+  it("continua consultando o retorno de uma DPS antiga já enviada sem o código municipal", async () => {
+    const s = solicitacao(); s.ambiente = "producao"; s.dados.parametros.confirmacao_producao = true;
+    s.dados.parametros.codigo_tributacao = "170501"; s.envio_iniciado_em = "2026-11-11T18:05:00Z";
+    s.protocolo = "33333333-3333-4333-8333-333333333333";
+    const deps = dependencias();
+    deps.cliente.consultarProtocolo.mockResolvedValue({tipoAmbiente:"PRODUCAO",processado:true,protocolo:s.protocolo,lote:[{
+      id:documento.identificadorDps(s),statusProcessamento:"ERRO",erros:[{codigo:"P5006",descricao:"Informe o código municipal"}],
+    }]} as never);
+    expect(await executarSolicitacao(s,deps)).toEqual({estado:"rejeitada",mensagem:"P5006: Informe o código municipal"});
+    expect(deps.cliente.enviar).not.toHaveBeenCalled();
+  });
+  it("omite pAliq no cenário local não optante de Triunfo, preservando valores e assinatura", async () => {
+    const s = solicitacao(); s.ambiente = "producao";
+    Object.assign(s.dados.parametros,{confirmacao_producao:true,codigo_tributacao:"170501",codigo_integracao_municipal:"8111700",aliquota_iss:"5.00",local_prestacao:"4322004"});
+    s.dados.parametros.tomador.municipio = "4322004";
+    Object.assign(s.dados.nota,{vlr_bruto_total:1500,issqn_total:75,inss_total:165,ir_total:72,vlr_liquido_total:1188});
+    const antes = JSON.stringify(s);
+    const xml = documento.gerarDps(s);
+    expect(xml).not.toContain("<pAliq>");
+    expect(xml).toContain("<tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>2</tpRetISSQN></tribMun>");
+    expect(xml).toContain("<vRetCP>165.00</vRetCP><vRetIRRF>72.00</vRetIRRF>");
+    const assinado = documento.assinarDps(xml,documento.identificadorDps(s),cert,"sha1");
+    await documento.validarEsquema(assinado);
+    const verificador = new SignedXml({publicCert:cert.certPem,getCertFromKeyInfo:()=>null});
+    verificador.loadSignature(documento.elementos(documento.lerXml(assinado),"Signature")[0]);
+    expect(verificador.checkSignature(assinado)).toBe(true);
+    expect(JSON.stringify(s)).toBe(antes);
+    const retorno = retornoXml(s,{liquido:"1188.00"});
+    expect(documento.conferirNota(documento.descompactar(retorno.xmlGZipB64).toString(),s,retorno.chave).numero).toBe("900");
+    const divergente = retornoXml(s,{liquido:"1200.00"});
+    expect(()=>documento.conferirNota(documento.descompactar(divergente.xmlGZipB64).toString(),s,divergente.chave)).toThrow(/líquido retornado diverge/);
+  });
+  it("preserva pAliq em homologação, fora do cenário local e no Simples Nacional", async () => {
+    for (const caso of ["homologacao","prestacao_fora","tomador_fora","simples"]) {
+      const s = solicitacao(); s.ambiente = caso === "homologacao" ? "homologacao" : "producao";
+      Object.assign(s.dados.parametros,{confirmacao_producao:true,local_prestacao:"4322004"});
+      s.dados.parametros.tomador.municipio = "4322004";
+      if(caso === "prestacao_fora")s.dados.parametros.local_prestacao="4314902";
+      if(caso === "tomador_fora")s.dados.parametros.tomador.municipio="4314902";
+      if(caso === "simples")Object.assign(s.dados.parametros,{opcao_simples:"3",regime_apuracao:"1"});
+      const xml = documento.gerarDps(s);
+      expect(xml).toContain("<pAliq>2.00</pAliq>");
+      await documento.validarEsquema(xml);
+    }
   });
   it("recusa XML com entidade externa, CNPJ divergente, ambiente real e líquido diferente", () => {
     expect(() => documento.lerXml('<!DOCTYPE x [<!ENTITY a SYSTEM "file:///segredo">]><x/>')).toThrow(/XML/);
@@ -185,5 +282,23 @@ describe("NFS-e: recuperação sem emissão duplicada", () => {
     const resultado = await tratarLote(s, { tipoAmbiente: "HOMOLOGACAO", processado: true, lote: [{ id: documento.identificadorDps(s), statusProcessamento: "ERRO", erros: [{ codigo: "E001", descricao: "Cadastro inválido" }] }] }, dependencias());
     expect(resultado).toEqual({ estado: "rejeitada", mensagem: "E001: Cadastro inválido" });
     await expect(tratarLote(s, { tipoAmbiente: "PRODUCAO", processado: true }, dependencias())).rejects.toThrow(/homologação/);
+  });
+  it("mostra rejeição sem Id somente para o protocolo persistido de um lote unitário sem nota", async () => {
+    const s = solicitacao(); s.envio_iniciado_em = "2026-11-11T16:00:00Z";
+    s.protocolo = "33333333-3333-4333-8333-333333333333";
+    const item = { id: null, chaveAcesso: null, xmlGZipB64: null, statusProcessamento: "ERRO", erros: [{ codigo: "P9022", descricao: "XML com quebras de linha" }] };
+    const lote = { tipoAmbiente: "HOMOLOGACAO", processado: true, protocolo: s.protocolo, lote: [item] };
+    expect(await tratarLote(s, lote, dependencias())).toEqual({ estado: "rejeitada", mensagem: "P9022: XML com quebras de linha" });
+    for (const invalido of [
+      { ...lote, protocolo: "outro-protocolo" }, { ...lote, lote: [item, item] },
+      { ...lote, lote: [{ ...item, id: "outra-DPS" }] },
+      { ...lote, lote: [{ ...item, chaveAcesso: "4".repeat(50) }] },
+      { ...lote, lote: [{ ...item, statusProcessamento: "SUCESSO" }] },
+    ]) await expect(tratarLote(s, invalido, dependencias())).rejects.toThrow();
+    const semProtocolo = { ...s, protocolo: null };
+    await expect(tratarLote(semProtocolo, lote, dependencias())).rejects.toThrow(/não identifica/);
+    const deps = dependencias(); deps.cliente.consultarProtocolo.mockResolvedValue(lote as never);
+    expect((await executarSolicitacao(s, deps)).estado).toBe("rejeitada");
+    expect(deps.cliente.enviar).not.toHaveBeenCalled();
   });
 });

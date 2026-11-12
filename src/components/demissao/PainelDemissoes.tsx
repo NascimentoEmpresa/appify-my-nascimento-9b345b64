@@ -24,7 +24,7 @@ import {
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
-  ArrowUpRight, Ban, CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Pencil, Search, Stethoscope,
+  ArrowUpRight, Ban, CheckCircle2, Clock, Download, Eye, FileSpreadsheet, FileText, Loader2, MapPin, Pencil, Search, Stethoscope,
   ThumbsDown, ThumbsUp, Undo2, X, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
@@ -33,6 +33,8 @@ import { BlocoCancelarReconsideracaoRH, BlocoDecidirCancelamentoRH } from "@/com
 import { AvisoAjusteDemissao } from "@/components/demissao/AjustarDemissao";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { TABELA_RESCISAO, corStatusRescisao } from "@/lib/demissao/rescisao";
+import { baixarExcelDemissoes } from "@/lib/demissao/exportarDemissoes";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -268,6 +270,14 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     })();
   }, [etapa, todas]);
 
+  // Exportar Excel (11/11/2026): a ordem é a da tela (o que a etapa tem para resolver primeiro).
+  const exportar = (lista: SolicitacaoDemissao[], tipo: "todas" | "filtradas") => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const ordenada = tipo === "filtradas" ? lista : [...lista].sort((a, b) => Number(precisaDeMim(b)) - Number(precisaDeMim(a)));
+    baixarExcelDemissoes(ordenada, `demissoes-${etapa}-${tipo}-${hoje}.xlsx`, etapa === "rh" ? statusRescisao : undefined);
+    toast.success(`${lista.length} solicitação(ões) exportada(s).`);
+  };
+
   // Quem decidiu: o nome que fica gravado na solicitação.
   const [quemSou, setQuemSou] = useState("");
   useEffect(() => {
@@ -356,6 +366,22 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                   <Link to="/app/rh/rescisoes">Rescisões <ArrowUpRight className="ml-1 h-4 w-4" /></Link>
                 </Button>
               )}
+              {/* Exportar Excel (11/11/2026): tudo o que a fila carregou, ou só o que o filtro mostra. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" disabled={carregando || linhas.length === 0}>
+                    <FileSpreadsheet className="mr-1.5 h-4 w-4" /> Exportar Excel
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => exportar(linhas, "todas")}>
+                    Exportar tudo ({linhas.length})
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={!filtroAtivo || filtradas.length === 0} onClick={() => exportar(filtradas, "filtradas")}>
+                    Exportar como está filtrado ({filtradas.length})
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button variant="outline" onClick={carregar} disabled={carregando}>
                 {carregando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
               </Button>

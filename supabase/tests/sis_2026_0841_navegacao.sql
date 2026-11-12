@@ -13,8 +13,8 @@ INSERT INTO public.app_menu(modulo_id,codigo,nome,rota,ordem,ativo,concede_tudo_
 ('11111111-1111-4111-8111-111111111111','nf-emissao','Emissão de NF','/app/financeiro/nf-emissao',1,true,true),
 ('11111111-1111-4111-8111-111111111111','nf_emissao_controle','Emissão de NF — Controle','/app/financeiro/emissao-nf/controle-notas',2,false,false);
 INSERT INTO public.perfil_acesso_permissao VALUES('22222222-2222-4222-8222-222222222222','nf_emissao_controle','visualizar',false);
-\ir ../migrations/20261110190000_sis_2026_0841_controle_notas_navegacao.sql
-\ir ../migrations/20261110190000_sis_2026_0841_controle_notas_navegacao.sql
+\ir ../migrations/20261110203100_sis_2026_0841_controle_notas_navegacao.sql
+\ir ../migrations/20261110203100_sis_2026_0841_controle_notas_navegacao.sql
 DO $$ BEGIN
  IF (SELECT count(*) FROM public.app_menu) <> 3 THEN RAISE EXCEPTION 'Reexecução duplicou menus'; END IF;
  IF NOT EXISTS(SELECT 1 FROM public.app_menu WHERE codigo='nf-emissao' AND nome='Controle de Notas' AND rota='/app/financeiro/emissao-nf' AND concede_tudo_alcanca) THEN RAISE EXCEPTION 'Entrada ou regra existente do pai foi perdida'; END IF;
