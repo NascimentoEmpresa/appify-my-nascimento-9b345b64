@@ -34,9 +34,17 @@
 // A fila aceita `reavaliar` (mig 20261112000100): refaz um parecer pronto,
 // para trazer os chamados do mês para a régua nova uma única vez.
 //
+// SÓ O PEDIDO (12/11/2026, aprovado pelo Iury depois da auditoria da
+// Bonificação): SUBSTITUI a "entrega real" e as horas como piso. O preço
+// sai de montarPromptDoPreco — sem horas informadas, sem PRs e sem
+// histórico —, porque cada um desses dados é controlado por quem
+// desenvolveu e já deu valor maior a um dev que a outro (ver o cabeçalho do
+// _shared). Editar as horas também não refaz mais o parecer
+// (mig 20261112230000).
+//
 // Dois jeitos de GERAR o parecer:
-//   · worker/fila_http (Bearer = service_role): enfileirado pelo banco quando
-//     as horas são gravadas (trg_chamado_horas_gastas_parecer_ia).
+//   · worker/fila_http (Bearer = service_role): enfileirado pelo banco na
+//     conclusão (trg_chamado_concluido_parecer_ia_escopo) e na reavaliação.
 //   · botão "Gerar parecer" na tela (Bearer = JWT do usuário), só quando
 //     ainda NÃO há parecer pronto (nunca gerou ou deu erro): confere
 //     chamado_parecer_ia_pode_gerar (gestão de chamados ou o responsável)
@@ -52,37 +60,11 @@
 // Edge Function, nunca em arquivo.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, SYSTEM_PROMPT,
-  type ChamadoParaParecer, type EntregaReal, type EventoGithub, type ParecerParaChat,
+  extrairJson, limparHistorico, montarPromptDoPreco, montarSistemaChat, validarParecer, SYSTEM_PROMPT,
+  type ChamadoParaParecer, type ParecerParaChat,
 } from "../_shared/chamado-parecer-ia.ts";
 
 const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao, status, created_at, concluido_em, horas_gastas, horas_gastas_em, horas_gastas_estimadas";
-
-/** O que foi entregue de fato: PRs e métricas gravadas pelo vínculo/merge do
- *  GitHub (chamado-vincular-pr / chamado-concluir-pr). Sem PR, null. */
-async function carregarEntrega(admin: ReturnType<typeof createClient>, c: ChamadoParaParecer): Promise<EntregaReal | null> {
-  const { data, error } = await admin.from("CHAMADO_SISTEMA_EVENTO")
-    .select("created_at, meta")
-    .eq("chamado_id", c.id)
-    .eq("meta->>canal", "github")
-    .order("created_at", { ascending: true })
-    .limit(500);
-  if (error) { console.error("eventos github", error.message); return null; }
-  return resumirEntrega((data ?? []) as EventoGithub[], c);
-}
-
-/** Comentários e observações do chamado: o escopo que o título não conta (09/11/2026). */
-async function carregarHistorico(admin: ReturnType<typeof createClient>, chamadoId: string): Promise<string[]> {
-  const { data, error } = await admin.from("CHAMADO_SISTEMA_EVENTO")
-    .select("texto")
-    .eq("chamado_id", chamadoId)
-    .in("tipo", ["comentario", "observacao_interna", "solicitar_info"])
-    .not("texto", "is", null)
-    .order("created_at", { ascending: true })
-    .limit(40);
-  if (error) { console.error("historico", error.message); return []; }
-  return (data ?? []).map((e: { texto: string | null }) => String(e.texto ?? "").trim()).filter(Boolean);
-}
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -172,9 +154,8 @@ async function responderChat(supa: Cliente, admin: Cliente, chamadoId: string, c
   if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
   const chamado = c as unknown as ChamadoParaParecer;
-  const entrega = await carregarEntrega(admin, chamado);
   const res = await chamarIA(provs, [
-    { role: "system", content: montarSistemaChat(chamado, p as unknown as ParecerParaChat, entrega) },
+    { role: "system", content: montarSistemaChat(chamado, p as unknown as ParecerParaChat) },
     ...limparHistorico(corpo?.historico),
     { role: "user", content: pergunta },
   ], false);
@@ -237,15 +218,16 @@ Deno.serve(async (req) => {
       // Fila: parecer pronto não é refeito (reentrega do worker, backfill de
       // novo). `forcar` (conclusão do chamado) troca SÓ o parecer gerado
       // ANTES da conclusão — o da abertura, que precificou o pedido. O gerado
-      // depois de concluído é o definitivo.
+      // depois de concluído é o definitivo. 12/11/2026: a régua é a CONCLUSÃO,
+      // não mais as horas gravadas — trocar as horas não refaz o preço.
       const { data: atual } = await admin.from("CHAMADO_SISTEMA_PARECER_IA")
         .select("status, gerado_em").eq("chamado_id", chamadoId).maybeSingle();
       if (atual?.status === "pronto" && corpo?.reavaliar !== true) {
         if (corpo?.forcar !== true) return respostaJson({ ok: true, pulado: "já pronto" });
-        const { data: cc } = await admin.from("CHAMADO_SISTEMA").select("horas_gastas_em").eq("id", chamadoId).maybeSingle();
-        const anteriorAsHoras = !!cc?.horas_gastas_em &&
-          (!atual.gerado_em || Date.parse(atual.gerado_em) < Date.parse(cc.horas_gastas_em));
-        if (!anteriorAsHoras) return respostaJson({ ok: true, pulado: "valores fixos" });
+        const { data: cc } = await admin.from("CHAMADO_SISTEMA").select("concluido_em").eq("id", chamadoId).maybeSingle();
+        const anteriorAConclusao = !!cc?.concluido_em &&
+          (!atual.gerado_em || Date.parse(atual.gerado_em) < Date.parse(cc.concluido_em));
+        if (!anteriorAConclusao) return respostaJson({ ok: true, pulado: "valores fixos" });
       }
     }
 
@@ -265,9 +247,6 @@ Deno.serve(async (req) => {
         ? respostaJson({ ok: true, pulado: "não concluído" })
         : respostaJson({ error: "O parecer da I.A só sai depois que o chamado é concluído." }, 409);
     }
-    // Horas supostas (mig 20261105005500) não são dado: a I.A não as recebe.
-    if (cc.horas_gastas_estimadas) cc.horas_gastas = null;
-
     const provs = provedores();
     if (!provs.length) {
       const msg = "A chave da IA não está configurada. Avise o time de Sistemas.";
@@ -276,18 +255,18 @@ Deno.serve(async (req) => {
     }
 
     const chamado = c as unknown as ChamadoParaParecer;
-    const entrega = await carregarEntrega(admin, chamado);
-    // Temperatura 0: chamados parecidos recebem horas parecidas.
+    // Temperatura 0: chamados parecidos recebem horas parecidas. Só o pedido
+    // entra (12/11/2026): horas, PRs e histórico ficam de fora.
     const res = await chamarIA(provs, [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: montarPrompt(chamado, entrega, await carregarHistorico(admin, chamado.id)) },
+      { role: "user", content: montarPromptDoPreco(chamado) },
     ], true, 0);
     if (!res.texto) {
       await registrarErro(res.erro ?? "Falha ao chamar a IA.");
       return respostaJson({ error: res.erro }, res.status ?? 502);
     }
 
-    const v = validarParecer(extrairJson(res.texto), chamado.horas_gastas);
+    const v = validarParecer(extrairJson(res.texto), null);
     if (!v.ok) {
       console.error("parecer inválido", chamadoId, res.texto.slice(0, 500));
       await registrarErro(v.erro);

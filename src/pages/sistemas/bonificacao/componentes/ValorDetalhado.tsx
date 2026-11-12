@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { EntregaBonificacao } from "@/lib/sistemas/bonificacaoColetiva";
-import { ROTULO_ORIGEM, detalheValores, type CampoValor } from "@/lib/sistemas/bonificacaoDetalhe";
+import { ROTULO_ORIGEM, detalheValores, mediaComValor, type CampoValor } from "@/lib/sistemas/bonificacaoDetalhe";
 import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import { moeda } from "./comum";
 
@@ -25,6 +25,8 @@ export function ValorDetalhado({ entregas, campo, titulo, valor, media = false, 
   const linhas = detalheValores(entregas, campo);
   if (!linhas.length) return <span className={className}>{valor === null ? "—" : moeda(valor)}</span>;
   const total = linhas.reduce((a, l) => a + l.valor, 0);
+  // Sem parecer = aguardando a I.A: fora da média e à vista na célula (12/11/2026).
+  const { comValor, pendentes } = mediaComValor(entregas, campo);
   // A ordem do detalhe vai junto: no chamado, as setas andam por esta lista.
   const ids = linhas.map((l) => l.chamadoId);
   return (
@@ -32,6 +34,7 @@ export function ValorDetalhado({ entregas, campo, titulo, valor, media = false, 
       <HoverCardTrigger asChild>
         <button type="button" className={`cursor-help whitespace-nowrap underline decoration-dotted underline-offset-4 ${className ?? ""}`}>
           {valor === null ? "—" : moeda(valor)}
+          {pendentes > 0 && <span className="ml-1 text-[10px] font-normal text-muted-foreground">({pendentes} aguardando I.A)</span>}
         </button>
       </HoverCardTrigger>
       <HoverCardContent align="start" className="w-[440px] max-w-[92vw] p-0">
@@ -39,8 +42,9 @@ export function ValorDetalhado({ entregas, campo, titulo, valor, media = false, 
           <p className="text-sm font-semibold">{titulo}</p>
           <p className="text-xs text-muted-foreground">
             {media
-              ? <>Média = {moeda(total)} ÷ {linhas.length} entrega(s) = <b className="text-foreground">{moeda(total / linhas.length)}</b></>
+              ? <>Média = {moeda(total)} ÷ {comValor} entrega(s) com valor = <b className="text-foreground">{comValor ? moeda(total / comValor) : "—"}</b></>
               : <>{linhas.length} entrega(s) concluída(s) no mês · total <b className="text-foreground">{moeda(total)}</b></>}
+            {pendentes > 0 && <> · {pendentes} aguardando a I.A, fora da conta</>}
           </p>
         </div>
         <ul className="max-h-80 divide-y overflow-y-auto">

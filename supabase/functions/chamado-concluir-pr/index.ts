@@ -35,21 +35,17 @@ import {
   limparResumoIa, listaDeTextos, MAX_ARQUIVOS, MAX_COMMITS, montarMensagemResumo, montarPromptResumo,
   resumoSemIa, urlsValidas, type EntradaResumo,
 } from "../_shared/chamado-resumo-pr.ts";
+import { perfilDoLoginGithub } from "../_shared/dev-github-login.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const CI_SECRET = Deno.env.get("CHAMADOS_CI_SECRET") ?? "";
 
-// Login do GitHub → profiles.id. Mesma lista de chamado-vincular-pr e de
-// .github/workflows/notify_discord.yml — atualizar nos três quando entrar
-// gente nova no time. CHAMADO_SISTEMA_EVENTO.autor_id é NOT NULL (FK pra
-// auth.users) e aqui não há auth.uid(), então sem essa correspondência o
-// evento não é gravado.
-const GITHUB_LOGIN_PARA_PROFILE_ID: Record<string, string> = {
-  EduardoJeiel007: "97260632-2f1a-44e3-9f93-58b2b1f3702c",
-  Tasuyuk1: "301bfa45-d01a-4e81-abd9-18d48bccef97",
-  joaovperetti: "e2c4faf6-289e-4f80-a235-628c2d674f46",
-};
+// Login do GitHub → profiles.id: tabela DEV_GITHUB_USUARIO (12/11/2026, ver
+// _shared/dev-github-login.ts). A lista chumbada que ficava aqui não tinha o
+// Pablo (PabloTasuyuk) nem o Otavio: a PR deles não concluía o chamado.
+// CHAMADO_SISTEMA_EVENTO.autor_id é NOT NULL (FK pra auth.users) e aqui não
+// há auth.uid(), então sem essa correspondência o evento não é gravado.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -171,7 +167,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, concluido: false, motivo: "esta PR já concluiu o chamado antes; ele foi reaberto depois" });
   }
 
-  const autorId = GITHUB_LOGIN_PARA_PROFILE_ID[prAutorGithub];
+  const autorId = await perfilDoLoginGithub(admin, prAutorGithub);
   if (!autorId) return json({ ok: true, concluido: false, motivo: "autor do GitHub não mapeado" });
 
   const { error: upErr } = await admin

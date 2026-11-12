@@ -50,6 +50,7 @@ import { AbaRegras } from "./componentes/AbaRegras";
 import { AvaliarEntregaDialog } from "./componentes/AvaliarEntregaDialog";
 import { ChatBonificacaoIa } from "./componentes/ChatBonificacaoIa";
 import { ValorDetalhado } from "./componentes/ValorDetalhado";
+import { mediaComValor } from "@/lib/sistemas/bonificacaoDetalhe";
 import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import { AJUDA, Ajuda, BarraCriterio, Kpi, Titulo, Vazio, dataBr, moeda, num } from "./componentes/comum";
 
@@ -375,7 +376,7 @@ function TabelaDevs({ devs, acao, extras = false, clt, rotuloMes }: {
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell><ValorDetalhado entregas={d.entregas} campo="valorMercado" valor={d.mercado} titulo={`Mercado IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold tabular-nums"><ValorDetalhado entregas={d.entregas} campo="valorMercado" media valor={d.entregas.length ? Math.round((d.mercado / d.entregas.length) * 100) / 100 : null} titulo={`Média por entrega — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell><ValorDetalhado entregas={d.entregas} campo="valorFreelancer" valor={d.freelancer} titulo={`Freelancer IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold text-success"><ValorDetalhado entregas={d.entregas} campo="lucro" valor={lucroDoDev(d)} titulo={`Lucro estimado — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell><ValorDetalhado entregas={d.entregas} campo="valorMercado" valor={d.mercado} titulo={`Mercado IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold tabular-nums"><ValorDetalhado entregas={d.entregas} campo="valorMercado" media valor={mediaComValor(d.entregas, "valorMercado").media} titulo={`Média por entrega — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell><ValorDetalhado entregas={d.entregas} campo="valorFreelancer" valor={d.freelancer} titulo={`Freelancer IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold text-success"><ValorDetalhado entregas={d.entregas} campo="lucro" valor={lucroDoDev(d)} titulo={`Lucro estimado — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}
