@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS public."CS_FORM_MURAL_TRIAGEM_IA" (
 );
 CREATE INDEX IF NOT EXISTS cs_form_mural_triagem_ia_form_idx
   ON public."CS_FORM_MURAL_TRIAGEM_IA" (formulario_id);
+-- FK para auth.users: sem índice, apagar um usuário varreria a tabela inteira.
+CREATE INDEX IF NOT EXISTS cs_form_mural_triagem_ia_habilitado_por_idx
+  ON public."CS_FORM_MURAL_TRIAGEM_IA" (habilitado_por);
 
 ALTER TABLE public."CS_FORM_MURAL_TRIAGEM_IA" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."CS_FORM_MURAL_TRIAGEM_IA" FROM PUBLIC, anon, authenticated;
