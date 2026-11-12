@@ -39,6 +39,8 @@ import {
 import { useAnexoChamado } from "./useAnexoChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
 import { ChamadosVinculados } from "./ChamadosVinculados";
+import { CardReaberturaChamado, CardTransferenciaChamado } from "./ReaberturaTransferenciaChamado";
+import { podeDecidir } from "@/lib/chamados/reabertura";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
 const DESCRICAO_LONGA_CHARS = 700;
@@ -84,7 +86,7 @@ export default function CoordenarChamado() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { gestor, canCoordenar, canAprovar } = useChamadoPerms();
+  const { gestor, canCoordenar, canAprovar, canGestorSistemas } = useChamadoPerms();
 
   const [responsavel, setResponsavel] = useState<string | null>(null);
   const [posicao, setPosicao] = useState<string>("");           // posição escolhida na fila do dev
@@ -662,6 +664,11 @@ export default function CoordenarChamado() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
+
+          {/* CHAMADO REABERTO / pedido de transferência (mig 20261112190000):
+              a decisão do Gestor de Sistemas, no meio da página, antes de tudo. */}
+          <CardReaberturaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
+          <CardTransferenciaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
 
           {/* Parte 1, Parte 2… (mig 20261112002000): a triagem vê a série inteira. */}
           <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `/app/sistemas/chamados/${cid}/coordenar`} />

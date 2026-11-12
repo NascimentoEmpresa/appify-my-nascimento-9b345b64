@@ -10,8 +10,9 @@
  *      5) e comentário com texto. É o filtro automático.
  *   2. LIBERADO — alguém com acesso às permissões do formulário
  *      (cs_form_pode(_, 'acesso'), o botão "Acesso") leu e liberou.
- *   3. MÊS ANTERIOR — mês civil de Brasília anterior ao de hoje. Em
- *      novembro aparecem os de outubro.
+ *   3. (até 12/11/2026) MÊS ANTERIOR — mês civil de Brasília anterior ao de
+ *      hoje. Saiu: o Início mostra todo mês publicado, com setas para passar
+ *      de um para o outro (mesesDoMural, mig 20261112210000).
  *
  * QUEM DECIDE É O BANCO (migration 20261030003200: cs_form_mural_positivo,
  * cs_form_mural_inicio). Este arquivo espelha a mesma regra para a tela de
@@ -82,13 +83,26 @@ export function mesAnterior(hoje: Date = new Date()): string {
   return somarMes(mesDeBrasilia(hoje), -1);
 }
 
-/** O que o cartão do Início pode mostrar: liberado + positivo + mês anterior. */
-export function filtrarMural<T extends LinhaMural>(linhas: T[], hoje: Date = new Date()): T[] {
-  const alvo = mesAnterior(hoje);
-  return linhas.filter((l) =>
-    l.status === "liberado"
-    && ehComentarioPositivo(l)
-    && mesDeBrasilia(l.enviado_em) === alvo);
+/**
+ * O que o cartão do Início pode mostrar, agrupado por mês (12/11/2026).
+ *
+ * Antes era filtrarMural: liberado + positivo + SÓ o mês anterior. Foi esse
+ * "só o mês anterior" que sumiu com setembro do Início em novembro, mesmo
+ * liberado pela Fernanda (mig 20261112210000). Agora todo mês que tem algo
+ * liberado vira uma página do cartão, do mais novo ao mais velho; o mês vem
+ * do envio no relógio de Brasília, mesma conta do banco.
+ */
+export function mesesDoMural<T extends LinhaMural>(linhas: T[]): { mes: string; itens: T[] }[] {
+  const porMes = new Map<string, T[]>();
+  for (const l of linhas) {
+    if (l.status !== "liberado" || !ehComentarioPositivo(l)) continue;
+    const mes = mesDeBrasilia(l.enviado_em);
+    const lista = porMes.get(mes);
+    if (lista) lista.push(l); else porMes.set(mes, [l]);
+  }
+  return [...porMes.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([mes, itens]) => ({ mes, itens }));
 }
 
 const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
@@ -100,51 +114,19 @@ export function rotuloMes(ym: string): string {
 }
 
 // ---------------------------------------------------------------------
-// RANKING E TRAVA DE LIBERAÇÃO (03/11/2026, pedido do Pablo)
+// RANKING (03/11/2026, pedido do Pablo)
 //
 // A moderação deixou de ser uma fila de 345 comentários soltos: cada pessoa
 // aparece uma vez, do 1º ao último, pela QUANTIDADE de comentários positivos
 // recebidos no mês; empate vai para a NOTA MÉDIA, e depois o nome (só para a
 // ordem não pular entre recargas — o nome não dá posição).
 //
-// E os votos de um mês só podem ser LIBERADOS a partir do dia 20 do mês
-// seguinte (outubro → 20/11): a votação precisa fechar e assentar antes de
-// virar mural. Quem trava de verdade é o banco (trigger
-// cs_form_mural_trava_liberacao, mig 20261103001300); isto aqui é o espelho
-// para a tela bloquear o botão e dizer quantos dias faltam.
+// Aqui também morava a trava "só libera a partir do dia 20 do mês seguinte"
+// (dataLiberacao/podeLiberar, espelho do trigger da mig 20261103001300). Saiu
+// em 12/11/2026 a pedido do Pablo — publica quando quiser, com DUAS
+// confirmações seguidas na tela (MuralModeracao) — e o trigger saiu junto
+// (mig 20261112210000).
 // ---------------------------------------------------------------------
-
-/** Dia do mês SEGUINTE ao do voto a partir do qual a liberação abre. */
-export const DIA_LIBERACAO = 20;
-
-/** "AAAA-MM-DD" em que os votos do mês "AAAA-MM" passam a poder ser liberados. */
-export function dataLiberacao(ym: string): string {
-  return `${somarMes(ym, 1)}-${String(DIA_LIBERACAO).padStart(2, "0")}`;
-}
-
-const FMT_DIA = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
-
-/** "AAAA-MM-DD" do instante, no relógio de Brasília. */
-export function diaDeBrasilia(instante: Date = new Date()): string {
-  return FMT_DIA.format(instante);
-}
-
-/** Dias corridos que faltam para liberar os votos de `ym` (0 = já pode). */
-export function diasParaLiberar(ym: string, hoje: Date = new Date()): number {
-  const ms = Date.parse(`${dataLiberacao(ym)}T00:00:00Z`) - Date.parse(`${diaDeBrasilia(hoje)}T00:00:00Z`);
-  return Math.max(0, Math.round(ms / 86_400_000));
-}
-
-/** Os votos de `ym` já podem ir para o mural? */
-export function podeLiberar(ym: string, hoje: Date = new Date()): boolean {
-  return diaDeBrasilia(hoje) >= dataLiberacao(ym);
-}
-
-/** "AAAA-MM-DD" → "DD/MM/AAAA". */
-export function dataBR(iso: string): string {
-  const [a, m, d] = iso.split("-");
-  return `${d}/${m}/${a}`;
-}
 
 export interface PessoaRanking<T> {
   /** 1, 2, 3… — empate em quantidade E média divide a posição (1, 1, 3). */

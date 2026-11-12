@@ -7,9 +7,10 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { ListChecks, TrendingUp, CheckCircle2, AlertTriangle, PieChart as PieChartIcon, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
-import { NfEmissaoItemRow, TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
+import { TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
 import { fmtMoney, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
+import { CAMPOS_DESCONTO, kpisDoDashboard } from "./kpisDashboard";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
   pago: "Pago",
@@ -27,17 +28,6 @@ const STATUS_COR: Record<StatusNota, string> = {
 function competenciaCurta(c: string) {
   return new Date(c + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" });
 }
-
-const CAMPOS_DESCONTO: { key: keyof NfEmissaoItemRow; label: string }[] = [
-  { key: "faltas", label: "Faltas" },
-  { key: "posto_nao_implementado", label: "Posto não implementado" },
-  { key: "multas", label: "Multas antes da NF" },
-  { key: "multas_pos_emissao", label: "Multas depois da NF" },
-  { key: "glosas", label: "Glosas antes da NF" },
-  { key: "glosas_pos_emissao", label: "Glosas depois da NF" },
-  { key: "outros_descontos", label: "Outros descontos antes da NF" },
-  { key: "outros_descontos_pos_emissao", label: "Outros descontos depois da NF" },
-];
 
 export default function DashboardRelatorioServicos() {
   const { data: nfs = [], isLoading } = useNfsEmissao(null, { todasEmpresas: true });
@@ -68,27 +58,8 @@ export default function DashboardRelatorioServicos() {
 
   const { data: itensPorNf } = useItensNfEmissaoEmLote(linhas.map((n) => n.id));
 
-  const kpis = useMemo(() => {
-    let executado = 0, faturado = 0, recebido = 0, pendente = 0, descontos = 0;
-    let pagas = 0;
-    // Achado real (Ruan): nota Cancelada/Substituída ainda carrega valores
-    // em vlr_bruto_total/vlr_liquido_total/valor_pago (a planilha legada
-    // não zera na migração) — sem esse filtro, ela entrava em Executado/
-    // Faturado/Recebido como se fosse uma nota normal, inflando o total.
-    for (const n of linhas) {
-      if (naoContabilizaKpi(n)) continue;
-      const itens = itensPorNf?.get(n.id) ?? [];
-      executado += n.valor_contrato_exec_total;
-      faturado += n.vlr_bruto_total;
-      recebido += n.valor_pago ?? 0;
-      pendente += valorPendenteNf(n, itens);
-      descontos += n.desconto_conta_vinculada + itens.reduce((s, it) => s + CAMPOS_DESCONTO.reduce((s2, c) => s2 + (Number(it[c.key]) || 0), 0), 0);
-      if (statusDaNota(n) === "pago") pagas++;
-    }
-    const pctPago = linhas.length ? (pagas / linhas.length) * 100 : 0;
-    const pctDescontos = executado ? (descontos / executado) * 100 : 0;
-    return { total: linhas.length, executado, faturado, recebido, pendente, descontos, pctPago, pctDescontos };
-  }, [linhas, itensPorNf]);
+  // SIS-2026-0869: conta extraída para kpisDashboard.ts — a Conciliação Financeira lê a mesma função.
+  const kpis = useMemo(() => kpisDoDashboard(linhas, itensPorNf), [linhas, itensPorNf]);
 
   const evolucaoMensal = useMemo(() => {
     const porComp = new Map<string, { comp: string; executado: number; faturado: number; recebido: number }>();

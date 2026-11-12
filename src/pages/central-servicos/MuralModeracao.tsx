@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useDecidirMural, useMuralModeracao, type ItemModeracao } from "@/hooks/useMuralReconhecimento";
 import {
-  dataBR, dataLiberacao, diasParaLiberar, itensDaPrevia, mesAnterior, podeLiberar, rankingMural, rotuloMes, somarMes,
+  itensDaPrevia, mesAnterior, rankingMural, rotuloMes, somarMes,
   type StatusMural,
 } from "@/lib/formularios/muralReconhecimento";
 import { CartaoReconhecimento, type ItemCartao } from "@/components/reconhecimento/ReconhecimentoCard";
@@ -31,6 +31,14 @@ import { CartaoReconhecimento, type ItemCartao } from "@/components/reconhecimen
 // cs_form_mural_trava_liberacao, mig 20261103001300). Toda liberação pede
 // confirmação dizendo quantos comentários e de qual mês.
 //
+// 12/11/2026 (Pablo): SAIU a trava do dia 20 — dá para publicar quando
+// quiser, na tela e no banco (mig 20261112210000 derruba o trigger). O freio
+// agora é a DUPLA confirmação: "Tem certeza?" e, depois do sim, "Confirma sua
+// certeza?". Só o segundo sim libera. Vale para o "Liberar" de um recado, o
+// "Liberar os N" da pessoa e o "Liberar todos os pendentes". E o Início
+// passou a mostrar todo mês publicado (setas no cartão), não só o anterior —
+// por isso o selo "no Início" agora depende de o mês ter algo liberado.
+//
 // 06/11/2026 (Pablo: "tem que ter uma prévia pra ver como fica antes de ser
 // publicado"): botão "Ver prévia" — no rodapé (o mês inteiro, já liberados +
 // pendentes), em cada pessoa (só os dela) e na confirmação de liberar. A
@@ -43,7 +51,7 @@ const MESES_CAP = (ym: string) => rotuloMes(ym).replace(/^./, (c) => c.toUpperCa
 const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "6px 12px", borderRadius: 9, border, background: bg, color: c, fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const btnSeta: React.CSSProperties = { width: 32, height: 32, borderRadius: 9, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 17, fontWeight: 800, lineHeight: 1, cursor: "pointer" };
-const btnTravado: React.CSSProperties = { ...btn("#e2e8f0", "#94a3b8"), cursor: "not-allowed" };
+const btnApagado: React.CSSProperties = { ...btn("#e2e8f0", "#94a3b8"), cursor: "not-allowed" };
 
 const COR_STATUS: Record<StatusMural, { bg: string; c: string; rot: string }> = {
   pendente: { bg: "#fef3c7", c: "#b45309", rot: "Pendente" },
@@ -72,15 +80,12 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   const [filtro, setFiltro] = useState<Filtro>("pendente");
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
-  const [confirmar, setConfirmar] = useState<{ lista: ItemModeracao[]; quem?: string } | null>(null);
+  // etapa 1 = "Tem certeza?", etapa 2 = "Confirma sua certeza?" — só a 2 libera.
+  const [confirmar, setConfirmar] = useState<{ lista: ItemModeracao[]; quem?: string; etapa: 1 | 2; desde?: number } | null>(null);
   // Prévia: o que vai ser liberado (somado ao que já está no mural).
   const [previa, setPrevia] = useState<{ aLiberar: ItemModeracao[]; quem?: string } | null>(null);
   const { data: itens = [], isLoading, error } = useMuralModeracao(formId, mes, true);
   const decidir = useDecidirMural();
-
-  const liberaEm = dataLiberacao(mes);
-  const liberavel = podeLiberar(mes);
-  const faltam = diasParaLiberar(mes);
 
   const contagem = useMemo(() => {
     const c: Record<StatusMural, number> = { pendente: 0, liberado: 0, recusado: 0 };
@@ -106,8 +111,8 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
     });
   };
   const pedirLiberacao = (lista: ItemModeracao[], quem?: string) => {
-    if (!lista.length || !liberavel) return;
-    setConfirmar({ lista, quem });
+    if (!lista.length) return;
+    setConfirmar({ lista, quem, etapa: 1 });
   };
   const alternar = (nome: string) => setAbertos((s) => {
     const n = new Set(s);
@@ -116,7 +121,6 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   });
 
   const ocupado = decidir.isPending;
-  const avisoTrava = `Votos de ${MESES_CAP(mes)} só podem ser liberados a partir de ${dataBR(liberaEm)}`;
 
   return (
     <div onClick={onFechar} style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(15,23,42,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -131,7 +135,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               </div>
               <ul style={{ fontSize: 11.5, opacity: .9, margin: "6px 0 0", paddingLeft: 16, lineHeight: 1.5 }}>
                 <li><b>Ranking:</b> do 1º ao último pela quantidade de comentários positivos no mês; empate vai para a nota média.</li>
-                <li><b>Liberação:</b> os votos de um mês só podem ser liberados a partir do <b>dia 20 do mês seguinte</b> (outubro → 20/11).</li>
+                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão.</li>
               </ul>
             </div>
             <button onClick={onFechar} aria-label="Fechar" style={{ ...btn("rgba(255,255,255,.16)"), fontSize: 15, padding: "4px 10px" }}>✕</button>
@@ -142,8 +146,8 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
           <button style={btnSeta} onClick={() => setMes((m) => somarMes(m, -1))} aria-label="Mês anterior">‹</button>
           <div style={{ minWidth: 150, textAlign: "center" }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: "#0f172a" }}>Votos de {MESES_CAP(mes)}</div>
-            <div style={{ fontSize: 10.5, color: mes === noInicio ? "#15803d" : "#94a3b8", fontWeight: 700 }}>
-              {mes === noInicio ? "● no Início agora" : `vai ao Início em ${rotuloMes(somarMes(mes, 1))}`}
+            <div style={{ fontSize: 10.5, color: contagem.liberado ? "#15803d" : "#94a3b8", fontWeight: 700 }}>
+              {contagem.liberado ? "● no Início agora" : "nada publicado ainda"}
             </div>
           </div>
           <button style={btnSeta} onClick={() => setMes((m) => somarMes(m, 1))} aria-label="Próximo mês">›</button>
@@ -155,16 +159,6 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             </button>
           ))}
         </div>
-
-        {liberavel ? (
-          <div style={{ padding: "8px 20px", background: "#f0fdf4", borderBottom: "1px solid #bbf7d0", fontSize: 12, color: "#15803d", fontWeight: 700 }}>
-            ✓ Liberação aberta: votos de {MESES_CAP(mes)} podem ser liberados desde {dataBR(liberaEm)}.
-          </div>
-        ) : (
-          <div role="alert" style={{ padding: "9px 20px", background: "#fffbeb", borderBottom: "1px solid #fde68a", fontSize: 12.5, color: "#92400e", fontWeight: 700 }}>
-            🔒 {avisoTrava} (faltam {plural(faltam, "dia", "dias")}). Até lá dá para ler e recusar, mas não liberar.
-          </div>
-        )}
 
         <div style={{ padding: "10px 20px 0" }}>
           <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar pessoa no ranking…"
@@ -219,10 +213,10 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                       style={btn("#fff", "#0f3171", "1px solid #c7d2fe")}>👁 Prévia</button>
                   )}
                   {pend.length > 0 && (
-                    <button disabled={ocupado || !liberavel} title={liberavel ? undefined : avisoTrava}
+                    <button disabled={ocupado}
                       onClick={() => pedirLiberacao(pend, p.colaborador)}
-                      style={liberavel ? btn("#16a34a") : btnTravado}>
-                      {liberavel ? "✓" : "🔒"} Liberar {pend.length > 1 ? `os ${pend.length}` : ""}
+                      style={btn("#16a34a")}>
+                      ✓ Liberar {pend.length > 1 ? `os ${pend.length}` : ""}
                     </button>
                   )}
                 </div>
@@ -238,9 +232,9 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                             <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: st.bg, color: st.c }}>{st.rot}</span>
                             <div style={{ flex: 1 }} />
                             {i.status !== "liberado" && (
-                              <button disabled={ocupado || !liberavel} title={liberavel ? undefined : avisoTrava}
-                                onClick={() => pedirLiberacao([i], p.colaborador)} style={liberavel ? btn("#16a34a") : btnTravado}>
-                                {liberavel ? "✓" : "🔒"} Liberar
+                              <button disabled={ocupado}
+                                onClick={() => pedirLiberacao([i], p.colaborador)} style={btn("#16a34a")}>
+                                ✓ Liberar
                               </button>
                             )}
                             {i.status !== "recusado" && (
@@ -273,13 +267,13 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
           </span>
           <button disabled={!pendentes.length && !contagem.liberado} onClick={() => setPrevia({ aLiberar: pendentes })}
             title="Ver como o cartão do Início fica com o que já está no mural e os pendentes"
-            style={pendentes.length || contagem.liberado ? btn("#fff", "#0f3171", "1px solid #c7d2fe") : btnTravado}>
+            style={pendentes.length || contagem.liberado ? btn("#fff", "#0f3171", "1px solid #c7d2fe") : btnApagado}>
             👁 Ver prévia
           </button>
-          <button disabled={!pendentes.length || ocupado || !liberavel} title={liberavel ? undefined : avisoTrava}
+          <button disabled={!pendentes.length || ocupado}
             onClick={() => pedirLiberacao(pendentes)}
-            style={pendentes.length && liberavel ? btn("#16a34a") : btnTravado}>
-            {liberavel ? "✓" : "🔒"} Liberar todos os pendentes
+            style={pendentes.length ? btn("#16a34a") : btnApagado}>
+            ✓ Liberar todos os pendentes
           </button>
         </div>
 
@@ -287,20 +281,36 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
           <div onClick={() => setConfirmar(null)} style={{ position: "absolute", inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
             <div role="alertdialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
               style={{ width: "min(420px, 100%)", background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 20px 50px rgba(15,23,42,.35)" }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: "#b91c1c" }}>TEM CERTEZA QUE DESEJA LIBERAR?</div>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: "#94a3b8", letterSpacing: ".04em" }}>CONFIRMAÇÃO {confirmar.etapa} DE 2</div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#b91c1c", marginTop: 2 }}>
+                {confirmar.etapa === 1 ? "TEM CERTEZA?" : "CONFIRMA SUA CERTEZA?"}
+              </div>
               <div style={{ marginTop: 8, fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
                 Vão para o mural do Início <b>{plural(confirmar.lista.length, "comentário", "comentários")}</b> dos
                 votos de <b>{MESES_CAP(mes)}</b>
                 {confirmar.quem ? <> para <b>{confirmar.quem}</b></> : <> de <b>{plural(new Set(confirmar.lista.map((i) => i.colaborador.trim().toUpperCase())).size, "pessoa", "pessoas")}</b></>}.
                 Todos que entram no ERP vão ler, sem o nome de quem votou.
+                {confirmar.etapa === 2 && <> <b>Depois deste sim, já está publicado.</b></>}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
                 <button onClick={() => setPrevia({ aLiberar: confirmar.lista, quem: confirmar.quem })}
                   style={{ ...btn("#fff", "#0f3171", "1px solid #c7d2fe"), marginRight: "auto" }}>👁 Ver prévia</button>
                 <button onClick={() => setConfirmar(null)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Cancelar</button>
-                <button autoFocus disabled={ocupado}
-                  onClick={() => { aplicar(confirmar.lista, "liberado"); setConfirmar(null); }}
-                  style={btn("#16a34a")}>✓ Sim, liberar {confirmar.lista.length}</button>
+                {confirmar.etapa === 1 ? (
+                  <button key="etapa1" autoFocus disabled={ocupado}
+                    onClick={() => setConfirmar({ ...confirmar, etapa: 2, desde: Date.now() })}
+                    style={btn("#16a34a")}>Sim, tenho certeza</button>
+                ) : (
+                  // O botão da etapa 2 nasce no MESMO lugar do da etapa 1: um
+                  // duplo clique passaria pelas duas confirmações de uma vez.
+                  // Clique nos primeiros 700 ms da etapa 2 não vale.
+                  <button key="etapa2" autoFocus disabled={ocupado}
+                    onClick={() => {
+                      if (Date.now() - (confirmar.desde ?? 0) < 700) return;
+                      aplicar(confirmar.lista, "liberado"); setConfirmar(null);
+                    }}
+                    style={btn("#b91c1c")}>✓ Confirmo, liberar {confirmar.lista.length}</button>
+                )}
               </div>
             </div>
           </div>
