@@ -796,7 +796,7 @@ const App = () => (
             <Route path="licitacoes/implantacao/base" element={<BaseMestre />} />
             <Route path="licitacoes/implantacao/base/hub" element={<BaseMestreHub />} />
             {/* Painel por setor da Implantação: lê as respostas do checklist acima,
-                agrupadas pelo Resp. ação (mig 20261113110000). Herda o acesso de
+                agrupadas pelo Resp. ação (mig 20261113220000). Herda o acesso de
                 licitacoes.implantacao pelo prefixo da rota. */}
             <Route path="licitacoes/implantacao/painel" element={<PainelImplantacao />} />
             <Route path="licitacoes/implantacao/painel/:setor" element={<PainelSetor />} />
