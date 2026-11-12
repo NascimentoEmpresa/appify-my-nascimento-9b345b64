@@ -288,6 +288,7 @@ function AbaEquipe({ filtradas, validas, cfg, notaEquipe, notaFiltro, filtrando,
         <Kpi rotulo="No prazo" valor={comPrazo.length ? `${num((noPrazoQtd / comPrazo.length) * 100)}%` : "—"} ajuda={AJUDA.noPrazo}
           detalhe={n && comPrazo.length < n ? `${n - comPrazo.length} sem prazo` : undefined} />
         <Kpi rotulo="Mercado IA" valor={moeda(somar(filtradas, "valorMercado"))} tom="ambar" ajuda={AJUDA.mercadoIa} />
+        <Kpi rotulo="Lucro estimado" valor={moeda(filtradas.reduce((a, e) => a + (e.lucro ?? 0), 0))} tom="verde" ajuda={AJUDA.lucro} />
       </div>
 
       <Card className="p-5">
@@ -343,6 +344,9 @@ function AbaEquipe({ filtradas, validas, cfg, notaEquipe, notaFiltro, filtrando,
   );
 }
 
+/** Soma do lucro das entregas do dev (12/11/2026). */
+const lucroDoDev = (d: ResumoDev) => (d.entregas as EntregaDetalhada[]).reduce((a, e) => a + (e.lucro ?? 0), 0);
+
 function TabelaDevs({ devs, acao, extras = false, clt, rotuloMes }: {
   devs: ResumoDev[]; acao?: (d: ResumoDev) => ReactNode; extras?: boolean;
   /** Mês do filtro, para o título do detalhe dos valores (12/11/2026). */
@@ -360,7 +364,7 @@ function TabelaDevs({ devs, acao, extras = false, clt, rotuloMes }: {
             {CRITERIOS.map((k) => <TableHead key={k}>{ROTULO_CRITERIO[k]}</TableHead>)}
             <TableHead>Nota final</TableHead>
             {/* 11/11/2026 (Pablo): média por entrega ao lado do total — o total cresce com a quantidade de entregas; a média compara o porte do que cada um entregou. */}
-            {extras && <><TableHead>Mercado IA</TableHead><TableHead><span className="inline-flex items-center gap-1">Média por entrega<Ajuda texto="Mercado IA ÷ número de entregas do mês. O total cresce com a quantidade de entregas; a média mostra o porte médio do que cada um entregou." /></span></TableHead><TableHead>Freelancer IA</TableHead><TableHead>{clt ? <span className="inline-flex items-center gap-1">CLT (salário do mês)<Ajuda texto="Salário do colaborador (cadastro da Senior) proporcional aos dias corridos já passados no mês atual — sobe sozinho a cada dia. Meses anteriores ficam R$ 0,00 por enquanto. Só aparece para quem tem 'Colaboradores — Ver salário'; os demais veem —." /></span> : "CLT IA"}</TableHead></>}
+            {extras && <><TableHead>Mercado IA</TableHead><TableHead><span className="inline-flex items-center gap-1">Média por entrega<Ajuda texto="Mercado IA ÷ número de entregas do mês. O total cresce com a quantidade de entregas; a média mostra o porte médio do que cada um entregou." /></span></TableHead><TableHead>Freelancer IA</TableHead><TableHead><span className="inline-flex items-center gap-1">Lucro estimado<Ajuda texto="Valor de mercado − custo real conosco (horas da equipe interna × hora do nosso salário). Passe o mouse no valor para ver a conta de cada chamado." /></span></TableHead><TableHead>{clt ? <span className="inline-flex items-center gap-1">CLT (salário do mês)<Ajuda texto="Salário do colaborador (cadastro da Senior) proporcional aos dias corridos já passados no mês atual — sobe sozinho a cada dia. Meses anteriores ficam R$ 0,00 por enquanto. Só aparece para quem tem 'Colaboradores — Ver salário'; os demais veem —." /></span> : "CLT IA"}</TableHead></>}
             {acao && <TableHead />}
           </TableRow>
         </TableHeader>
@@ -371,7 +375,7 @@ function TabelaDevs({ devs, acao, extras = false, clt, rotuloMes }: {
               <TableCell>{d.entregas.length}</TableCell>
               {CRITERIOS.map((k) => <TableCell key={k} className="tabular-nums">{num(d.medias[k])}</TableCell>)}
               <TableCell className="font-bold text-success tabular-nums">{num(d.nota)}</TableCell>
-              {extras && <><TableCell><ValorDetalhado entregas={d.entregas} campo="valorMercado" valor={d.mercado} titulo={`Mercado IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold tabular-nums"><ValorDetalhado entregas={d.entregas} campo="valorMercado" media valor={d.entregas.length ? Math.round((d.mercado / d.entregas.length) * 100) / 100 : null} titulo={`Média por entrega — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell><ValorDetalhado entregas={d.entregas} campo="valorFreelancer" valor={d.freelancer} titulo={`Freelancer IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
+              {extras && <><TableCell><ValorDetalhado entregas={d.entregas} campo="valorMercado" valor={d.mercado} titulo={`Mercado IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold tabular-nums"><ValorDetalhado entregas={d.entregas} campo="valorMercado" media valor={d.entregas.length ? Math.round((d.mercado / d.entregas.length) * 100) / 100 : null} titulo={`Média por entrega — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell><ValorDetalhado entregas={d.entregas} campo="valorFreelancer" valor={d.freelancer} titulo={`Freelancer IA — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className="font-semibold text-success"><ValorDetalhado entregas={d.entregas} campo="lucro" valor={lucroDoDev(d)} titulo={`Lucro estimado — ${d.devNome}${rotuloMes ? `, ${rotuloMes}` : ""}`} /></TableCell><TableCell className={clt ? "font-semibold text-success tabular-nums" : "tabular-nums"}>{clt ? (clt(d) === null ? "—" : moeda(clt(d))) : moeda(d.clt)}</TableCell></>}
               {acao && <TableCell className="text-right">{acao(d)}</TableCell>}
             </TableRow>
           ))}

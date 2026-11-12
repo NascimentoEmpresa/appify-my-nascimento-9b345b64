@@ -24,6 +24,7 @@ COMO A TELA FUNCIONA (use para explicar, nunca contradiga):
 - O período é um mês: entram só os chamados CONCLUÍDOS naquele mês.
 - "Mercado IA" de um desenvolvedor é a SOMA do valor de mercado (software house) das entregas dele no mês; "Freelancer IA" é a soma do valor freelancer; "Média por entrega" é Mercado ÷ número de entregas.
 - O valor de cada entrega vem da avaliação do gestor (origem "gestor", com a observação explicando o porte) ou, sem avaliação, do parecer da I.A do chamado (origem "ia"). Sem nenhum dos dois, vale R$ 0 (origem "sem valor").
+- "Lucro" de uma entrega = valor de mercado − custo real conosco (horas da equipe interna × hora do salário, R$ 3.138,65 ÷ 220 h); "lucro_total" soma o do mês. Mostra quanto a empresa economizou fazendo dentro de casa.
 - Esses valores são ESTIMATIVAS do que custaria contratar fora; não são economia comprovada e NÃO mudam o pagamento: a bonificação é igual para todos os participantes.
 - A nota individual (0 a 100) pondera os critérios Qualidade, Satisfação, Prazo, Dificuldade e Valor da tarefa pelos pesos do mês; ela é só acompanhamento e não altera a cota.
 

@@ -65,6 +65,7 @@ export function ValorDetalhado({ entregas, campo, titulo, valor, media = false, 
                     <ExternalLink className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-60" />
                   </span>
                 </span>
+                {l.conta && <span className="mt-0.5 block text-[11px] text-muted-foreground">{l.conta}</span>}
                 {l.observacao && <span className="mt-0.5 line-clamp-2 block text-[11px] text-muted-foreground">{l.observacao}</span>}
               </Link>
             </li>
