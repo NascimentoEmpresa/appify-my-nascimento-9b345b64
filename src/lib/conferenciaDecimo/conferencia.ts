@@ -13,8 +13,10 @@
 //        ↘ Devolvido RH (o Financeiro devolve, com motivo)
 //        ↘ Problema (o Financeiro marca, com motivo; continua com ele)
 //
-// O valor o RH digita ou importa da planilha da Senior (lerPlanilhaDecimo,
-// abaixo) — a importação só grava enquanto o contrato está com o RH.
+// O valor o RH digita ou importa da planilha da Senior (linhasDaPlanilha,
+// abaixo; o banco acha o contrato) — a importação só grava enquanto o
+// contrato está com o RH. Contratos: os ATIVOS da Licitação (mig
+// 20261113001000), não mais o CONTRATOS da Senior.
 //
 // DIFERENÇA DE DESENHO EM RELAÇÃO AO PONTO: lá a tabela é aberta e a regra
 // vive só na tela. Aqui a tabela é só leitura e toda escrita passa pelas RPCs
@@ -206,13 +208,35 @@ const PRIORIDADE: Record<string, number> = {
 export const ordemDoStatus = (s: string) => PRIORIDADE[s] ?? 99;
 
 // ── O registro ───────────────────────────────────────────────────────
+/** Uma pessoa ativa ligada ao contrato (rh_ac_ativos, a ligação do Ativos/Contratos). */
+export interface PessoaDecimo {
+  cadastro: string | null;
+  nome: string;
+  cargo: string | null;
+  situacao: string | null;
+  admissao: string | null;
+}
+
+/** O contrato como decimo_contratos() devolve — da LICITAÇÃO, não da Senior (13/11/2026). */
+export interface ContratoDecimo {
+  contrato_id: string;
+  nome: string;
+  cliente: string | null;
+  empresa: string | null;
+  status_contrato: "ativo" | "suspenso" | "encerrado" | string;
+  pessoas: PessoaDecimo[];
+}
+
 export interface LinhaDecimo {
   /** null enquanto ninguém agiu no contrato nesta parcela. */
   id: number | null;
-  contrato_empresa: number;
-  contrato_filial: number;
+  /** Contrato da Licitação (public.contratos). Desde a mig 20261113001000. */
+  contrato_id: string;
   contrato_nome: string | null;
   nome_empresa: string | null;
+  cliente?: string | null;
+  status_contrato?: string;
+  pessoas?: PessoaDecimo[];
   ano: number;
   parcela: Parcela;
   status: StatusDecimo;
@@ -294,13 +318,14 @@ export function codigoDaCelula(v: unknown): number | null {
   return m ? Number(m[1]) : null;
 }
 
-const ehEmpresa =(h: string) => /^(cod(igo)? )?(empresa|emp|numemp|codemp)$/.test(h) || h === "cod empresa" || h === "codigo da empresa";
-const ehFilial  = (h: string) => /^(cod(igo)? )?(filial|fil|codfil)$/.test(h) || h === "codigo da filial";
-const ehQtd     = (h: string) => /^(qtd|quantidade|qtde)( de)?( colaboradores| funcionarios| empregados)?$/.test(h) || h === "colaboradores";
+const ehEmpresa  = (h: string) => /^(cod(igo)? )?(empresa|emp|numemp|codemp)$/.test(h) || h === "codigo da empresa";
+const ehFilial   = (h: string) => /^(cod(igo)? )?(filial|fil|codfil)$/.test(h) || h === "codigo da filial";
+const ehCadastro = (h: string) => /^(cadastro|matricula|numcad|cad|codigo do colaborador|cod colaborador)$/.test(h);
+const ehQtd      = (h: string) => /^(qtd|quantidade|qtde)( de)?( colaboradores| funcionarios| empregados)?$/.test(h) || h === "colaboradores";
 
 /** Ordem de preferência da coluna de valor quando a planilha tem várias. */
 function pesoDoValor(h: string): number {
-  if (!h || ehEmpresa(h) || ehFilial(h) || ehQtd(h)) return 0;
+  if (!h || ehEmpresa(h) || ehFilial(h) || ehCadastro(h) || ehQtd(h)) return 0;
   if (/liquido/.test(h)) return 5;
   if (/(13|decimo)/.test(h) && /(valor|vlr|total)/.test(h)) return 4;
   if (/^(valor|vlr)$/.test(h)) return 3;
@@ -314,6 +339,7 @@ export interface CabecalhoPlanilha {
   colunas: string[];
   colEmpresa: number | null;
   colFilial: number;
+  colCadastro: number | null;
   colQtd: number | null;
   /** Colunas que podem ser o valor, na ordem de preferência. A tela deixa trocar. */
   candidatasValor: number[];
@@ -332,105 +358,89 @@ export function acharCabecalho(linhas: unknown[][]): CabecalhoPlanilha | null {
     const candidatasValor = cols.map((h, j) => [j, pesoDoValor(h)] as const)
       .filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([j]) => j);
     if (!candidatasValor.length) continue;
-    const colEmpresa = cols.findIndex(ehEmpresa);
-    const colQtd = cols.findIndex(ehQtd);
+    const achar = (f: (h: string) => boolean) => { const j = cols.findIndex(f); return j >= 0 ? j : null; };
     return {
       linhaCabecalho: i,
       colunas: (linhas[i] ?? []).map(c => String(c ?? "")),
-      colEmpresa: colEmpresa >= 0 ? colEmpresa : null,
+      colEmpresa: achar(ehEmpresa),
       colFilial,
-      colQtd: colQtd >= 0 ? colQtd : null,
+      colCadastro: achar(ehCadastro),
+      colQtd: achar(ehQtd),
       candidatasValor,
     };
   }
   return null;
 }
 
-export interface ContratoChave { empresa: number; filial: number; nome: string | null }
-
-export interface ResultadoPlanilha {
-  /** Uma linha por contrato, já somada — é o que vai para decimo_importar_valores. */
-  porContrato: { empresa: number; filial: number; nome: string | null; valor: number; qtd: number | null }[];
-  /** Filial que não está no cadastro de contratos ativos. */
-  semContrato: { empresa: number | null; filial: number; valor: number }[];
-  /** Filial sem empresa na planilha que existe em mais de uma empresa. */
-  ambiguas: { filial: number; valor: number }[];
-  linhasLidas: number;
-  linhasIgnoradas: number;
-  total: number;
+/** Uma linha da planilha como vai para decimo_importar_valores. */
+export interface LinhaPlanilhaDecimo {
+  empresa: number | null;
+  filial: number;
+  cadastro: string | null;
+  valor: number;
+  qtd: number | null;
 }
 
-const arred = (n: number) => Math.round(n * 100) / 100;
-
 /**
- * Lê a planilha (linhas cruas, `sheet_to_json(..., { header: 1 })`) e soma o
- * valor por contrato. Serve tanto para a planilha por colaborador (várias
- * linhas por filial — aí a quantidade é o número de linhas) quanto para a já
- * resumida por contrato (uma linha por filial, com ou sem coluna de qtd).
+ * Lê as linhas da planilha (`sheet_to_json(..., { header: 1 })`) SEM somar.
+ *
+ * Desde 13/11/2026 quem acha o contrato é o banco: a lista do 13º é dos
+ * contratos da LICITAÇÃO, e o elo entre a filial/matrícula da Senior e o
+ * contrato da Licitação é o mesmo do RH › Ativos/Contratos (rh_ac_ativos),
+ * que só existe lá. A tela manda as linhas cruas e mostra a prévia que
+ * `decimo_importar_valores(..., p_simular := true)` devolve.
+ *
+ * Fica de fora o que não tem filial ou valor (título, total, linha vazia).
  */
-export function lerPlanilhaDecimo(
+export function linhasDaPlanilha(
   linhas: unknown[][],
   cab: CabecalhoPlanilha,
   colValor: number,
-  contratos: ContratoChave[],
-): ResultadoPlanilha {
-  const porFilial = new Map<number, ContratoChave[]>();
-  for (const c of contratos) porFilial.set(c.filial, [...(porFilial.get(c.filial) ?? []), c]);
-  const achar = (emp: number | null, fil: number) => {
-    const lista = porFilial.get(fil) ?? [];
-    if (emp != null) return { contrato: lista.find(c => c.empresa === emp) ?? null, ambigua: false };
-    if (lista.length > 1) return { contrato: null, ambigua: true };
-    return { contrato: lista[0] ?? null, ambigua: false };
-  };
-
-  const soma = new Map<string, { empresa: number; filial: number; nome: string | null; valor: number; linhas: number; qtd: number | null }>();
-  const semContrato = new Map<string, { empresa: number | null; filial: number; valor: number }>();
-  const ambiguas = new Map<number, { filial: number; valor: number }>();
-  let lidas = 0, ignoradas = 0;
-
+): { linhas: LinhaPlanilhaDecimo[]; ignoradas: number; total: number } {
+  const out: LinhaPlanilhaDecimo[] = [];
+  let ignoradas = 0;
   for (const linha of linhas.slice(cab.linhaCabecalho + 1)) {
-    const fil = codigoDaCelula(linha?.[cab.colFilial]);
+    const filial = codigoDaCelula(linha?.[cab.colFilial]);
     const valor = numeroDaCelula(linha?.[colValor]);
-    if (fil == null || valor == null || valor === 0) { ignoradas++; continue; }
-    const emp = cab.colEmpresa != null ? codigoDaCelula(linha?.[cab.colEmpresa]) : null;
-    lidas++;
-    const { contrato, ambigua } = achar(emp, fil);
-    if (ambigua) {
-      const a = ambiguas.get(fil) ?? { filial: fil, valor: 0 };
-      a.valor = arred(a.valor + valor); ambiguas.set(fil, a); continue;
-    }
-    if (!contrato) {
-      const k = `${emp ?? ""}__${fil}`;
-      const s = semContrato.get(k) ?? { empresa: emp, filial: fil, valor: 0 };
-      s.valor = arred(s.valor + valor); semContrato.set(k, s); continue;
-    }
-    const k = `${contrato.empresa}__${contrato.filial}`;
-    const atual = soma.get(k) ?? { empresa: contrato.empresa, filial: contrato.filial, nome: contrato.nome, valor: 0, linhas: 0, qtd: null };
-    atual.valor = arred(atual.valor + valor);
-    atual.linhas++;
-    if (cab.colQtd != null) {
-      const q = numeroDaCelula(linha?.[cab.colQtd]);
-      if (q != null) atual.qtd = (atual.qtd ?? 0) + q;
-    }
-    soma.set(k, atual);
+    if (filial == null || valor == null || valor === 0) { ignoradas++; continue; }
+    const cad = cab.colCadastro != null ? String(linha?.[cab.colCadastro] ?? "").trim() : "";
+    out.push({
+      empresa: cab.colEmpresa != null ? codigoDaCelula(linha?.[cab.colEmpresa]) : null,
+      filial,
+      cadastro: /^\d+$/.test(cad) ? cad : null,
+      valor: Math.round(valor * 100) / 100,
+      qtd: cab.colQtd != null ? numeroDaCelula(linha?.[cab.colQtd]) : null,
+    });
   }
+  return { linhas: out, ignoradas, total: Math.round(out.reduce((t, l) => t + l.valor * 100, 0)) / 100 };
+}
 
-  // Sem coluna de quantidade: planilha por colaborador (alguma filial repete)
-  // conta as linhas; planilha já resumida (uma linha por filial) não diz.
-  const porColaborador = [...soma.values()].some(s => s.linhas > 1);
-  const porContrato = [...soma.values()]
-    .map(s => ({
-      empresa: s.empresa, filial: s.filial, nome: s.nome, valor: s.valor,
-      qtd: cab.colQtd != null ? s.qtd : porColaborador ? s.linhas : null,
-    }))
-    .sort((a, b) => String(a.nome ?? "").localeCompare(String(b.nome ?? "")));
+// ── Situação das pessoas do contrato ─────────────────────────────────
+/** "Trabalhando" conta como em atividade; o resto (Auxílio Doença, Férias…) é situação a olhar. */
+export const emAtividade = (situacao?: string | null) => /^trabalhando$/i.test(String(situacao ?? "").trim());
 
-  return {
-    porContrato,
-    semContrato: [...semContrato.values()],
-    ambiguas: [...ambiguas.values()],
-    linhasLidas: lidas,
-    linhasIgnoradas: ignoradas,
-    total: arred(porContrato.reduce((t, c) => t + c.valor, 0)),
-  };
+/** [{ situacao, n }] — Trabalhando primeiro, depois do maior para o menor. */
+export function resumoSituacoes(pessoas: PessoaDecimo[]): { situacao: string; n: number }[] {
+  const m = new Map<string, number>();
+  for (const p of pessoas) {
+    const s = String(p.situacao ?? "").trim() || "Sem situação";
+    m.set(s, (m.get(s) ?? 0) + 1);
+  }
+  return [...m.entries()].map(([situacao, n]) => ({ situacao, n }))
+    .sort((a, b) => Number(emAtividade(b.situacao)) - Number(emAtividade(a.situacao)) || b.n - a.n || a.situacao.localeCompare(b.situacao));
+}
+
+/**
+ * O alerta do contrato na lista. Pedido do Pablo: "tem uns que tem só uma
+ * pessoa com aux doença, aí tem que mostrar essa situação". Sem ninguém
+ * trabalhando o alerta é forte; com parte afastada, informativo.
+ */
+export function alertaDoContrato(pessoas: PessoaDecimo[]): { nivel: "forte" | "info"; texto: string } | null {
+  if (!pessoas.length) return { nivel: "forte", texto: "Nenhuma pessoa ativa ligada ao contrato" };
+  const fora = resumoSituacoes(pessoas).filter(s => !emAtividade(s.situacao));
+  if (!fora.length) return null;
+  const texto = fora.map(s => `${s.n} em ${s.situacao}`).join(" · ");
+  return pessoas.every(p => !emAtividade(p.situacao))
+    ? { nivel: "forte", texto: `Ninguém trabalhando: ${texto}` }
+    : { nivel: "info", texto };
 }

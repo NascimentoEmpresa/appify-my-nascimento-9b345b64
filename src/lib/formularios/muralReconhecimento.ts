@@ -181,6 +181,26 @@ export function rankingMural<T extends Pick<LinhaMural, "colaborador" | "setor" 
 }
 
 /**
+ * Todos os recados de UMA pessoa, mês a mês (12/11/2026, Pablo: "no mural
+ * inicial ao clicar no nome de uma pessoa deve aparecer todos comentários
+ * bons que apareceram pra ela"). Recebe os meses que o cartão já tem (só o
+ * publicado) e devolve, do mês mais novo ao mais velho, os recados dela —
+ * mês sem recado dela fica de fora. Nome comparado sem caixa nem espaços nas
+ * pontas, como no ranking.
+ */
+export function recadosDaPessoa<T extends Pick<LinhaMural, "colaborador">>(
+  meses: { mes: string; itens: T[] }[],
+  colaborador: string,
+): { mes: string; itens: T[] }[] {
+  const alvo = String(colaborador ?? "").trim().toUpperCase();
+  if (!alvo) return [];
+  return [...meses]
+    .sort((a, b) => b.mes.localeCompare(a.mes))
+    .map(({ mes, itens }) => ({ mes, itens: itens.filter((i) => String(i.colaborador ?? "").trim().toUpperCase() === alvo) }))
+    .filter((b) => b.itens.length > 0);
+}
+
+/**
  * PRÉVIA do cartão do Início (06/11/2026, Pablo: "tem que ter uma prévia pra
  * ver como fica antes de ser publicado"): o que JÁ está no mural mais o que
  * está para ser liberado, nunca o recusado. Um recado entra uma vez só,

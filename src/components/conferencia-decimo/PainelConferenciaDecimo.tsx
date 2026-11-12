@@ -12,13 +12,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Banknote, CheckCircle2, ClipboardCheck, Clock,
-  DollarSign, FileSpreadsheet, History, Loader2, PlayCircle, Search, Undo2, type LucideIcon,
+  DollarSign, FileSpreadsheet, History, Loader2, PlayCircle, Search, Undo2, Users, type LucideIcon,
 } from "lucide-react";
 import {
   ACOES_PRINCIPAIS, MENU, STATUS_INICIAL, STATUS_TODOS, TABELA, TABELA_EVENTOS,
   competenciaPadrao, contaAvanco, corDoStatus, explicaStatus, faltaPara, fmtBRL, fmtDataHora,
-  numeroDaCelula, ordemDoStatus, pct, podeAgir, prazoDaParcela, rotuloParcela,
-  type Acao, type EventoDecimo, type LinhaDecimo, type Modulo, type Parcela,
+  alertaDoContrato, emAtividade, numeroDaCelula, ordemDoStatus, pct, podeAgir, prazoDaParcela,
+  resumoSituacoes, rotuloParcela,
+  type Acao, type ContratoDecimo, type EventoDecimo, type LinhaDecimo, type Modulo, type Parcela,
+  type PessoaDecimo,
 } from "@/lib/conferenciaDecimo/conferencia";
 import { ImportarPlanilhaDecimo } from "./ImportarPlanilhaDecimo";
 import { toast } from "sonner";
@@ -28,24 +30,21 @@ const sb = supabase as unknown as SupabaseClient;
 
 /**
  * Conferência de 13º — clone da Conferência de Ponto sem Operacional nem
- * encarregados (12/11/2026). A lista junta os CONTRATOS ativos (cadastro) com
- * o andamento da parcela em SISTEMA_CONFERENCIA_DECIMO; contrato sem linha
- * aparece "Pendente RH" e a linha nasce na primeira ação.
+ * encarregados (12/11/2026). A lista junta os contratos com o andamento da
+ * parcela em SISTEMA_CONFERENCIA_DECIMO; contrato sem linha aparece
+ * "Pendente RH" e a linha nasce na primeira ação.
+ *
+ * 13/11/2026 (mig 20261113001000): os contratos vinham de public."CONTRATOS"
+ * (filiais da Senior, ATIVO = 'SIM') e o Pablo achou inativos na lista —
+ * "tem que puxar todos contratos da licitação, lá eles controlam as situações
+ * dos contratos". Agora vêm de decimo_contratos(): os ATIVOS da Licitação (e
+ * os que já têm linha na parcela), cada um com as pessoas e a situação delas
+ * ("tem uns que tem só uma pessoa com aux doença").
  *
  * Diferente do ponto, nada aqui grava direto na tabela: toda ação passa por
  * `decimo_agir` / `decimo_importar_valores`, que conferem chave e transição
  * no banco (mig 20261112220000).
  */
-
-const chaveDoContrato = (l: { contrato_empresa: number; contrato_filial: number }) =>
-  `${l.contrato_empresa}__${l.contrato_filial}`;
-
-interface ContratoCad {
-  Empresa: number;
-  Filial: number;
-  "NOME EMPRESA": string | null;
-  "NOME CONTRATO": string | null;
-}
 
 function Kpi({ titulo, valor, sub, icone: Icone, cor }: {
   titulo: string; valor: string; sub?: string; icone: LucideIcon; cor: string;
@@ -86,11 +85,12 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
   const inicial = useMemo(() => competenciaPadrao(), []);
   const [ano, setAno] = useState(inicial.ano);
   const [parcela, setParcela] = useState<Parcela>(inicial.parcela);
-  const [contratos, setContratos] = useState<ContratoCad[]>([]);
+  const [contratos, setContratos] = useState<ContratoDecimo[]>([]);
   const [linhas, setLinhas] = useState<LinhaDecimo[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("");
+  const [fSituacao, setFSituacao] = useState<"" | "alerta">("");
   const [aberta, setAberta] = useState<LinhaDecimo | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [importando, setImportando] = useState(false);
@@ -104,30 +104,28 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
   const carregar = useCallback(async () => {
     setCarregando(true);
     const [ct, cf] = await Promise.all([
-      sb.from("CONTRATOS").select('"Empresa","Filial","NOME EMPRESA","NOME CONTRATO"').eq("ATIVO", "SIM"),
+      sb.rpc("decimo_contratos", { p_ano: ano, p_parcela: parcela }),
       sb.from(TABELA).select("*").eq("ano", ano).eq("parcela", parcela),
     ]);
     if (ct.error) toast.error("Erro ao carregar os contratos: " + ct.error.message);
     if (cf.error) toast.error("Erro ao carregar o andamento: " + cf.error.message);
-    setContratos(ct.data ?? []);
-    setLinhas(cf.data ?? []);
+    setContratos((ct.data as ContratoDecimo[] | null) ?? []);
+    setLinhas((cf.data as LinhaDecimo[] | null) ?? []);
     setCarregando(false);
   }, [ano, parcela]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // decimo_contratos já traz os contratos que têm linha nesta parcela, mesmo
+  // encerrados depois — o 13º deles ainda pode estar para pagar.
   const juntas: LinhaDecimo[] = useMemo(() => {
-    const idx = new Map(linhas.map(l => [chaveDoContrato(l), l]));
-    const nomeEmpresa = new Map(contratos.map(c => [`${c.Empresa}__${c.Filial}`, c["NOME EMPRESA"]]));
-    const vistas = new Set<string>();
+    const idx = new Map(linhas.filter(l => l.contrato_id).map(l => [l.contrato_id, l]));
     const out: LinhaDecimo[] = contratos.map(c => {
-      const k = `${c.Empresa}__${c.Filial}`;
-      vistas.add(k);
-      const achada = idx.get(k);
-      if (achada) return { ...achada, nome_empresa: c["NOME EMPRESA"] };
+      const extra = { nome_empresa: c.empresa, cliente: c.cliente, status_contrato: c.status_contrato, pessoas: c.pessoas ?? [] };
+      const achada = idx.get(c.contrato_id);
+      if (achada) return { ...achada, contrato_nome: achada.contrato_nome ?? c.nome, ...extra };
       return {
-        id: null, contrato_empresa: c.Empresa, contrato_filial: c.Filial,
-        contrato_nome: c["NOME CONTRATO"], nome_empresa: c["NOME EMPRESA"],
+        id: null, contrato_id: c.contrato_id, contrato_nome: c.nome, ...extra,
         ano, parcela, status: STATUS_INICIAL,
         valor: null, qtd_colaboradores: null, valor_origem: null, planilha_nome: null,
         devolucao_motivo: null,
@@ -136,29 +134,25 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
         pago_por: null, pago_em: null, atualizado_em: null, atualizado_por: null,
       };
     });
-    // Contrato desativado depois de entrar no fluxo continua aparecendo: o
-    // 13º dele ainda pode estar para pagar.
-    for (const l of linhas) {
-      if (!vistas.has(chaveDoContrato(l))) out.push({ ...l, nome_empresa: nomeEmpresa.get(chaveDoContrato(l)) ?? null });
-    }
     return out.sort((a, b) =>
       ordemDoStatus(a.status) - ordemDoStatus(b.status) ||
       String(a.contrato_nome ?? "").localeCompare(String(b.contrato_nome ?? "")));
   }, [contratos, linhas, ano, parcela]);
 
   useEffect(() => {
-    setAberta(a => (a ? juntas.find(j => chaveDoContrato(j) === chaveDoContrato(a)) ?? a : a));
+    setAberta(a => (a ? juntas.find(j => j.contrato_id === a.contrato_id) ?? a : a));
   }, [juntas]);
 
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return juntas.filter(l => {
       if (fStatus && l.status !== fStatus) return false;
+      if (fSituacao === "alerta" && !alertaDoContrato(l.pessoas ?? [])) return false;
       if (!q) return true;
-      return [l.contrato_nome, l.nome_empresa, String(l.contrato_filial)]
+      return [l.contrato_nome, l.nome_empresa, l.cliente, ...(l.pessoas ?? []).map(p => p.nome)]
         .some(v => String(v ?? "").toLowerCase().includes(q));
     });
-  }, [juntas, busca, fStatus]);
+  }, [juntas, busca, fStatus, fSituacao]);
 
   const avanco = useMemo(() => contaAvanco(juntas.map(l => l.status)), [juntas]);
   const { totalLiberado, totalPago } = useMemo(() => {
@@ -181,7 +175,7 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
     }
     setSalvando(true);
     const { data, error } = await sb.rpc("decimo_agir", {
-      p_empresa: linha.contrato_empresa, p_filial: linha.contrato_filial,
+      p_contrato_id: linha.contrato_id,
       p_ano: ano, p_parcela: parcela, p_acao: acao,
       p_valor: extra.valor ?? null, p_observacao: extra.observacao ?? null,
       p_status_esperado: linha.status,
@@ -267,9 +261,13 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
       <div className="flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Buscar por contrato, empresa ou filial…"
+          <Input className="pl-9" placeholder="Buscar por contrato, cliente, empresa ou colaborador…"
                  value={busca} onChange={e => setBusca(e.target.value)} />
         </div>
+        <Button variant={fSituacao ? "default" : "outline"} onClick={() => setFSituacao(v => (v ? "" : "alerta"))}
+                title="Contratos com gente afastada, de férias ou sem ninguém trabalhando">
+          <AlertTriangle className="mr-2 h-4 w-4" /> Com situação a olhar
+        </Button>
         <Select value={fStatus || "todos"} onValueChange={v => setFStatus(v === "todos" ? "" : v)}>
           <SelectTrigger className="sm:w-60"><SelectValue placeholder="Todos os status" /></SelectTrigger>
           <SelectContent>
@@ -296,7 +294,7 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
             </div>
           ) : filtradas.length === 0 ? (
             <p className="py-16 text-center text-muted-foreground">
-              {juntas.length === 0 ? "Nenhum contrato ativo no cadastro." : "Nada bate com o filtro atual."}
+              {juntas.length === 0 ? "Nenhum contrato ativo na Licitação." : "Nada bate com o filtro atual."}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -307,7 +305,7 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
                     <TableHead className="hidden lg:table-cell">Empresa</TableHead>
                     <TableHead>Status</TableHead>
                     {veValores && <TableHead className="text-right">Valor</TableHead>}
-                    <TableHead className="hidden md:table-cell text-right">Colaboradores</TableHead>
+                    <TableHead className="hidden md:table-cell">Pessoas e situação</TableHead>
                     <TableHead className="hidden md:table-cell text-right">Atualizado</TableHead>
                     <TableHead className="w-24" />
                   </TableRow>
@@ -316,10 +314,17 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
                   {filtradas.map(l => {
                     const temAcao = ACOES_PRINCIPAIS.some(a => podeAgir(l.status, a, pode, modulo));
                     return (
-                      <TableRow key={chaveDoContrato(l)} className="cursor-pointer" onClick={() => setAberta(l)}>
+                      <TableRow key={l.contrato_id} className="cursor-pointer" onClick={() => setAberta(l)}>
                         <TableCell>
                           <div className="font-medium">{l.contrato_nome || "—"}</div>
-                          <div className="text-xs text-muted-foreground">Filial {l.contrato_filial}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {l.cliente || "—"}
+                            {l.status_contrato && l.status_contrato !== "ativo" && (
+                              <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
+                                contrato {l.status_contrato}
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">{l.nome_empresa || "—"}</TableCell>
                         <TableCell>
@@ -335,8 +340,8 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
                             )}
                           </TableCell>
                         )}
-                        <TableCell className="hidden md:table-cell text-right tabular-nums text-sm">
-                          {l.qtd_colaboradores ?? "—"}
+                        <TableCell className="hidden md:table-cell">
+                          <ResumoPessoas pessoas={l.pessoas ?? []} />
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-right text-xs text-muted-foreground">
                           {fmtDataHora(l.atualizado_em)}
@@ -363,7 +368,6 @@ export function PainelConferenciaDecimo({ modulo }: { modulo: Modulo }) {
       {importando && (
         <ImportarPlanilhaDecimo
           ano={ano} parcela={parcela}
-          contratos={contratos.map(c => ({ empresa: c.Empresa, filial: c.Filial, nome: c["NOME CONTRATO"] }))}
           onFechar={() => setImportando(false)}
           onImportou={() => { setImportando(false); carregar(); }}
         />
@@ -440,17 +444,20 @@ function DetalheContrato({ linha, pode, modulo, salvando, veValores, onFechar, o
 
         <div className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
           <Info rotulo="Empresa" valor={l.nome_empresa} />
-          <Info rotulo="Filial" valor={String(l.contrato_filial)} />
+          <Info rotulo="Cliente" valor={l.cliente ?? null} />
+          <Info rotulo="Contrato na Licitação" valor={l.status_contrato ?? null} />
           {veValores && (
             <Info rotulo="Valor do 13º"
                   valor={l.valor != null
                     ? `${fmtBRL(l.valor)}${l.valor_origem === "planilha" ? ` · planilha${l.planilha_nome ? ` (${l.planilha_nome})` : ""}` : " · digitado"}`
                     : null} />
           )}
-          <Info rotulo="Colaboradores" valor={l.qtd_colaboradores != null ? String(l.qtd_colaboradores) : null} />
+          <Info rotulo="Colaboradores na planilha" valor={l.qtd_colaboradores != null ? String(l.qtd_colaboradores) : null} />
           <Info rotulo="Última atualização"
                 valor={l.atualizado_por ? `${l.atualizado_por} · ${fmtDataHora(l.atualizado_em)}` : null} />
         </div>
+
+        <PessoasDoContrato pessoas={l.pessoas ?? []} />
 
         {l.devolucao_motivo && (l.status === "Devolvido RH" || l.status === "Problema") && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
@@ -566,6 +573,95 @@ function DetalheContrato({ linha, pode, modulo, salvando, veValores, onFechar, o
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Lista: "3 pessoas · 1 em Auxílio Doença" — vermelho quando ninguém trabalha. */
+function ResumoPessoas({ pessoas }: { pessoas: PessoaDecimo[] }) {
+  const alerta = alertaDoContrato(pessoas);
+  return (
+    <div className="text-sm">
+      <span className="tabular-nums">{pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"}</span>
+      {alerta && (
+        <div className={cn("mt-0.5 inline-flex max-w-[260px] items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium",
+                           alerta.nivel === "forte" ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-800")}
+             title={alerta.texto}>
+          <AlertTriangle className="h-3 w-3 shrink-0" /> <span className="truncate">{alerta.texto}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Detalhe: as pessoas ativas do contrato e a situação de cada uma, pela
+ * mesma ligação do RH › Ativos/Contratos. "Tem uns que tem só uma pessoa com
+ * aux doença, aí tem que mostrar essa situação em detalhes" (Pablo, 13/11).
+ */
+function PessoasDoContrato({ pessoas }: { pessoas: PessoaDecimo[] }) {
+  const resumo = resumoSituacoes(pessoas);
+  const alerta = alertaDoContrato(pessoas);
+  return (
+    <div className="rounded-lg border p-4">
+      <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+        <Users className="h-4 w-4" /> Pessoas no contrato ({pessoas.length})
+      </h3>
+      {alerta && (
+        <p className={cn("mb-2 rounded-md px-3 py-2 text-sm",
+                         alerta.nivel === "forte" ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800")}>
+          {alerta.texto}
+        </p>
+      )}
+      {resumo.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {resumo.map(s => (
+            <span key={s.situacao}
+                  className={cn("rounded-full border px-2 py-0.5 text-xs font-medium",
+                                emAtividade(s.situacao) ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800")}>
+              {s.situacao}: {s.n}
+            </span>
+          ))}
+        </div>
+      )}
+      {pessoas.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nenhuma pessoa ativa da Senior ligada a este contrato (a ligação é a do RH › Ativos/Contratos).
+        </p>
+      ) : (
+        <div className="max-h-64 overflow-y-auto rounded-md border">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-muted text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="p-2 text-left">Nome</th>
+                <th className="hidden p-2 text-left sm:table-cell">Cargo</th>
+                <th className="p-2 text-left">Situação</th>
+                <th className="hidden p-2 text-right sm:table-cell">Admissão</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pessoas.map((p, i) => (
+                <tr key={`${p.cadastro ?? ""}-${p.nome}-${i}`} className="border-t">
+                  <td className="p-2">
+                    {p.nome}
+                    {p.cadastro && <span className="ml-1 text-xs text-muted-foreground">· {p.cadastro}</span>}
+                  </td>
+                  <td className="hidden p-2 text-muted-foreground sm:table-cell">{p.cargo || "—"}</td>
+                  <td className={cn("p-2", !emAtividade(p.situacao) && "font-medium text-amber-700")}>{p.situacao || "—"}</td>
+                  <td className="hidden p-2 text-right tabular-nums text-muted-foreground sm:table-cell">{fmtData(p.admissao)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Admissão vem como texto da Senior: ISO ou DD/MM/AAAA (os dois convivem). */
+function fmtData(s?: string | null) {
+  const t = String(s ?? "").trim();
+  const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : t || "—";
 }
 
 function Info({ rotulo, valor }: { rotulo: string; valor?: string | null }) {
