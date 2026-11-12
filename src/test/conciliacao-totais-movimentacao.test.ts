@@ -45,7 +45,7 @@ const todos = { dataDe: "", dataAte: "", empresaId: null, bancoId: null };
 describe("SIS-2026-0736 — soma de entradas e saídas do período", () => {
   it("separa entradas de saídas", () => {
     const r = totaisDeMovimentacao([l({ tipo: "entrada", valor: 50.5 }), l({ valor: 30 }), l({ valor: 20 })], todos, hoje);
-    expect(r).toEqual({ entradas: 50.5, saidas: 50, lancamentos: 3 });
+    expect(r).toMatchObject({ entradas: 50.5, saidas: 50, lancamentos: 3 });
   });
 
   it("respeita período, empresa e banco", () => {
@@ -62,7 +62,7 @@ describe("SIS-2026-0736 — soma de entradas e saídas do período", () => {
 
   it("rateio é uma linha só pelo total, na empresa da primeira fatia (como o Fluxo)", () => {
     const rateio = [l({ despesa_id: "r", empresa_id: "HAGG", valor: 742.6 }), l({ despesa_id: "r", empresa_id: "NH", valor: 79 })];
-    expect(totaisDeMovimentacao(rateio, { ...todos, empresaId: "HAGG" }, hoje)).toEqual({ entradas: 0, saidas: 821.6, lancamentos: 1 });
+    expect(totaisDeMovimentacao(rateio, { ...todos, empresaId: "HAGG" }, hoje)).toMatchObject({ entradas: 0, saidas: 821.6, lancamentos: 1 });
     expect(totaisDeMovimentacao(rateio, { ...todos, empresaId: "NH" }, hoje).saidas).toBe(0);
   });
 
@@ -102,5 +102,33 @@ describe("Saldo final do extrato com data posterior ao período (AGPS · Banrisu
   it("no dashboard o saldo de outra data não é comparado: fica pendente, sem diferença, e sai dos totais", () => {
     const r = totaisDeSaldos([S({ saldoExtrato: 111.16, saldoExtratoDeOutraData: "2026-02-04", diferenca: null, confere: "pendente" })]);
     expect(r).toMatchObject({ grupos: 0, semConferencia: 1 });
+  });
+});
+
+describe("SIS-2026-0857 — saldo anterior fora da movimentação", () => {
+  const saldo = (tipo: "entrada" | "saida", valor: number, o: Partial<LinhaParaTotais> = {}) => l({ tipo, valor, classificacao_nome: "SALDO ANTERIOR", ...o });
+
+  it("entradas = movimentação (sem o saldo anterior); o saldo anterior vem à parte e o total fecha com o do Fluxo", () => {
+    const linhas = [l({ tipo: "entrada", valor: 35_805_940.67 }), saldo("entrada", 4_307_442.06)];
+    const r = totaisDeMovimentacao(linhas, todos, hoje);
+    expect(r.entradas).toBe(35_805_940.67);
+    expect(r.saldoAnterior).toEqual({ entradas: 4_307_442.06, saidas: 0 });
+    expect(r.totalEntradas).toBe(40_113_382.73);
+  });
+
+  it("a mesma regra vale para saídas", () => {
+    const r = totaisDeMovimentacao([l({ valor: 100 }), saldo("saida", 30)], todos, hoje);
+    expect(r).toMatchObject({ saidas: 100, totalSaidas: 130, saldoAnterior: { entradas: 0, saidas: 30 } });
+  });
+
+  it("sem saldo anterior, movimentação e total são iguais", () => {
+    const r = totaisDeMovimentacao([l({ tipo: "entrada", valor: 10 })], todos, hoje);
+    expect(r).toMatchObject({ entradas: 10, totalEntradas: 10, saldoAnterior: { entradas: 0, saidas: 0 } });
+  });
+
+  it("o saldo anterior respeita os mesmos filtros (período, empresa, banco) e ainda não aconteceu = fora", () => {
+    const linhas = [saldo("entrada", 50, { empresa_id: "B" }), saldo("entrada", 70, { data_pagamento: "2026-12-01" }), saldo("entrada", 5)];
+    expect(totaisDeMovimentacao(linhas, { ...todos, empresaId: "B" }, hoje).saldoAnterior.entradas).toBe(50);
+    expect(totaisDeMovimentacao(linhas, todos, hoje).saldoAnterior.entradas).toBe(55);
   });
 });
