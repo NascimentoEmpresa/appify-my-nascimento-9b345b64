@@ -230,6 +230,22 @@ nova solicitação/DPS. Preservar a tentativa rejeitada e não retransmiti-la.
 O ensaio desta correção usa XML e assinaturas locais, sem criar pedido nem
 transmitir outra DPS fiscal.
 
+## Alíquota parametrizada e rejeição P3070
+
+Na DPS 3 de produção, o código municipal 8111700 foi informado e o provedor
+retornou P3070, vedando a alíquota explícita no cenário declarado: não optante,
+regime especial nenhum e municípios de emissão, prestação e tomador em Triunfo.
+O gerador passa a omitir somente `pAliq` nessa combinação local em produção.
+O XSD nacional declara o campo opcional e informa que a alíquota do município
+participante é fornecida pelo sistema. Homologação, Simples Nacional e cenários
+com prestação ou tomador fora de Triunfo mantêm o comportamento anterior.
+
+A alíquota de conferência de 5%, o ISS de R$ 75,00 e o líquido de R$ 1.188,00
+permanecem no snapshot. O retorno oficial continua sendo confrontado com os
+valores salvos; uma divergência não é aceita automaticamente. A DPS 3 permanece
+rejeitada no histórico. Após publicar o ajuste, o operador deve revisar e
+confirmar uma nova solicitação; não zerar os valores para contornar a rejeição.
+
 ## Confirmações antes de habilitar
 
 - A documentação pública do provedor e o teste realizado confirmam
