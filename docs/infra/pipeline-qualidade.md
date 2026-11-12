@@ -79,9 +79,9 @@ gastos baixando 21,1 MB de fontes do Ubuntu no `install --with-deps`; instalar
 os dois pacotes npm levou só 3s. Na main seguinte (run 42317145891), o mesmo
 job levou 6min20s: a instalação do sistema era também uma fonte de oscilação.
 
-O QA agora faz uma única build com a API falsa (`qa-preparar`), compartilha
-`dist` e distribui todas as rotas em **três fatias**, com quatro páginas por
-runner (`qa-telas`). A espera para a tela assentar e o `clock.runFor` de dez
+Desde essa otimização, o QA faz uma única build com a API falsa (`qa-preparar`),
+compartilha `dist` e distribui todas as rotas entre runners (`qa-telas`).
+A espera para a tela assentar e o `clock.runFor` de dez
 minutos continuam iguais. Mais runners reduzem a espera do desenvolvedor;
 há custo adicional de inicialização, cache e transferência de artefatos.
 Não é uma redução garantida de minutos totais de runner.
@@ -95,7 +95,7 @@ Se a imagem do runner perder uma biblioteca necessária, o lançamento do
 navegador falha e o check reprova; não há fallback para pular testes.
 
 O check obrigatório continua se chamando **`qa-requisicoes`**. Ele exige
-preparação e três fatias bem-sucedidas, confere se cada rota apareceu
+preparação e todas as fatias bem-sucedidas, confere se cada rota apareceu
 exatamente na fatia esperada e só então gera o artefato consolidado
 `orcamento-requisicoes`. Falha, cancelamento, fatia ausente, rota repetida ou
 resultado incompleto reprovam. O baseline só é publicado na main depois
@@ -107,6 +107,31 @@ próprio workflow, em `infra/qa/`, em `public/` ou na lista de tabelas grandes
 também dispara o QA completo, para a otimização não ficar sem validação.
 `node --test infra/qa/fatias.test.mjs` prova a cobertura e as rejeições da
 consolidação, sem precisar abrir o navegador.
+
+### Tempo do QA — 12/11/2026
+
+Nas cinco últimas PRs mergeadas no momento da análise, o tempo de Qualidade
+antes do merge (criação até conclusão do workflow) foi:
+
+| PR | Workflow Qualidade | Maior tempo de varredura em uma fatia |
+|---|---:|---:|
+| [#1216](https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/actions/runs/43225200616) | 4min26s | 2min30s |
+| [#1225](https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/actions/runs/43222687786) | 37s | dispensada pelo filtro existente |
+| [#1217](https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/actions/runs/43218404079) | 4min40s | 3min03s |
+| [#1224](https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/actions/runs/43216970206) | 4min39s | 3min03s |
+| [#1223](https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/actions/runs/43212459783) | 5min08s | 3min04s |
+
+Nas quatro execuções com varredura, o Chromium levou 0–1s para preparar com
+cache, a build levou 42–55s e `migracao-roda` terminou em 20–36s, em paralelo.
+O gargalo restante era o tempo para abrir todas as telas na fatia mais lenta.
+
+A matriz passou de três para **seis fatias**, com quatro páginas por runner.
+Cada job recebe seu índice e o tamanho real da matriz (`strategy.job-total`),
+então o total das fatias não precisa ser repetido na linha de comando. A
+consolidação ainda exige todas as rotas uma única vez. O mesmo build, navegador,
+relógio, baseline e critérios de reprovação são usados em cada tela. Isso
+reduz a espera quando há runners livres; em períodos de concorrência alta,
+a fila de runners pode limitar o ganho.
 
 ## 3. Obrigatório desde 04/11/2026 — FEITO
 
