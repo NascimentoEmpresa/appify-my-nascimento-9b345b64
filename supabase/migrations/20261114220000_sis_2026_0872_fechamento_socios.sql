@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS public.fechamento_socio_competencia_socio (
   complemento_pago numeric(16,2) NOT NULL DEFAULT 0,
   PRIMARY KEY (competencia, socio_id)
 );
+-- socio_id é FK e não é a 1ª coluna da PK: sem este índice, todo JOIN por ele e todo DELETE em fechamento_socio varrem a tabela inteira (guardião de desempenho M2)
+CREATE INDEX IF NOT EXISTS fechamento_socio_competencia_socio_socio_id_idx ON public.fechamento_socio_competencia_socio (socio_id);
 
 ALTER TABLE public.fechamento_socio ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fechamento_socio_percentual ENABLE ROW LEVEL SECURITY;
