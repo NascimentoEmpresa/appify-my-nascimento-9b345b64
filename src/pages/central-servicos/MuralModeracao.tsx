@@ -258,7 +258,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               </div>
               <ul style={{ fontSize: 11.5, opacity: .9, margin: "6px 0 0", paddingLeft: 16, lineHeight: 1.5 }}>
                 <li><b>Ranking:</b> do 1º ao último pela quantidade de comentários positivos no mês; empate vai para a nota média.</li>
-                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e, por mês, você escolhe quem vê: <b>👥 todos veem os comentários bons</b> ou <b>🔒 cada um vê só os seus</b> (ao lado do mês e na confirmação de publicar). <b>🗑 Remover completamente mês do mural</b> (ao lado do mês) tira o mês inteiro do Início na hora; <b>⤺ Tirar do Início</b> (em cada pessoa) tira só os dela. O que sai volta para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
+                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e, por mês, você escolhe quem vê: <b>👥 todos veem os comentários bons</b> ou <b>🔒 cada um vê só os seus</b> (ao lado do mês e na confirmação de publicar). <b>🗑 Tirar mês do Início</b> (ao lado do mês) tira o mês inteiro do Início na hora; <b>⤺ Tirar do Início</b> (em cada pessoa) tira só os dela. O que sai volta para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
                 <li><b>Triagem por IA:</b> comentários que não cabem num mural público (comparação com o líder, crítica a terceiros, assunto pessoal…) já vêm <b>desabilitados</b>; habilite se quiser enviar.</li>
               </ul>
             </div>
@@ -281,13 +281,19 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               escolhido nas setas ao lado. Antes isso era o "Tirar do Início" do
               rodapé, fácil de não ver. Os comentários voltam para Pendente
               (dá para publicar de novo, com as duas confirmações). */}
-          {contagem.liberado > 0 && (
-            <button disabled={ocupado} onClick={() => setTirar({ lista: itens.filter((i) => i.status === "liberado"), mesInteiro: true })}
-              title={`Tirar do cartão do Início todos os ${contagem.liberado} comentários publicados de ${MESES_CAP(mes)}`}
-              style={{ ...btn("#fff", "#b91c1c", "1px solid #fecaca"), textTransform: "uppercase", fontSize: 11.5 }}>
-              🗑 Remover completamente mês do mural
-            </button>
-          )}
+          {/* 14/11/2026 (Pablo: "não tem botão de tirar do início"): o botão
+              sumia justamente quando o mês não tinha nada publicado, e parecia
+              que não existia. Agora fica sempre à vista, com a contagem;
+              desabilitado só quando não há o que tirar daquele mês. */}
+          <button disabled={ocupado || contagem.liberado === 0}
+            onClick={() => setTirar({ lista: itens.filter((i) => i.status === "liberado"), mesInteiro: true })}
+            title={contagem.liberado > 0
+              ? `Tirar do cartão do Início todos os ${contagem.liberado} comentários publicados de ${MESES_CAP(mes)}`
+              : `${MESES_CAP(mes)} não tem nada publicado no Início — nada para tirar`}
+            style={{ ...btn("#fff", "#b91c1c", "1px solid #fecaca"), textTransform: "uppercase", fontSize: 11.5,
+                     ...(contagem.liberado === 0 ? { opacity: 0.45, cursor: "not-allowed" } : {}) }}>
+            🗑 Tirar mês do Início ({contagem.liberado})
+          </button>
           {modoDisponivel && (
             <SeletorModo modo={modoAtual} desabilitado={ocupado} onTrocar={trocarModo} compacto />
           )}
