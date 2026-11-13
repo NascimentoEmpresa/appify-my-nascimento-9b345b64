@@ -7,12 +7,12 @@ import {
   conferirContrato, contratoCompleto, pendenciasDoContrato,
   conferirQuadroComContrato,
 } from "@/lib/licitacoes/quadroPostos";
-import { somaDiasUteis, hojeIso } from "@/lib/recrutamento/vagaRegras";
+import { somaDiasCorridos, hojeIso } from "@/lib/recrutamento/vagaRegras";
 
-/** Uma data que passa no prazo de 7 dias úteis, contada de hoje. */
-const dataOk = () => somaDiasUteis(hojeIso(), 10);
+/** Uma data que passa no prazo de 3 dias corridos, contada de hoje. */
+const dataOk = () => somaDiasCorridos(hojeIso(), 10);
 /** Uma data que NÃO passa (amanhã). */
-const dataCurta = () => somaDiasUteis(hojeIso(), 1);
+const dataCurta = () => somaDiasCorridos(hojeIso(), 1);
 
 const linha = (p: Partial<LinhaQuadroForm> = {}): LinhaQuadroForm => ({
   ...LINHA_VAZIA,
@@ -119,7 +119,7 @@ describe("faltamNaLinha", () => {
   });
 });
 
-describe("prazo de 7 dias úteis — a mesma regra do guard da vaga", () => {
+describe("prazo de 3 dias corridos — a mesma regra do guard da vaga", () => {
   it("aceita data com folga", () => {
     expect(prazoSuficiente(dataOk())).toBe(true);
   });
@@ -132,7 +132,7 @@ describe("prazo de 7 dias úteis — a mesma regra do guard da vaga", () => {
     const e = erroDaLinha(linha({ data_inicio_prevista: dataCurta() }));
     expect(e).toContain("BLOCO CIRURGICO");
     expect(e).toContain("SERVENTE DE LIMPEZA");
-    expect(e).toContain("dias úteis");
+    expect(e).toContain("3 dias de antecedência");
   });
 
   // Posto declarado no contrato mas que não abre vaga nesta leva não tem
