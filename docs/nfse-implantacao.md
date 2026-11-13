@@ -374,6 +374,47 @@ No diálogo de conferência de uma preparação enviada ao Financeiro:
    e a consulta de resultado podem ocorrer em ciclos diferentes.
 4. Baixar XML/PDF oficiais quando disponíveis, mediante permissão de exportar.
 
+### Data de execução e competência fiscal
+
+Em **Preparar emissão**, no grupo **Prestador e documento**, preencher
+**Data de execução do serviço / competência da NFS-e**. O campo começa com
+a competência salva da preparação e permite escolher o dia completo; por
+exemplo, selecionar **31/10/2026** envia `dCompet=2026-10-31`. Esse é o campo
+usado como Competência da NFS-e no documento fiscal. Funciona nos ambientes
+de homologação e produção e exige nova confirmação da revisão ao ser alterado.
+
+A escolha fica nos parâmetros da solicitação, preservando o mês da
+preparação, descrição, valores e retenções. Solicitações antigas sem essa
+escolha continuam usando a data do snapshot original. Não há migration:
+os parâmetros já são armazenados como JSONB. O processador também confere
+se a competência devolvida no XML oficial corresponde à data selecionada.
+
+O campo vale para solicitações novas. Não edita a competência de uma NFS-e
+já autorizada, nem modifica seu XML/PDF oficial. Alterar o documento emitido
+exige o procedimento fiscal adequado, analisado pelo Financeiro e município.
+
+### Evidências para ausência no ADN
+
+Consultar a situação municipal por chave e protocolo, obter o XML oficial e
+consultar a distribuição nacional com o certificado do próprio contribuinte.
+Guardar data/hora, ambiente, chave, série/número de DPS, protocolo municipal,
+HTTP e códigos de resposta. A distribuição precisa ser paginada até o fim;
+a ausência numa única página não comprova que o documento não está disponível.
+
+O retorno nacional `E2240` em uma consulta por chave significa que nenhum
+documento foi localizado; não é o motivo de uma rejeição do compartilhamento.
+Da mesma forma, `SUCESSO` e `erros: []` no protocolo municipal comprovam
+processamento municipal, sem expor a resposta de recepção no ADN. As APIs de
+consulta do contribuinte não fornecem o histórico privado dessas tentativas.
+
+Solicitar ao município/provedor a tentativa de compartilhamento da mesma chave:
+data/hora e ambiente do destino, HTTP, corpo completo da resposta do ADN,
+código/descrição de rejeição e identificador de correlação/recibo. Se não houve
+tentativa, solicitar a situação da fila municipal. Com esses dados, distinguir
+ausência de envio, rejeição e atraso de publicação antes de propor uma correção.
+Não emitir uma segunda nota, cancelar a primeira ou alterar um XML oficial
+apenas para tentar descobrir essa causa.
+
 O piloto cobre emissão regular de serviços nacionais para tomador identificado,
 com endereço de imóvel quando exigido por IBS/CBS, sem obra, intermediário,
 substituição ou evento fiscal de cancelamento.
