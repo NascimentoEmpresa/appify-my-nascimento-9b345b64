@@ -16,7 +16,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, CheckCircle2, ClipboardCheck, LayoutGrid, Pencil, RotateCcw, Search, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
-import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST } from "@/lib/implantacao/permissaoChecklist";
+import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST, MENU_RESUMO_GERAL, menuDoPainel } from "@/lib/implantacao/permissaoChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -81,9 +81,11 @@ export default function PainelSetor() {
         subtitle={contrato ? contrato.nome : "Respostas do checklist de Implantação destinadas a este setor."}
         actions={
           <>
-            <Button asChild variant="outline" size="sm">
-              <Link to={rotaPainel(contratoId)}><ArrowLeft className="mr-1.5 h-4 w-4" /> Resumo geral</Link>
-            </Button>
+            <AcessoGate menu={MENU_RESUMO_GERAL} acao="visualizar">
+              <Button asChild variant="outline" size="sm">
+                <Link to={rotaPainel(contratoId)}><ArrowLeft className="mr-1.5 h-4 w-4" /> Resumo geral</Link>
+              </Button>
+            </AcessoGate>
             {setor && (
               <AcessoGate menu={MENU_EDITAR_CHECKLIST} acao={ACAO_EDITAR_CHECKLIST}>
                 <Button asChild size="sm">
@@ -115,8 +117,9 @@ export default function PainelSetor() {
           <nav aria-label="Navegação por setor" className="card-elevated flex flex-wrap items-center gap-2 p-3">
             <span className="mr-1 text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">Visualizar</span>
             {painel.setores.map((s) => (
+              // Cada painel tem acesso próprio: só mostra o botão do setor que a pessoa pode abrir.
+              <AcessoGate key={s.setor} menu={menuDoPainel(s.slug)} acao="visualizar">
               <button
-                key={s.setor}
                 type="button"
                 onClick={() => navigate(rotaSetor(s.slug, contratoId))}
                 className={cn(
@@ -128,6 +131,7 @@ export default function PainelSetor() {
               >
                 {s.setor}
               </button>
+              </AcessoGate>
             ))}
           </nav>
 
