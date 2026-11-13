@@ -7,7 +7,8 @@
 //      com o JWT de quem chamou — o portão cs_form_pode(_, 'acesso') é do
 //      banco, igual à fila de moderação);
 //   2. manda para a IA SÓ os pendentes sem triagem válida (texto novo ou
-//      mudado), em lotes de 40;
+//      mudado) e os que uma régua anterior recomendou (precisaTriagem), em
+//      lotes de 20;
 //   3. grava o que voltou (cs_form_mural_triagem_gravar) e devolve a triagem
 //      do mês inteiro.
 //
@@ -22,7 +23,8 @@
 // Sem service_role: tudo roda como o usuário.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  emLotes, lerResultadoTriagem, montarPromptTriagem, SYSTEM_PROMPT_TRIAGEM, TAMANHO_LOTE,
+  emLotes, lerResultadoTriagem, modeloComVersao, montarPromptTriagem, precisaTriagem,
+  SYSTEM_PROMPT_TRIAGEM, TAMANHO_LOTE,
 } from "../_shared/mural-triagem-ia.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -110,6 +112,8 @@ interface LinhaTriagem {
   recomendado: boolean | null;
   motivo: string | null;
   habilitado: boolean;
+  /** "v2|gemini:..." — versão da régua que leu (mig 20261113230000). */
+  modelo?: string | null;
 }
 
 const paraTela = (l: LinhaTriagem) => ({
@@ -143,8 +147,11 @@ Deno.serve(async (req) => {
     if (error) return respostaJson({ error: error.message, code: error.code }, error.code === "42501" ? 403 : 500);
     const linhas = (data ?? []) as LinhaTriagem[];
 
-    const aLer = linhas.filter((l) => !l.triado && l.status === "pendente");
+    // Nunca lidos + recomendados por uma régua anterior (ver precisaTriagem:
+    // a releitura só acrescenta sinalização, não desfaz o que foi decidido).
+    const aLer = linhas.filter(precisaTriagem);
     if (!aLer.length) return respostaJson({ itens: linhas.filter((l) => l.triado).map(paraTela), faltam: 0 });
+    const lidos = new Set<LinhaTriagem>();
 
     const provs = provedores();
     if (!provs.length) {
@@ -171,17 +178,20 @@ Deno.serve(async (req) => {
           return { resposta_id: l.resposta_id, pergunta_id: l.pergunta_id, linha: l.linha,
                    assinatura: l.assinatura, recomendado: r.recomendado, motivo: r.motivo };
         });
-        const { error: gErr } = await supa.rpc("cs_form_mural_triagem_gravar", { _form_id: formId, _itens: itens, _modelo: res.modelo ?? null });
+        const { error: gErr } = await supa.rpc("cs_form_mural_triagem_gravar", { _form_id: formId, _itens: itens, _modelo: modeloComVersao(res.modelo) });
         if (gErr) { erros.push(gErr.message); continue; }
         for (const r of resultado) {
           const l = lote[r.indice];
-          l.triado = true; l.recomendado = r.recomendado; l.motivo = r.motivo; l.habilitado = false;
+          // Mesma assinatura: o banco preserva o "habilitado à mão" (e aqui
+          // só chega quem não estava habilitado — ver precisaTriagem).
+          l.triado = true; l.recomendado = r.recomendado; l.motivo = r.motivo;
+          lidos.add(l);
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(LOTES_EM_PARALELO, lotes.length) }, trabalhar));
 
-    const faltam = aLer.filter((l) => !l.triado).length;
+    const faltam = aLer.filter((l) => !lidos.has(l)).length;
     return respostaJson({
       itens: linhas.filter((l) => l.triado).map(paraTela),
       faltam,
