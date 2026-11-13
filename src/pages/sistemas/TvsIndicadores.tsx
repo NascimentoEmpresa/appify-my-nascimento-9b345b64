@@ -19,8 +19,10 @@ import { IaIndicadorDialog } from "@/components/tv/IaIndicador";
 import {
   COR_SITUACAO, PAINEIS_GERENCIAIS, VISUAIS_GERENCIAIS, type VisualGerencial, ROTULO_FONTE, ROTULO_PERIODICIDADE, ROTULO_SITUACAO, formatarValor, frase, indicadoresDaTv,
   lancamentoAtrasado, placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type PainelGerencial,
-  CORES_EQUIPE, formatarMetaEquipe, type MetaEquipe,
+  CORES_EQUIPE, formatarMetaEquipe, type MetaEquipe, aplicarNumerosDaTv, relatoriosDaTv,
 } from "@/lib/tv/gerencial";
+import { cardsOpeGerencial, type DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
+import { CLARO, Grafico } from "@/pages/tv/relatorio/paginasGerencialPainel";
 
 // =====================================================================
 // TV's › INDICADORES GERENCIAIS (12/10/2026, mig 20261012000001) — SIS-2026-0635
@@ -35,6 +37,16 @@ import {
 //     ASO, eSocial…), com contrato afetado, causa, responsável e impacto.
 // Liberação: tvs_gerenciais (visualizar / incluir lançamento / alterar
 // parâmetros / excluir lançamento). Regras em src/lib/tv/gerencial.ts.
+//
+// 14/11/2026 — Pablo: "os indicadores gerenciais das TVs têm que estar assim
+// [o protótipo], as informações têm que bater":
+//   · cada cartão leva o gráfico do protótipo (o mesmo desenho da TV);
+//   · Gerência Operacional: a TV da sala toca a 'ope-contratos', então os 7
+//     cartões daqui saem da MESMA conta (cardsOpeGerencial). Sem acesso a ela,
+//     ficam os do cadastro, com o aviso;
+//   · "Atualizar" também manda as TVs desta área recarregarem
+//     (tv_recarregar_relatorios, mig 20261114140000): antes só atualizava esta
+//     tela, e a TV seguia com os números de quando ligou.
 // =====================================================================
 
 const sb = supabase as any;
@@ -50,6 +62,16 @@ const usePainel = (slug: string) => useQuery({
   queryKey: [K, "painel", slug], staleTime: 60_000,
   queryFn: async (): Promise<PainelGerencial> => {
     const { data, error } = await sb.rpc("tvg_painel", { p_painel: slug });
+    if (error) throw error;
+    return data;
+  },
+});
+
+/** O que a TV da Gerência Operacional mostra (a mesma RPC da prévia da TV). */
+const useOpeDaTv = (ligado: boolean) => useQuery({
+  queryKey: [K, "ope-tv"], enabled: ligado, staleTime: 5 * 60_000, retry: false,
+  queryFn: async (): Promise<DadosOpeContratosTv> => {
+    const { data, error } = await sb.rpc("tv_ope_contratos_previa");
     if (error) throw error;
     return data;
   },
@@ -76,8 +98,30 @@ export default function TvsIndicadores() {
   const [visual, setVisual] = useState<VisualGerencial>("dashboard");
   // I.A "de onde vem este número?" (14/10/2026, Edge tvg-ia): clique na prévia ou no detalhe.
   const [ia, setIa] = useState<{ codigo: string; nome: string } | null>(null);
-  const painel = usePainel(slug);
+  const painelTvg = usePainel(slug);
+  const ope = useOpeDaTv(slug === "ger-operacional");
+  // Os números da TV da sala por cima dos do cadastro (só a Gerência Operacional hoje).
+  const dadosPainel = useMemo(() => {
+    if (!painelTvg.data || slug !== "ger-operacional" || !ope.data) return painelTvg.data;
+    try { return aplicarNumerosDaTv(painelTvg.data, cardsOpeGerencial(ope.data), "TV Gerência Operacional"); } catch { return painelTvg.data; }
+  }, [painelTvg.data, ope.data, slug]);
+  const painel = { ...painelTvg, data: dadosPainel, isFetching: painelTvg.isFetching || ope.isFetching };
   const qc = useQueryClient();
+  const recarregarTvs = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await sb.rpc("tv_recarregar_relatorios", { p_relatorios: relatoriosDaTv(slug) });
+      if (error) throw error;
+      return Number(data) || 0;
+    },
+  });
+  const atualizar = () => {
+    qc.invalidateQueries({ queryKey: [K, "painel", slug] });
+    if (slug === "ger-operacional") qc.invalidateQueries({ queryKey: [K, "ope-tv"] });
+    recarregarTvs.mutateAsync().then(
+      (n) => toast.success(n > 0 ? `Atualizado. ${n} TV${n === 1 ? "" : "s"} desta área recarrega${n === 1 ? "" : "m"} em até 1 minuto.` : "Atualizado. Nenhuma TV está tocando esta área agora."),
+      (e) => toast.error(`Atualizado aqui, mas o aviso às TVs falhou: ${(e as Error).message}`),
+    );
+  };
   const info = PAINEIS_GERENCIAIS.find((p) => p.slug === slug)!;
   const naTv = indicadoresDaTv(painel.data);
   const subsPainel = subindicadores(painel.data, null);
@@ -117,7 +161,7 @@ export default function TvsIndicadores() {
               ))}
             </div>
             <Button size="sm" variant="secondary" onClick={() => setVerTv(true)}><MonitorPlay className="mr-1 h-4 w-4" /> Ver como na TV</Button>
-            <Button size="sm" variant="secondary" disabled={painel.isFetching} onClick={() => qc.invalidateQueries({ queryKey: [K, "painel", slug] })}>
+            <Button size="sm" variant="secondary" disabled={painel.isFetching || recarregarTvs.isPending} onClick={atualizar} title="Atualiza esta tela e faz as TVs desta área recarregarem">
               <RefreshCw className={`mr-1 h-4 w-4 ${painel.isFetching ? "animate-spin" : ""}`} /> Atualizar
             </Button>
           </div>
@@ -127,6 +171,9 @@ export default function TvsIndicadores() {
             : (
               <div className="space-y-4 p-4">
                 <p className="text-xs text-muted-foreground">Na ordem da TV: fora da meta primeiro, pelo impacto. Clique num indicador para ver o detalhe, lançar o número ou ajustar a meta.</p>
+                {slug === "ger-operacional" && (ope.data
+                  ? <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">Números iguais aos da TV da Gerência Operacional (Indicadores por Contrato, competência {ope.data.competencia?.slice(5, 7)}/{ope.data.competencia?.slice(0, 4)}).</p>
+                  : ope.error ? <p className="text-xs text-amber-700 dark:text-amber-400">Sem acesso aos Indicadores por Contrato: os números abaixo são os do cadastro e podem diferir da TV da sala.</p> : null)}
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   {naTv.map((i) => <CartaoGestao key={i.codigo} i={i} onClick={() => setAberto(i.codigo)} />)}
                 </div>
@@ -189,7 +236,10 @@ function CartaoGestao({ i, onClick, compacto = false }: { i: IndicadorGerencial;
       <p className={`mt-1 font-black tabular-nums ${compacto ? "text-xl" : "text-3xl"}`} style={{ color: i.resultado?.valor == null ? undefined : cor }}>
         {i.resultado?.valor == null ? <span className="text-base font-semibold text-muted-foreground">{i.resultado?.erro ? "Erro no cálculo" : "Aguardando lançamento"}</span> : formatarValor(i.resultado.valor, i.unidade, true, i.resultado.casas)}
       </p>
-      <p className="text-[11px] text-muted-foreground">{textoMeta(i)}</p>
+      <p className="text-[11px] text-muted-foreground">{textoMeta(i).replace(/^(?!Meta|Sem meta|Entregue)/, "Meta ")}</p>
+      {!compacto && i.medida !== "sem_fonte" && i.resultado?.valor != null && (
+        <div className="relative mt-2 h-32 w-full"><Grafico i={i} t={CLARO} grande={false} /></div>
+      )}
       {!compacto && (
         <div className="mt-2 space-y-0.5 text-xs">
           {i.resultado?.afetado && <p className="line-clamp-2"><b className="text-muted-foreground">Onde:</b> {i.resultado.afetado}</p>}

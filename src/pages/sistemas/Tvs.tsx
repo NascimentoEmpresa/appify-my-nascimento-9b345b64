@@ -113,7 +113,7 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
         {tvs.length > 1 && (
           <AcessoGate menu={MENU_TVS} acao="alterar">
             <Button size="sm" variant="ghost" disabled={recarregar.isPending}
-              onClick={() => window.confirm(`Recarregar as ${tvs.length} TVs?`) && recarregar.mutateAsync(tvs.map((t) => t.id)).then(() => toast.success("Comando enviado — as TVs recarregam em até 4 min."))}>
+              onClick={() => window.confirm(`Recarregar as ${tvs.length} TVs?`) && recarregar.mutateAsync(tvs.map((t) => t.id)).then(() => toast.success("Comando enviado — as TVs recarregam em até 1 min."))}>
               <RefreshCw className="mr-1 h-3.5 w-3.5" /> Recarregar todas
             </Button>
           </AcessoGate>
@@ -161,7 +161,7 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
                         <Button size="sm" variant="ghost" className="h-8 text-xs" title="Ver o que esta TV está mostrando agora" onClick={() => setAoVivoDe(t)}><Radio className="mr-1 h-3.5 w-3.5 text-red-500" /> Ao vivo</Button>
                         <AcessoGate menu={MENU_TVS} acao="alterar">
                           <Button size="sm" variant="ghost" className="h-8 text-xs" title="Endereço fixo desta TV, para ela abrir já conectada ao ligar" onClick={() => setLinkDe(t)}><Link2 className="mr-1 h-3.5 w-3.5" /> Link fixo</Button>
-                          <Button size="icon" variant="ghost" title="Recarregar a TV" onClick={() => recarregar.mutateAsync([t.id]).then(() => toast.success(`${t.nome} recarrega em até 4 min.`))}><RefreshCw className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Recarregar a TV" onClick={() => recarregar.mutateAsync([t.id]).then(() => toast.success(`${t.nome} recarrega em até 1 min.`))}><RefreshCw className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title={t.ativo ? "Pausar (mostra só o nome)" : "Voltar a tocar"} onClick={() => salvar(t.id, { ativo: !t.ativo }, t.ativo ? `${t.nome} pausada.` : `${t.nome} voltou a tocar.`)}>
                             {t.ativo ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                           </Button>
@@ -796,7 +796,7 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
   // TV online que não confirma o item (mig 20261020000004): player antigo — recarregar resolve.
   const semConfirmacao = online && tv.ativo && aoVivoFresco(aoVivo.data, agora) === false;
   const mandarRecarregar = () => recarregar.mutateAsync([tv.id]).then(
-    () => toast.success(`${tv.nome} recarrega em até 4 min.`),
+    () => toast.success(`${tv.nome} recarrega em até 1 min.`),
     (e) => toast.error((e as Error).message));
 
   return (

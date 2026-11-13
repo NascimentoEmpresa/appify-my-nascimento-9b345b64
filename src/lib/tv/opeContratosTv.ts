@@ -17,7 +17,7 @@ import {
 } from "@/lib/operacional/indicadoresContratos";
 import {
   COBERTURA_CRITICA, CUSTO_ATENCAO, CUSTO_CRITICO, EFETIVO_MIN_FALTAS, EFETIVO_MIN_TURNOVER, FALTAS_ATENCAO, FALTAS_CRITICO,
-  MARGEM_PADRAO, PISO_RECEITA, TURNOVER_META_MES, type ChaveInd, type StatusInd,
+  MARGEM_PADRAO, PISO_RECEITA, RECLAMACOES_CRITICO, TURNOVER_META_MES, type ChaveInd, type StatusInd,
 } from "@/lib/operacional/indicadoresContratos";
 
 export interface FinanceiroTv {
@@ -178,4 +178,89 @@ export function glosasPorCausa(d: DadosOpeContratosTv): { causa: string; valor: 
   if (lista.length <= 4) return lista;
   const outros = lista.slice(3).reduce((a, x) => a + x.valor, 0);
   return [...lista.slice(0, 3), { causa: "Outras", valor: outros }];
+}
+
+// ── Indicadores gerenciais = a TV (14/11/2026) ──────────────────────────
+// Pablo: "os indicadores gerenciais das TVs têm que estar assim, as
+// informações têm que bater". A TV da Gerência Operacional toca a
+// 'ope-contratos' (mig 20261111130000) e a tela TV's › Indicadores gerenciais
+// mostrava os cards do tvg_calc (DRE, outra régua): 51,2% de lucratividade
+// na tela contra ~10% na TV. Aqui os 7 cards saem dos MESMOS totais da TV
+// (totaisOpe), com as metas e o semáforo dela. Dono, nome, ordem e medida
+// continuam os do cadastro do indicador.
+
+/** O que substitui, no card do indicador gerencial, o cálculo do tvg. */
+export interface CardOpe {
+  unidade: "qtd" | "pct" | "brl"; sentido: "menor" | "maior"; meta: number; alerta: number | null; meta_texto: string;
+  valor: number | null; afetado: string | null; causa: string | null; base: string;
+  detalhe: { nome: string; valor: number | null; a?: number | null; b?: number | null }[];
+}
+
+const pctBr = (v: number) => `${v.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+
+export function cardsOpeGerencial(d: DadosOpeContratosTv): Record<string, CardOpe> {
+  const linhas = linhasDaTv(d);
+  const t = totaisOpe(d, linhas);
+  const comp = d.competencia ? `${d.competencia.slice(5, 7)}/${d.competencia.slice(0, 4)}` : "";
+  const ruins = (k: ChaveInd) => linhas.filter((l) => fora(l.ind[k].status));
+  // Os contratos do gráfico: os piores primeiro, só com número.
+  const top = (k: ChaveInd, maiorPior = true) => linhas.filter((l) => l.ind[k].valor != null)
+    .sort((a, b) => (maiorPior ? (b.ind[k].valor ?? 0) - (a.ind[k].valor ?? 0) : (a.ind[k].valor ?? 0) - (b.ind[k].valor ?? 0)))
+    .slice(0, 6).map((l) => ({ nome: l.nome, valor: l.ind[k].valor }));
+  const onde = (k: ChaveInd, maiorPior = true) => {
+    const r = ruins(k).sort((a, b) => (maiorPior ? (b.ind[k].valor ?? 0) - (a.ind[k].valor ?? 0) : (a.ind[k].valor ?? 0) - (b.ind[k].valor ?? 0)));
+    return r.length ? `${r.length} contrato(s) · pior: ${r[0].nome} (${r[0].ind[k].texto})` : "Nenhum contrato fora";
+  };
+  const causa = (k: ChaveInd, maiorPior = true) => {
+    const r = ruins(k).sort((a, b) => (maiorPior ? (b.ind[k].valor ?? 0) - (a.ind[k].valor ?? 0) : (a.ind[k].valor ?? 0) - (b.ind[k].valor ?? 0)));
+    return r[0]?.ind[k].detalhe ?? null;
+  };
+  const cs = new Map(d.contratos.map((c) => [c.id, c]));
+  const faltaPostos = linhas.map((l) => ({ l, p: cs.get(l.id)?.postos }))
+    .filter((x) => x.p && x.p.contratados > 0 && x.p.cobertos < x.p.contratados)
+    .sort((a, b) => (b.p!.contratados - b.p!.cobertos) - (a.p!.contratados - a.p!.cobertos));
+  const gc = glosasPorCausa(d);
+  return {
+    op_postos: {
+      unidade: "pct", sentido: "maior", meta: 100, alerta: COBERTURA_CRITICA, meta_texto: "100% de cobertura",
+      valor: t.postos.pct, base: `${t.postos.cobertos} de ${t.postos.contratados} postos cobertos`,
+      afetado: faltaPostos.length ? `${faltaPostos.length} contrato(s) com falta · maior: ${faltaPostos[0].l.nome} (−${faltaPostos[0].p!.contratados - faltaPostos[0].p!.cobertos})` : "Todos os postos cobertos",
+      causa: faltaPostos.length ? `${t.postos.contratados - t.postos.cobertos} posto(s) sem pessoa trabalhando` : null,
+      detalhe: faltaPostos.slice(0, 6).map((x) => ({ nome: x.l.nome, valor: x.p!.contratados - x.p!.cobertos, a: x.p!.contratados, b: x.p!.cobertos })),
+    },
+    op_lucratividade: {
+      unidade: "pct", sentido: "maior", meta: MARGEM_PADRAO, alerta: 0, meta_texto: `≥ ${MARGEM_PADRAO}% (ou a margem prevista do contrato)`,
+      valor: t.lucratividade.margem, base: `Faturamento da Empresa, competência ${comp}`,
+      afetado: onde("lucratividade", false), causa: causa("lucratividade", false), detalhe: top("lucratividade", false),
+    },
+    op_custo_direto: {
+      unidade: "pct", sentido: "menor", meta: CUSTO_ATENCAO, alerta: CUSTO_CRITICO, meta_texto: `≤ ${CUSTO_ATENCAO}% acima do orçado`,
+      valor: t.custo.desvio, base: `Realizado × Planilha de Custo, ${comp.slice(3)}`,
+      afetado: onde("custo"), causa: causa("custo"), detalhe: top("custo"),
+    },
+    op_glosas: {
+      unidade: "brl", sentido: "menor", meta: 0, alerta: Number.MAX_SAFE_INTEGER, meta_texto: "R$ 0 em glosas", // a TV: glosa = atenção
+      valor: t.glosas.valor, base: "Últimos 90 dias",
+      afetado: t.glosas.contratos ? `${t.glosas.contratos} contrato(s)` : "Nenhum contrato", causa: gc[0]?.causa ?? null,
+      detalhe: linhas.filter((l) => (l.ind.glosas.valor ?? 0) > 0).sort((a, b) => (b.ind.glosas.valor ?? 0) - (a.ind.glosas.valor ?? 0)).slice(0, 6)
+        .map((l) => ({ nome: l.nome, valor: l.ind.glosas.valor })),
+    },
+    op_faltas: {
+      unidade: "pct", sentido: "menor", meta: FALTAS_ATENCAO, alerta: FALTAS_CRITICO, meta_texto: `≤ ${FALTAS_ATENCAO}% de faltas`,
+      valor: t.faltas.pct, base: `Atestados na competência ${comp}`,
+      afetado: onde("faltas"), causa: causa("faltas"), detalhe: top("faltas"),
+    },
+    op_turnover: {
+      unidade: "pct", sentido: "menor", meta: TURNOVER_META_MES, alerta: TURNOVER_META_MES * 2, meta_texto: `≤ ${pctBr(TURNOVER_META_MES)} ao mês (41% no ano)`,
+      valor: t.turnover.pct, base: `Demissões ÷ efetivo, ${comp}`,
+      afetado: onde("turnover"), causa: causa("turnover"), detalhe: top("turnover"),
+    },
+    op_reclamacoes: {
+      unidade: "qtd", sentido: "menor", meta: 0, alerta: RECLAMACOES_CRITICO - 1, meta_texto: "0 reclamações e ≥ 90% de satisfação",
+      valor: t.reclamacoes.qtd, base: "Notificações do cliente, 90 dias",
+      afetado: t.reclamacoes.contratos ? onde("reclamacoes") : "Nenhum contrato", causa: causa("reclamacoes"),
+      detalhe: linhas.filter((l) => (l.ind.reclamacoes.valor ?? 0) > 0).sort((a, b) => (b.ind.reclamacoes.valor ?? 0) - (a.ind.reclamacoes.valor ?? 0)).slice(0, 6)
+        .map((l) => ({ nome: l.nome, valor: l.ind.reclamacoes.valor })),
+    },
+  };
 }
