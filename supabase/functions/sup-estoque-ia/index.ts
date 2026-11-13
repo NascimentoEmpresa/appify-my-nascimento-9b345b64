@@ -140,6 +140,9 @@ function compactar(painel: Record<string, unknown>, pergunta = ""): Record<strin
     disp: i.disponivel,
     reservado: i.reservado,
     transito: i.em_transito,
+    pendente_falta: i.pendente_falta,
+    giro_3m: i.giro_3m,
+    ja_em_compra: i.ja_em_compra,
     dem_mes: i.demanda_mensal,
     cob_dias: i.cobertura_dias,
     alvo: i.alvo,
@@ -157,6 +160,9 @@ function compactar(painel: Record<string, unknown>, pergunta = ""): Record<strin
   return {
     premissas: painel.premissas,
     resumo: painel.resumo,
+    // Totais de "pedidos pendentes por falta" (catálogo inteiro) e a data em
+    // que começa o giro de 3 meses.
+    pedidos_falta: painel.pedidos_falta,
     alertas: painel.alertas,
     evolucao: painel.evolucao,
     // Os RANKINGS vão INTEIROS e primeiro. São dez linhas cada, calculadas
@@ -195,7 +201,10 @@ COMO O NÚMERO FOI FEITO (explique assim se perguntarem):
 - "estoque de segurança" = colchão para a oscilação da demanda dentro do prazo de reposição, no nível de serviço das premissas.
 - "ponto de pedido" = consumo durante o prazo de reposição + segurança. Abaixo dele, pedir.
 - "alvo saudável" = consumo durante (prazo de reposição + ciclo de revisão) + segurança. É o quanto ter em casa depois de comprar.
-- "comprar" = alvo − disponível − em trânsito.
+- "comprar" = alvo + pedidos pendentes por falta − disponível − já em compra. O que chega atende primeiro os pedidos parados, por isso eles somam ao alvo.
+- "pedidos pendentes por falta" (pendente_falta) = peças que pedidos já separados ainda esperam porque não havia estoque, somadas de todos os pedidos. Pedido ainda em preparação não conta.
+- "já em compra" (ja_em_compra) = pedido de compra enviado ao fornecedor e ainda não recebido (trânsito) + solicitação do Malote em cotação. Não é pedido de novo.
+- "giro dos últimos 3 meses" (giro_3m) = peças que de fato SAÍRAM do estoque para pedidos nos últimos 3 meses. Enquanto o estoque estiver baixo fica abaixo do consumo pedido — não use como demanda.
 - "físico na prateleira" conta tudo que está no almoxarifado. "disponível" = físico − reservado para pedido que já está em separação. Ao responder estoque atual, cite os dois se houver reserva; nunca chame o disponível de físico.
 - ABC = onde está o dinheiro (A = 80% do valor consumido). XYZ = previsibilidade (X regular, Z irregular).
 - "dinheiro parado" = valor acima do alvo em itens que giram. "valor morto" = valor de item sem giro no prazo das premissas. São números SEPARADOS, nunca some os dois.

@@ -138,18 +138,23 @@ export function CartaoReconhecimento({ mes, itens: itensBrutos, rodape, navMes }
         <div className="ini-hd-tx">
           <h3><Award className="ini-hd-ic rec-trofeu" aria-hidden /> Reconhecimento e Convivência Profissional</h3>
           <p>
-            O que os colegas disseram uns dos outros em{" "}
-            {navMes ? (
-              <span className="rec-mes-nav">
-                <button type="button" className="rec-mes-seta" onClick={navMes.anterior} disabled={!navMes.anterior}
-                  aria-label="Mês anterior" title="Mês anterior"><ChevronLeft size={13} /></button>
-                <b>{rotuloMes(mes)}</b>
-                <button type="button" className="rec-mes-seta" onClick={navMes.proximo} disabled={!navMes.proximo}
-                  aria-label="Próximo mês" title="Próximo mês"><ChevronRight size={13} /></button>
-              </span>
-            ) : <b>{rotuloMes(mes)}</b>} ·{" "}
+            O que os colegas disseram uns dos outros em <b>{rotuloMes(mes)}</b> ·{" "}
             {itens.length} {itens.length === 1 ? "recado" : "recados"} para {pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"}
           </p>
+          {/* 12/11/2026 (Pablo: "opção de passar o mês, só dois botões de passar
+              e voltar"): as setinhas de 20 px no meio do subtítulo passavam
+              despercebidas. Agora são dois botões com texto, embaixo do
+              subtítulo; no mês da ponta o botão fica apagado. */}
+          {navMes && (
+            <div className="rec-mes-nav" role="group" aria-label="Trocar de mês">
+              <button type="button" className="rec-mes-btn" onClick={navMes.anterior} disabled={!navMes.anterior}>
+                <ChevronLeft size={14} aria-hidden /> Mês anterior
+              </button>
+              <button type="button" className="rec-mes-btn" onClick={navMes.proximo} disabled={!navMes.proximo}>
+                Próximo mês <ChevronRight size={14} aria-hidden />
+              </button>
+            </div>
+          )}
         </div>
         {itens.length > 1 && (
           <div className="rec-setas">
@@ -326,12 +331,14 @@ const CSS_RECONHECIMENTO = `
   border:1px solid hsl(var(--border));background:hsl(var(--card));color:hsl(var(--foreground));
   transition:transform .2s cubic-bezier(.34,1.56,.64,1),background .2s;}
 .rec-seta:hover{transform:scale(1.1);background:hsl(var(--muted));}
-/* Setas de mês no subtítulo (12/11/2026): pequenas, para não competir com as do recado. */
-.rec-mes-nav{display:inline-flex;align-items:center;gap:4px;vertical-align:middle;}
-.rec-mes-seta{display:inline-grid;place-items:center;width:20px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-  border:1px solid hsl(var(--border));background:hsl(var(--card));color:hsl(var(--foreground));}
-.rec-mes-seta:hover:not(:disabled){background:hsl(var(--muted));}
-.rec-mes-seta:disabled{opacity:.35;cursor:default;}
+/* Os dois botões de mês, embaixo do subtítulo (alinhados com ele). */
+.rec-mes-nav{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0 36px;}
+.rec-mes-btn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 11px;border-radius:9px;cursor:pointer;
+  font-size:.74rem;font-weight:700;border:1px solid hsl(var(--border));background:hsl(var(--card));color:hsl(var(--foreground));
+  transition:background .2s,border-color .2s;}
+.rec-mes-btn:hover:not(:disabled){background:hsl(var(--muted));border-color:#f97316;}
+.rec-mes-btn:focus-visible{outline:2px solid #f97316;outline-offset:2px;}
+.rec-mes-btn:disabled{opacity:.4;cursor:default;}
 .rec-contador{font-size:.72rem;font-weight:800;color:hsl(var(--muted-foreground));min-width:34px;text-align:center;}
 
 .ini-card-body.rec-body{padding:16px 20px 14px;}

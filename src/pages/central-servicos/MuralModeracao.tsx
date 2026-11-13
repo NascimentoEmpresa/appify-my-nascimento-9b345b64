@@ -128,7 +128,8 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   const [previa, setPrevia] = useState<{ aLiberar: ItemModeracao[]; quem?: string } | null>(null);
   const [cardIAAberto, setCardIAAberto] = useState(true);
   // "Tirar do Início": o que já está publicado volta a pendente (uma confirmação).
-  const [tirar, setTirar] = useState<{ lista: ItemModeracao[]; quem?: string } | null>(null);
+  // mesInteiro = o botão "Remover completamente mês do mural" (12/11/2026).
+  const [tirar, setTirar] = useState<{ lista: ItemModeracao[]; quem?: string; mesInteiro?: boolean } | null>(null);
   // Checklist: chaves dos pendentes marcados para liberar/recusar juntos.
   const [marcados, setMarcados] = useState<Set<string>>(new Set());
   useEffect(() => { setMarcados(new Set()); }, [mes]);
@@ -212,7 +213,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               </div>
               <ul style={{ fontSize: 11.5, opacity: .9, margin: "6px 0 0", paddingLeft: 16, lineHeight: 1.5 }}>
                 <li><b>Ranking:</b> do 1º ao último pela quantidade de comentários positivos no mês; empate vai para a nota média.</li>
-                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e todo mundo logado vê, sem precisar de permissão. <b>⤺ Tirar do Início</b> devolve o publicado para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
+                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e todo mundo logado vê, sem precisar de permissão. <b>🗑 Remover completamente mês do mural</b> (ao lado do mês) tira o mês inteiro do Início na hora; <b>⤺ Tirar do Início</b> (em cada pessoa) tira só os dela. O que sai volta para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
                 <li><b>Triagem por IA:</b> comentários que não cabem num mural público (comparação com o líder, crítica a terceiros, assunto pessoal…) já vêm <b>desabilitados</b>; habilite se quiser enviar.</li>
               </ul>
             </div>
@@ -229,6 +230,19 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             </div>
           </div>
           <button style={btnSeta} onClick={() => setMes((m) => somarMes(m, 1))} aria-label="Próximo mês">›</button>
+          {/* 12/11/2026 (Pablo: "desenvolve o botão REMOVER COMPLETAMENTE MÊS DO
+              MURAL — se eu fizer isso em setembro vai remover instantaneamente
+              do Início"): tira do cartão TUDO o que está publicado do mês
+              escolhido nas setas ao lado. Antes isso era o "Tirar do Início" do
+              rodapé, fácil de não ver. Os comentários voltam para Pendente
+              (dá para publicar de novo, com as duas confirmações). */}
+          {contagem.liberado > 0 && (
+            <button disabled={ocupado} onClick={() => setTirar({ lista: itens.filter((i) => i.status === "liberado"), mesInteiro: true })}
+              title={`Tirar do cartão do Início todos os ${contagem.liberado} comentários publicados de ${MESES_CAP(mes)}`}
+              style={{ ...btn("#fff", "#b91c1c", "1px solid #fecaca"), textTransform: "uppercase", fontSize: 11.5 }}>
+              🗑 Remover completamente mês do mural
+            </button>
+          )}
           <div style={{ flex: 1 }} />
           {(["pendente", "liberado", "recusado", "todos"] as Filtro[]).map((f) => (
             <button key={f} onClick={() => setFiltro(f)}
@@ -457,13 +471,6 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
             style={pendentesLiberaveis.length || contagem.liberado ? btn("#fff", "#0f3171", "1px solid #c7d2fe") : btnApagado}>
             👁 Ver prévia
           </button>
-          {contagem.liberado > 0 && (
-            <button disabled={ocupado} onClick={() => setTirar({ lista: itens.filter((i) => i.status === "liberado") })}
-              title="Tirar do cartão do Início tudo o que está publicado deste mês"
-              style={btn("#fff", "#b45309", "1px solid #fde68a")}>
-              ⤺ Tirar do Início ({contagem.liberado})
-            </button>
-          )}
           {selecionados.length > 0 ? (
             <>
               <button onClick={() => setMarcados(new Set())} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Limpar seleção</button>
@@ -530,8 +537,11 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
           <div onClick={() => setTirar(null)} style={{ position: "absolute", inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
             <div role="alertdialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
               style={{ width: "min(420px, 100%)", background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 20px 50px rgba(15,23,42,.35)" }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: "#b45309" }}>TIRAR DO INÍCIO?</div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: tirar.mesInteiro ? "#b91c1c" : "#b45309" }}>
+                {tirar.mesInteiro ? `REMOVER ${MESES_CAP(mes).toUpperCase()} DO MURAL?` : "TIRAR DO INÍCIO?"}
+              </div>
               <div style={{ marginTop: 8, fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+                {tirar.mesInteiro && <><b>{MESES_CAP(mes)} sai inteiro do Início na hora</b> — o cartão deixa de ter esse mês. </>}
                 Saem do cartão "Reconhecimento e Convivência Profissional" <b>{plural(tirar.lista.length, "comentário", "comentários")}</b> dos
                 votos de <b>{MESES_CAP(mes)}</b>{tirar.quem ? <> de <b>{tirar.quem}</b></> : null}.
                 {" "}Eles voltam para <b>Pendente</b> aqui e podem ser liberados de novo depois.
@@ -541,13 +551,18 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                 <button autoFocus disabled={ocupado}
                   onClick={() => {
                     const n = tirar.lista.length;
+                    const mesInteiro = tirar.mesInteiro;
                     decidir.mutate({ itens: tirar.lista, status: "pendente" }, {
-                      onSuccess: () => toast.success(`${plural(n, "comentário tirado", "comentários tirados")} do Início.`),
+                      onSuccess: () => toast.success(mesInteiro
+                        ? `${MESES_CAP(mes)} removido do mural do Início (${plural(n, "comentário", "comentários")}).`
+                        : `${plural(n, "comentário tirado", "comentários tirados")} do Início.`),
                       onError: (e: Error) => toast.error(e?.message ?? "Não foi possível tirar do Início."),
                     });
                     setTirar(null);
                   }}
-                  style={btn("#b45309")}>⤺ Tirar {tirar.lista.length} do Início</button>
+                  style={btn(tirar.mesInteiro ? "#b91c1c" : "#b45309")}>
+                  {tirar.mesInteiro ? `🗑 Remover ${MESES_CAP(mes)} do mural` : `⤺ Tirar ${tirar.lista.length} do Início`}
+                </button>
               </div>
             </div>
           </div>
