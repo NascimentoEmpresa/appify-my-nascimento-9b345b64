@@ -423,6 +423,15 @@ de competência escolhida pelo Financeiro. A série da DPS também não é a cau
 indicada por esse código: a série é fixa por emissor, enquanto o número da DPS
 avança por solicitação, inclusive quando uma solicitação acaba rejeitada.
 
+O número da DPS é reservado pelo ERP antes do envio. O número da NFS-e é
+atribuído pelo autorizador e obtido no XML oficial após o processamento.
+São campos distintos: por exemplo, uma DPS 42 / série 123 pode resultar na
+NFS-e 900. A coincidência entre esses números em documentos feitos pelo
+portal municipal é uma característica do fluxo do portal; não se deve
+copiar a série desse portal nem tentar adivinhar o próximo número da NFS-e
+para forçar igualdade na integração. O painel exibe os dois identificadores
+e a série tal como registrados na solicitação e na resposta oficial.
+
 Os documentos emitidos pelo portal de Triunfo e recebidos no ADN usam o fuso
 brasileiro. O ERP agora formata `dhEmi` com `America/Sao_Paulo` antes de assinar,
 independentemente do fuso do computador/runner. Por exemplo,
