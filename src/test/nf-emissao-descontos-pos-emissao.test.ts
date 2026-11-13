@@ -131,3 +131,17 @@ describe("[SEM-CHAMADO]: INSS 'Não reter' (NF de material do SEMAE)", () => {
     expect(INSS_CATEGORIAS.insalubridade_40.pct).toBe(0.15);
   });
 });
+
+describe("[SEM-CHAMADO]: nota importada ajustada duas vezes mantém INSS e líquido (DMAE 895/0 NF 240)", () => {
+  it("o item gravado após o 1º ajuste (mão de obra 0) continua legado e o 2º ajuste não recalcula", () => {
+    const salvo = { vlr_va: 0, vlr_vt: 0, vlr_materiais: 0, vlr_mao_obra: 0, vlr_bruto: 158992.76, issqn: 0, inss: 15368.05, ir: 0, cofins: 0, pis: 0, csll: 0, vlr_liquido: 132018.24 };
+    const legado = valoresLegadosDoItem(salvo);
+    expect(legado).not.toBeNull();
+    const item: ItemInput = { ...base, valor_contrato_exec: 163473.09, valores_legados: legado };
+    const r = ajustarDescontosPosEmissao(item, pct, { multas_pos_emissao: 817.37, glosas_pos_emissao: 0, outros_descontos_pos_emissao: 0 });
+    expect(r.inss).toBe(15368.05);
+    expect(r.vlr_liquido).toBe(132018.24);
+    // se a mão de obra implícita fosse gravada (≠ 0), a nota deixaria de ser legada: era o defeito
+    expect(valoresLegadosDoItem({ ...salvo, vlr_mao_obra: 139709.55 })).toBeNull();
+  });
+});
