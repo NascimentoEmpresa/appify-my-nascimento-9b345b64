@@ -36,14 +36,17 @@ function useTelasDaBusca(): TelaBusca[] {
   return useMemo(() => {
     const vistos = new Set<string>();
     const telas: TelaBusca[] = [];
-    const incluir = (t: TelaBusca) => {
-      if (vistos.has(t.to) || !rotaVisivelNoMenu(t.to, access)) return;
+    const incluir = (t: TelaBusca, menuCodigo?: string) => {
+      if (vistos.has(t.to) || !rotaVisivelNoMenu(t.to, access, menuCodigo)) return;
       vistos.add(t.to);
       telas.push(t);
     };
     for (const m of modulos) {
       if (m.status !== "active") continue;
-      for (const g of m.groups ?? []) for (const i of g.items) incluir({ to: i.to, label: i.label, modulo: m.label, grupo: g.label });
+      for (const g of m.groups ?? []) for (const i of g.items) incluir(
+        { to: i.to, label: i.label, modulo: m.label, grupo: g.label },
+        i.menuCodigo,
+      );
       // Módulo com página própria: "Malote" e "Central de Serviços" também são destino.
       if (m.headerLink && m.headerLink !== "/app") incluir({ to: m.headerLink, label: m.label, modulo: "Módulo" });
     }

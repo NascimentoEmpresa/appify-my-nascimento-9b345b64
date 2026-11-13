@@ -63,6 +63,10 @@ describe("operações de vários submódulos", () => {
     expect(copias.map((it) => it.id)).toEqual(["cp:1", "cp:2", "e"]);
     expect(copias[0]).toMatchObject({ rota: "/app/a", ref: "original:a", copiaDe: "a", rotulo: "a" });
     expect(copias[1]).toMatchObject({ rota: "/app/b", ref: "original:b", copiaDe: "b", rotulo: "b" });
+    expect(copias.slice(0, 2).map((it) => it.menuCodigo)).toEqual([
+      "menu_lateral_copia_cp_1",
+      "menu_lateral_copia_cp_2",
+    ]);
     expect(ids(estrutura, 1)).toEqual(["e"]);
   });
 
@@ -70,5 +74,9 @@ describe("operações de vários submódulos", () => {
     const anterior = copiarItens(estrutura, ["a", "b"], "c2", (() => { let i = 0; return () => `cp:${++i}`; })());
     const nova = copiarItens(anterior, ["cp:1", "cp:2"], "c3", (() => { let i = 0; return () => `cp2:${++i}`; })());
     expect(nova.modulos[2].categorias[0].itens.slice(1).map((it) => it.copiaDe)).toEqual(["a", "b"]);
+    expect(nova.modulos[2].categorias[0].itens.slice(1).map((it) => it.menuCodigo)).toEqual([
+      "menu_lateral_copia_cp2_1",
+      "menu_lateral_copia_cp2_2",
+    ]);
   });
 });
