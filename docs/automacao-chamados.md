@@ -92,11 +92,13 @@ colchetes) — sem chamado relacionado, usa `[SEM-CHAMADO]:` (com colchetes).
 Isso já é validado por CI hoje (`.github/workflows/chamado_pr_sync.yml`,
 required status check que bloqueia merge) e, quando a PR é aberta (fora de
 rascunho), `.github/workflows/chamado_concluir_no_merge.yml` **conclui o
-chamado sozinho** e a Edge `chamado-concluir-pr` põe no chat do chamado um
-resumo da entrega escrito pela I.A para o solicitante, com as URLs das telas
-alteradas (calculadas por `.github/scripts/rotas-da-pr.cjs`). O merge continua
-concluindo como reserva, sem passar por cima de uma reabertura do solicitante
-(desde 12/11/2026).
+chamado sozinho** (desde 12/11/2026). No **merge**, a Edge
+`chamado-concluir-pr` põe no chat do chamado o resumo da entrega escrito pela
+I.A para o solicitante, com as URLs das telas alteradas (calculadas por
+`.github/scripts/rotas-da-pr.cjs`). Desde 13/11/2026 o resumo sai só no merge
+e lê a PR já fechada: só os commits do chamado (mensagem inteira) e o código
+alterado neles (`.github/scripts/contexto-resumo-pr.cjs`). O merge também
+conclui como reserva, sem passar por cima de uma reabertura do solicitante.
 
 ## Modelo por complexidade (mesma classificação alimenta os dois agentes)
 
