@@ -10,14 +10,19 @@
 // Fonte: RPC chamados_monitoramento (mig 20261022000180), que devolve o
 // chamado + contagens (anexos, conversa, reaberturas) + avaliações já
 // existentes (a do solicitante sobre a entrega e a do dev sobre o pedido).
-// Ajustes manuais (tema, complexidade, aderência, efetividade, índice) ficam
-// em CHAMADO_SISTEMA_MONITOR_AJUSTE, com quem/quando/por quê; o último por
-// campo vence (valor null = volta ao automático).
+// 15/11/2026 (SIS-2026-0904): SEM AJUSTE MANUAL. Até aqui tema, complexidade,
+// aderência, efetividade e índice podiam ser sobrescritos à mão (tabela
+// CHAMADO_SISTEMA_MONITOR_AJUSTE); o pedido foi "deixar somente o modo
+// automático interpretado pelo sistema". A tabela fica no banco como
+// histórico, a RPC ainda devolve `ajustes`, mas nada aqui lê esse campo:
+// todo chamado mostra só a avaliação automática (I.A ou regra).
 //
 // Regras da avaliação (do pedido):
 //   · avalia-se a SOLICITAÇÃO; o solicitante é só a soma dos chamados dele;
 //   · não concluído = nota PRELIMINAR; efetividade só existe após a entrega;
-//   · cancelado conta à parte e não pesa contra ninguém.
+//   · cancelado NÃO ENTRA no monitoramento (SIS-2026-0904): nem na lista,
+//     nem nos totais, médias, temas, ranking ou leitura — ver
+//     entraNoMonitoramento. Ele continua existindo nos Chamados de Sistemas.
 // =====================================================================
 
 // ---- Tipos de entrada (linha da RPC) ---------------------------------
@@ -58,8 +63,6 @@ export interface ChamadoMonitor {
   /** Validação da Presidência (quando o chamado passou por ela). */
   validacao_aprovado: boolean | null;
   validacao_devolucoes: number | null;
-  /** Ajustes manuais vigentes (último por campo). */
-  ajustes?: Partial<Record<CampoAjuste, string | null>>;
   /** Avaliação da I.A (mig 20261115000100); null = ainda não avaliado → regra por palavras. */
   ia?: AvaliacaoIaMonitor | null;
 }
@@ -73,19 +76,12 @@ export interface AvaliacaoIaMonitor {
   reavaliando?: boolean | null;
 }
 
-export type CampoAjuste = "tema" | "complexidade" | "aderencia" | "efetividade" | "indice";
-
-export interface AjusteMonitor {
-  id: number;
-  chamado_id: string;
-  campo: CampoAjuste;
-  valor: string | null;
-  valor_anterior: string | null;
-  justificativa: string;
-  autor_id: string;
-  autor_nome: string | null;
-  created_at: string;
-}
+/**
+ * Chamado cancelado não teve continuidade nem entrega para ser avaliada: fica
+ * no histórico dos Chamados de Sistemas e fora de TUDO no monitoramento — não
+ * aparece na lista e não melhora nem piora a nota de ninguém (SIS-2026-0904).
+ */
+export const entraNoMonitoramento = (c: Pick<ChamadoMonitor, "status">): boolean => c.status !== "cancelado";
 
 // ---- Texto ------------------------------------------------------------
 /** minúsculo, sem acento, espaços colapsados — base de todas as buscas por termo. */
@@ -232,7 +228,6 @@ export interface AvaliacaoChamadoMonitor {
   temaAuto: ClassificacaoTema;
   criterios: Record<CriterioIndice, NotaCriterio>;
   indice: number;
-  indiceAuto: number;
   preliminar: boolean;
   complexidade: "baixa" | "media" | "alta";
   aderencia: "alta" | "media" | "baixa";
@@ -240,7 +235,6 @@ export interface AvaliacaoChamadoMonitor {
   efetividadeMotivo: string;
   prazoDias: number | null;
   cancelado: boolean;
-  ajustado: CampoAjuste[];
   /** "ia" = critérios lidos pela I.A; "regra" = palavras-chave (I.A ainda não avaliou). */
   fonte: "ia" | "regra";
   /** Frase da I.A sobre o pedido (só com fonte "ia"). */
@@ -270,11 +264,8 @@ export function prazoEmDias(c: Pick<ChamadoMonitor, "created_at" | "concluido_em
  * dos que ainda estão abertos).
  */
 export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): AvaliacaoChamadoMonitor {
-  const aj = c.ajustes ?? {};
-  const ajustado: CampoAjuste[] = [];
   const temaAuto = classificarTema(c);
-  const tema: Tema = ehTema(aj.tema) ? aj.tema : temaAuto.tema;
-  if (ehTema(aj.tema)) ajustado.push("tema");
+  const tema: Tema = temaAuto.tema;
 
   const desc = normalizar(c.descricao);
   const texto = normalizar(`${c.assunto} ${c.descricao ?? ""} ${c.observacoes_solicitante ?? ""}`);
@@ -385,10 +376,7 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
     if (n == null) continue;
     soma += n * k.peso; pesos += k.peso;
   }
-  const indiceAuto = pesos ? arred1(soma / pesos) : 0;
-  const indiceAj = numeroAjuste(aj.indice, 0, 10);
-  if (indiceAj != null) ajustado.push("indice");
-  const indice = indiceAj ?? indiceAuto;
+  const indice = pesos ? arred1(soma / pesos) : 0;
 
   // Complexidade — tamanho do pedido, quantas frentes toca e o que deu de conversa.
   let pc = 0;
@@ -400,14 +388,10 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
   if (c.comentarios >= 10) pc += 1;
   const prazoDias = prazoEmDias(c, agora);
   if (concluido && prazoDias != null && prazoDias >= 15) pc += 1;
-  const complexAuto: AvaliacaoChamadoMonitor["complexidade"] = pc >= 4 ? "alta" : pc >= 2 ? "media" : "baixa";
-  const complexAj = ["baixa", "media", "alta"].includes(aj.complexidade ?? "") ? (aj.complexidade as AvaliacaoChamadoMonitor["complexidade"]) : null;
-  if (complexAj) ajustado.push("complexidade");
+  const complexidade: AvaliacaoChamadoMonitor["complexidade"] = pc >= 4 ? "alta" : pc >= 2 ? "media" : "baixa";
 
   const aderFinal = nt("aderencia");
-  const aderAuto: AvaliacaoChamadoMonitor["aderencia"] = aderFinal >= 7.5 ? "alta" : aderFinal >= 5 ? "media" : "baixa";
-  const aderAj = ["alta", "media", "baixa"].includes(aj.aderencia ?? "") ? (aj.aderencia as AvaliacaoChamadoMonitor["aderencia"]) : null;
-  if (aderAj) ajustado.push("aderencia");
+  const aderencia: AvaliacaoChamadoMonitor["aderencia"] = aderFinal >= 7.5 ? "alta" : aderFinal >= 5 ? "media" : "baixa";
 
   // Efetividade da entrega (%) — só para concluído. Base: a avaliação do
   // solicitante (5/5 = 100%); sem ela, 80%. Desconta reabertura, devolução da
@@ -427,15 +411,13 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
     efetividade = Math.round(Math.max(0, Math.min(100, e)));
     efetividadeMotivo = partes.join("; ");
   }
-  const efAj = numeroAjuste(aj.efetividade, 0, 100);
-  if (efAj != null) { ajustado.push("efetividade"); efetividade = Math.round(efAj); efetividadeMotivo = "ajustada manualmente"; }
 
   return {
-    tema, temaAuto, criterios, indice, indiceAuto,
+    tema, temaAuto, criterios, indice,
     preliminar: !concluido,
-    complexidade: complexAj ?? complexAuto,
-    aderencia: aderAj ?? aderAuto,
-    efetividade, efetividadeMotivo, prazoDias, cancelado, ajustado,
+    complexidade,
+    aderencia,
+    efetividade, efetividadeMotivo, prazoDias, cancelado,
     fonte, resumoIa: notasIa ? (c.ia?.resumo?.trim() || null) : null,
     flags: {
       objetivoClaro: nt("clareza_resultado") >= 6,
@@ -461,12 +443,6 @@ export function criteriosDaIa(ia: AvaliacaoIaMonitor | null | undefined): Record
   return out;
 }
 
-function numeroAjuste(v: string | null | undefined, min: number, max: number): number | null {
-  if (v == null || v === "") return null;
-  const n = Number(String(v).replace(",", "."));
-  return Number.isFinite(n) && n >= min && n <= max ? n : null;
-}
-
 // ---- Consolidação -------------------------------------------------------
 export interface LinhaMonitor { c: ChamadoMonitor; a: AvaliacaoChamadoMonitor }
 
@@ -479,14 +455,17 @@ export interface KpisMonitor {
   emAndamento: number;
   pendentes: number;
   reprovadas: number;
-  canceladas: number;
   efetividadeMedia: number | null;
   indiceMedio: number | null;
 }
 
 const media = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
 
-/** Cancelados ficam só no contador próprio — não entram em total, médias nem ranking. */
+/**
+ * Cancelados não entram em nada (SIS-2026-0904). A tela já os tira na
+ * entrada; o filtro aqui e nas outras consolidações é a garantia de que
+ * ninguém os soma por outro caminho.
+ */
 export function calcularKpis(linhas: LinhaMonitor[]): KpisMonitor {
   const validas = linhas.filter((l) => !l.a.cancelado);
   const ef = validas.map((l) => l.a.efetividade).filter((x): x is number => x != null);
@@ -499,7 +478,6 @@ export function calcularKpis(linhas: LinhaMonitor[]): KpisMonitor {
     emAndamento: validas.filter((l) => STATUS_ANDAMENTO.includes(l.c.status)).length,
     pendentes: validas.filter((l) => l.c.status === "aberto").length,
     reprovadas: validas.filter((l) => l.c.status === "reprovado").length,
-    canceladas: linhas.length - validas.length,
     efetividadeMedia: em == null ? null : Math.round(em),
     indiceMedio: im == null ? null : arred1(im),
   };
@@ -649,7 +627,3 @@ function listaPt(xs: string[]): string {
 
 export const COMPLEXIDADE_LABEL = { baixa: "Baixa", media: "Média", alta: "Alta" } as const;
 export const ADERENCIA_LABEL = { alta: "Alta", media: "Média", baixa: "Baixa" } as const;
-export const CAMPO_AJUSTE_LABEL: Record<CampoAjuste, string> = {
-  tema: "Tema", complexidade: "Complexidade", aderencia: "Aderência estratégica",
-  efetividade: "Efetividade (%)", indice: "Índice de qualidade (0–10)",
-};
