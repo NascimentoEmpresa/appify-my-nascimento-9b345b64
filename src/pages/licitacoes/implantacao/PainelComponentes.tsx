@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST } from "@/lib/implantacao/permissaoChecklist";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -253,9 +255,11 @@ export function CartaoSetor({ resumo, contratoId, limite = 7 }: { resumo: Resumo
         <Button asChild size="sm" variant="outline" className="h-8 text-xs">
           <Link to={rotaSetor(resumo.slug, contratoId)}>Abrir setor <ChevronRight className="ml-1 h-3.5 w-3.5" /></Link>
         </Button>
-        <Button asChild size="sm" className="h-8 text-xs">
-          <Link to={rotaFormulario(contratoId, resumo.setor)}><Pencil className="mr-1 h-3.5 w-3.5" /> Preencher / Atualizar</Link>
-        </Button>
+        <AcessoGate menu={MENU_EDITAR_CHECKLIST} acao={ACAO_EDITAR_CHECKLIST}>
+          <Button asChild size="sm" className="h-8 text-xs">
+            <Link to={rotaFormulario(contratoId, resumo.setor)}><Pencil className="mr-1 h-3.5 w-3.5" /> Preencher / Atualizar</Link>
+          </Button>
+        </AcessoGate>
       </div>
     </div>
   );
