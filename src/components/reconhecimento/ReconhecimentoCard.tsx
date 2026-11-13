@@ -46,7 +46,7 @@ import { lerNota, rankingMural, rotuloMes } from "@/lib/formularios/muralReconhe
 const INTERVALO_MS = 7000;
 
 /** O que o cartão precisa de cada recado (o Início e a prévia da moderação). */
-export type ItemCartao = Pick<ItemMuralInicio, "chave" | "colaborador" | "setor" | "cargo" | "avatar_url" | "nota" | "escala" | "comentario">;
+export type ItemCartao = Pick<ItemMuralInicio, "chave" | "colaborador" | "setor" | "cargo" | "avatar_url" | "nota" | "escala" | "comentario" | "visibilidade">;
 
 export function ReconhecimentoCard() {
   const { data, isLoading, isError } = useMuralInicio();
@@ -102,6 +102,9 @@ export function CartaoReconhecimento({ mes, itens: itensBrutos, rodape, navMes }
     });
   }, [ranking]);
   const chaveDe = (c: string) => String(c ?? "").trim().toUpperCase();
+  // Mês em "cada um vê só os seus" (mig 20261114120000): o banco só mandou
+  // os recados feitos para quem está logado — o cartão fala com a pessoa.
+  const soOsSeus = itensBrutos.length > 0 && itensBrutos.every((x) => x.visibilidade === "proprios");
 
   const ir = useCallback((i: number) => {
     if (!itens.length) return;
@@ -138,8 +141,12 @@ export function CartaoReconhecimento({ mes, itens: itensBrutos, rodape, navMes }
         <div className="ini-hd-tx">
           <h3><Award className="ini-hd-ic rec-trofeu" aria-hidden /> Reconhecimento e Convivência Profissional</h3>
           <p>
-            O que os colegas disseram uns dos outros em <b>{rotuloMes(mes)}</b> ·{" "}
-            {itens.length} {itens.length === 1 ? "recado" : "recados"} para {pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"}
+            {soOsSeus ? (
+              <>O que os colegas disseram de você em <b>{rotuloMes(mes)}</b> · {itens.length} {itens.length === 1 ? "recado" : "recados"} · 🔒 só você vê</>
+            ) : (
+              <>O que os colegas disseram uns dos outros em <b>{rotuloMes(mes)}</b> ·{" "}
+              {itens.length} {itens.length === 1 ? "recado" : "recados"} para {pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"}</>
+            )}
           </p>
           {/* 12/11/2026 (Pablo: "opção de passar o mês, só dois botões de passar
               e voltar"): as setinhas de 20 px no meio do subtítulo passavam
@@ -254,7 +261,10 @@ export function CartaoReconhecimento({ mes, itens: itensBrutos, rodape, navMes }
             })}
           </div>
         )}
-        <p className="rec-rodape">{rodape ?? "Recados anônimos, liberados por quem cuida da avaliação."} Clique no nome para ver os recados da pessoa no mês.</p>
+        <p className="rec-rodape">
+          {rodape ?? "Recados anônimos, liberados por quem cuida da avaliação."}
+          {soOsSeus ? " Neste mês cada pessoa vê só os recados feitos para ela." : " Clique no nome para ver os recados da pessoa no mês."}
+        </p>
       </div>
     </section>
   );
