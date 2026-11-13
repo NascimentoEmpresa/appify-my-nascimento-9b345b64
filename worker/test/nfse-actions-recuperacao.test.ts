@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { executarNoGithub } = require("../../worker/src/nfse/github-actions.js");
-const { processarFilaNfse } = require("../../worker/src/nfse/index.js");
+const { executarNoGithub } = require("../src/nfse/github-actions.js");
+const { processarFilaNfse } = require("../src/nfse/index.js");
 let pasta: string;
 
 beforeEach(() => { pasta = mkdtempSync(join(tmpdir(), "nfse-actions-teste-")); });
