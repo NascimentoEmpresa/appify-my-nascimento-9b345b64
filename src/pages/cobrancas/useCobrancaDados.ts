@@ -1,8 +1,11 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { clienteCobranca } from "./clienteCobranca";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
-import { linhasDeCobranca, type DecisaoAuto, type LinhaCobranca, type ModoAuto, type NfParaCobranca, type NfParaRecebido, type PlanoDoContrato } from "./cobrancaNotas";
+import {
+  datasPorNota, linhasDeCobranca, type DatasPorSetor, type DecisaoAuto, type EnvioAutomaticoNotas, type LinhaCobranca, type ModoAuto, type NfParaCobranca, type NfParaRecebido, type PlanoDoContrato, type RegistroCobranca,
+} from "./cobrancaNotas";
 
 // SIS-2026-0653: dados da tela Cobranças. As notas vêm direto do Relatório de Serviços (nf_emissao), a mesma fonte da cobrança
 // automática; o plano de cada contrato (próxima ação) vem da simulação da edge function e o "último e-mail" da trilha de envios.
@@ -60,23 +63,39 @@ export function useCobrancaDados() {
   });
 
   // Último e-mail de cobrança de cada contrato: só envio real (produção). O piloto manda para um e-mail de teste e não conta.
-  const { data: ultimoEnvio = new Map<string, string>() } = useQuery<Map<string, string>>({
+  // SIS-2026-0878: o mesmo envio traz as notas que levou (`notas`), de onde sai a data do Financeiro POR NOTA.
+  const { data: enviosAuto = [] } = useQuery<(EnvioAutomaticoNotas & { contrato_id: string | null })[]>({
     queryKey: ["cobranca-ultimo-envio"],
     staleTime: 60_000,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("cobranca_auto_envio")
-        .select("contrato_id, criado_em")
+        .select("contrato_id, criado_em, notas")
         .eq("status", "enviado")
         .eq("modo", "producao")
         .order("criado_em", { ascending: false })
         .limit(5000);
-      if (error) return new Map<string, string>(); // tabela ainda não existe no ambiente: coluna fica em branco
-      const mapa = new Map<string, string>();
-      for (const r of data ?? []) if (r.contrato_id && !mapa.has(r.contrato_id)) mapa.set(r.contrato_id, r.criado_em);
-      return mapa;
+      if (error) return []; // tabela ainda não existe no ambiente: coluna fica em branco
+      return (data ?? []) as (EnvioAutomaticoNotas & { contrato_id: string | null })[];
     },
   });
+  const ultimoEnvio = useMemo(() => {
+    const mapa = new Map<string, string>();
+    for (const r of enviosAuto) if (r.contrato_id && !mapa.has(r.contrato_id)) mapa.set(r.contrato_id, r.criado_em);
+    return mapa;
+  }, [enviosAuto]);
+
+  // SIS-2026-0878: cobranças registradas à mão, por setor (Jurídico e Financeiro) — RPC cobranca_registrar.
+  const { data: registros = [] } = useQuery<RegistroCobranca[]>({
+    queryKey: ["cobranca-registros"],
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data, error } = await clienteCobranca.from("cobranca_registro").select("nf_emissao_id, setor, data_cobranca").order("data_cobranca", { ascending: false }).limit(20000);
+      if (error) return []; // migration ainda não aplicada no ambiente
+      return data ?? [];
+    },
+  });
+  const datasPorNotaMapa: Map<string, DatasPorSetor> = useMemo(() => datasPorNota(registros, enviosAuto), [registros, enviosAuto]);
 
   const simulacao = useSimulacaoCobranca();
 
@@ -97,5 +116,6 @@ export function useCobrancaDados() {
     modoAuto: simulacao.data?.modo,
     automacaoIndisponivel: simulacao.isError,
     ultimoEnvio,
+    datasPorNota: datasPorNotaMapa,
   };
 }
