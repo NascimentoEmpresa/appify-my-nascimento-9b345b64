@@ -15,6 +15,7 @@ import {
   useSolicitacaoParaCotar, useSalvarRascunhoCotacao, useEnviarCotacao,
   useAprovarCotacao, useReprovarCotacao, useCancelarCotacao, useSalvarItensDaCotacao,
   useSolicitarAjusteCotacao, useIniciarCotacao, useLiberarCotacao,
+  useComprasPassadas,
   lerCotacoes, cotacaoPreenchida, abrirAnexoMalote,
   ROTULO_COTACAO, fmtBRL, fmtData, fmtDataHora,
   type Cotacao,
@@ -34,6 +35,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { obterValorPrevistoCompra } from "@/lib/suprimentos/valorPrevistoCompra";
 
 /**
  * SIS-2026-0112 — detalhe da solicitação do Malote, pelo lado de Suprimentos.
@@ -58,6 +60,10 @@ export default function CotacaoMaloteDetalhe() {
   const { user } = useAuth();
   const { data: d, isLoading, error } = useSolicitacaoParaCotar(id);
   const { data: itens = [] } = useItensDaDespesa(id);
+  const { data: comprasPassadas } = useComprasPassadas(
+    d?.classificacao_id ?? null,
+    d?.id,
+  );
 
   const salvar = useSalvarRascunhoCotacao();
   const enviar = useEnviarCotacao();
@@ -83,6 +89,7 @@ export default function CotacaoMaloteDetalhe() {
   const { data: fornecedores = [] } = useFornecedores(empresaId ?? null);
 
   const [cots, setCots] = useState<Cotacao[]>(lerCotacoes(null));
+  const [valorPrevisto, setValorPrevisto] = useState("");
   const [carregadoDe, setCarregadoDe] = useState<string | null>(null);
   const [confirmando, setConfirmando] = useState<null | "cancelar" | "reprovar" | "aprovar" | "ajustar">(null);
   const [motivo, setMotivo] = useState("");
@@ -97,6 +104,7 @@ export default function CotacaoMaloteDetalhe() {
   if (d && carregadoDe !== d.id) {
     setCarregadoDe(d.id);
     setCots(lerCotacoes(d));
+    setValorPrevisto(String(obterValorPrevistoCompra(d)));
     setVencedor(d.cotacao_vencedor_num ?? null);
   }
 
@@ -126,6 +134,8 @@ export default function CotacaoMaloteDetalhe() {
   const dispensa = d.tipo === "dispensa_cotacao";
   const minimo = dispensa ? 1 : 3;
   const preenchidas = cots.filter(cotacaoPreenchida).length;
+  const valorPrevistoNumero = Number(valorPrevisto.replace(",", "."));
+  const valorPrevistoValido = Number.isFinite(valorPrevistoNumero) && valorPrevistoNumero > 0;
   const ocupado = salvar.isPending || enviar.isPending || aprovar.isPending
     || reprovar.isPending || cancelar.isPending || ajustar.isPending;
 
@@ -198,7 +208,46 @@ export default function CotacaoMaloteDetalhe() {
         <Campo rotulo="Motivo" valor={d.motivo} />
         <Campo rotulo="Descrição" valor={d.descricao} linhas />
         <Campo rotulo="Link(s)" valor={d.links} />
-        <Campo rotulo="Valor estimado" valor={fmtBRL(d.valor_total)} />
+        <div>
+          <Label className="text-xs text-muted-foreground">Valor previsto para saving</Label>
+          {editavel ? (
+            <div className="mt-1 space-y-1.5">
+              <div className="flex flex-wrap gap-2">
+                <Input
+                  className="h-9 min-w-40 flex-1"
+                  inputMode="decimal"
+                  value={valorPrevisto}
+                  onChange={(e) => setValorPrevisto(
+                    e.target.value.replace(/[^\d.,]/g, "").replace(",", "."),
+                  )}
+                  placeholder="0,00"
+                />
+                {comprasPassadas?.ultima_valor != null && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setValorPrevisto(String(comprasPassadas.ultima_valor))}
+                  >
+                    Usar última compra ({fmtBRL(comprasPassadas.ultima_valor)})
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Referência usada somente no saving. O pedido, a despesa e a NF usam o valor da cotação aprovada.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm">{fmtBRL(obterValorPrevistoCompra(d))}</p>
+              {d.valor_previsto_editado_por_nome && (
+                <p className="text-[11px] text-muted-foreground">
+                  Ajustado por {d.valor_previsto_editado_por_nome} em {fmtDataHora(d.valor_previsto_editado_em)}.
+                </p>
+              )}
+            </>
+          )}
+        </div>
         <Campo rotulo="Classificação da despesa" valor={d.classificacao?.nome} />
         <Campo rotulo="Tipo" valor={d.tipo} />
         <Campo rotulo="Data de pagamento" valor={fmtData(d.data_pagamento)} />
@@ -456,12 +505,20 @@ export default function CotacaoMaloteDetalhe() {
           <div className="ml-auto flex flex-wrap gap-2">
             {editavel && (
               <>
-                <Button variant="outline" disabled={ocupado}
-                        onClick={() => salvar.mutate({ id: d.id, cotacoes: cots })}>
+                <Button variant="outline" disabled={ocupado || !valorPrevistoValido}
+                        onClick={() => salvar.mutate({
+                          id: d.id,
+                          cotacoes: cots,
+                          valorPrevisto: valorPrevistoNumero,
+                        })}>
                   <Save className="mr-1.5 h-4 w-4" /> Salvar rascunho
                 </Button>
-                <Button disabled={ocupado || preenchidas < minimo}
-                        onClick={() => enviar.mutate({ id: d.id, cotacoes: cots })}>
+                <Button disabled={ocupado || preenchidas < minimo || !valorPrevistoValido}
+                        onClick={() => enviar.mutate({
+                          id: d.id,
+                          cotacoes: cots,
+                          valorPrevisto: valorPrevistoNumero,
+                        })}>
                   <Send className="mr-1.5 h-4 w-4" />
                   {enviar.isPending ? "Enviando…" : "Enviar cotação para aprovação"}
                 </Button>
@@ -478,6 +535,11 @@ export default function CotacaoMaloteDetalhe() {
           {editavel && preenchidas < minimo && (
             <p className="w-full text-xs text-muted-foreground">
               Faltam {minimo - preenchidas} cotação(ões) — cada uma precisa de fornecedor, valor e prazo.
+            </p>
+          )}
+          {editavel && !valorPrevistoValido && (
+            <p className="w-full text-xs text-destructive">
+              Informe um valor previsto maior que zero para salvar ou enviar a cotação.
             </p>
           )}
           {decidivel && !vencedor && (
