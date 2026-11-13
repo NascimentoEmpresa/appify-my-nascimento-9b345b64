@@ -188,11 +188,13 @@ const licitacoesModule: ModuleDef = {
     {
       // Resumo dos Contratos (13/11/2026): o painel da Implantação ganha
       // submódulo próprio, uma tela por setor, como nos protótipos HTML do
-      // Pablo. Sem menu novo no banco: as rotas ficam sob
-      // /app/licitacoes/implantacao/painel e herdam o acesso da Implantação
-      // pelo prefixo (rotaVisivelNoMenu) — quem preenche o checklist vê o
-      // resumo. Os slugs são os de slugSetor() (painelSetores.ts); setor que
-      // não existir no checklist abre "Setor não encontrado".
+      // Pablo. Desde 15/11/2026 (mig 20261115000400) cada item tem menu
+      // PRÓPRIO em Licitação, com rota — o Pablo gerencia por pessoa quem
+      // abre cada painel (Acesso por Usuário). O prefixo mais longo decide
+      // (rotaVisivelNoMenu); a lista de slugs é a de SLUGS_PAINEL_SETOR
+      // (lib/implantacao/permissaoChecklist.ts). Os slugs são os de
+      // slugSetor() (painelSetores.ts); setor que não existir no checklist
+      // abre "Setor não encontrado".
       label: "Resumo dos Contratos",
       defaultOpen: true,
       items: [

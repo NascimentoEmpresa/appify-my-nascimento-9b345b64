@@ -16,6 +16,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, CheckCircle2, ClipboardCheck, LayoutGrid, Pencil, RotateCcw, Search, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
+import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST } from "@/lib/implantacao/permissaoChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -84,9 +85,11 @@ export default function PainelSetor() {
               <Link to={rotaPainel(contratoId)}><ArrowLeft className="mr-1.5 h-4 w-4" /> Resumo geral</Link>
             </Button>
             {setor && (
-              <Button asChild size="sm">
-                <Link to={rotaFormulario(contratoId, setor)}><Pencil className="mr-1.5 h-4 w-4" /> Preencher / Atualizar</Link>
-              </Button>
+              <AcessoGate menu={MENU_EDITAR_CHECKLIST} acao={ACAO_EDITAR_CHECKLIST}>
+                <Button asChild size="sm">
+                  <Link to={rotaFormulario(contratoId, setor)}><Pencil className="mr-1.5 h-4 w-4" /> Preencher / Atualizar</Link>
+                </Button>
+              </AcessoGate>
             )}
           </>
         }

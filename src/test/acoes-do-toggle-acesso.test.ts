@@ -74,7 +74,7 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa, Controle de Faturamento e Fechamento dos Sócios são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa, Controle de Faturamento, Fechamento dos Sócios e Implantação são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "controle-faturamento",
       "duvidas",
@@ -82,6 +82,7 @@ describe("catálogo de exceções", () => {
       "fechamento-socios",
       "financeiro-fluxo-caixa-gestao",
       "financeiro_diarias",
+      "licitacoes.implantacao",
       "operacional_diarias",
       "rh_ferias",
       "rh_rateio_despesas",
