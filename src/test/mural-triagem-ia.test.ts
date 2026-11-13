@@ -3,7 +3,8 @@ import {
   bloqueadoPelaIA, separarPelaTriagem, semTriagem, sinalizadoPelaIA, type TriagemItem,
 } from "@/lib/formularios/muralTriagem";
 import {
-  emLotes, lerResultadoTriagem, montarPromptTriagem, LIMITE_MOTIVO,
+  emLotes, lerResultadoTriagem, modeloComVersao, montarPromptTriagem, motivoComTrecho, precisaTriagem,
+  LIMITE_MOTIVO, SYSTEM_PROMPT_TRIAGEM, TAMANHO_LOTE, VERSAO_TRIAGEM,
 } from "../../supabase/functions/_shared/mural-triagem-ia.ts";
 
 const naoRec: TriagemItem = { recomendado: false, motivo: "Compara com o líder", habilitado: false };
@@ -84,5 +85,65 @@ describe("montarPromptTriagem / emLotes", () => {
   });
   it("fatia em lotes", () => {
     expect(emLotes([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+  });
+});
+
+describe("régua v2 (12/11/2026: a v1 deixava passar crítica escondida no elogio)", () => {
+  it("lote pequeno e desempate para NÃO publicar", () => {
+    expect(TAMANHO_LOTE).toBeLessThanOrEqual(20);
+    expect(SYSTEM_PROMPT_TRIAGEM).toMatch(/Na dúvida entre os dois, NÃO recomende/);
+    expect(SYSTEM_PROMPT_TRIAGEM).not.toMatch(/Na dúvida, recomende/);
+  });
+  it("a régua cobre o que a revisão humana tirou e o que ela liberou", () => {
+    // Tirados em set/out: crítica a antecessor, problema interno, ressalva, gênero, texto quebrado.
+    for (const t of ["antecessor", "minha líder", "às vezes fica bem bravo", "homem ou mulher", "ilegível"]) {
+      expect(SYSTEM_PROMPT_TRIAGEM).toContain(t);
+    }
+    // Liberados pela revisão: religião leve, carinho, "melhor líder".
+    for (const t of ["que Deus te abençoe", "segunda mãe", "melhor líder"]) {
+      expect(SYSTEM_PROMPT_TRIAGEM).toContain(t);
+    }
+  });
+  it("lê o trecho e mostra junto do motivo", () => {
+    const bruto = JSON.stringify({ itens: [{ id: 0, publicar: false, motivo: "Critica quem ocupava o cargo antes", trecho: "“superior ao seu antecessor”" }] });
+    expect(lerResultadoTriagem(bruto, 1)[0].motivo).toBe("Critica quem ocupava o cargo antes — “superior ao seu antecessor”");
+  });
+  it("motivo com trecho nunca passa do limite e o motivo nunca some", () => {
+    const m = motivoComTrecho("x".repeat(100), "y".repeat(300));
+    expect(m.length).toBeLessThanOrEqual(LIMITE_MOTIVO);
+    expect(m.startsWith("x".repeat(100))).toBe(true);
+    expect(motivoComTrecho("x".repeat(158), "trecho")).toBe("x".repeat(158));
+    expect(motivoComTrecho("", "")).toMatch(/mural/);
+  });
+  it("modelo gravado leva a versão", () => {
+    expect(modeloComVersao("gemini:gemini-3.6-flash")).toBe(`${VERSAO_TRIAGEM}|gemini:gemini-3.6-flash`);
+    expect(modeloComVersao("z".repeat(200)).length).toBe(80);
+  });
+});
+
+describe("precisaTriagem — quem a régua nova relê", () => {
+  const v1 = "gemini:gemini-3.6-flash";
+  const atual = modeloComVersao(v1);
+  it("pendente nunca lido: lê", () => {
+    expect(precisaTriagem({ status: "pendente", triado: false, recomendado: null, modelo: null })).toBe(true);
+  });
+  it("recomendado pela régua antiga: relê (pode ganhar sinalização)", () => {
+    expect(precisaTriagem({ status: "pendente", triado: true, recomendado: true, habilitado: false, modelo: v1 })).toBe(true);
+    expect(precisaTriagem({ status: "pendente", triado: true, recomendado: true, habilitado: false, modelo: null })).toBe(true);
+  });
+  it("já lido pela régua atual: não gasta token de novo", () => {
+    expect(precisaTriagem({ status: "pendente", triado: true, recomendado: true, habilitado: false, modelo: atual })).toBe(false);
+  });
+  it("desabilitado ou habilitado à mão: a releitura não desfaz decisão", () => {
+    expect(precisaTriagem({ status: "pendente", triado: true, recomendado: false, habilitado: false, modelo: v1 })).toBe(false);
+    expect(precisaTriagem({ status: "pendente", triado: true, recomendado: false, habilitado: true, modelo: v1 })).toBe(false);
+  });
+  it("no mural ou recusado: não lê", () => {
+    expect(precisaTriagem({ status: "liberado", triado: false, recomendado: null })).toBe(false);
+    expect(precisaTriagem({ status: "recusado", triado: true, recomendado: true, modelo: v1 })).toBe(false);
+  });
+  it("banco sem a migration (modelo ausente): não relê, só lê os nunca lidos", () => {
+    expect(precisaTriagem({ status: "pendente", triado: true, recomendado: true, habilitado: false })).toBe(false);
+    expect(precisaTriagem({ status: "pendente", triado: false, recomendado: null })).toBe(true);
   });
 });

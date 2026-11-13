@@ -62,7 +62,10 @@ export function useMuralInicio() {
   return useQuery({
     queryKey: [CHAVE_INICIO, user?.id],
     enabled: !!user?.id,
-    staleTime: 10 * 60_000,
+    // 1 min (era 10): remover um mês do mural (MuralModeracao) tem que sumir
+    // do Início dos outros logo, não 10 min depois. Só reconsulta ao abrir o
+    // Início com o dado vencido — sem polling, sem refetch ao focar a janela.
+    staleTime: 60_000,
     queryFn: async (): Promise<{ mes: string; itens: ItemMuralInicio[] }[]> => {
       const { data, error } = await sb.rpc("cs_form_mural_inicio");
       if (error) throw error;

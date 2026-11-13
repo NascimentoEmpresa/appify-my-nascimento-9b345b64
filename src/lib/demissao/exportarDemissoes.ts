@@ -37,6 +37,8 @@ export function linhasExcelDemissoes(lista: SolicitacaoDemissao[], statusRescisa
       "Motivo": s.motivo_solicitacao,
       "Justificativa do desligamento": s.justificativa_desligamento ?? null,
       "Complemento da justificativa": s.justificativa_complemento ?? null,
+      // SIS-2026-0854: Sim = fora do turnover.
+      "Encerramento do contrato com o cliente": s.encerramento_contrato ? "Sim" : "Não",
       "Data do aviso": paraData(s.data_aviso),
       "Modelo do aviso": s.modelo_aviso,
       "Última data trabalhada": paraData(s.rh_ultima_data_trabalhada ?? null),
