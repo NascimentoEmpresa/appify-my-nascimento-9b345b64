@@ -62,7 +62,7 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
 ## Processamento temporário pelo GitHub Actions
 
 O workflow **NFS-e - fila automática** (`nfse_homologacao.yml`) agenda
-uma execução por hora, exclusivamente na `main` do
+uma execução a cada 15 minutos, exclusivamente na `main` do
 repositório oficial. Usa o mesmo processamento, reservas e proteção contra
 duplicidade do worker local. Não inicia WhatsApp, e-mail ou os outros workers.
 O estado e os documentos persistem no banco/storage do ERP; o runner é descartável.
@@ -98,8 +98,14 @@ fiscal de cada pedido deve ser conferido no painel do ERP.
 
 Enquanto o job está ativo, novos pedidos, protocolos e PDFs pendentes são
 processados nos ciclos de 60 segundos, respeitando a reserva e o prazo do banco.
-Falhas de infraestrutura avulsas não encerram o serviço; três consecutivas
-encerram com erro. Ao atingir o prazo, o job termina e remove os arquivos privados.
+Falhas de infraestrutura não encerram antecipadamente o modo contínuo: o serviço
+mantém as tentativas a cada 60 segundos até o limite da execução e informa quando
+o ciclo se restabelece. Isso permite recuperar reinícios de Docker/banco sem
+depender de outro disparo do cron. Os logs registram somente o código interno,
+operação RPC, status HTTP e código PostgREST/SQLSTATE quando disponíveis; nunca
+mensagem bruta, credencial ou parâmetros fiscais. Ao atingir o prazo, o job termina
+e remove os arquivos privados. Se terminar com três ou mais falhas consecutivas,
+conclui com erro para não apresentar uma indisponibilidade persistente como sucesso.
 **Atualizar** no ERP apenas relê o resultado salvo; não dispara o Actions.
 O [GitHub documenta intervalo mínimo de cinco minutos e possíveis atrasos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
@@ -110,6 +116,27 @@ nesse repositório. O modo contínuo reduz a dependência do cron durante o job;
 não garante disponibilidade sem interrupção se não houver outra execução na
 fila quando ele terminar. Conferir os jobs ativos/pendentes em Actions e usar
 **Run workflow** se necessário. A hospedagem definitiva continua sendo o servidor.
+
+### Recuperação após a indisponibilidade de 13/11/2026
+
+O job de produção encerrou às 04h42 (Brasília), após três falhas consecutivas de
+infraestrutura; a solicitação posterior ficou pendente, com zero tentativas e sem
+protocolo. O operador informou reinícios de Docker/containerd durante atualização
+de segurança do Ubuntu. A política anterior encerrava o runner antes do prazo,
+mesmo que o banco voltasse, e o cron não havia iniciado outro processador.
+
+O modo contínuo agora tolera essa sequência, preserva reservas/marcas de envio e
+retoma os ciclos quando o banco recupera. O cron oferece quatro oportunidades por
+hora de reposição do runner, sem cancelar uma execução saudável. Isso reduz a
+dependência de um disparo isolado, mas mantém a limitação de agendamento do GitHub.
+Uma fila parada exige conferir Actions e o estado persistido antes de retomar;
+o operador não deve criar outra solicitação apenas para destravar a anterior.
+
+Preparações antigas também podem trazer `codigo_municipal: "-"` no campo opcional
+`cTribMun`. Esse marcador e espaços são omitidos na geração do XML. Um código
+informado deve ter três dígitos, com zeros preservados; outros formatos geram
+orientação antes da consulta/envio. Isso não escolhe enquadramento tributário nem
+substitui o campo separado `cIntContrib`. A solicitação original permanece intacta.
 
 O primeiro ciclo remoto já foi conferido; o processador local foi encerrado.
 A reserva no banco protege contra disputa caso duas instâncias se sobreponham.

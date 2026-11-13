@@ -6,8 +6,14 @@ const { ErroNfse, exigir, gerarDps, identificadorDps, assinarDps, validarEsquema
 const { carregarConfiguracao, criarCliente } = require('./cliente');
 
 async function rpc(supabase,nome,parametros) {
-  const {data,error}=await supabase.rpc(nome,parametros);
-  if(error) throw new ErroNfse('FALHA_BANCO','Não foi possível registrar o processamento. A solicitação será reconciliada pela fila.');
+  const {data,error,status}=await supabase.rpc(nome,parametros);
+  if(error) {
+    const erro = new ErroNfse('FALHA_BANCO','Não foi possível registrar o processamento. A solicitação será reconciliada pela fila.');
+    // Nunca preservar message/details/hint: podem conter dados e credenciais.
+    erro.diagnostico = { operacao: nome, http: status,
+      codigoBanco: /^(?:PGRST[0-9]{3}|[0-9A-Z]{5})$/.test(error.code || '') ? error.code : undefined };
+    throw erro;
+  }
   return data;
 }
 async function guardar(supabase,caminho,conteudo,tipo) {
