@@ -76,7 +76,7 @@ describe("o que a tela oferece em cada linha", () => {
     expect(acaoDeRateio({ origem: "importacao_historica", contrato_nome: "Rateio", rateio_erp: true })).toBe("refazer");
     expect(acaoDeRateio({ origem: "importacao_historica", contrato_nome: "Rateio", rateio_erp: false })).toBeNull();
     expect(acaoDeRateio({ origem: "malote", contrato_nome: "ALFA" })).toBeNull();
-    expect(acaoDeRateio({ origem: "debito_automatico" })).toBeNull();
+    // SIS-2026-0877: Débito Automático passou a poder ser rateado (ver o describe no fim do arquivo)
   });
 });
 
@@ -92,5 +92,24 @@ describe("cotas iniciais do diálogo", () => {
   it("refazer: parte do detalhe atual; id 'nome:...' (contrato sem cadastro) vira 'sem contrato'", () => {
     const cotas = cotasIniciais(100, null, [{ id: "c1", valor: 70 }, { id: "nome:ADMINISTRATIVO", valor: 30 }], true);
     expect(cotas).toEqual([C("c1", "70"), C(SEM_CONTRATO, "30")]);
+  });
+});
+
+describe("SIS-2026-0877: ratear Débito Automático no Fluxo", () => {
+  it("Débito Automático oferece ratear (avulso) ou refazer (rateio criado no ERP); rateio já aberto sem flag não oferece nada", () => {
+    expect(acaoDeRateio({ origem: "debito_automatico", contrato_nome: "ADMINISTRATIVO - HAGG" })).toBe("ratear");
+    expect(acaoDeRateio({ origem: "debito_automatico", contrato_nome: "Rateio", rateio_erp: true })).toBe("refazer");
+    expect(acaoDeRateio({ origem: "debito_automatico", contrato_nome: "Rateio" })).toBeNull();
+    // outras origens seguem sem rateio pelo Fluxo
+    expect(acaoDeRateio({ origem: "malote" })).toBeNull();
+    expect(acaoDeRateio({ origem: "cartao_fatura" })).toBeNull();
+  });
+
+  it("a RPC recebe a classificação de cada cota só quando a origem a usa ('' = a do lançamento = nula)", () => {
+    expect(cotasParaRpc([{ contratoId: "c1", valor: "10000", classificacaoId: "" }, { contratoId: SEM_CONTRATO, valor: "10.270,94", classificacaoId: "k1" }])).toEqual([
+      { contrato_id: "c1", classificacao_id: null, valor: 10000 },
+      { contrato_id: null, classificacao_id: "k1", valor: 10270.94 },
+    ]);
+    expect(cotasParaRpc([C("c1", "5")])).toEqual([{ contrato_id: "c1", valor: 5 }]);
   });
 });
