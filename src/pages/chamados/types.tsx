@@ -107,6 +107,9 @@ export interface Chamado {
   modulo_sistema_outro: string | null;
   ambiente: string;
   afeta_usuarios: number | null;
+  /** Alcance informado na abertura (mig 20261115001000): setores e módulos (value de MODULOS_ERP). */
+  setores_impactados?: string[] | null;
+  modulos_impactados?: string[] | null;
   observacoes_solicitante: string | null;
   solicitante_id: string;
   solicitante_nome: string | null;

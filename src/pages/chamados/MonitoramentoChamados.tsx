@@ -23,6 +23,7 @@ import {
 import {
   PRIORIDADES, STATUS_CHAMADO, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
 } from "./types";
+import { atinge, listaImpactados, rotuloModuloImpactado } from "./impactados";
 import {
   ADERENCIA_LABEL, CAMPO_AJUSTE_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
   analiseQualidade, avaliarChamado, calcularKpis, leituraControladoria, rankingSolicitantes, resumoTemas,
@@ -87,9 +88,12 @@ const corAvatar = (chave: string | null | undefined) =>
 
 interface Filtros {
   de: string; ate: string; solic: string; setor: string; modulo: string; tema: string; prioridade: string; status: string;
+  /** Setores/módulos IMPACTADOS informados na abertura (mig 20261115001000). */
+  setorImpactado: string; moduloImpactado: string;
 }
 const filtrosIniciais = (): Filtros => ({
   de: inicioAnoISO(), ate: hojeISO(), solic: TODOS, setor: TODOS, modulo: TODOS, tema: TODOS, prioridade: TODOS, status: TODOS,
+  setorImpactado: TODOS, moduloImpactado: TODOS,
 });
 
 type Foco = "resumo" | "historico" | "criterios";
@@ -133,13 +137,20 @@ export default function MonitoramentoChamados() {
     const solic = new Map<string, string>();
     const setores = new Set<string>();
     const modulos = new Map<string, string>();
+    const setoresImp = new Set<string>();
+    const modulosImp = new Set<string>();
     for (const { c } of todas) {
       solic.set(c.solicitante_id, c.solicitante_nome ?? "—");
       if (c.setor?.trim()) setores.add(c.setor.trim());
       const mk = c.modulo_sistema ?? "";
       if (mk) modulos.set(mk, moduloLabel(c));
+      (c.setores_impactados ?? []).forEach((s) => setoresImp.add(s));
+      (c.modulos_impactados ?? []).forEach((m) => modulosImp.add(m));
     }
     return {
+      setoresImpactados: [...setoresImp].sort((a, b) => a.localeCompare(b, "pt-BR")).map((s) => ({ value: s, label: s })),
+      modulosImpactados: [...modulosImp].map((m) => ({ value: m, label: rotuloModuloImpactado(m) }))
+        .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       solicitantes: [...solic.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       setores: [...setores].sort((a, b) => a.localeCompare(b, "pt-BR")),
       modulos: [...modulos.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
@@ -150,6 +161,8 @@ export default function MonitoramentoChamados() {
     (f.solic === TODOS || c.solicitante_id === f.solic)
     && (f.setor === TODOS || (c.setor?.trim() ?? "") === f.setor)
     && (f.modulo === TODOS || c.modulo_sistema === f.modulo)
+    && atinge(c.setores_impactados, f.setorImpactado, TODOS)
+    && atinge(c.modulos_impactados, f.moduloImpactado, TODOS)
     && (f.tema === TODOS || a.tema === f.tema)
     && (f.prioridade === TODOS || c.prioridade === f.prioridade)
     && (f.status === TODOS || c.status === f.status),
@@ -174,10 +187,12 @@ export default function MonitoramentoChamados() {
 
   const exportarSelecionados = () => {
     const linhas = filtradas.filter(({ c }) => selecionados.has(c.id));
-    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo / Sistema", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
+    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo / Sistema", "Setores impactados", "Módulos impactados", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const corpo = linhas.map(({ c, a }) => [
-      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c), PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
+      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c),
+      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloModuloImpactado),
+      PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
       a.efetividade ?? "", fmt1(a.indice), STATUS_CHAMADO[c.status]?.label ?? c.status, fmt1(a.prazoDias),
       fmtData(c.created_at), c.status === "concluido" ? fmtData(c.concluido_em) : "",
     ].map(esc).join(";"));
@@ -292,6 +307,10 @@ export default function MonitoramentoChamados() {
         <FiltroSelect label="Setor" value={rascunho.setor} onChange={(v) => muda({ setor: v })} todos="Todos os setores"
           opcoes={opcoes.setores.map((s) => ({ value: s, label: s }))} />
         <FiltroSelect label="Módulo / Sistema" value={rascunho.modulo} onChange={(v) => muda({ modulo: v })} todos="Todos os módulos" opcoes={opcoes.modulos} />
+        <FiltroSelect label="Setor impactado" value={rascunho.setorImpactado} onChange={(v) => muda({ setorImpactado: v })} todos="Todos"
+          opcoes={opcoes.setoresImpactados} />
+        <FiltroSelect label="Módulo impactado" value={rascunho.moduloImpactado} onChange={(v) => muda({ moduloImpactado: v })} todos="Todos"
+          opcoes={opcoes.modulosImpactados} />
         <FiltroSelect label="Resumo do Tema da Solicitação" value={rascunho.tema} onChange={(v) => muda({ tema: v })} todos="Todos os temas"
           opcoes={TEMAS.map((t) => ({ value: t.value, label: t.label }))} />
         <FiltroSelect label="Prioridade" value={rascunho.prioridade} onChange={(v) => muda({ prioridade: v })} todos="Todas"
@@ -384,7 +403,16 @@ export default function MonitoramentoChamados() {
                           {temaLabel(a.tema)}{a.ajustado.includes("tema") && " *"}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap py-2 pr-2">{moduloLabel(c)}</td>
+                      <td className="py-2 pr-2">
+                        <span className="whitespace-nowrap">{moduloLabel(c)}</span>
+                        {/* Alcance informado na abertura (mig 20261115001000). */}
+                        {(c.setores_impactados?.length || c.modulos_impactados?.length) ? (
+                          <span className="mt-0.5 block max-w-[170px] truncate text-[10px] text-muted-foreground"
+                            title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}`}>
+                            Impacta: {[...(c.setores_impactados ?? []), ...(c.modulos_impactados ?? []).map(rotuloModuloImpactado)].join(", ")}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="py-2 pr-2"><PrioridadeBadge prioridade={c.prioridade} /></td>
                       <td className="py-2 pr-2">
                         {a.efetividade == null ? (
@@ -776,6 +804,11 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
             {c.numero} <StatusBadge status={c.status} /> <PrioridadeBadge prioridade={c.prioridade} />
           </DialogTitle>
           <DialogDescription>{c.assunto} — {c.solicitante_nome ?? "—"} ({c.setor ?? "sem setor"}) · aberto em {fmtData(c.created_at)}</DialogDescription>
+          <p className="text-xs text-muted-foreground">
+            <b className="text-foreground">Setores impactados:</b> {listaImpactados(c.setores_impactados)}
+            {" · "}
+            <b className="text-foreground">Módulos impactados:</b> {listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}
+          </p>
         </DialogHeader>
 
         <div className="grid gap-3 sm:grid-cols-3">

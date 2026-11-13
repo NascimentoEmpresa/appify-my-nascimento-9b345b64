@@ -38,6 +38,9 @@ export interface ChamadoMonitor {
   solicitante_id: string;
   solicitante_nome: string | null;
   setor: string | null;
+  /** Alcance informado na abertura (mig 20261115001000). Ausente antes dela. */
+  setores_impactados?: string[] | null;
+  modulos_impactados?: string[] | null;
   status: string;
   prazo_previsto: string | null;
   concluido_em: string | null;
