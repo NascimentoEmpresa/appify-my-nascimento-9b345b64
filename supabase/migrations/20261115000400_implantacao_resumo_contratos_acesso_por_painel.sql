@@ -42,15 +42,15 @@ INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
 SELECT m.id, v.codigo, v.nome, v.rota, v.ordem, true
   FROM public.app_modulo m
   CROSS JOIN (VALUES
-    ('licitacoes-implantacao-painel',              'Resumo Geral dos Contratos', '/app/licitacoes/implantacao/painel',              40),
-    ('licitacoes-implantacao-painel-compras',      'Resumo dos Contratos - Compras',      '/app/licitacoes/implantacao/painel/compras',      41),
-    ('licitacoes-implantacao-painel-financeiro',   'Resumo dos Contratos - Financeiro',   '/app/licitacoes/implantacao/painel/financeiro',   42),
-    ('licitacoes-implantacao-painel-licitacao',    'Resumo dos Contratos - Licitação',    '/app/licitacoes/implantacao/painel/licitacao',    43),
-    ('licitacoes-implantacao-painel-operacional',  'Resumo dos Contratos - Operacional',  '/app/licitacoes/implantacao/painel/operacional',  44),
-    ('licitacoes-implantacao-painel-recrutamento', 'Resumo dos Contratos - Recrutamento', '/app/licitacoes/implantacao/painel/recrutamento', 45),
-    ('licitacoes-implantacao-painel-rh',           'Resumo dos Contratos - RH',           '/app/licitacoes/implantacao/painel/rh',           46),
-    ('licitacoes-implantacao-painel-sst',          'Resumo dos Contratos - SST',          '/app/licitacoes/implantacao/painel/sst',          47),
-    ('licitacoes-implantacao-painel-treinamentos', 'Resumo dos Contratos - Treinamentos', '/app/licitacoes/implantacao/painel/treinamentos', 48)
+    ('licitacoes-implantacao-painel',              'Resumo de Contrato GERAL', '/app/licitacoes/implantacao/painel',              40),
+    ('licitacoes-implantacao-painel-compras',      'Resumo de Contrato COMPRAS',      '/app/licitacoes/implantacao/painel/compras',      41),
+    ('licitacoes-implantacao-painel-financeiro',   'Resumo de Contrato FINANCEIRO',   '/app/licitacoes/implantacao/painel/financeiro',   42),
+    ('licitacoes-implantacao-painel-licitacao',    'Resumo de Contrato LICITAÇÃO',    '/app/licitacoes/implantacao/painel/licitacao',    43),
+    ('licitacoes-implantacao-painel-operacional',  'Resumo de Contrato OPERACIONAL',  '/app/licitacoes/implantacao/painel/operacional',  44),
+    ('licitacoes-implantacao-painel-recrutamento', 'Resumo de Contrato RECRUTAMENTO', '/app/licitacoes/implantacao/painel/recrutamento', 45),
+    ('licitacoes-implantacao-painel-rh',           'Resumo de Contrato RH',           '/app/licitacoes/implantacao/painel/rh',           46),
+    ('licitacoes-implantacao-painel-sst',          'Resumo de Contrato SST',          '/app/licitacoes/implantacao/painel/sst',          47),
+    ('licitacoes-implantacao-painel-treinamentos', 'Resumo de Contrato TREINAMENTOS', '/app/licitacoes/implantacao/painel/treinamentos', 48)
   ) AS v(codigo, nome, rota, ordem)
  WHERE m.codigo = 'licitacoes'
 ON CONFLICT (modulo_id, codigo) DO NOTHING;
