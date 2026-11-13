@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   assinaturaRespostas,
+  categoriaDaPergunta,
+  categoriasDasLinhas,
+  filtrarLinhas,
   itensDoSetor,
   listarSetores,
   mapaRespostas,
@@ -125,5 +128,33 @@ describe("painel geral e por setor", () => {
     expect(valorLegivel('["ASO","CTPS"]')).toBe("ASO, CTPS");
     expect(valorLegivel("[rascunho")).toBe("[rascunho");
     expect(valorLegivel(null)).toBe("");
+  });
+});
+
+describe("Implantação › página do setor — categorias e filtros", () => {
+  it("comuns viram Dados do contrato / Informações gerais; as do setor, o grupo do tema", () => {
+    expect(categoriaDaPergunta("CNPJ do contratante", true)).toBe("Dados do contrato");
+    expect(categoriaDaPergunta("Nº pessoas (Quantidade de postos)", true)).toBe("Dados do contrato");
+    expect(categoriaDaPergunta("Cidade", true)).toBe("Informações gerais");
+    expect(categoriaDaPergunta("Compras de crachá", false)).toBe("Uniformes e compras");
+    expect(categoriaDaPergunta("Prazo envio ASOs", false)).toBe("Saúde e treinamentos");
+    expect(categoriaDaPergunta("Documentos mensais para emissão da nota", false)).toBe("Documentação e faturamento");
+    expect(categoriaDaPergunta("Escala de horário de postos", false)).toBe("Informações específicas");
+  });
+
+  it("abas na ordem fixa e filtro por busca, status e categoria", () => {
+    const linha = (row: number, pergunta: string, comum: boolean, valor: string) => ({
+      row_index: row, pergunta, valor, respondido: !!valor, comum, plano_acao: "Recebimento dados", onde: "ERP",
+      categoria: categoriaDaPergunta(pergunta, comum),
+    });
+    const linhas = [
+      linha(1, "Escala de horário de postos", false, ""),
+      linha(2, "CNPJ do contratante", true, "00.000.000/0001-00"),
+      linha(3, "Compras de uniformes", false, "Pedido feito"),
+    ];
+    expect(categoriasDasLinhas(linhas)).toEqual(["Dados do contrato", "Uniformes e compras", "Informações específicas"]);
+    expect(filtrarLinhas(linhas, "", "pendentes", "todas").map((l) => l.row_index)).toEqual([1]);
+    expect(filtrarLinhas(linhas, "pedido", "todos", "todas").map((l) => l.row_index)).toEqual([3]);
+    expect(filtrarLinhas(linhas, "", "preenchidos", "Dados do contrato").map((l) => l.row_index)).toEqual([2]);
   });
 });
