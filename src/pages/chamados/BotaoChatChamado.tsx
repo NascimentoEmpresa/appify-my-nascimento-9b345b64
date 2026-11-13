@@ -77,7 +77,12 @@ export function BotaoChatChamado({
         onOpenChange={(v) => {
           setAberto(v);
           // Fechou → a leitura já foi carimbada lá dentro; atualiza a bolinha.
-          if (!v) qc.invalidateQueries({ queryKey: ["chamados-nao-lidos"] });
+          // Também a conversa de "Meus chamados": quem respondeu continua na
+          // lista padrão, quem só leu sai dela (mig 20261115000900).
+          if (!v) {
+            qc.invalidateQueries({ queryKey: ["chamados-nao-lidos"] });
+            qc.invalidateQueries({ queryKey: ["chamados-meus-conversa"] });
+          }
         }}
       >
         <DialogContent className="max-w-3xl gap-3">
