@@ -99,6 +99,10 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
  * que ela nem enxerga mais.
  */
 export function acoesGravadasPeloToggle(codigo: string, allow: boolean): AppAcao[] {
+  // SIS-2026-0837: a permissão da cópia controla somente a visibilidade
+  // daquela posição no menu. As ações de negócio continuam pertencendo ao
+  // menu original da tela; gravá-las na cópia criaria grants sem consumidor.
+  if (codigo.startsWith("menu_lateral_copia_")) return ["visualizar"];
   const fora = ACOES_FORA_DO_TOGGLE[codigo] ?? [];
   if (allow) return ACOES_DO_TOGGLE_PADRAO.filter((a) => !fora.includes(a));
   return [...ACOES_DO_TOGGLE_PADRAO, ...fora.filter((a) => !ACOES_DO_TOGGLE_PADRAO.includes(a))];

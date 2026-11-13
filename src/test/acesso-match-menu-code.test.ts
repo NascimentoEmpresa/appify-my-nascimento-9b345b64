@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchMenuCode, type MenuRoute } from "@/hooks/useAccessibleMenus";
+import { matchMenuCode, matchingMenuRoutes, menuCodeComAcessoNaRota, rotaVisivelNoMenu, type MenuRoute } from "@/hooks/useAccessibleMenus";
 
 /**
  * Incidente real em produção. A MESMA rota aparece cadastrada duas vezes em
@@ -29,6 +29,46 @@ describe("matchMenuCode — desempate por menu ativo", () => {
   it("prefere o ativo mesmo se ele vier depois na lista", () => {
     const invertido = [...rotasDuplicadas].reverse();
     expect(matchMenuCode("/app/rh/recrutamento", invertido)).toBe("recrutamento_gestao");
+  });
+
+  it("cópias da mesma rota não substituem o código original", () => {
+    const rotas: MenuRoute[] = [
+      { codigo: "financeiro-fluxo-caixa-gestao", rota: "/app/financeiro/gestao-financeira/fluxo-caixa", ativo: true },
+      { codigo: "menu_lateral_copia_contabil_fluxo", rota: "/app/financeiro/gestao-financeira/fluxo-caixa", ativo: true },
+      { codigo: "menu_lateral_copia_diretoria_fluxo", rota: "/app/financeiro/gestao-financeira/fluxo-caixa", ativo: true },
+    ];
+    expect(matchMenuCode(rotas[0].rota, rotas)).toBe("financeiro-fluxo-caixa-gestao");
+    expect(matchingMenuRoutes(rotas[0].rota, rotas).map((r) => r.codigo)).toEqual([
+      "financeiro-fluxo-caixa-gestao",
+      "menu_lateral_copia_contabil_fluxo",
+      "menu_lateral_copia_diretoria_fluxo",
+    ]);
+
+    const acesso = {
+      routes: rotas,
+      codes: new Set(["menu_lateral_copia_contabil_fluxo"]),
+      inactiveCodes: new Set<string>(),
+    };
+    expect(rotaVisivelNoMenu(rotas[0].rota, acesso)).toBe(false);
+    expect(rotaVisivelNoMenu(rotas[0].rota, acesso, "menu_lateral_copia_contabil_fluxo")).toBe(true);
+    expect(rotaVisivelNoMenu(rotas[0].rota, acesso, "menu_lateral_copia_diretoria_fluxo")).toBe(false);
+    expect(menuCodeComAcessoNaRota(rotas[0].rota, acesso)).toBe("menu_lateral_copia_contabil_fluxo");
+  });
+
+  it("cópia não reaparece se a tela original estiver inativa", () => {
+    const rota = "/app/tela";
+    const routes: MenuRoute[] = [
+      { codigo: "tela_original", rota, ativo: false },
+      { codigo: "menu_lateral_copia_tela", rota, ativo: true },
+    ];
+    const acesso = {
+      routes,
+      codes: new Set(["menu_lateral_copia_tela"]),
+      inactiveCodes: new Set(["tela_original"]),
+    };
+    expect(rotaVisivelNoMenu(rota, acesso)).toBe(false);
+    expect(rotaVisivelNoMenu(rota, acesso, "menu_lateral_copia_tela")).toBe(false);
+    expect(menuCodeComAcessoNaRota(rota, acesso)).toBeNull();
   });
 
   it("rota mais específica ainda ganha, mesmo que a genérica esteja ativa", () => {

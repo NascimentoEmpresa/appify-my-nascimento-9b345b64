@@ -31,6 +31,11 @@ describe("pacote padrão do toggle", () => {
       ...ACOES_DO_TOGGLE_PADRAO,
     ]);
   });
+
+  it("cópia do menu lateral grava somente visualizar", () => {
+    expect(acoesGravadasPeloToggle("menu_lateral_copia_cp_abc", true)).toEqual(["visualizar"]);
+    expect(acoesGravadasPeloToggle("menu_lateral_copia_cp_abc", false)).toEqual(["visualizar"]);
+  });
 });
 
 describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle", () => {

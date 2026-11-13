@@ -114,6 +114,8 @@ interface NavItem {
   label: string;
   to: string;
   icon: LucideIcon;
+  /** Preenchido nas cópias organizadas: controla somente esta posição. */
+  menuCodigo?: string;
   badge?: string;
   // Selo "Novo" que expira sozinho: data (AAAA-MM-DD) em que a tela foi liberada. O selo
   // aparece por NOVO_DIAS (15) dias a partir dela e some depois, sem precisar de PR para remover.
@@ -1656,8 +1658,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
-  // Organização salva (ou o padrão). Só decide ONDE cada tela aparece; quem
-  // vê cada uma continua sendo o canSee abaixo, pela rota.
+  // Organização salva (ou o padrão). Entradas originais seguem a permissão
+  // da rota; cópias carregam um menuCodigo independente (SIS-2026-0837).
   const allModules = useMenuLateral<NavItem, ModuleDef>(NAV_MODULOS);
 
   // Sidebar filtra itens com base nos menus acessíveis do usuário (perfil de
@@ -1665,7 +1667,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Ações passou a usar o mesmo filtro que todo o resto (antes tinha exceção
   // própria via usePlanoAcaoPermissao — removida a pedido do usuário, pra
   // "Acesso por Usuário" ser a única autoridade em qualquer módulo).
-  const canSee = useCallback((to: string) => {
+  const canSee = useCallback((alvo: string | NavItem) => {
+    const to = typeof alvo === "string" ? alvo : alvo.to;
+    const menuCodigo = typeof alvo === "string" ? undefined : alvo.menuCodigo;
     // Encarregado externo: só a allowlist dele. Precisa vir ANTES de tudo —
     // ele não tem perfil de acesso, então cairia no ramo "menu ainda não
     // configurado → visível" e enxergaria o ERP inteiro no menu. Este ramo
@@ -1674,7 +1678,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // Mesma regra do RouteGuard: NEGA POR PADRÃO. A sidebar não pode listar o
     // que a rota vai barrar — item visível que dá "Acesso negado" ao clicar é
     // pior do que item ausente.
-    return rotaVisivelNoMenu(to, access);
+    return rotaVisivelNoMenu(to, access, menuCodigo);
   }, [access, externo]);
 
   const visibleModules = useMemo(() => {
@@ -1687,7 +1691,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       .map((mod) => {
         if (!mod.groups) return mod;
         const groups = mod.groups
-          .map((g) => ({ ...g, items: g.items.filter((item) => canSee(item.to)) }))
+          .map((g) => ({ ...g, items: g.items.filter((item) => canSee(item)) }))
           .filter((g) => g.items.length > 0);
         return { ...mod, groups };
       })

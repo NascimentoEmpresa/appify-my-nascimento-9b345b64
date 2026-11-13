@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 import { AtalhosMobile } from "@/components/layout/AtalhosMobile";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
-import { useModoExterno, ROTAS_EXTERNO } from "@/hooks/useModoExterno";
-import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
+import { useAccessibleMenus, rotaVisivelNoMenu } from "@/hooks/useAccessibleMenus";
+import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
+import { rotaMovida } from "@/lib/acesso";
 import { NAV_MODULOS, type NavItemDef, type NavModuleDef } from "@/components/layout/Sidebar";
 import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { MinhasReunioesCard } from "@/pages/central-servicos/reunioes/componentes/MinhasReunioesCard";
@@ -76,6 +76,7 @@ type Atalho = {
   desc: string;
   cor: string;
   grupo: string;
+  menuCodigo?: string;
 };
 
 /** Uma cor por módulo, para o cartão herdar a identidade do menu. */
@@ -154,18 +155,15 @@ const ATALHOS_PESSOAIS: Atalho[] = [
 ];
 
 /**
- * Achata os módulos do menu em cartões, um por tela, sem repetir rota.
- * SIS-2026-0772: recebe o menu já organizado (useMenuLateral) — a tela
- * copiada para dois módulos aparece uma vez só, no primeiro deles.
+ * Achata os módulos do menu em cartões. A deduplicação acontece DEPOIS do
+ * filtro de acesso: assim, se a entrada original estiver negada e uma cópia
+ * estiver liberada, o cartão usa o módulo da cópia em vez de sumir.
  */
 function montarCatalogo(modulos: typeof NAV_MODULOS): Atalho[] {
-  const vistos = new Set<string>();
   const out: Atalho[] = [];
   for (const mod of modulos) {
     for (const grupo of mod.groups ?? []) {
       for (const item of grupo.items) {
-        if (vistos.has(item.to)) continue;
-        vistos.add(item.to);
         out.push({
           to: item.to,
           icon: item.icon as LucideIcon,
@@ -175,16 +173,18 @@ function montarCatalogo(modulos: typeof NAV_MODULOS): Atalho[] {
           desc: DESC_ROTA[item.to] ?? grupo.label,
           cor: COR_MODULO[mod.id] ?? COR_PADRAO,
           grupo: mod.label,
+          menuCodigo: item.menuCodigo,
         });
       }
     }
   }
   for (const a of ATALHOS_PESSOAIS) {
-    if (!vistos.has(a.to)) { vistos.add(a.to); out.push(a); }
+    if (!out.some((item) => item.to === a.to)) out.push(a);
   }
-  // Alfabética dentro de cada módulo, igual à sidebar: quem procura um cartão
-  // procura pelo mesmo nome, na mesma ordem que já viu no menu.
-  return out.sort((a, b) => a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" }));
+  // Preserva a ordem dos módulos até o filtro de acesso deduplicar a rota:
+  // se original e cópia estiverem liberados, a entrada original continua
+  // vencendo como antes do SIS-2026-0837.
+  return out;
 }
 
 /**
@@ -274,23 +274,22 @@ export default function Inicio() {
   // visível") qualquer pessoa passaria a ver as 140 telas do sistema aqui e
   // tomaria "Acesso negado" ao clicar. Vale também para "Gerenciar
   // favoritos": ninguém favorita tela que não pode abrir.
-  const podeVer = useCallback((to: string) => {
-
-    // Encarregado externo primeiro: ele não tem perfil de acesso, então só a
-    // allowlist dele responde.
-    if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
-    if (rotaSempreLiberada(to)) return true;
-    if (!access) return false;
-    
-    const code = matchMenuCode(to, access.routes);
-    if (!code || access.inactiveCodes.has(code)) return false;
-    return access.codes.has(code);
+  const podeVer = useCallback((atalho: Atalho) => {
+    if (externo) return rotaPermitidaExterno(atalho.to);
+    return rotaVisivelNoMenu(atalho.to, access, atalho.menuCodigo);
   }, [access, externo]);
 
   const modulosDoMenu = useMenuLateral<NavItemDef, NavModuleDef>(NAV_MODULOS);
   const CATALOGO = useMemo(() => montarCatalogo(modulosDoMenu), [modulosDoMenu]);
   const ORDEM_GRUPOS = useMemo(() => ordemDosGrupos(modulosDoMenu, CATALOGO), [modulosDoMenu, CATALOGO]);
-  const catalogoVisivel = useMemo(() => CATALOGO.filter((a) => podeVer(a.to)), [CATALOGO, podeVer]);
+  const catalogoVisivel = useMemo(() => {
+    const vistos = new Set<string>();
+    return CATALOGO.filter((a) => {
+      if (vistos.has(a.to) || !podeVer(a)) return false;
+      vistos.add(a.to);
+      return true;
+    }).sort((a, b) => a.label.localeCompare(b.label, "pt-BR", { sensitivity: "base" }));
+  }, [CATALOGO, podeVer]);
 
   const meusFavoritos = useMemo(() => {
     const set = new Set(favoritos ?? FAVORITOS_PADRAO);

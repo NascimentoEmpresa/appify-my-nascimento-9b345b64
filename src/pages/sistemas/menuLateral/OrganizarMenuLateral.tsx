@@ -37,7 +37,9 @@ import {
  *
  * Organiza só o LUGAR das telas no menu (módulo, categoria, ordem, nome
  * exibido). A permissão de cada tela continua em Administração › Acesso por
- * Usuário — mover não dá acesso a ninguém e tirar do menu não bloqueia. A
+ * Usuário; desde o SIS-2026-0837, copiar também cria ali uma permissão
+ * independente para a nova posição. Mover não muda acesso e tirar do menu
+ * não bloqueia a rota original. A
  * regra mora em src/lib/menuLateral/estrutura.ts; a gravação, na RPC
  * menu_lateral_salvar (mig 20261105040000), que confere a permissão
  * "alterar" de menu_lateral e recusa salvar em cima de versão velha.
@@ -272,9 +274,9 @@ export default function OrganizarMenuLateral() {
       <div className="flex gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          Aqui muda só <strong>onde</strong> cada tela aparece no menu. <strong>Quem vê</strong> cada tela continua sendo definido em
-          Administração › Acesso por Usuário: mover uma tela para outro módulo não dá acesso a ninguém, e tirar do menu não bloqueia
-          quem tem permissão.
+          Aqui muda <strong>onde</strong> cada tela aparece no menu. Mover preserva o acesso; <strong>copiar cria uma permissão
+          independente</strong> em Administração › Acesso por Usuário, para a nova posição não liberar as demais; e tirar do menu
+          não bloqueia quem abre a rota original.
         </p>
       </div>
 
