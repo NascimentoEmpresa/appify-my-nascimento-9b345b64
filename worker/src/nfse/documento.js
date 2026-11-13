@@ -35,6 +35,13 @@ function texto(valor, maximo, nome) {
   exigir(resultado.length > 0 && resultado.length <= maximo && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(resultado), `Confira ${nome}.`);
   return resultado;
 }
+function codigoMunicipal(valor) {
+  const resultado = String(valor ?? '').trim();
+  // Preparações antigas usam '-' como ausência deste campo opcional.
+  if (resultado === '-') return '';
+  exigir(!resultado || /^[0-9]{3}$/.test(resultado), 'Confira o código municipal do serviço: informe três dígitos ou deixe o campo vazio. O código de integração da prefeitura é informado separadamente.');
+  return resultado;
+}
 function validarSolicitacao(s) {
   exigir(['homologacao','producao'].includes(s.ambiente), 'Ambiente fiscal inválido.');
   const p = s.dados?.parametros;
@@ -50,6 +57,7 @@ function validarSolicitacao(s) {
   codigo(p.local_prestacao, 7, 'o local da prestação');
   codigo(p.codigo_tributacao, 6, 'o código nacional do serviço');
   codigo(p.codigo_nbs, 9, 'a NBS');
+  codigoMunicipal(p.codigo_municipal);
   const integracaoMunicipal = String(p.codigo_integracao_municipal ?? '').trim();
   exigir(!integracaoMunicipal || /^[a-zA-Z0-9]{1,20}$/.test(integracaoMunicipal), 'Código do serviço na prefeitura inválido: use até 20 letras ou números, sem separadores.');
   if (s.ambiente === 'producao' && !s.envio_iniciado_em && digitos(p.municipio_emissor) === '4322004' && digitos(p.codigo_tributacao) === '170501') {
@@ -108,7 +116,8 @@ function gerarDps(s) {
   const endereco = `<end><endNac>${tag('cMun',digitos(t.municipio))}${tag('CEP',digitos(t.cep))}</endNac>${tag('xLgr',t.logradouro.trim())}${tag('nro',t.numero.trim())}${t.complemento ? tag('xCpl',t.complemento.trim()) : ''}${tag('xBairro',t.bairro.trim())}</end>`;
   const regTrib = `<regTrib>${tag('opSimpNac',p.opcao_simples)}${p.opcao_simples === '3' ? tag('regApTribSN',p.regime_apuracao) : ''}${tag('regEspTrib',p.regime_especial)}</regTrib>`;
   const integracaoMunicipal = String(p.codigo_integracao_municipal ?? '').trim();
-  const servico = `<serv><locPrest>${tag('cLocPrestacao',digitos(p.local_prestacao))}</locPrest><cServ>${tag('cTribNac',digitos(p.codigo_tributacao))}${p.codigo_municipal ? tag('cTribMun',p.codigo_municipal) : ''}${tag('xDescServ',p.descricao || n.descricao)}${tag('cNBS',digitos(p.codigo_nbs))}${integracaoMunicipal ? tag('cIntContrib',integracaoMunicipal) : ''}</cServ></serv>`;
+  const municipal = codigoMunicipal(p.codigo_municipal);
+  const servico = `<serv><locPrest>${tag('cLocPrestacao',digitos(p.local_prestacao))}</locPrest><cServ>${tag('cTribNac',digitos(p.codigo_tributacao))}${municipal ? tag('cTribMun',municipal) : ''}${tag('xDescServ',p.descricao || n.descricao)}${tag('cNBS',digitos(p.codigo_nbs))}${integracaoMunicipal ? tag('cIntContrib',integracaoMunicipal) : ''}</cServ></serv>`;
   const pisCofins = centavos(n.pis_total) + centavos(n.cofins_total) > 0
     ? `<piscofins>${tag('CST',p.cst_pis_cofins)}${tag('vBCPisCofins',moeda(n.vlr_bruto_total))}${tag('pAliqPis',(Number(n.pis_total) / Number(n.vlr_bruto_total) * 100).toFixed(2))}${tag('pAliqCofins',(Number(n.cofins_total) / Number(n.vlr_bruto_total) * 100).toFixed(2))}${tag('vPis',moeda(n.pis_total))}${tag('vCofins',moeda(n.cofins_total))}${tag('tpRetPisCofins',p.retencao_pis_cofins)}</piscofins>` : '';
   // Compatibilidade GOVBR comprovada em homologação e nos XMLs de Triunfo:

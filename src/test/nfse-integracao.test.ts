@@ -77,6 +77,25 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it("omite marcador vazio no código municipal e preserva o código fiscal informado com três dígitos", async () => {
+    for (const codigo of ["", "   ", "-", " - ", "007"]) {
+      const s = solicitacao(); s.dados.parametros.codigo_municipal = codigo;
+      const antes = JSON.stringify(s);
+      const xml = documento.gerarDps(s);
+      if (codigo === "007") expect(xml).toContain("<cTribMun>007</cTribMun>");
+      else expect(xml).not.toContain("<cTribMun>");
+      await documento.validarEsquema(documento.assinarDps(xml, documento.identificadorDps(s), cert, "sha1"));
+      expect(JSON.stringify(s)).toBe(antes);
+    }
+  });
+  it("recusa código municipal inválido com orientação antes de consultar ou enviar à prefeitura", async () => {
+    for (const codigo of ["12", "1234", "8111700", "ABC"]) {
+      const s = solicitacao(); s.dados.parametros.codigo_municipal = codigo;
+      const deps = dependencias();
+      await expect(executarSolicitacao(s, deps)).rejects.toThrow(/código municipal.*três dígitos/i);
+      expect(deps.cliente.consultarDps).not.toHaveBeenCalled(); expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    }
+  });
   it("preserva a assinatura da DPS nos namespaces herdados da NFSe municipal", async () => {
     const s = solicitacao();
     for (const algoritmo of ["sha1", "sha256"]) {
