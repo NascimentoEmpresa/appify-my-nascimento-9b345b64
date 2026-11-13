@@ -12,7 +12,7 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, maximoDeVagas, quantidadeValida,
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   avaliarPrazo, dataMinimaVaga,
-  cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
+  cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
@@ -107,7 +107,7 @@ function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
     <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
       {!prazo.ok
         ? <>⚠️ {prazo.erro}</>
-        : <>✅ <b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+        : <>✅ <b>{prazo.dias} dias</b> de antecedência ({prazo.diasUteis} úteis) → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
     </div>
   );
 }

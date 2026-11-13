@@ -199,6 +199,22 @@ export interface Evento {
   texto: string | null;
   meta: Record<string, any> | null;
   created_at: string;
+  /** Editar/apagar a própria mensagem (mig 20261115000600). Versões antigas em
+   *  CHAMADO_SISTEMA_EVENTO_VERSAO; apagada tem `texto` NULL. */
+  editado_em?: string | null;
+  apagado_em?: string | null;
+  apagado_por?: string | null;
+}
+
+/** Versão anterior de uma mensagem do chat (editada ou apagada). */
+export interface VersaoMensagem {
+  id: string;
+  evento_id: string;
+  chamado_id: string;
+  acao: "editada" | "apagada";
+  texto: string | null;
+  feito_por: string | null;
+  feito_em: string;
 }
 
 export interface AvaliacaoChamado {

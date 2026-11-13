@@ -19,14 +19,14 @@
 // tabela.
 
 // O prazo da vaga NÃO é recalculado aqui de propósito: é a mesma regra da
-// solicitação de vaga (7 dias úteis, seg–sex menos feriado nacional), e ela
+// solicitação de vaga (3 dias corridos desde 13/11/2026; eram 7 úteis), e ela
 // já mora em vagaRegras.ts, que é onde o trigger `sistema_recrutamento_guard`
-// é espelhado. Reimplementar a contagem de dias úteis neste arquivo criaria
+// é espelhado. Reimplementar a contagem de dias neste arquivo criaria
 // duas contas que podem divergir — e a que a vaga usa na hora de gravar
 // continuaria sendo a de lá, então a daqui só enganaria quem preenche.
-import { avaliarPrazo, dataMinimaVaga, hojeIso, MIN_DIAS_UTEIS, fmtBr } from "@/lib/recrutamento/vagaRegras";
+import { avaliarPrazo, dataMinimaVaga, hojeIso, MIN_DIAS_ANTECEDENCIA, fmtBr } from "@/lib/recrutamento/vagaRegras";
 
-export { dataMinimaVaga, MIN_DIAS_UTEIS };
+export { dataMinimaVaga, MIN_DIAS_ANTECEDENCIA };
 
 /** Uma linha do quadro, do jeito que o formulário a edita (tudo string). */
 export interface LinhaQuadroForm {
@@ -94,7 +94,7 @@ export const brl = (v: number): string =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 // ── Prazo da vaga ───────────────────────────────────────────────────────
-// A vaga precisa de 7 dias úteis de antecedência — regra do
+// A vaga precisa de 3 dias corridos de antecedência — regra do
 // `sistema_recrutamento_guard` (migration 20260903000001), que recusa o
 // INSERT. A geração das vagas do quadro passa pelo MESMO guard, então a data
 // de cada posto tem que respeitá-la antes de alguém clicar em salvar: sem
