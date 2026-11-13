@@ -25,6 +25,9 @@ import {
 } from "./types";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { afetaUsuariosParaBanco, somenteDigitos } from "./afetaUsuarios";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
+import { opcoesModulosImpactados, opcoesSetoresImpactados, semColunasImpactados } from "./impactados";
 import {
   filtrarChamadosParaVincular, formularioBaseadoEm, lerBaseado, MIN_COMPLEMENTO, proximaParte, rotuloParte,
   type ChamadoBase, type ParteSerie,
@@ -115,6 +118,11 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const [moduloOutro, setModuloOutro] = useState("");
   const [ambiente, setAmbiente] = useState("producao");
   const [afetaUsuarios, setAfetaUsuarios] = useState("");
+  // Alcance da mudança (13/11/2026, mig 20261115001000): opcionais, vários.
+  const [setoresImpactados, setSetoresImpactados] = useState<string[]>([]);
+  const [modulosImpactados, setModulosImpactados] = useState<string[]>([]);
+  const { data: setoresEmpresa = [] } = useSetoresEmpresa();
+  const opcoesSetores = useMemo(() => opcoesSetoresImpactados(setoresEmpresa), [setoresEmpresa]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
@@ -254,7 +262,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       return;
     }
     setSalvando(true);
-    const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").insert({
+    const linha = {
       assunto: assunto.trim(),
       categorias,
       tipo_solicitacao: tipo,
@@ -272,7 +280,18 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       setor: setor !== "—" ? setor : null,
       vinculado_a: baseadoId ? baseadoId : vincular ? vinculadoA : null,
       complemento: baseadoId ? complemento.trim() : null,
-    }).select("id, numero, parte").single();
+      setores_impactados: setoresImpactados,
+      modulos_impactados: modulosImpactados,
+    };
+    const inserir = (l: Record<string, unknown>) =>
+      (supabase as any).from("CHAMADO_SISTEMA").insert(l).select("id, numero, parte").single();
+    let { data, error } = await inserir(linha);
+    // Até a mig 20261115001000 entrar, as colunas não existem: abre sem elas
+    // em vez de travar a abertura de chamado.
+    if (error && semColunasImpactados(error.message)) {
+      const { setores_impactados: _s, modulos_impactados: _m, ...semImpactados } = linha;
+      ({ data, error } = await inserir(semImpactados));
+    }
 
     if (error) { setSalvando(false); toast({ title: "Erro ao abrir chamado", description: error.message, variant: "destructive" }); return; }
 
@@ -655,6 +674,21 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               <div>
                 <Label className="mb-1.5 block text-xs font-semibold">Afeta quantos usuários?</Label>
                 <Input inputMode="numeric" placeholder="Opcional" value={afetaUsuarios} onChange={(e) => setAfetaUsuarios(somenteDigitos(e.target.value))} />
+              </div>
+            </div>
+
+            {/* Alcance da mudança: ajuda Sistemas a ver, antes de começar,
+                quais áreas e telas testar (mig 20261115001000). */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label className="mb-1.5 block text-xs font-semibold">Setores impactados</Label>
+                <SearchableMultiSelect value={setoresImpactados} onChange={setSetoresImpactados} options={opcoesSetores}
+                  placeholder="Selecionar setores" searchPlaceholder="Buscar setor..." emptyLabel="Nenhum setor encontrado" />
+              </div>
+              <div>
+                <Label className="mb-1.5 block text-xs font-semibold">Módulos impactados</Label>
+                <SearchableMultiSelect value={modulosImpactados} onChange={setModulosImpactados} options={opcoesModulosImpactados}
+                  placeholder="Selecionar módulos" searchPlaceholder="Buscar módulo..." emptyLabel="Nenhum módulo encontrado" />
               </div>
             </div>
           </Card>
