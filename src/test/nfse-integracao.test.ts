@@ -77,6 +77,35 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it("envia a data fiscal escolhida no dCompet sem alterar a competência mensal nem os valores", async () => {
+    const s = solicitacao();
+    Object.assign(s.dados.parametros, { data_competencia: "2026-10-31" });
+    const antes = JSON.stringify(s);
+    const xml = documento.assinarDps(documento.gerarDps(s), documento.identificadorDps(s), cert, "sha1");
+    expect(xml).toContain("<dCompet>2026-10-31</dCompet>");
+    expect(s.dados.nota.competencia).toBe("2026-10-01");
+    await documento.validarEsquema(xml);
+    const verificador = new SignedXml({ publicCert: cert.certPem, getCertFromKeyInfo: () => null });
+    verificador.loadSignature(documento.elementos(documento.lerXml(xml), "Signature")[0]);
+    expect(verificador.checkSignature(xml)).toBe(true);
+    expect(JSON.stringify(s)).toBe(antes);
+    const nota = retornoXml(s);
+    expect(documento.conferirNota(documento.descompactar(nota.xmlGZipB64).toString(), s, nota.chave).numero).toBe("900");
+    const divergente = documento.descompactar(nota.xmlGZipB64).toString().replace("<dCompet>2026-10-31</dCompet>", "<dCompet>2026-10-01</dCompet>");
+    expect(() => documento.conferirNota(divergente, s, nota.chave)).toThrow(/competência.*diverge/i);
+  });
+  it("preserva pedidos antigos sem data fiscal e recusa datas inexistentes antes de iniciar envio", async () => {
+    const antiga = solicitacao();
+    expect(documento.gerarDps(antiga)).toContain("<dCompet>2026-10-01</dCompet>");
+    for (const data of ["2026-02-29", "2026-02-30", "2026-13-01", "31/10/2026", ""]) {
+      const s = solicitacao(); Object.assign(s.dados.parametros, { data_competencia: data });
+      const deps = dependencias();
+      await expect(executarSolicitacao(s, deps)).rejects.toThrow(/competência.*inválida/i);
+      expect(deps.cliente.consultarDps).not.toHaveBeenCalled(); expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    }
+    const bissexto = solicitacao(); Object.assign(bissexto.dados.parametros, { data_competencia: "2024-02-29" });
+    await documento.validarEsquema(documento.gerarDps(bissexto));
+  });
   it("omite marcador vazio no código municipal e preserva o código fiscal informado com três dígitos", async () => {
     for (const codigo of ["", "   ", "-", " - ", "007"]) {
       const s = solicitacao(); s.dados.parametros.codigo_municipal = codigo;
