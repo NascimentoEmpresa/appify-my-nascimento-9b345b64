@@ -15,13 +15,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ArrowDown, ArrowUp, ArrowUpDown, Bell, CalendarClock, ChevronDown, ChevronRight, Download, FileText, Mail, MoreVertical, RotateCcw, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Bell, CalendarClock, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Mail, MoreVertical, RotateCcw, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   agruparPorContrato, filtrarLinhas, FILTROS_VAZIOS, notasPorFaixa, ordenarLinhas, proximaAcao, recebidoDoMes, ROTULO_STATUS, rotuloFaixa, topContratos,
   totaisDe, valoresPorStatus, type ColunaOrdem, type FiltrosCobranca, type GrupoContrato, type LinhaCobranca, type RestricaoDias, type StatusCobranca, type TomAcao,
 } from "./cobrancaNotas";
 import { useCobrancaDados } from "./useCobrancaDados";
+import { RegistrarCobrancaDialog } from "./RegistrarCobrancaDialog";
+import { datasDoConjunto, ROTULO_SETOR, SEM_DATAS, setoresQueEuRegistro, type DatasPorSetor } from "./cobrancaNotas";
 
 // SIS-2026-0653: tela Cobranças (notas em aberto) no formato do mockup do Financeiro. As notas vêm do Relatório de Serviços,
 // a faixa e o prazo são os da cobrança automática, e "Próxima ação" / "Último e-mail" ligam a tela à automação.
@@ -73,6 +75,17 @@ function Kpi({ icone, cor, titulo, valor, sub, subCor }: { icone: React.ReactNod
   );
 }
 
+// SIS-2026-0878: "Jurídico: dd/mm/aaaa / Financeiro: dd/mm/aaaa", como no sistema antigo ("-" = nunca cobrada por esse setor).
+function DatasSetor({ datas }: { datas: DatasPorSetor }) {
+  return (
+    <div className="whitespace-nowrap text-[11px] leading-tight text-muted-foreground">
+      {(["juridico", "financeiro"] as const).map((s) => (
+        <p key={s}>{ROTULO_SETOR[s]}: <span className={datas[s] ? "text-foreground" : ""}>{datas[s] ? fmtData(datas[s] as string) : "-"}</span></p>
+      ))}
+    </div>
+  );
+}
+
 function CabecalhoOrdenavel({ rotulo, coluna, ordem, desc, onOrdenar, className }: { rotulo: string; coluna: ColunaOrdem; ordem: ColunaOrdem; desc: boolean; onOrdenar: (c: ColunaOrdem) => void; className?: string }) {
   const ativa = ordem === coluna;
   const Icone = !ativa ? ArrowUpDown : desc ? ArrowDown : ArrowUp;
@@ -89,13 +102,16 @@ export default function NotasAbertoTab() {
   const { can } = usePermissoes();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { carregando, nfsParaRecebido, empresas, linhas, planoPorContrato, modoAuto, automacaoIndisponivel, ultimoEnvio } = useCobrancaDados();
+  const { carregando, nfsParaRecebido, empresas, linhas, planoPorContrato, modoAuto, automacaoIndisponivel, datasPorNota } = useCobrancaDados();
 
   // Mesma regra de visibilidade do sistema antigo, por Acesso por Usuário: "alterar" vê tudo; "aprovar" (Jurídico) só o que está há
   // mais de 30 dias em atraso; "visualizar" (Comercial) há mais de 60. Sem nenhuma marcação específica, vê tudo.
   const podeVerTudo = can("alterar", undefined, "cobrancas");
   const restricao: RestricaoDias = podeVerTudo ? 0 : can("aprovar", undefined, "cobrancas") ? 30 : can("visualizar", undefined, "cobrancas") ? 60 : 0;
   const podeMarcarManual = podeVerTudo || can("aprovar", undefined, "cobrancas");
+  // SIS-2026-0878: quem registra a cobrança de cada setor (Jurídico = aprovar ou alterar; Financeiro = alterar) — a RPC confere de novo.
+  const setoresRegistro = useMemo(() => setoresQueEuRegistro({ alterar: podeVerTudo, aprovar: can("aprovar", undefined, "cobrancas") }), [podeVerTudo, can]);
+  const [registrando, setRegistrando] = useState<{ notaIds: string[]; contrato: string } | null>(null);
 
   const [rascunho, setRascunho] = useState<FiltrosCobranca>(FILTROS_VAZIOS);
   const [filtros, setFiltros] = useState<FiltrosCobranca>(FILTROS_VAZIOS);
@@ -106,7 +122,7 @@ export default function NotasAbertoTab() {
   const [porPagina, setPorPagina] = useState(25);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
-  const [previa, setPrevia] = useState<{ contrato: string; assunto: string; corpo: string; para: string[]; cc: string[] } | null>(null);
+  const [previa, setPrevia] = useState<{ contrato: string; assunto: string; corpo: string; para: string[]; cc: string[]; notaIds: string[] } | null>(null);
 
   const visiveis = useMemo(() => filtrarLinhas(linhas, filtros, restricao), [linhas, filtros, restricao]);
   const totais = useMemo(() => totaisDe(visiveis), [visiveis]);
@@ -190,11 +206,14 @@ export default function NotasAbertoTab() {
   });
   const selecionadasLinhas = useMemo(() => linhas.filter((l) => selecionadas.has(l.id)), [linhas, selecionadas]);
 
-  async function abrirPrevia(contratoId: string, contrato: string) {
-    const { data, error } = await supabase.functions.invoke("cobranca-automatica", { body: { acao: "previa", contrato_id: contratoId } });
+  // SIS-2026-0878: a prévia leva SÓ as notas escolhidas (e só as que o setor do usuário pode cobrar — o servidor confere de novo).
+  async function abrirPrevia(contratoId: string, contrato: string, notaIds: string[]) {
+    const { data, error } = await supabase.functions.invoke("cobranca-automatica", { body: { acao: "previa", contrato_id: contratoId, nota_ids: notaIds } });
     if (error || !data?.ok) { toast.error(data?.error ?? "Não foi possível montar a prévia do e-mail."); return; }
-    setPrevia({ contrato, assunto: data.assunto, corpo: data.corpo, para: data.para, cc: data.cc });
+    setPrevia({ contrato, assunto: data.assunto, corpo: data.corpo, para: data.para, cc: data.cc, notaIds: data.nota_ids ?? notaIds });
   }
+  // Notas de um conjunto que entram numa cobrança: as que já chegaram na janela do aviso e não estão canceladas.
+  const idsCobraveis = (ls: LinhaCobranca[]) => ls.filter((l) => l.status !== "cancelada" && l.faixa !== null).map((l) => l.id);
 
   async function alternarManual(contratoId: string, manual: boolean) {
     const t = (supabase as any).from("cobranca_auto_contrato_manual");
@@ -217,7 +236,8 @@ export default function NotasAbertoTab() {
       "Dias de atraso": Math.max(0, l.atraso),
       Faixa: rotuloFaixa(l.faixa),
       Status: ROTULO_STATUS[l.status],
-      "Último e-mail": ultimoEnvio.get(l.contratoId) ? fmtData(ultimoEnvio.get(l.contratoId) as string) : "",
+      "Cobrança Jurídico": (datasPorNota.get(l.id) ?? SEM_DATAS).juridico ? fmtData((datasPorNota.get(l.id) as DatasPorSetor).juridico as string) : "",
+      "Cobrança Financeiro": (datasPorNota.get(l.id) ?? SEM_DATAS).financeiro ? fmtData((datasPorNota.get(l.id) as DatasPorSetor).financeiro as string) : "",
       "Próxima ação": proximaAcao(l, planoPorContrato.get(l.contratoId), modoAuto).texto,
     }));
     const ws = XLSX.utils.json_to_sheet(linhasXlsx);
@@ -232,7 +252,7 @@ export default function NotasAbertoTab() {
     return (
       <div className="flex items-center justify-end gap-0.5">
         {acao.tom !== "juridico" && l.status !== "cancelada" && l.faixa !== null && (
-          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Ver prévia do e-mail (não envia)" onClick={() => abrirPrevia(l.contratoId, l.contrato)}><Mail className="h-3.5 w-3.5" /></Button>
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Ver prévia do e-mail (não envia)" onClick={() => abrirPrevia(l.contratoId, l.contrato, [l.id])}><Mail className="h-3.5 w-3.5" /></Button>
         )}
         <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Ver a nota no Relatório de Serviços" onClick={() => verNoRelatorio(l)}><FileText className="h-3.5 w-3.5" /></Button>
         {podeMarcarManual && acao.tom !== "juridico" && (
@@ -262,7 +282,7 @@ export default function NotasAbertoTab() {
         <td className="px-2 py-1.5 text-right">{l.dias}</td>
         <td className="px-2 py-1.5">{l.faixa ? <Chip className={FAIXA_CHIP[l.faixa]}>{rotuloFaixa(l.faixa)}</Chip> : <span className="text-muted-foreground">No prazo</span>}</td>
         <td className="px-2 py-1.5"><Chip className={STATUS_CHIP[l.status]}>{ROTULO_STATUS[l.status]}</Chip></td>
-        <td className="px-2 py-1.5 whitespace-nowrap text-muted-foreground">{ultimoEnvio.get(l.contratoId) ? fmtData(ultimoEnvio.get(l.contratoId) as string) : "-"}</td>
+        <td className="px-2 py-1.5"><DatasSetor datas={datasPorNota.get(l.id) ?? SEM_DATAS} /></td>
         <td className={cn("px-2 py-1.5", TOM_ACAO[acao.tom])}>{acao.texto}</td>
         <td className="px-2 py-1.5">{celulaAcoes(l)}</td>
       </tr>
@@ -449,7 +469,7 @@ export default function NotasAbertoTab() {
                   <CabecalhoOrdenavel rotulo="Dias" coluna="dias" {...cab} className="text-right" />
                   <CabecalhoOrdenavel rotulo="Faixa" coluna="faixa" {...cab} />
                   <CabecalhoOrdenavel rotulo="Status" coluna="status" {...cab} />
-                  <th className="px-2 py-2 font-medium">Último e-mail</th>
+                  <th className="px-2 py-2 font-medium" title="Última cobrança de cada setor (e-mail automático e cobranças registradas)">Última cobrança</th>
                   <th className="px-2 py-2 font-medium">Próxima ação</th>
                   <th className="px-2 py-2 text-right font-medium">Ações</th>
                 </tr>
@@ -483,11 +503,11 @@ export default function NotasAbertoTab() {
                         <td className="px-2 py-2 text-right">{g.diasMax}</td>
                         <td className="px-2 py-2">{g.faixa ? <Chip className={FAIXA_CHIP[g.faixa]}>{rotuloFaixa(g.faixa)}</Chip> : <span className="font-normal text-muted-foreground">No prazo</span>}</td>
                         <td className="px-2 py-2 font-normal text-muted-foreground">{g.linhas.filter((l) => l.atraso > 0).length} em atraso</td>
-                        <td className="px-2 py-2 font-normal text-muted-foreground whitespace-nowrap">{ultimoEnvio.get(g.contratoId) ? fmtData(ultimoEnvio.get(g.contratoId) as string) : "-"}</td>
+                        <td className="px-2 py-2 font-normal"><DatasSetor datas={datasDoConjunto(g.linhas.map((l) => l.id), datasPorNota)} /></td>
                         <td className={cn("px-2 py-2 font-normal", TOM_ACAO[acao.tom])}>{acao.texto}</td>
                         <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-0.5">
-                            {acao.tom !== "juridico" && alvoPrevia && <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Ver prévia do e-mail (não envia)" onClick={() => abrirPrevia(g.contratoId, g.contrato)}><Mail className="h-3.5 w-3.5" /></Button>}
+                            {acao.tom !== "juridico" && alvoPrevia && <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Ver prévia do e-mail (não envia)" onClick={() => abrirPrevia(g.contratoId, g.contrato, idsCobraveis(g.linhas))}><Mail className="h-3.5 w-3.5" /></Button>}
                             {podeMarcarManual && acao.tom !== "juridico" && (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Mais ações"><MoreVertical className="h-3.5 w-3.5" /></Button></DropdownMenuTrigger>
@@ -528,7 +548,10 @@ export default function NotasAbertoTab() {
           </span>
           <div className="flex gap-2">
             {proximaAcao(selecionadasLinhas[0], planoPorContrato.get(selecionadasLinhas[0].contratoId), modoAuto).tom !== "juridico" && (
-              <Button size="sm" onClick={() => abrirPrevia(selecionadasLinhas[0].contratoId, selecionadasLinhas[0].contrato)}><Mail className="mr-1.5 h-4 w-4" />Prévia do e-mail</Button>
+              <Button size="sm" onClick={() => abrirPrevia(selecionadasLinhas[0].contratoId, selecionadasLinhas[0].contrato, selecionadasLinhas.map((l) => l.id))}><Mail className="mr-1.5 h-4 w-4" />Prévia do e-mail</Button>
+            )}
+            {setoresRegistro.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setRegistrando({ notaIds: selecionadasLinhas.map((l) => l.id), contrato: selecionadasLinhas[0].contrato })}><CheckCheck className="mr-1.5 h-4 w-4" />Registrar cobrança</Button>
             )}
             <Button size="sm" variant="outline" onClick={() => setSelecionadas(new Set())}>Limpar seleção</Button>
           </div>
@@ -550,10 +573,18 @@ export default function NotasAbertoTab() {
               </div>
               {/* iframe sem permissões: o HTML do e-mail nunca executa script na tela */}
               <iframe title="Prévia do e-mail" sandbox="" srcDoc={previa.corpo} className="h-[50vh] w-full rounded border bg-white" />
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">{previa.notaIds.length} nota(s) neste e-mail — só as selecionadas e aptas para o seu setor.</p>
+                {setoresRegistro.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={() => { setRegistrando({ notaIds: previa.notaIds, contrato: previa.contrato }); setPrevia(null); }}><CheckCheck className="mr-1.5 h-4 w-4" />Registrar cobrança destas notas</Button>
+                )}
+              </div>
             </>
           )}
         </DialogContent>
       </Dialog>
+
+      <RegistrarCobrancaDialog notaIds={registrando?.notaIds ?? null} contrato={registrando?.contrato ?? ""} setores={setoresRegistro} onClose={() => setRegistrando(null)} />
     </div>
   );
 }

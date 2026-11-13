@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { enviarEmail } from "../_shared/enviar-email.ts";
 import {
-  TEMPLATE_DA_FAIXA, copiaDoEmail, dentroDaJanela, garantirEnvioPermitido, hojeEmSaoPaulo, montarEmail, planejarCobrancas, somarDias,
+  TEMPLATE_DA_FAIXA, copiaDoEmail, dentroDaJanela, filtrarNotasParaPrevia, garantirEnvioPermitido, hojeEmSaoPaulo, montarEmail, planejarCobrancas, somarDias,
   PRAZO_PAGAMENTO_DIAS, type ConfigCobranca, type NotaAberta, type PlanoContrato,
 } from "../_shared/cobranca-automatica.ts";
 
@@ -178,16 +178,21 @@ Deno.serve(async (req) => {
 
       const config = await lerConfig(admin);
       const entrada = await carregarEntrada(admin, config, agora);
-      const planos = planejarCobrancas(entrada);
 
       if (corpo.acao === "previa") {
-        const plano = planos.find((p) => p.contratoId === corpo.contrato_id);
-        if (!plano) return json({ ok: false, error: "Contrato sem nota na janela de cobrança." }, 404);
+        // SIS-2026-0878: a prévia leva só as notas escolhidas (`nota_ids`) e só as que o setor do usuário pode cobrar (mesma régua da tela:
+        // alterar vê tudo; aprovar = Jurídico, atraso > 30 dias; visualizar = Comercial, > 60). Sem `nota_ids`, as notas do contrato visíveis a ele.
+        const restricaoDias = checks[0].data === true ? 0 : checks[1].data === true ? 30 : checks[2].data === true ? 60 : 0;
+        const notaIds = Array.isArray(corpo.nota_ids) ? (corpo.nota_ids as unknown[]).filter((x): x is string => typeof x === "string") : null;
+        const notasDaPrevia = filtrarNotasParaPrevia(entrada.notas.filter((n) => n.contratoId === corpo.contrato_id), { notaIds, restricaoDias, hoje });
+        const plano = planejarCobrancas({ ...entrada, notas: notasDaPrevia }).find((p) => p.contratoId === corpo.contrato_id);
+        if (!plano) return json({ ok: false, error: "Nenhuma das notas escolhidas está apta para cobrança por você (fora da janela de cobrança ou do seu prazo)." }, 404);
         if (plano.decisao === "judicial") return json({ ok: false, error: "Faixa judicial: não há modelo automático; envio exclusivo do Jurídico." }, 409);
         const email = montarEmail(plano, await modelo(admin, plano.faixa), hoje, config.assinatura_html);
-        return json({ ok: true, assunto: email.assunto, corpo: email.corpo, para: plano.destinatarios, cc: copiaDoEmail(plano.faixa, config.cc_fixo) });
+        return json({ ok: true, assunto: email.assunto, corpo: email.corpo, para: plano.destinatarios, cc: copiaDoEmail(plano.faixa, config.cc_fixo), nota_ids: plano.notas.map((n) => n.id) });
       }
       if (corpo.acao !== "simular") return json({ ok: false, error: "Ação inválida (simular | previa)." }, 400);
+      const planos = planejarCobrancas(entrada);
 
       const contagem: Record<string, number> = {};
       for (const p of planos) contagem[p.decisao] = (contagem[p.decisao] ?? 0) + 1;

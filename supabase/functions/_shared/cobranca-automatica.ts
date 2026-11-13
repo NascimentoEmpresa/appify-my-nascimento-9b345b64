@@ -299,3 +299,22 @@ export function copiaDoEmail(faixa: Faixa, ccFixo: string[]): string[] {
 export function garantirEnvioPermitido(faixa: Faixa): void {
   if (!ehFaixaAutomatica(faixa)) throw new Error(`Faixa "${faixa}" não pode ser enviada automaticamente (envio exclusivo do Jurídico).`);
 }
+
+// ── Prévia manual (tela Cobranças) ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * SIS-2026-0878: quais notas entram na prévia do e-mail feita pela tela.
+ *  • `notaIds`: só as notas escolhidas pelo usuário (antes a prévia levava TODAS as notas do contrato que estavam na janela de cobrança,
+ *    inclusive as da faixa verde quando o usuário queria cobrar só a laranja). Sem `notaIds`, vale o contrato inteiro (comportamento antigo).
+ *  • `restricaoDias`: a mesma régua de visibilidade da tela — quem só tem parte do acesso (Jurídico 30, Comercial 60) só cobra nota já atrasada
+ *    há mais de N dias; 0 = sem restrição (Financeiro).
+ * A faixa (e portanto o modelo do e-mail) passa a vir só das notas que entram, não do contrato todo.
+ */
+export function filtrarNotasParaPrevia(notas: NotaAberta[], opcoes: { notaIds?: string[] | null; restricaoDias: number; hoje: string }): NotaAberta[] {
+  const escolhidas = opcoes.notaIds && opcoes.notaIds.length > 0 ? new Set(opcoes.notaIds) : null;
+  return notas.filter((n) => {
+    if (escolhidas && !escolhidas.has(n.id)) return false;
+    if (opcoes.restricaoDias > 0 && diasEntre(n.dataEmissao, opcoes.hoje) - PRAZO_PAGAMENTO_DIAS <= opcoes.restricaoDias) return false;
+    return true;
+  });
+}
