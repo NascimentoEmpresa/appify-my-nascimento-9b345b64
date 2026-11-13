@@ -19,7 +19,17 @@ export const MAX_ARQUIVOS = 150;
 export const MAX_COMMITS = 60;
 export const MAX_URLS = 8;
 export const MAX_RESUMO_CHARS = 2500;
+/** Teto do código alterado que vai para a I.A (o CI já corta em 40 mil). */
+export const MAX_ALTERACOES_CHARS = 45000;
+/** Mensagem inteira de um commit (o corpo explica o que mudou). */
+export const MAX_COMMIT_CHARS = 2000;
 
+// 13/11/2026: o resumo passou a sair no MERGE, não mais na abertura da PR.
+// No SIS-2026-0854 a PR abriu antes do commit do chamado subir, e a I.A —
+// que só via a 1ª linha dos commits e o nome dos arquivos — reescreveu o
+// pedido como se fosse a entrega. Agora ela recebe, da PR já mergeada, só os
+// commits deste chamado, a mensagem inteira de cada um e o código alterado
+// (.github/scripts/contexto-resumo-pr.cjs).
 export interface EntradaResumo {
   numero: string;
   assunto: string;
@@ -29,6 +39,8 @@ export interface EntradaResumo {
   commits: string[];
   arquivos: string[];
   urls: string[];
+  /** Trechos do código alterado ("### arquivo\n<diff>"), dos commits do chamado. */
+  alteracoes?: string | null;
 }
 
 const texto = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
@@ -69,7 +81,7 @@ FORMATO (texto simples, sem markdown, sem asteriscos, sem títulos com #):
 - Se houver algo que a pessoa precisa fazer ou saber para usar (ex.: um campo novo obrigatório, um botão que mudou de lugar), um item a mais em "Como usar:".
 
 REGRAS:
-1. Use só o que está nos dados (chamado, título e descrição da PR, mensagens de commit, nomes dos arquivos). Não invente funcionalidade.
+1. Descreva o que FOI FEITO, e a prova disso são as mensagens de commit e o código alterado. O pedido do solicitante é só contexto: não repita o pedido como se tivesse sido entregue. Use o código para dizer exatamente o que a pessoa vê agora (o texto da pergunta, dos botões, dos campos, das abas, se é obrigatório). Não invente funcionalidade.
 2. Sem nome de arquivo, função, tabela, migration, branch ou termo técnico (React, SQL, RPC, Edge, commit, PR). Traduza para o que a pessoa vê.
 3. Não escreva URLs nem links — eles são acrescentados depois, automaticamente.
 4. Não fale de prazo, de aprovação, de teste nem de "publicação".
@@ -81,8 +93,9 @@ export function montarPromptResumo(e: EntradaResumo): { role: string; content: s
     `PEDIDO DO SOLICITANTE:\n${texto(e.descricao, 3000) || "—"}`,
     `TÍTULO DA ENTREGA: ${texto(e.prTitulo, 300)}`,
     `DESCRIÇÃO DA ENTREGA:\n${limparCorpoPr(e.prCorpo) || "—"}`,
-    `MENSAGENS DE COMMIT:\n${e.commits.map((c) => `- ${c}`).join("\n") || "—"}`,
+    `MENSAGENS DE COMMIT:\n${e.commits.map((c) => `- ${c.replace(/\n/g, "\n  ")}`).join("\n") || "—"}`,
     `ARQUIVOS ALTERADOS (só para você entender a área; não cite):\n${e.arquivos.join("\n") || "—"}`,
+    `CÓDIGO ALTERADO (linhas com + entraram, com - saíram; leia para saber o que mudou na tela; não cite):\n${texto(e.alteracoes, MAX_ALTERACOES_CHARS) || "—"}`,
   ].join("\n\n");
   return [
     { role: "system", content: SYSTEM_PROMPT_RESUMO },
