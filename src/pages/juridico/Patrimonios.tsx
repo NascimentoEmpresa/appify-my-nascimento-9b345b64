@@ -22,6 +22,7 @@ import {
   podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
 } from "./patrimonio/vinculoMalote";
 import { nomeDespesaMalote } from "./patrimonio/nomeMalote";
+import { aplicarBaixaDasContas, resumoDasParcelas } from "./patrimonio/baixaParcelas";
 
 // JUR_PATRIMONIO* e SISTEMA_COMENTARIOS não estão no types.ts gerado; mesmo
 // padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -713,7 +714,8 @@ export default function Patrimonios() {
   // da importação e ninguém atualizava quando uma parcela era paga. Agora é a
   // soma das parcelas em aberto de Financiamento/Consórcio nas obrigações, que
   // se corrige sozinha a cada baixa.
-  const faltaPorPatrimonio = useMemo(() => mapaValorQueFalta(obrAll), [obrAll]);
+  // Com o selo de verdade: parcela paga pelo Malote também sai do "falta".
+  const faltaPorPatrimonio = useMemo(() => mapaValorQueFalta(obrAll, o => seloDaConta(o) === "Pago"), [obrAll, seloDaConta]);
   const faltaDe = (id: number) => faltaPorPatrimonio.get(Number(id)) ?? 0;
   const totalContratos = somar(p => p.valor_contrato);
   const totalFalta = listaFiltrada.reduce((acc, p) => acc + faltaDe(p.id), 0);
@@ -1392,11 +1394,16 @@ export default function Patrimonios() {
 
               {/* PARCELAS — a posição do financiamento, como veio do contrato */}
               {tab === "parcelas" && (() => {
-                const pagas = parcelas.filter(x => String(x.situacao ?? "").toUpperCase().startsWith("PAG")).length;
-                const somaPagas = parcelas.filter(x => String(x.situacao ?? "").toUpperCase().startsWith("PAG"))
-                  .reduce((s, x) => s + (Number(x.valor_pago ?? x.valor) || 0), 0);
-                const somaAberto = parcelas.filter(x => !String(x.situacao ?? "").toUpperCase().startsWith("PAG"))
-                  .reduce((s, x) => s + (Number(x.valor) || 0), 0);
+                // A planilha é a foto de 09/2026; o que foi pago depois está
+                // nas Contas / Obrigações (baixa manual ou Malote). A situação
+                // é lida de lá agora — ver baixaParcelas.ts (13/11/2026).
+                const comBaixa = aplicarBaixaDasContas(parcelas, obrs, c => {
+                  const o = c as Obrigacao;
+                  if (seloDaConta(o) !== "Pago") return null;
+                  return o.status === "Pago" ? "conta" : "malote";
+                });
+                const { pagas, somaPagas, somaAberto } = resumoDasParcelas(comBaixa);
+                const viaContas = comBaixa.filter(x => x.baixa === "malote" || x.baixa === "conta").length;
                 // As colunas extras mudam de contrato para contrato (seguro, taxa,
                 // INCC, juro): mostra as que ESTE contrato tem, na ordem em que
                 // aparecem, em vez de uma tabela fixa cheia de coluna vazia.
@@ -1420,8 +1427,8 @@ export default function Patrimonios() {
                           </tr>
                         </thead>
                         <tbody>
-                          {parcelas.map(x => {
-                            const paga = String(x.situacao ?? "").toUpperCase().startsWith("PAG");
+                          {comBaixa.map(x => {
+                            const paga = !!x.baixa;
                             return (
                               <tr key={x.id} style={{ borderTop: "1px solid #f1f5f9" }}>
                                 <td style={{ padding: "9px 14px", fontWeight: 700, color: "#0f172a" }}>{x.rotulo || (x.numero != null ? `${x.numero}ª` : "—")}</td>
@@ -1429,7 +1436,11 @@ export default function Patrimonios() {
                                 <td style={{ padding: "9px 14px", textAlign: "right", color: "#0f172a", fontWeight: 700 }}>{x.valor != null ? money(x.valor) : "—"}</td>
                                 {extras.map(e => <td key={e} style={{ padding: "9px 14px", textAlign: "right", color: "#64748b" }}>{x.detalhes?.[e] != null && x.detalhes[e] !== "" ? (typeof x.detalhes[e] === "number" ? money(x.detalhes[e]) : String(x.detalhes[e])) : "—"}</td>)}
                                 <td style={{ padding: "9px 14px", textAlign: "center" }}>
-                                  <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: paga ? "#dcfce7" : "#fff7ed", color: paga ? "#15803d" : "#c2410c" }}>{x.situacao || "EM ABERTO"}</span>
+                                  <span title={x.baixa === "malote" ? "Paga pelo Malote (conta do contrato)" : x.baixa === "conta" ? "Baixa dada na conta do contrato" : undefined}
+                                    style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: paga ? "#dcfce7" : "#fff7ed", color: paga ? "#15803d" : "#c2410c" }}>{x.situacao || "EM ABERTO"}</span>
+                                  {(x.baixa === "malote" || x.baixa === "conta") && (
+                                    <div style={{ fontSize: 9.5, color: "#64748b", marginTop: 2 }}>{x.baixa === "malote" ? "pelo Malote" : "baixa na conta"}</div>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -1440,6 +1451,7 @@ export default function Patrimonios() {
                     {parcelas[0]?.origem && (
                       <div style={{ padding: "8px 14px", borderTop: "1px solid #eef2f7", fontSize: 11, color: "#94a3b8" }}>
                         Origem: {[...new Set(parcelas.map(x => x.origem).filter(Boolean))].join(" · ")} (planilha ATIVO IMOBILIZADO)
+                        {viaContas > 0 && ` · ${viaContas} paga${viaContas > 1 ? "s" : ""} depois da planilha, pelas Contas / Obrigações`}
                       </div>
                     )}
                   </div>

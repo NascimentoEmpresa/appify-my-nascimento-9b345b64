@@ -192,8 +192,13 @@ export interface ObrigacaoMin {
   status?: string | null;
 }
 
-export const parcelaEmAberto = (o: ObrigacaoMin): boolean =>
-  ehContratoParcelado(o.categoria) && String(o.status ?? "").trim() !== "Pago";
+/**
+ * `paga` (opcional) é o selo de verdade da conta. Sem ele, só a baixa manual
+ * (`status = 'Pago'`) contava — e a parcela paga PELO MALOTE, que não grava
+ * status, seguia somando no "falta pagar" (13/11/2026, Turim/Murano/Green).
+ */
+export const parcelaEmAberto = (o: ObrigacaoMin, paga?: (o: ObrigacaoMin) => boolean): boolean =>
+  ehContratoParcelado(o.categoria) && !(paga ? paga(o) : String(o.status ?? "").trim() === "Pago");
 
 /**
  * Quanto ainda falta pagar de um patrimônio: soma das parcelas NÃO PAGAS de
@@ -211,10 +216,10 @@ export function valorQueFalta(obrigacoes: ObrigacaoMin[], patrimonioId: number):
 }
 
 /** Mapa patrimônio → falta, para a tabela não recalcular linha a linha. */
-export function mapaValorQueFalta(obrigacoes: ObrigacaoMin[]): Map<number, number> {
+export function mapaValorQueFalta<O extends ObrigacaoMin>(obrigacoes: O[], paga?: (o: O) => boolean): Map<number, number> {
   const m = new Map<number, number>();
   obrigacoes.forEach(o => {
-    if (!parcelaEmAberto(o)) return;
+    if (!parcelaEmAberto(o, paga as ((o: ObrigacaoMin) => boolean) | undefined)) return;
     const k = Number(o.patrimonio_id);
     m.set(k, Math.round(((m.get(k) ?? 0) + numero(o.valor)) * 100) / 100);
   });
