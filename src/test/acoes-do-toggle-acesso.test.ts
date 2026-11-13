@@ -74,11 +74,12 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa e Controle de Faturamento são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico, Hora Extra, Rateio do RH, Férias e Fluxo de Caixa, Controle de Faturamento e Fechamento dos Sócios são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "controle-faturamento",
       "duvidas",
       "encarregados_diarias",
+      "fechamento-socios",
       "financeiro-fluxo-caixa-gestao",
       "financeiro_diarias",
       "operacional_diarias",
@@ -86,6 +87,16 @@ describe("catálogo de exceções", () => {
       "rh_rateio_despesas",
       "sistemas_hora_extra",
     ]);
+  });
+
+  it("Fechamento dos Sócios: ligar a tela dá só visualizar; alterar (percentuais) e aprovar (fechar) ficam de fora, e desligar revoga tudo", () => {
+    const ligar = acoesGravadasPeloToggle("fechamento-socios", true);
+    expect(ligar).toContain("visualizar");
+    expect(ligar).not.toContain("alterar");
+    expect(ligar).not.toContain("aprovar");
+    const desligar = acoesGravadasPeloToggle("fechamento-socios", false);
+    expect(desligar).toContain("alterar");
+    expect(desligar).toContain("aprovar");
   });
 
   it("Gestão de Férias: ligar a tela NÃO concede enviar_malote, desligar revoga", () => {

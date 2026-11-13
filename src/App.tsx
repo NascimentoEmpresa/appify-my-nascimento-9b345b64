@@ -163,6 +163,7 @@ import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
 import ConciliacaoOrigemFluxoCaixa from "./pages/financeiro/ConciliacaoOrigemFluxoCaixa";
 import ConciliacaoOrigemRelatorioServicos from "./pages/financeiro/ConciliacaoOrigemRelatorioServicos";
 import FluxoCaixaGerencial from "./pages/financeiro/FluxoCaixaGerencial";
+import FechamentoSocios from "./pages/controladoria/FechamentoSocios";
 import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import ClassificarLancamentos from "./pages/financeiro/cartao-credito/ClassificarLancamentos";
@@ -839,6 +840,7 @@ const App = () => (
             <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
             <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
             <Route path="controladoria/fechamento-empresa" element={<FechamentoEmpresa />} />
+            <Route path="controladoria/fechamento-socios" element={<FechamentoSocios />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
             <Route path="controladoria/auditoria" element={<AuditoriaControladoria />} />
             {/* SIS-2026-0807: Justificativas de Valor — gestão (Controladoria) e caixa do responsável. */}
