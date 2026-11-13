@@ -62,7 +62,7 @@ um ciclo para diagnóstico. O estado sem credenciais fica em
 ## Processamento temporário pelo GitHub Actions
 
 O workflow **NFS-e - fila automática** (`nfse_homologacao.yml`) agenda
-uma execução por hora, exclusivamente na `main` do
+uma execução a cada 15 minutos, exclusivamente na `main` do
 repositório oficial. Usa o mesmo processamento, reservas e proteção contra
 duplicidade do worker local. Não inicia WhatsApp, e-mail ou os outros workers.
 O estado e os documentos persistem no banco/storage do ERP; o runner é descartável.
@@ -98,8 +98,14 @@ fiscal de cada pedido deve ser conferido no painel do ERP.
 
 Enquanto o job está ativo, novos pedidos, protocolos e PDFs pendentes são
 processados nos ciclos de 60 segundos, respeitando a reserva e o prazo do banco.
-Falhas de infraestrutura avulsas não encerram o serviço; três consecutivas
-encerram com erro. Ao atingir o prazo, o job termina e remove os arquivos privados.
+Falhas de infraestrutura não encerram antecipadamente o modo contínuo: o serviço
+mantém as tentativas a cada 60 segundos até o limite da execução e informa quando
+o ciclo se restabelece. Isso permite recuperar reinícios de Docker/banco sem
+depender de outro disparo do cron. Os logs registram somente o código interno,
+operação RPC, status HTTP e código PostgREST/SQLSTATE quando disponíveis; nunca
+mensagem bruta, credencial ou parâmetros fiscais. Ao atingir o prazo, o job termina
+e remove os arquivos privados. Se terminar com três ou mais falhas consecutivas,
+conclui com erro para não apresentar uma indisponibilidade persistente como sucesso.
 **Atualizar** no ERP apenas relê o resultado salvo; não dispara o Actions.
 O [GitHub documenta intervalo mínimo de cinco minutos e possíveis atrasos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
@@ -110,6 +116,27 @@ nesse repositório. O modo contínuo reduz a dependência do cron durante o job;
 não garante disponibilidade sem interrupção se não houver outra execução na
 fila quando ele terminar. Conferir os jobs ativos/pendentes em Actions e usar
 **Run workflow** se necessário. A hospedagem definitiva continua sendo o servidor.
+
+### Recuperação após a indisponibilidade de 13/11/2026
+
+O job de produção encerrou às 04h42 (Brasília), após três falhas consecutivas de
+infraestrutura; a solicitação posterior ficou pendente, com zero tentativas e sem
+protocolo. O operador informou reinícios de Docker/containerd durante atualização
+de segurança do Ubuntu. A política anterior encerrava o runner antes do prazo,
+mesmo que o banco voltasse, e o cron não havia iniciado outro processador.
+
+O modo contínuo agora tolera essa sequência, preserva reservas/marcas de envio e
+retoma os ciclos quando o banco recupera. O cron oferece quatro oportunidades por
+hora de reposição do runner, sem cancelar uma execução saudável. Isso reduz a
+dependência de um disparo isolado, mas mantém a limitação de agendamento do GitHub.
+Uma fila parada exige conferir Actions e o estado persistido antes de retomar;
+o operador não deve criar outra solicitação apenas para destravar a anterior.
+
+Preparações antigas também podem trazer `codigo_municipal: "-"` no campo opcional
+`cTribMun`. Esse marcador e espaços são omitidos na geração do XML. Um código
+informado deve ter três dígitos, com zeros preservados; outros formatos geram
+orientação antes da consulta/envio. Isso não escolhe enquadramento tributário nem
+substitui o campo separado `cIntContrib`. A solicitação original permanece intacta.
 
 O primeiro ciclo remoto já foi conferido; o processador local foi encerrado.
 A reserva no banco protege contra disputa caso duas instâncias se sobreponham.
@@ -346,6 +373,82 @@ No diálogo de conferência de uma preparação enviada ao Financeiro:
    cinco minutos; no processador contínuo local, a cada 60 segundos. O envio
    e a consulta de resultado podem ocorrer em ciclos diferentes.
 4. Baixar XML/PDF oficiais quando disponíveis, mediante permissão de exportar.
+
+### Data de execução e competência fiscal
+
+Em **Preparar emissão**, no grupo **Prestador e documento**, preencher
+**Data de execução do serviço / competência da NFS-e**. O campo começa com
+a competência salva da preparação e permite escolher o dia completo; por
+exemplo, selecionar **31/10/2026** envia `dCompet=2026-10-31`. Esse é o campo
+usado como Competência da NFS-e no documento fiscal. Funciona nos ambientes
+de homologação e produção e exige nova confirmação da revisão ao ser alterado.
+
+A escolha fica nos parâmetros da solicitação, preservando o mês da
+preparação, descrição, valores e retenções. Solicitações antigas sem essa
+escolha continuam usando a data do snapshot original. Não há migration:
+os parâmetros já são armazenados como JSONB. O processador também confere
+se a competência devolvida no XML oficial corresponde à data selecionada.
+
+O campo vale para solicitações novas. Não edita a competência de uma NFS-e
+já autorizada, nem modifica seu XML/PDF oficial. Alterar o documento emitido
+exige o procedimento fiscal adequado, analisado pelo Financeiro e município.
+
+### Evidências para ausência no ADN
+
+Consultar a situação municipal por chave e protocolo, obter o XML oficial e
+consultar a distribuição nacional com o certificado do próprio contribuinte.
+Guardar data/hora, ambiente, chave, série/número de DPS, protocolo municipal,
+HTTP e códigos de resposta. A distribuição precisa ser paginada até o fim;
+a ausência numa única página não comprova que o documento não está disponível.
+
+O retorno nacional `E2240` em uma consulta por chave significa que nenhum
+documento foi localizado; não é o motivo de uma rejeição do compartilhamento.
+Da mesma forma, `SUCESSO` e `erros: []` no protocolo municipal comprovam
+processamento municipal, sem expor a resposta de recepção no ADN. As APIs de
+consulta do contribuinte não fornecem o histórico privado dessas tentativas.
+
+Solicitar ao município/provedor a tentativa de compartilhamento da mesma chave:
+data/hora e ambiente do destino, HTTP, corpo completo da resposta do ADN,
+código/descrição de rejeição e identificador de correlação/recibo. Se não houve
+tentativa, solicitar a situação da fila municipal. Com esses dados, distinguir
+ausência de envio, rejeição e atraso de publicação antes de propor uma correção.
+Não emitir uma segunda nota, cancelar a primeira ou alterar um XML oficial
+apenas para tentar descobrir essa causa.
+
+### E0008 no compartilhamento e fuso da emissão
+
+O E0008 se refere a `dhEmi` (data/hora de emissão), que deve ser anterior ou
+igual ao processamento nacional. É um campo diferente de `dCompet`, a data
+de competência escolhida pelo Financeiro. A série da DPS também não é a causa
+indicada por esse código: a série é fixa por emissor, enquanto o número da DPS
+avança por solicitação, inclusive quando uma solicitação acaba rejeitada.
+
+O número da DPS é reservado pelo ERP antes do envio. O número da NFS-e é
+atribuído pelo autorizador e obtido no XML oficial após o processamento.
+São campos distintos: por exemplo, uma DPS 42 / série 123 pode resultar na
+NFS-e 900. A coincidência entre esses números em documentos feitos pelo
+portal municipal é uma característica do fluxo do portal; não se deve
+copiar a série desse portal nem tentar adivinhar o próximo número da NFS-e
+para forçar igualdade na integração. O painel exibe os dois identificadores
+e a série tal como registrados na solicitação e na resposta oficial.
+
+Os documentos emitidos pelo portal de Triunfo e recebidos no ADN usam o fuso
+brasileiro. O ERP agora formata `dhEmi` com `America/Sao_Paulo` antes de assinar,
+independentemente do fuso do computador/runner. Por exemplo,
+`14:45:00+00:00` vira `11:45:00-03:00`: é o mesmo instante, sem retroagir a
+emissão em três horas, alterar a competência ou editar o horário no banco.
+O fuso é calculado pela base IANA, incluindo a passagem de dia/ano. Entradas
+inválidas ou sem fuso explícito são recusadas antes de transmitir.
+
+Essa compatibilidade vale para DPS ainda não transmitidas. Uma nota já
+autorizada permanece com seu XML original. Se seu compartilhamento ao ADN
+foi rejeitado, o município/provedor deve conferir `dhEmi`, `dhProc` e respectivos
+fusos no XML efetivamente compartilhado e reprocessar a mesma chave pelo
+procedimento oficial. Não basta substituir o sufixo `+00:00` por `-03:00`:
+isso mudaria o instante e invalidaria a assinatura de um documento emitido.
+O log de rejeição e as comparações apontam a causa provável, mas a confirmação
+do ponto que desconsiderou o fuso exige o conteúdo e o retorno da transmissão
+municipal ao ADN. Nenhuma alteração automática de documentos oficiais é feita.
 
 O piloto cobre emissão regular de serviços nacionais para tomador identificado,
 com endereço de imóvel quando exigido por IBS/CBS, sem obra, intermediário,

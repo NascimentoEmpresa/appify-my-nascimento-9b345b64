@@ -19,7 +19,17 @@ export const MAX_ARQUIVOS = 150;
 export const MAX_COMMITS = 60;
 export const MAX_URLS = 8;
 export const MAX_RESUMO_CHARS = 2500;
+/** Teto do código alterado que vai para a I.A (o CI já corta em 40 mil). */
+export const MAX_ALTERACOES_CHARS = 45000;
+/** Mensagem inteira de um commit (o corpo explica o que mudou). */
+export const MAX_COMMIT_CHARS = 2000;
 
+// 13/11/2026: o resumo passou a sair no MERGE, não mais na abertura da PR.
+// No SIS-2026-0854 a PR abriu antes do commit do chamado subir, e a I.A —
+// que só via a 1ª linha dos commits e o nome dos arquivos — reescreveu o
+// pedido como se fosse a entrega. Agora ela recebe, da PR já mergeada, só os
+// commits deste chamado, a mensagem inteira de cada um e o código alterado
+// (.github/scripts/contexto-resumo-pr.cjs).
 export interface EntradaResumo {
   numero: string;
   assunto: string;
@@ -29,6 +39,102 @@ export interface EntradaResumo {
   commits: string[];
   arquivos: string[];
   urls: string[];
+  /** Trechos do código alterado ("### arquivo\n<diff>"), dos commits do chamado. */
+  alteracoes?: string | null;
+  /**
+   * Cada commit com as URLs das telas que ELE alterou, na mesma ordem de
+   * `commits`. Vem do workflow desde 13/11/2026; sem ele (workflow antigo),
+   * as URLs são as de `urls`, sem escolha.
+   */
+  detalhes?: DetalheCommit[];
+}
+
+// ── SÓ O QUE O CHAMADO PEDIU (13/11/2026) ──────────────────────────────
+// A PR sai da branch pessoal e junta assuntos diferentes. No SIS-2026-0895
+// (Implantação dos contratos) todos os commits eram [SEM-CHAMADO], o filtro
+// do CI ficou com todos, e o resumo levou as URLs das TVs. Pablo: "tem que
+// regrar ela pra falar somente do que foi solicitado no chamado, se tiver
+// algum commit sobre um assunto diferente ela ignora".
+// Agora a I.A recebe os commits numerados, responde na 1ª linha quais
+// atendem o chamado ("COMMITS: 1, 3") e escreve só sobre eles; as URLs que
+// vão para o solicitante são só as desses commits. Se a I.A falha ou não
+// responde a linha, a escolha é pelas palavras do pedido (commitsPorPalavras).
+
+export interface DetalheCommit { mensagem: string; urls: string[] }
+
+/** commits_detalhe vindo do CI → só mensagem de texto e URLs do ERP. */
+export function detalhesValidos(v: unknown): DetalheCommit[] {
+  const saida: DetalheCommit[] = [];
+  for (const item of Array.isArray(v) ? v : []) {
+    const o = (item ?? {}) as { mensagem?: unknown; urls?: unknown };
+    const mensagem = String(o.mensagem ?? "").trim().slice(0, MAX_COMMIT_CHARS);
+    if (!mensagem) continue;
+    saida.push({ mensagem, urls: urlsValidas(o.urls) });
+    if (saida.length >= MAX_COMMITS) break;
+  }
+  return saida;
+}
+
+const PALAVRAS_VAZIAS = new Set([
+  "para", "como", "com", "sem", "que", "uma", "dos", "das", "nos", "nas", "pelo", "pela", "mais", "menos",
+  "ajuste", "ajustes", "ajustar", "tela", "telas", "sistema", "erp", "parte", "chamado", "favor", "quando",
+  "onde", "isso", "esse", "essa", "este", "esta", "todo", "toda", "todos", "todas", "agora", "sobre", "precisa",
+  "preciso", "fazer", "deve", "devem", "ficar", "fica", "novo", "nova", "pode", "podem", "cada", "mesmo",
+]);
+
+/** Palavras com conteúdo (4+ letras, sem acento), para comparar assunto e commit. */
+export function palavrasChave(t: string): Set<string> {
+  const lista = String(t ?? "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4 && !PALAVRAS_VAZIAS.has(w))
+    .map((w) => w.replace(/(oes|aes|s)$/, ""));
+  return new Set(lista);
+}
+
+/**
+ * Plano B, sem a I.A: os commits cuja 1ª linha divide palavras com o
+ * assunto do chamado (o pedido inteiro só desempata). Nenhum casou → todos
+ * (melhor um resumo largo do que nenhum).
+ */
+export function commitsPorPalavras(e: EntradaResumo): number[] {
+  const assunto = palavrasChave(e.assunto);
+  const pedido = palavrasChave(`${e.assunto} ${e.descricao ?? ""}`);
+  const notas = e.commits.map((c) => {
+    const linha = palavrasChave(c.split("\n")[0]);
+    let n = 0;
+    for (const w of linha) n += assunto.has(w) ? 3 : pedido.has(w) ? 1 : 0;
+    return n;
+  });
+  const fortes = notas.map((n, i) => (n >= 3 ? i : -1)).filter((i) => i >= 0);
+  if (fortes.length) return fortes;
+  const fracos = notas.map((n, i) => (n > 0 ? i : -1)).filter((i) => i >= 0);
+  return fracos.length ? fracos : e.commits.map((_, i) => i);
+}
+
+/**
+ * Separa a linha "COMMITS: 1, 3" do texto da I.A. Devolve os índices (base
+ * 0) válidos e o resto do texto; sem a linha (ou só números fora da lista),
+ * `escolhidos` = null.
+ */
+export function separarRespostaIa(t: string, total: number): { escolhidos: number[] | null; texto: string } {
+  const linhas = String(t ?? "").replace(/\r/g, "").split("\n");
+  const idx = linhas.findIndex((l) => /^\s*\**\s*commits\s*:/i.test(l));
+  if (idx < 0 || idx > 2) return { escolhidos: null, texto: t };
+  const nums = [...new Set((linhas[idx].match(/\d+/g) ?? []).map(Number))]
+    .filter((n) => n >= 1 && n <= total)
+    .map((n) => n - 1)
+    .sort((a, b) => a - b);
+  const texto = linhas.filter((_, i) => i !== idx).join("\n").trim();
+  return { escolhidos: nums.length ? nums : null, texto };
+}
+
+/** URLs do solicitante: só as dos commits escolhidos (sem detalhes, as de `urls`). */
+export function urlsDosEscolhidos(e: EntradaResumo, escolhidos: number[]): string[] {
+  if (!e.detalhes?.length) return e.urls;
+  const saida = new Set<string>();
+  for (const i of escolhidos) for (const u of e.detalhes[i]?.urls ?? []) saida.add(u);
+  return [...saida].slice(0, MAX_URLS);
 }
 
 const texto = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
@@ -63,13 +169,16 @@ export function limparCorpoPr(corpo: string | null | undefined): string {
 export const SYSTEM_PROMPT_RESUMO = `Você escreve, em português do Brasil, a mensagem que o SOLICITANTE de um chamado de sistemas recebe quando o desenvolvimento fica pronto.
 Quem lê NÃO é programador: escreva para o usuário do sistema (ERP do Grupo Nascimento).
 
+ATENÇÃO — SÓ O QUE ESTE CHAMADO PEDIU: a entrega costuma juntar commits de OUTROS assuntos (o desenvolvedor trabalha em várias demandas na mesma branch). Compare cada commit numerado com o PEDIDO DO SOLICITANTE e o assunto do chamado. Use só os commits que atendem a este pedido; ignore os outros por completo — não os cite, não os resuma, não diga que existem. Na dúvida, um commit de outro módulo ou de outra tela que não aparece no pedido fica de fora.
+
 FORMATO (texto simples, sem markdown, sem asteriscos, sem títulos com #):
-- Primeira linha: uma frase dizendo o que foi resolvido.
+- Linha 1, obrigatória e só ela: "COMMITS: " seguido dos números dos commits que atendem este chamado, separados por vírgula (ex.: COMMITS: 1, 3). Ela é retirada antes de a mensagem chegar ao solicitante.
+- Linha 2: uma frase dizendo o que foi resolvido.
 - Depois, "O que mudou:" e de 2 a 6 itens começando com "- ", cada um com uma mudança que a pessoa vai perceber na tela (o que aparece, onde clicar, o que passou a acontecer).
 - Se houver algo que a pessoa precisa fazer ou saber para usar (ex.: um campo novo obrigatório, um botão que mudou de lugar), um item a mais em "Como usar:".
 
 REGRAS:
-1. Use só o que está nos dados (chamado, título e descrição da PR, mensagens de commit, nomes dos arquivos). Não invente funcionalidade.
+1. Descreva o que FOI FEITO, e a prova disso são as mensagens de commit e o código alterado. O pedido do solicitante é só contexto: não repita o pedido como se tivesse sido entregue. Use o código para dizer exatamente o que a pessoa vê agora (o texto da pergunta, dos botões, dos campos, das abas, se é obrigatório). Não invente funcionalidade.
 2. Sem nome de arquivo, função, tabela, migration, branch ou termo técnico (React, SQL, RPC, Edge, commit, PR). Traduza para o que a pessoa vê.
 3. Não escreva URLs nem links — eles são acrescentados depois, automaticamente.
 4. Não fale de prazo, de aprovação, de teste nem de "publicação".
@@ -81,8 +190,9 @@ export function montarPromptResumo(e: EntradaResumo): { role: string; content: s
     `PEDIDO DO SOLICITANTE:\n${texto(e.descricao, 3000) || "—"}`,
     `TÍTULO DA ENTREGA: ${texto(e.prTitulo, 300)}`,
     `DESCRIÇÃO DA ENTREGA:\n${limparCorpoPr(e.prCorpo) || "—"}`,
-    `MENSAGENS DE COMMIT:\n${e.commits.map((c) => `- ${c}`).join("\n") || "—"}`,
+    `MENSAGENS DE COMMIT (numeradas; escolha na linha COMMITS só as deste pedido):\n${e.commits.map((c, i) => `[${i + 1}] ${c.replace(/\n/g, "\n    ")}`).join("\n") || "—"}`,
     `ARQUIVOS ALTERADOS (só para você entender a área; não cite):\n${e.arquivos.join("\n") || "—"}`,
+    `CÓDIGO ALTERADO (de todos os commits acima — use só o que for dos commits escolhidos; linhas com + entraram, com - saíram; não cite):\n${texto(e.alteracoes, MAX_ALTERACOES_CHARS) || "—"}`,
   ].join("\n\n");
   return [
     { role: "system", content: SYSTEM_PROMPT_RESUMO },
@@ -103,9 +213,12 @@ export function limparResumoIa(t: string): string {
     .slice(0, MAX_RESUMO_CHARS);
 }
 
-/** Sem I.A (sem chave, cota estourada): o título da PR e os commits, como vieram. */
-export function resumoSemIa(e: EntradaResumo): string {
-  const itens = e.commits
+/**
+ * Sem I.A (sem chave, cota estourada): o título da PR e os commits, como
+ * vieram — só os `escolhidos` (índices), quando informados.
+ */
+export function resumoSemIa(e: EntradaResumo, escolhidos?: number[]): string {
+  const itens = (escolhidos ? escolhidos.map((i) => e.commits[i]).filter(Boolean) : e.commits)
     .map((c) => c.split("\n")[0].replace(/^\[SEM-CHAMADO\]:\s*|^SIS-\d{4}-\d+:\s*/i, "").trim())
     .filter(Boolean)
     .slice(0, 6);
@@ -113,12 +226,23 @@ export function resumoSemIa(e: EntradaResumo): string {
   return [`Desenvolvimento pronto: ${titulo}.`, ...(itens.length ? ["", "O que mudou:", ...itens.map((i) => `- ${i}`)] : [])].join("\n");
 }
 
-/** A mensagem que vai para o chat: cabeçalho, resumo e "Onde acessar". */
+/**
+ * Última linha, sempre (13/11/2026, pedido do Pablo): a mensagem chega no
+ * merge, mas a tela nova só aparece depois que o front publica e a migration
+ * entra — minutos depois. Sem o aviso, o solicitante abria a tela na hora,
+ * não via nada e reabria o chamado. Texto fixo, fora da I.A, para sair igual
+ * também no resumo sem I.A.
+ */
+export const AVISO_MENSAGEM_AUTOMATICA =
+  "Esta é uma mensagem automática. Por gentileza, aguarde: em até 15 minutos a atualização estará disponível no sistema.";
+
+/** A mensagem que vai para o chat: cabeçalho, resumo, "Onde acessar" e o aviso dos 15 minutos. */
 export function montarMensagemResumo(resumo: string, urls: string[]): string {
   const partes = ["✅ Seu chamado foi desenvolvido. Resumo do que foi feito:", "", resumo.trim()];
   if (urls.length) {
     partes.push("", urls.length === 1 ? "Onde acessar:" : "Onde acessar (telas alteradas):", ...urls.map((u) => `- ${u}`));
   }
   partes.push("", "Confira e, se estiver tudo certo, clique em Confirmar conclusão. Se não atendeu, use Reabrir chamado.");
+  partes.push("", AVISO_MENSAGEM_AUTOMATICA);
   return partes.join("\n");
 }

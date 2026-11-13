@@ -81,6 +81,12 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   // Controle de Faturamento (09/11/2026): 'visao_completa' libera as abas Visão Geral e Visão Anual. Quem só tem a tela vê apenas
   // "NFs Não Emitidas" (caso dos supervisores); a visão completa é ligada de propósito. Desligar a tela revoga junto.
   "controle-faturamento": ["visao_completa"],
+  // Fechamento dos Sócios (14/11/2026, SIS-2026-0872): ligar a tela dá só "visualizar". "alterar" (sócios e percentuais) e "aprovar" (fechar competência) mexem
+  // na divisão do lucro entre os sócios e se ligam de propósito, uma a uma.
+  "fechamento-socios": ["alterar", "aprovar"],
+  // Implantação de Contratos (15/11/2026, mig 20261115000300): ver o checklist não dá o poder de editá-lo.
+  // 'alterar' = "Pode editar o checklist" (Confirmar, Preencher, Editar, Salvar); liga-se de propósito.
+  "licitacoes.implantacao": ["alterar"],
 };
 
 /**

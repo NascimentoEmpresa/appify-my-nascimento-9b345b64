@@ -3,6 +3,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { carregarConfiguracao, validarUrlFiscal } = require('./cliente');
 const { processarFilaNfse } = require('./index');
+const { ErroNfse } = require('./documento');
+
+function diagnosticoSeguro(erro) {
+  if (!(erro instanceof ErroNfse)) return 'codigo=FALHA_INFRAESTRUTURA';
+  const campos = [`codigo=${erro.codigo}`];
+  const d = erro.diagnostico;
+  if (['nfse_reservar_trabalho','nfse_reservar_trabalho_ambiente','nfse_marcar_envio','nfse_registrar_resultado'].includes(d?.operacao)) campos.push(`operacao=${d.operacao}`);
+  if (Number.isInteger(d?.http) && d.http >= 0 && d.http <= 599) campos.push(`http=${d.http}`);
+  if (/^(?:PGRST[0-9]{3}|[0-9A-Z]{5})$/.test(d?.codigoBanco || '')) campos.push(`banco=${d.codigoBanco}`);
+  return campos.join(' ');
+}
 
 function prepararArquivos(ambiente) {
   if (ambiente.GITHUB_ACTIONS !== 'true' || ambiente.GITHUB_REF !== 'refs/heads/main' ||
@@ -80,15 +91,22 @@ async function executarNoGithub(ambiente = process.env, dependencias = {}) {
       let falhasSeguidas = 0;
       console.log('[nfse-actions] Processador ativo; intervalo de 60 segundos.');
       do {
-        try { await processar(supabase, temporarios.ambienteWorker); falhasSeguidas = 0; }
-        catch {
+        try {
+          await processar(supabase, temporarios.ambienteWorker);
+          if (falhasSeguidas) console.log(`[nfse-actions] Ciclo restabelecido após ${falhasSeguidas} falhas consecutivas.`);
+          falhasSeguidas = 0;
+        }
+        catch (erro) {
           falhasSeguidas++;
-          if (falhasSeguidas >= 3) throw new Error('Três ciclos consecutivos falharam. Confira a disponibilidade do banco e a configuração fiscal.');
-          console.warn('[nfse-actions] Falha de infraestrutura no ciclo; haverá nova tentativa em 60 segundos.');
+          // Reinícios do banco/Docker não encerram o runner: o cron pode levar
+          // horas para substituí-lo. Reservas e marcas persistidas continuam
+          // impedindo retransmissão de uma DPS cujo envio já foi iniciado.
+          console.warn(`[nfse-actions] Falha de infraestrutura no ciclo (${falhasSeguidas}); nova tentativa em 60 segundos. ${diagnosticoSeguro(erro)}`);
         }
         if (agora() + 60_000 >= fim) break;
         await aguardar(60_000);
       } while (agora() < fim);
+      if (falhasSeguidas >= 3) throw new Error('Prazo do processador encerrado com infraestrutura indisponível. Confira a próxima execução da fila.');
       return;
     }
     const resultado = await processar(supabase, temporarios.ambienteWorker);

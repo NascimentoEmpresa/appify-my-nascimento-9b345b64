@@ -68,6 +68,8 @@ import FinanceiroInicioContrato from "./pages/implantacao/setor/FinanceiroInicio
 import RhInicioContrato from "./pages/implantacao/setor/RhInicioContrato";
 import OperacionalInicioContrato from "./pages/implantacao/setor/OperacionalInicioContrato";
 import ComprasInicioContrato from "./pages/implantacao/setor/ComprasInicioContrato";
+import PainelImplantacao from "./pages/licitacoes/implantacao/PainelImplantacao";
+import PainelSetor from "./pages/licitacoes/implantacao/PainelSetor";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ConvencoesColetivas from "./pages/licitacoes/ConvencoesColetivas";
 import PrazosRecursos from "./pages/licitacoes/PrazosRecursos";
@@ -161,6 +163,7 @@ import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
 import ConciliacaoOrigemFluxoCaixa from "./pages/financeiro/ConciliacaoOrigemFluxoCaixa";
 import ConciliacaoOrigemRelatorioServicos from "./pages/financeiro/ConciliacaoOrigemRelatorioServicos";
 import FluxoCaixaGerencial from "./pages/financeiro/FluxoCaixaGerencial";
+import FechamentoSocios from "./pages/controladoria/FechamentoSocios";
 import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import ClassificarLancamentos from "./pages/financeiro/cartao-credito/ClassificarLancamentos";
@@ -282,6 +285,7 @@ import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
 import AsoDemissional from "./pages/sst/AsoDemissional";
+import AsoPeriodico from "./pages/sst/AsoPeriodico";
 import ConferenciaPonto from "./pages/rh/ConferenciaPonto";
 import ConferenciaPontoPainel from "./pages/rh/ConferenciaPontoPainel";
 import OperacionalConferenciaPonto from "./pages/operacional/ConferenciaPonto";
@@ -793,6 +797,11 @@ const App = () => (
                 Implantação — e as quatro setoriais leem dela. */}
             <Route path="licitacoes/implantacao/base" element={<BaseMestre />} />
             <Route path="licitacoes/implantacao/base/hub" element={<BaseMestreHub />} />
+            {/* Painel por setor da Implantação: lê as respostas do checklist acima,
+                agrupadas pelo Resp. ação (mig 20261113220000). Herda o acesso de
+                licitacoes.implantacao pelo prefixo da rota. */}
+            <Route path="licitacoes/implantacao/painel" element={<PainelImplantacao />} />
+            <Route path="licitacoes/implantacao/painel/:setor" element={<PainelSetor />} />
             <Route path="financeiro/inicio-de-contrato" element={<FinanceiroInicioContrato />} />
             <Route path="rh/inicio-de-contrato" element={<RhInicioContrato />} />
             <Route path="operacional/inicio-de-contrato" element={<OperacionalInicioContrato />} />
@@ -831,6 +840,7 @@ const App = () => (
             <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
             <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
             <Route path="controladoria/fechamento-empresa" element={<FechamentoEmpresa />} />
+            <Route path="controladoria/fechamento-socios" element={<FechamentoSocios />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
             <Route path="controladoria/auditoria" element={<AuditoriaControladoria />} />
             {/* SIS-2026-0807: Justificativas de Valor — gestão (Controladoria) e caixa do responsável. */}
@@ -1162,6 +1172,8 @@ const App = () => (
             {/* SST — ASO demissional. Desde 02/09/2026 vem ANTES do RH: o SST
                 marca o exame e o RH confirma o desligamento. */}
             <Route path="sst/aso-demissional" element={<AsoDemissional />} />
+            {/* SST — ASO periódico: vencimento automático pelo último ASO (mig 20261114100000). */}
+            <Route path="sst/aso-periodico" element={<AsoPeriodico />} />
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
             <Route path="sst/afastamentos" element={<SstAfastamentos />} />

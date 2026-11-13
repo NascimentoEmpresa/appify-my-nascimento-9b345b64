@@ -41,6 +41,7 @@ import {
   Home,
   ShoppingCart,
   BarChart3,
+  HandCoins,
   Settings,
   FileArchive,
   BookOpen,
@@ -83,6 +84,8 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { usePrazosRecursosNotif } from "@/hooks/usePrazosRecursosNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
+import { useImplantacaoConfirmacaoNotif } from "@/hooks/useImplantacaoConfirmacaoNotif";
+import { itemComBolinha } from "@/lib/implantacao/notifConfirmacao";
 import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { FileX2 } from "lucide-react";
@@ -184,6 +187,30 @@ const licitacoesModule: ModuleDef = {
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
         { label: "Composição & BDI", to: "/app/composicao", icon: PieChart },
+      ],
+    },
+    {
+      // Resumo dos Contratos (13/11/2026): o painel da Implantação ganha
+      // submódulo próprio, uma tela por setor, como nos protótipos HTML do
+      // Pablo. Desde 15/11/2026 (mig 20261115000400) cada item tem menu
+      // PRÓPRIO em Licitação, com rota — o Pablo gerencia por pessoa quem
+      // abre cada painel (Acesso por Usuário). O prefixo mais longo decide
+      // (rotaVisivelNoMenu); a lista de slugs é a de SLUGS_PAINEL_SETOR
+      // (lib/implantacao/permissaoChecklist.ts). Os slugs são os de
+      // slugSetor() (painelSetores.ts); setor que não existir no checklist
+      // abre "Setor não encontrado".
+      label: "Resumo dos Contratos",
+      defaultOpen: true,
+      items: [
+        { label: "Resumo geral", to: "/app/licitacoes/implantacao/painel", icon: LayoutDashboard },
+        { label: "Compras", to: "/app/licitacoes/implantacao/painel/compras", icon: ShoppingCart },
+        { label: "Financeiro", to: "/app/licitacoes/implantacao/painel/financeiro", icon: Wallet },
+        { label: "Licitação", to: "/app/licitacoes/implantacao/painel/licitacao", icon: Gavel },
+        { label: "Operacional", to: "/app/licitacoes/implantacao/painel/operacional", icon: ClipboardList },
+        { label: "Recrutamento", to: "/app/licitacoes/implantacao/painel/recrutamento", icon: UserPlus },
+        { label: "RH", to: "/app/licitacoes/implantacao/painel/rh", icon: UserCog },
+        { label: "SST", to: "/app/licitacoes/implantacao/painel/sst", icon: HardHat },
+        { label: "Treinamentos", to: "/app/licitacoes/implantacao/painel/treinamentos", icon: GraduationCap },
       ],
     },
     {
@@ -296,6 +323,8 @@ const controladoriaOrcModule: ModuleDef = {
         // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
         { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
         { label: "Fechamento da Empresa", to: "/app/controladoria/fechamento-empresa", icon: TrendingUp, badge: "Novo" },
+        // SIS-2026-0872: precisa existir AQUI e em app_menu (mig 20261114220000). Nasce sem ninguém liberado.
+        { label: "Fechamento dos Sócios", to: "/app/controladoria/fechamento-socios", icon: HandCoins, badge: "Novo" },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
@@ -1434,6 +1463,7 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
         { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
+        { label: "ASO Periódico", to: "/app/sst/aso-periodico", icon: CalendarClock },
       ],
     },
   ],
@@ -1655,6 +1685,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // rota, então acende qualquer item cujo link tenha pendência, sem precisar
   // marcar `notif` item a item.
   const aprovacoesNotif = useAprovacoesNotif();
+  // 13/11/2026 (mig 20261115000800): Resumo dos Contratos — setor com contrato
+  // pronto esperando "Confirmar recebimento". Também vem por rota.
+  const confirmacaoNotif = useImplantacaoConfirmacaoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
@@ -1704,6 +1737,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // `notif`, e cada um acende pelo status da própria etapa.
     const resolvedDot = (item: NavItem) =>
       (aprovacoesNotif.porRota[item.to] ?? 0) > 0 ? true
+      : itemComBolinha(confirmacaoNotif.porRota, item.to) ? true
       : item.notif === "meus" ? chamadosNotif.meus
       : item.notif === "dev" ? chamadosNotif.dev
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
@@ -1727,7 +1761,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         })),
       })),
     }));
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif, confirmacaoNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"

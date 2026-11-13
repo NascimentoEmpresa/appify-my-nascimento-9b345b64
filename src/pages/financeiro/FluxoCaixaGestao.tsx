@@ -1550,6 +1550,34 @@ export default function FluxoCaixaGestao() {
                           </AcessoGate>
                           {/* Importada da planilha: ratear (ou refazer/desfazer um rateio feito aqui) e excluir.
                               SIS-2026-0712: Ratear é a ação "incluir" e Excluir é a ação "excluir" — cada uma com switch próprio na Administração. */}
+                          {/* SIS-2026-0877: Débito Automático também se rateia aqui (contrato e classificação por cota); o lançamento original não muda. */}
+                          {l.origem === "debito_automatico" && acaoDeRateio(l) && (
+                            <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="incluir">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                title={acaoDeRateio(l) === "refazer" ? "Refazer ou desfazer o rateio" : "Ratear entre contratos"}
+                                onClick={() =>
+                                  setItemRatear({
+                                    linha: {
+                                      despesa_id: l.despesa_id,
+                                      id_malote: l.id_malote,
+                                      descricao: l.descricao,
+                                      valor: Number(l.valor) || 0,
+                                      contrato_id: l.contrato_id,
+                                      origem: "debito_automatico",
+                                      empresa_id: l.empresa_id,
+                                      classificacao_id: l.classificacao_id,
+                                    },
+                                    refazendo: acaoDeRateio(l) === "refazer",
+                                  })
+                                }
+                              >
+                                <Split className="h-3.5 w-3.5" />
+                              </Button>
+                            </AcessoGate>
+                          )}
                           {l.origem === "importacao_historica" && (
                             <>
                               {acaoDeRateio(l) && (
@@ -1915,7 +1943,12 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      <RatearImportadoDialog linha={itemRatear?.linha ?? null} refazendo={!!itemRatear?.refazendo} onClose={() => setItemRatear(null)} />
+      <RatearImportadoDialog
+        linha={itemRatear?.linha ?? null}
+        refazendo={!!itemRatear?.refazendo}
+        classificacoes={classificacoesCatalogo.filter((c) => c.ativo).map((c) => ({ value: c.id, label: c.nome }))}
+        onClose={() => setItemRatear(null)}
+      />
       <HistoricoLinhaDialog linha={itemHistorico} onClose={() => setItemHistorico(null)} />
 
       {/* Lixeira — itens excluídos das origens (inclusive importadas da planilha), cada um com Restaurar */}

@@ -36,7 +36,8 @@ import { QuadroBeneficiosDoPosto } from "@/components/licitacoes/convencoes/Quad
 import { useReferenciaDoPosto } from "@/hooks/useConvencoes";
 import { herancaDaConvencao, urlEditarConvencao } from "@/lib/licitacoes/convencoes";
 import { Link } from "react-router-dom";
-import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { VinculoCatalogoVaga, type EnderecoPostoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { avisoEnderecoPosto, proximoEndereco } from "@/lib/recrutamento/postosPlanilhaVaga";
 import { useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
@@ -101,7 +102,7 @@ function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
     <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
       {!prazo.ok
         ? <><AlertTriangle size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{prazo.erro}</>
-        : <><CheckCircle2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+        : <><CheckCircle2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{prazo.dias} dias</b> de antecedência ({prazo.diasUteis} úteis) → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
     </div>
   );
 }
@@ -365,6 +366,19 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // O que o catálogo oferece pro contrato da vaga (postos/funções) e o
   // colaborador escolhido nesta sessão (pro fallback do cadastro).
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
+  // Endereço do posto na Planilha de Custo (13/11/2026): preenche o
+  // "Endereço efetivo" sozinho; `enderecoAuto` guarda o que a tela pôs, pra
+  // nunca sobrescrever o que a pessoa digitou.
+  const [endPosto, setEndPosto] = useState<EnderecoPostoVaga | null>(null);
+  const enderecoAuto = useRef("");
+  const aplicarEnderecoPosto = (e: EnderecoPostoVaga) => {
+    setEndPosto(e);
+    setVaga(v => {
+      const r = proximoEndereco(v.endereco_trabalho, enderecoAuto.current, e.endereco);
+      enderecoAuto.current = r.auto;
+      return r.valor === v.endereco_trabalho ? v : { ...v, endereco_trabalho: r.valor };
+    });
+  };
   // Catálogo de setores do ERP (o mesmo do Acesso por Usuário e da troca de função).
   const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
   useEffect(() => {
@@ -1185,6 +1199,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             valor={{ contrato_id: vaga.contrato_id, posto_id: vaga.posto_id, funcao_id: vaga.funcao_id }}
             onChange={v => setVaga(x => ({ ...x, ...v }))}
             onListas={setCatListas}
+            onEnderecoPosto={aplicarEnderecoPosto}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
           {/* #0849 (11/11/2026): Contrato → Cargo → Posto → ENDEREÇO EFETIVO →
@@ -1195,6 +1210,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             <input className="nvg-fi" value={vaga.endereco_trabalho} maxLength={300}
               placeholder={ENDERECO_TRABALHO_AJUDA}
               onChange={e => setVaga(v => ({ ...v, endereco_trabalho: e.target.value }))} />
+            {avisoEnderecoPosto(endPosto, vaga.endereco_trabalho) && (
+              <div style={{ marginTop: 4, fontSize: 12, color: endPosto?.endereco ? "#64748b" : "#92400e" }}>
+                {avisoEnderecoPosto(endPosto, vaga.endereco_trabalho)}
+              </div>
+            )}
           </div>
           {/* Benefícios e adicionais da vaga (27/10/2026, Convenções Coletivas):
               contrato + posto → CCT/decreto vinculado na Planilha de Custo. */}

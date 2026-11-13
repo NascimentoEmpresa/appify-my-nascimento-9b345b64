@@ -24,7 +24,7 @@ import {
   DefValidacao, diferenca, linkConciliacao, linksDoCard, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
 } from "./auditoria/regras";
 import { EstadoCard, useTotaisAuditoria } from "./auditoria/useTotaisAuditoria";
-import { CorpoCentrosFluxo, CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
+import { CorpoCentrosFluxo, CorpoConciliacaoFaturamento, CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
 import {
   HistoricoRow, useHistoricoPeriodo, useRegistrarAuditoria, useResponsaveisAuditoria, useSalvarResponsaveis, useValidacoesPeriodo, ValidacaoRow,
 } from "./auditoria/useAuditoriaValidacoes";
@@ -195,8 +195,8 @@ export default function AuditoriaControladoria() {
         <KpiTile label="Total Orçado" valor={kpi(resumo("orcado_realizado")?.a)} icon={<Target />} cor="sky" />
       </div>
 
-      {[VALIDACOES.slice(0, 4), VALIDACOES.slice(4)].map((grupo, g) => (
-      <div key={g} className={cn("grid grid-cols-1 gap-4", g === 0 ? "lg:grid-cols-2" : "lg:grid-cols-4")}>
+      {[VALIDACOES.slice(0, 4), VALIDACOES.slice(4, 7), VALIDACOES.slice(7)].map((grupo, g) => (
+      <div key={g} className={cn("grid grid-cols-1 gap-4", g === 0 ? "lg:grid-cols-2" : g === 1 ? "lg:grid-cols-4" : "lg:grid-cols-1")}>
         {grupo.map((def) => (
           <CardValidacao
             key={def.tipo}
@@ -369,6 +369,8 @@ function CardValidacao(props: {
           <CorpoCentrosFluxo p={t.painel} mes={props.mes} empresaId={props.empresaId} />
         ) : t.painel?.kind === "orcado_realizado" ? (
           <CorpoOrcadoRealizado p={t.painel} t={t} />
+        ) : t.painel?.kind === "conciliacao_faturamento" ? (
+          <CorpoConciliacaoFaturamento p={t.painel} situacao={situacao} links={{ relatorio: link("Relatório de Serviços"), faturamento: link("Faturamento da Empresa") }} />
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2 text-center">

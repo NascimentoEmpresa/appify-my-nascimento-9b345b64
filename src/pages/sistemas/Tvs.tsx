@@ -35,7 +35,7 @@ import { PAINEIS_DO_DOCUMENTO, VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
 //
 // "Um módulo pra conectar TODAS as TVs da empresa no ERP e controlar tudo o
 // que passa nelas." Três abas:
-//   · TVs — as TVs conectadas (online/offline pelo ping de 4 min), playlist
+//   · TVs — as TVs conectadas (online/offline pelo ping de 20 min), playlist
 //     de cada uma, recarregar à distância, pausar, remover. "Adicionar TV"
 //     pareia pelo código de 6 dígitos que a TV mostra em <app>/tv;
 //   · Playlists — o que passa: imagem, vídeo, aviso em texto, YouTube e
@@ -113,7 +113,7 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
         {tvs.length > 1 && (
           <AcessoGate menu={MENU_TVS} acao="alterar">
             <Button size="sm" variant="ghost" disabled={recarregar.isPending}
-              onClick={() => window.confirm(`Recarregar as ${tvs.length} TVs?`) && recarregar.mutateAsync(tvs.map((t) => t.id)).then(() => toast.success("Comando enviado — as TVs recarregam em até 4 min."))}>
+              onClick={() => window.confirm(`Recarregar as ${tvs.length} TVs?`) && recarregar.mutateAsync(tvs.map((t) => t.id)).then(() => toast.success("Comando enviado — as TVs recarregam em até 20 min."))}>
               <RefreshCw className="mr-1 h-3.5 w-3.5" /> Recarregar todas
             </Button>
           </AcessoGate>
@@ -161,7 +161,7 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
                         <Button size="sm" variant="ghost" className="h-8 text-xs" title="Ver o que esta TV está mostrando agora" onClick={() => setAoVivoDe(t)}><Radio className="mr-1 h-3.5 w-3.5 text-red-500" /> Ao vivo</Button>
                         <AcessoGate menu={MENU_TVS} acao="alterar">
                           <Button size="sm" variant="ghost" className="h-8 text-xs" title="Endereço fixo desta TV, para ela abrir já conectada ao ligar" onClick={() => setLinkDe(t)}><Link2 className="mr-1 h-3.5 w-3.5" /> Link fixo</Button>
-                          <Button size="icon" variant="ghost" title="Recarregar a TV" onClick={() => recarregar.mutateAsync([t.id]).then(() => toast.success(`${t.nome} recarrega em até 4 min.`))}><RefreshCw className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Recarregar a TV" onClick={() => recarregar.mutateAsync([t.id]).then(() => toast.success(`${t.nome} recarrega em até 20 min.`))}><RefreshCw className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title={t.ativo ? "Pausar (mostra só o nome)" : "Voltar a tocar"} onClick={() => salvar(t.id, { ativo: !t.ativo }, t.ativo ? `${t.nome} pausada.` : `${t.nome} voltou a tocar.`)}>
                             {t.ativo ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                           </Button>
@@ -251,7 +251,7 @@ function DialogAdicionar({ aberto, onClose, playlists }: { aberto: boolean; onCl
   const enviar = async () => {
     try {
       await parear.mutateAsync({ codigo: f.codigo, nome: f.nome, local: f.local, playlistId: f.playlist === "__" ? null : f.playlist });
-      toast.success(`${f.nome} conectada — em até 4 min ela começa a tocar.`); fechar();
+      toast.success(`${f.nome} conectada — em até 20 min ela começa a tocar.`); fechar();
     } catch (e) { toast.error((e as Error).message); }
   };
   return (
@@ -538,7 +538,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });
-      toast.success("Item adicionado — as TVs pegam na próxima consulta (até 4 min). Acompanhe no AO VIVO.");
+      toast.success("Item adicionado — as TVs pegam na próxima consulta (até 20 min). Acompanhe no AO VIVO.");
       const limpo = { ...VAZIO, tipo: f.tipo };
       setF(limpo); setBase(limpo); setArquivo(null); if (inputRef.current) inputRef.current.value = "";
     } catch (e) { toast.error((e as Error).message); } finally { setEnviando(false); }
@@ -796,7 +796,7 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
   // TV online que não confirma o item (mig 20261020000004): player antigo — recarregar resolve.
   const semConfirmacao = online && tv.ativo && aoVivoFresco(aoVivo.data, agora) === false;
   const mandarRecarregar = () => recarregar.mutateAsync([tv.id]).then(
-    () => toast.success(`${tv.nome} recarrega em até 4 min.`),
+    () => toast.success(`${tv.nome} recarrega em até 20 min.`),
     (e) => toast.error((e as Error).message));
 
   return (
@@ -916,7 +916,7 @@ function PainelPrevia({ p, rascunho }: { p: TvPlaylist; rascunho: ItemTv | null 
         </div>
       ) : <p className="text-[11px] text-muted-foreground">Playlist vazia: a TV mostra o relógio.</p>}
       <p className="text-[11px] text-muted-foreground">
-        Ordem, ocultar e excluir valem na hora; o item NOVO entra quando você clicar em <b>Adicionar</b>. As TVs pegam a mudança em até 4 min — confira no AO VIVO.
+        Ordem, ocultar e excluir valem na hora; o item NOVO entra quando você clicar em <b>Adicionar</b>. As TVs pegam a mudança em até 20 min — confira no AO VIVO.
       </p>
     </div>
   );
@@ -986,7 +986,7 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
     try {
       await criar.mutateAsync({ texto: f.texto.trim(), cor: f.cor, duracaoSeg: seg, imagem: arquivo, layout, todas: f.todas, dispositivos: f.escolhidas,
                                autor: (user?.user_metadata?.display_name as string) || user?.email || "" });
-      toast.success("Aviso no ar — as TVs mostram em até 4 min."); setF({ ...f, texto: "" }); setArquivo(null);
+      toast.success("Aviso no ar — as TVs mostram em até 20 min."); setF({ ...f, texto: "" }); setArquivo(null);
     } catch (e) { toast.error((e as Error).message); }
   };
 

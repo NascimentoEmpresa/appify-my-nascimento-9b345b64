@@ -12,7 +12,7 @@ import {
   MOTIVOS_VAGA, motivoLabel, ehSubstituicao, maximoDeVagas, quantidadeValida,
   erroDaRecomendacao, recomendacaoParaBanco, cpfValido, soDigitos, maskCpf,
   avaliarPrazo, dataMinimaVaga,
-  cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
+  cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
   podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
@@ -31,7 +31,8 @@ import { dataParaIso, tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 import { BUCKET_ANEXOS, caminhoAnexo, erroDoAnexo, fmtTamanho } from "@/lib/solicitacoes/anexos";
 import { solicitacaoEmAberto, TITULO_DUPLICIDADE, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
-import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { VinculoCatalogoVaga, type EnderecoPostoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { avisoEnderecoPosto, proximoEndereco } from "@/lib/recrutamento/postosPlanilhaVaga";
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmtDt(s?: string) {
@@ -106,7 +107,7 @@ function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
     <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
       {!prazo.ok
         ? <>⚠️ {prazo.erro}</>
-        : <>✅ <b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+        : <>✅ <b>{prazo.dias} dias</b> de antecedência ({prazo.diasUteis} úteis) → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
     </div>
   );
 }
@@ -535,6 +536,18 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [custoPosto, setCustoPosto] = useState<CustoPosto | null>(null);
   const [custoNota, setCustoNota] = useState("");
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
+  // Endereço do posto na Planilha de Custo (13/11/2026) — mesmo da Nova Vaga
+  // do Recrutamento: preenche sozinho e não sobrescreve o que foi digitado.
+  const [endPosto, setEndPosto] = useState<EnderecoPostoVaga | null>(null);
+  const enderecoAuto = useRef("");
+  const aplicarEnderecoPosto = (e: EnderecoPostoVaga) => {
+    setEndPosto(e);
+    setVaga(v => {
+      const r = proximoEndereco(v.endereco_trabalho, enderecoAuto.current, e.endereco);
+      enderecoAuto.current = r.auto;
+      return r.valor === v.endereco_trabalho ? v : { ...v, endereco_trabalho: r.valor };
+    });
+  };
   const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
   useEffect(() => {
     db.from("setor_catalogo").select("nome").order("nome")
@@ -1661,12 +1674,18 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 valor={{ contrato_id: vaga.contrato_id, posto_id: vaga.posto_id, funcao_id: vaga.funcao_id }}
                 onChange={v => setVaga(x => ({ ...x, ...v }))}
                 onListas={setCatListas}
+                onEnderecoPosto={aplicarEnderecoPosto}
                 classeInput="ini-fi" classeGrupo="ini-fg" />
               {/* #0849: Contrato → Cargo → Posto → ENDEREÇO EFETIVO → o resto. */}
               <div className="ini-fg">
                 <label>Endereço efetivo do local de trabalho <span style={{ color: "#dc2626" }}>*</span></label>
                 <input className="ini-fi" value={vaga.endereco_trabalho} maxLength={300} placeholder={ENDERECO_TRABALHO_AJUDA}
                   onChange={e => setVaga(v => ({ ...v, endereco_trabalho: e.target.value }))} />
+                {avisoEnderecoPosto(endPosto, vaga.endereco_trabalho) && (
+                  <div style={{ marginTop: 4, fontSize: 12, color: endPosto?.endereco ? "#64748b" : "#92400e" }}>
+                    {avisoEnderecoPosto(endPosto, vaga.endereco_trabalho)}
+                  </div>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="ini-fg">

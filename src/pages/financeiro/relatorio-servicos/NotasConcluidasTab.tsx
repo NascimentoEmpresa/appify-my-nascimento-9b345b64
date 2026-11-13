@@ -623,7 +623,8 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
 
   useEffect(() => {
     if (!nf) return;
-    setValorPago(String(nf.valor_pago ?? nf.vlr_liquido_total ?? 0));
+    // valor_pago 0 sem data de pagamento = pagamento ainda não registrado: sugere o líquido (a regra dos pós-emissão refina abaixo).
+    setValorPago(String(nf.valor_pago != null && (nf.valor_pago > 0 || nf.data_pagamento) ? nf.valor_pago : nf.vlr_liquido_total ?? 0));
     setDataPagamento(nf.data_pagamento ?? new Date().toISOString().slice(0, 10));
     setSituacaoSitePmt(nf.situacao_site_pmt ?? "");
     setSituacaoDominio(nf.situacao_dominio ?? "");
@@ -646,7 +647,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   // descontos pós-emissão). Os itens chegam depois da nota, por isso efeito próprio
   // (só enquanto não há pagamento registrado, para não sobrescrever o que o usuário digitou).
   useEffect(() => {
-    if (!nf || nf.valor_pago != null || itensExistentes.length === 0) return;
+    if (!nf || (nf.valor_pago != null && (nf.valor_pago > 0 || nf.data_pagamento)) || itensExistentes.length === 0) return;
     const pos = itensExistentes.reduce(
       (a: number, it: any) => a + Number(it.multas_pos_emissao || 0) + Number(it.glosas_pos_emissao || 0) + Number(it.outros_descontos_pos_emissao || 0), 0);
     const aPagar = Math.max(0, Math.round(((nf.vlr_liquido_total ?? 0) - Number(nf.desconto_conta_vinculada ?? 0) - pos) * 100) / 100);
@@ -730,7 +731,9 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
           vlr_materiais: c.vlr_materiais,
           total_descontos: c.total_descontos,
           vlr_bruto: c.vlr_bruto,
-          vlr_mao_obra: c.vlr_mao_obra,
+          // Nota importada que continua "legada": a mão de obra gravada (0) é o que a identifica como legada.
+          // Gravar a implícita (INSS ÷ alíquota) fazia a nota deixar de ser legada e o ajuste seguinte recalculava INSS/líquido.
+          vlr_mao_obra: c.valores_legados ? Number(itensExistentes[i].vlr_mao_obra ?? 0) : c.vlr_mao_obra,
           vlr_liquido: c.vlr_liquido,
           issqn: c.issqn,
           inss: c.inss,

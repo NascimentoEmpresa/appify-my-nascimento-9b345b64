@@ -13,8 +13,8 @@ import { AniversariantesCard } from "@/components/aniversarios/AniversariantesCa
 import { AvisosCard } from "@/components/notificacoes/AvisosCard";
 import { ReconhecimentoCard } from "@/components/reconhecimento/ReconhecimentoCard";
 
-/** Cartão "Reconhecimento e Convivência Profissional" no Início (desligado em 12/11/2026). */
-const MURAL_NO_INICIO = false;
+/** Cartão "Reconhecimento e Convivência Profissional" no Início (desligado e religado em 12/11/2026). */
+const MURAL_NO_INICIO = true;
 import fachadaImg from "@/assets/fachada.jpg";
 import {
   CircleUserRound, ListChecks, Megaphone, Quote, Star, Search,
@@ -506,7 +506,9 @@ export default function Inicio() {
           {/* 12/11/2026, Pablo: "tira do mural do início agora". Cartão fora
               do Início até segunda ordem — a moderação continua no formulário
               e o que está liberado fica guardado; para voltar, troque
-              MURAL_NO_INICIO para true. */}
+              MURAL_NO_INICIO para true.
+              Religado no mesmo dia, depois da revisão dos comentários de
+              outubro (Pablo: "religa"). */}
           {MURAL_NO_INICIO && !externo && <ReconhecimentoCard />}
         </div>
       </div>

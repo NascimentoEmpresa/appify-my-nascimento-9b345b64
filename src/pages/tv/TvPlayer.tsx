@@ -166,10 +166,16 @@ export default function TvPlayer() {
   useEffect(() => {
     if (chaveFixa) gravarToken(chaveFixa);
     consultar();
-    // guardiao-ok: ping da TV a cada 4 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega)
+    // guardiao-ok: ping da TV a cada 20 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega; teto de 2 mil/dia, 13/11/2026)
     const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
     return () => window.clearInterval(t);
   }, [consultar]);
+
+  // 14/11/2026 a TV passou a perguntar a cada 1 min se tinha comando
+  // (tv_tem_comando, mig 20261114140000). 13/11/2026: saiu — 13 TVs davam
+  // ~19 mil consultas/dia, e o teto pedido pelo Pablo é 2 mil para TODAS as
+  // TVs (ver INTERVALO_PING_S em src/lib/tv/tv.ts). O Recarregar volta a
+  // chegar no ping, agora de 20 min; não recoloque um segundo timer de rede.
 
   // AO VIVO: avisa o ERP do item que entrou na tela (null = relógio/pausada).
   // Fogo e esquece — nunca atrapalha a reprodução.

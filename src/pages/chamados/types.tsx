@@ -127,6 +127,10 @@ export interface Chamado {
   // Confirmação do solicitante (mig 20261028001300). NULL com status
   // 'concluido' = o time concluiu e o solicitante ainda não confirmou.
   conclusao_confirmada_em?: string | null;
+  /** Fim do prazo para o solicitante responder o pedido de informações (3 dias úteis, mig 20261114130000). */
+  aguardando_retorno_ate?: string | null;
+  /** Concluído pela madrugada por falta de retorno do solicitante (mig 20261114130000). */
+  concluido_sem_retorno?: boolean;
   conclusao_confirmada_por?: string | null;
   // Finalização pelo Gestor de Sistemas (mig 20261110009000), depois da
   // confirmação do solicitante. NULL com 'concluido' = ainda não fechou de vez.
@@ -195,6 +199,22 @@ export interface Evento {
   texto: string | null;
   meta: Record<string, any> | null;
   created_at: string;
+  /** Editar/apagar a própria mensagem (mig 20261115000600). Versões antigas em
+   *  CHAMADO_SISTEMA_EVENTO_VERSAO; apagada tem `texto` NULL. */
+  editado_em?: string | null;
+  apagado_em?: string | null;
+  apagado_por?: string | null;
+}
+
+/** Versão anterior de uma mensagem do chat (editada ou apagada). */
+export interface VersaoMensagem {
+  id: string;
+  evento_id: string;
+  chamado_id: string;
+  acao: "editada" | "apagada";
+  texto: string | null;
+  feito_por: string | null;
+  feito_em: string;
 }
 
 export interface AvaliacaoChamado {

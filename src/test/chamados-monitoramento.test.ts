@@ -169,3 +169,49 @@ describe("Monitoramento de Chamados — consolidação", () => {
     expect(leituraControladoria([])).toMatch(/Sem solicitações/);
   });
 });
+
+describe("Monitoramento de Chamados — nota da I.A e ranking por volume (13/11/2026)", () => {
+  const ia = (nota: number) => ({
+    criterios: Object.fromEntries(["clareza_problema", "clareza_resultado", "descricao", "evidencias", "importancia",
+      "aderencia", "reaproveitamento", "reducao_manual", "confiabilidade"].map((k) => [k, { nota, motivo: "ok" }])),
+    resumo: "Pedido completo.", avaliado_em: "2026-11-13T10:00:00-03:00",
+  });
+
+  it("com a avaliação da I.A, os critérios de texto vêm dela e o índice chega a 9+", () => {
+    const l = linha({ descricao: "ver", ia: ia(9.5) });
+    expect(l.a.fonte).toBe("ia");
+    expect(l.a.criterios.clareza_problema.nota).toBe(9.5);
+    expect(l.a.indice).toBeGreaterThanOrEqual(9);
+    expect(l.a.resumoIa).toBe("Pedido completo.");
+  });
+
+  it("I.A incompleta (faltou critério) cai na regra antiga", () => {
+    const parcial = ia(9);
+    delete (parcial.criterios as Record<string, unknown>).confiabilidade;
+    expect(linha({ ia: parcial }).a.fonte).toBe("regra");
+    expect(linha({ ia: null }).a.fonte).toBe("regra");
+  });
+
+  it("quem tem 2 chamados ótimos não passa à frente de quem tem 25 muito bons", () => {
+    const ls: LinhaMonitor[] = [
+      ...Array.from({ length: 2 }, (_, i) => linha({ id: `s${i}`, solicitante_id: "sen", solicitante_nome: "Poucos", ia: ia(9.6) })),
+      ...Array.from({ length: 25 }, (_, i) => linha({ id: `f${i}`, solicitante_id: "fer", solicitante_nome: "Muitos", ia: ia(9) })),
+      ...Array.from({ length: 30 }, (_, i) => linha({ id: `o${i}`, solicitante_id: `o${i % 6}`, solicitante_nome: `Outro ${i % 6}`, ia: ia(6) })),
+    ];
+    const r = rankingSolicitantes(ls);
+    expect(r[0].nome).toBe("Muitos");
+    expect(r[1].nome).toBe("Poucos");
+    // a média simples continua aparecendo como é
+    expect(r[1].indiceMedio).toBeGreaterThan(r[0].indiceMedio);
+    expect(r[0].notaRanking).toBeGreaterThan(r[1].notaRanking);
+    expect(r[0]).toMatchObject({ total: 25, pctBons: 100, avaliadosIa: 25 });
+  });
+
+  it("com volume parecido, a melhor média vence", () => {
+    const ls = [
+      ...Array.from({ length: 10 }, (_, i) => linha({ id: `a${i}`, solicitante_id: "a", solicitante_nome: "A", ia: ia(7) })),
+      ...Array.from({ length: 10 }, (_, i) => linha({ id: `b${i}`, solicitante_id: "b", solicitante_nome: "B", ia: ia(8.5) })),
+    ];
+    expect(rankingSolicitantes(ls).map((x) => x.nome)).toEqual(["B", "A"]);
+  });
+});

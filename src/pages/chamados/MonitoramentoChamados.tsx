@@ -18,7 +18,7 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertCircle, BarChart3, CalendarDays, CheckCircle2, Download, Eye, FileText, Info, Loader2, MessageSquare, Pencil,
-  RotateCcw, Search, Star, Users, XCircle,
+  RotateCcw, Search, Sparkles, Star, Trophy, Users, XCircle,
 } from "lucide-react";
 import {
   PRIORIDADES, STATUS_CHAMADO, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
@@ -27,7 +27,7 @@ import {
   ADERENCIA_LABEL, CAMPO_AJUSTE_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
   analiseQualidade, avaliarChamado, calcularKpis, leituraControladoria, rankingSolicitantes, resumoTemas,
   temaCor, temaLabel,
-  type AjusteMonitor, type CampoAjuste, type ChamadoMonitor, type LinhaMonitor,
+  type AjusteMonitor, type CampoAjuste, type ChamadoMonitor, type LinhaMonitor, type RankingSolicitante,
 } from "@/lib/chamados/monitoramento";
 import { cn } from "@/lib/utils";
 
@@ -80,7 +80,10 @@ const CORES_AVATAR = [
   "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-orange-100 text-orange-700",
   "bg-violet-100 text-violet-700", "bg-rose-100 text-rose-700", "bg-cyan-100 text-cyan-700", "bg-amber-100 text-amber-700",
 ];
-const corAvatar = (chave: string) => CORES_AVATAR[[...chave].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
+// 13/11/2026: chamado sem solicitante_id (aberto por quem saiu, ou importado)
+// derrubava a tela inteira no "Ver o ranking completo" — `[...null]` quebra.
+const corAvatar = (chave: string | null | undefined) =>
+  CORES_AVATAR[[...String(chave ?? "")].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
 
 interface Filtros {
   de: string; ate: string; solic: string; setor: string; modulo: string; tema: string; prioridade: string; status: string;
@@ -107,7 +110,6 @@ export default function MonitoramentoChamados() {
   const [pagina, setPagina] = useState(1);
   const [detalhe, setDetalhe] = useState<{ id: string; foco: Foco } | null>(null);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  const [rankingCompleto, setRankingCompleto] = useState(false);
 
   const periodoOk = !!f.de && !!f.ate && f.de <= f.ate;
   const { data: chamados = [], isLoading, error } = useQuery({
@@ -442,51 +444,23 @@ export default function MonitoramentoChamados() {
         )}
       </Card>
 
-      {/* ── Ranking | Análise de qualidade ── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <Card className="p-4">
-          <p className="mb-2 text-sm font-bold">Ranking dos solicitantes</p>
-          {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
-            <>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
-                    <th className="w-10 py-1.5">#</th>
-                    <th className="py-1.5">Solicitante</th>
-                    <th className="py-1.5 text-center">Total de chamados</th>
-                    <th className="py-1.5 text-center">Média de inteligência</th>
-                    <th className="py-1.5 text-center">Efetividade média</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(rankingCompleto ? ranking : ranking.slice(0, 5)).map((r, i) => (
-                    <tr key={r.solicitante_id} className="cursor-pointer hover:bg-muted/40" title="Filtrar por este solicitante"
-                      onClick={() => { setRascunho((x) => ({ ...x, solic: r.solicitante_id })); setF((x) => ({ ...x, solic: r.solicitante_id })); setPagina(1); }}>
-                      <td className="py-1.5">
-                        <span className={cn("inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
-                          i === 0 ? "bg-amber-400 text-white" : i === 1 ? "bg-slate-400 text-white" : i === 2 ? "bg-orange-500 text-white" : "")}>
-                          {i + 1}
-                        </span>
-                      </td>
-                      <td className="py-1.5 font-medium">{r.nome}</td>
-                      <td className="py-1.5 text-center">{r.total}</td>
-                      <td className="py-1.5 text-center">
-                        <span className={cn("inline-block min-w-[44px] rounded border px-2 py-0.5 font-semibold", pilulaIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</span>
-                      </td>
-                      <td className="py-1.5 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {ranking.length > 5 && (
-                <button type="button" className="mt-2 text-xs font-medium text-primary hover:underline" onClick={() => setRankingCompleto((v) => !v)}>
-                  {rankingCompleto ? "Mostrar só os 5 primeiros" : `Ver o ranking completo (${ranking.length})`}
-                </button>
-              )}
-            </>
-          )}
-        </Card>
+      {/* ── Ranking (largura inteira) ── */}
+      <RankingCard
+        ranking={ranking}
+        mediaGeral={kpis.indiceMedio}
+        // 13/11/2026, Pablo: "ao clicar no nome de alguém pra ver o ranking
+        // também não dá pra voltar". Clicar de novo na mesma pessoa, ou no
+        // "Voltar ao ranking de todos", desfaz só o filtro de solicitante.
+        filtradoPor={f.solic !== TODOS ? f.solic : null}
+        onFiltrar={(id) => {
+          const solic = f.solic === id ? TODOS : id;
+          setRascunho((x) => ({ ...x, solic })); setF((x) => ({ ...x, solic })); setPagina(1);
+        }}
+        onVoltar={() => { setRascunho((x) => ({ ...x, solic: TODOS })); setF((x) => ({ ...x, solic: TODOS })); setPagina(1); }}
+      />
 
+      {/* ── Análise de qualidade ── */}
+      <div className="grid gap-4">
         <Card className="p-4">
           <p className="mb-3 text-sm font-bold">Análise de qualidade das solicitações</p>
           <div className="space-y-2.5">
@@ -543,6 +517,168 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
     </div>
   );
 }
+
+// =====================================================================
+// RANKING DOS SOLICITANTES (13/11/2026, Pablo: "o ranking tá bem fraco o
+// layout, ajusta ele e deixa melhor, mais completo"). Pódio com os 3
+// primeiros e tabela com tudo o que explica a posição: nota do ranking
+// (média ajustada pelo volume — rankingSolicitantes na lib), média simples,
+// melhor chamado, % bem especificados, tema mais pedido, efetividade e
+// quantos já têm a nota da I.A. Clicar numa pessoa filtra a tela por ela.
+// =====================================================================
+const MEDALHA = ["bg-amber-400 text-white", "bg-slate-400 text-white", "bg-orange-500 text-white"];
+const MOLDURA_PODIO = ["border-amber-300 bg-amber-50/60 dark:bg-amber-500/10", "border-slate-300 bg-slate-50/60 dark:bg-slate-500/10", "border-orange-300 bg-orange-50/60 dark:bg-orange-500/10"];
+
+function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: {
+  ranking: RankingSolicitante[]; mediaGeral: number | null; onFiltrar: (solicitanteId: string) => void;
+  filtradoPor: string | null; onVoltar: () => void;
+}) {
+  const [busca, setBusca] = useState("");
+  const [todos, setTodos] = useState(false);
+  const posicao = useMemo(() => new Map(ranking.map((r, i) => [r.solicitante_id, i + 1])), [ranking]);
+  const q = normalizarBusca(busca);
+  const filtrado = q ? ranking.filter((r) => normalizarBusca(`${r.nome} ${r.setor ?? ""}`).includes(q)) : ranking;
+  const lista = q || todos ? filtrado : filtrado.slice(0, 10);
+  const podio = ranking.slice(0, 3);
+  const totalIa = ranking.reduce((s, r) => s + r.avaliadosIa, 0);
+  const totalCh = ranking.reduce((s, r) => s + r.total, 0);
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-amber-500" /> Ranking dos solicitantes</p>
+          <p className="mt-0.5 max-w-3xl text-[11px] text-muted-foreground">
+            Ordem pela <b>nota do ranking</b>: a média de inteligência dos chamados de cada pessoa, ajustada pelo volume —
+            quem abriu poucos chamados tem a nota puxada para a média geral{mediaGeral != null && <> ({fmt1(mediaGeral)})</>},
+            então não passa à frente de quem mantém a qualidade em muitos pedidos.
+            {totalCh > 0 && totalIa < totalCh && <> A I.A já avaliou {totalIa} de {totalCh} chamados; o restante ainda usa a regra automática.</>}
+          </p>
+        </div>
+        <div className="relative w-full sm:w-64">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar solicitante ou setor" className="h-8 pl-8 text-xs" />
+        </div>
+      </div>
+
+      {filtradoPor && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+          <span>
+            A tela está mostrando só os chamados de <b>{ranking.find((r) => r.solicitante_id === filtradoPor)?.nome ?? "um solicitante"}</b>.
+          </span>
+          <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onVoltar}>
+            <RotateCcw className="h-3.5 w-3.5" /> Voltar ao ranking de todos
+          </Button>
+        </div>
+      )}
+
+      {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
+        <>
+          {!q && (
+            <div className="mb-4 grid gap-3 md:grid-cols-3">
+              {podio.map((r, i) => (
+                <button key={r.solicitante_id} type="button" onClick={() => onFiltrar(r.solicitante_id)} title="Filtrar por este solicitante"
+                  className={cn("flex items-center gap-3 rounded-lg border p-3 text-left transition hover:shadow-sm", MOLDURA_PODIO[i])}>
+                  <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold", MEDALHA[i])}>{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{r.nome}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{r.setor || "sem setor"}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {r.total} chamado(s) · média {fmt1(r.indiceMedio)} · {r.pctBons}% bem especificados
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("text-2xl font-bold leading-none", corIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</p>
+                    <p className="text-[10px] text-muted-foreground">nota do ranking</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-xs">
+              <thead>
+                <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
+                  <th className="w-10 py-2">#</th>
+                  <th className="py-2">Solicitante</th>
+                  <th className="py-2 text-center">Chamados</th>
+                  <th className="py-2" title="Média ajustada pelo volume — é o que ordena">Nota do ranking</th>
+                  <th className="py-2 text-center" title="Média simples dos chamados">Média</th>
+                  <th className="py-2 text-center">Melhor chamado</th>
+                  <th className="py-2" title="Chamados com índice 8 ou mais">Bem especificados</th>
+                  <th className="py-2">Tema mais pedido</th>
+                  <th className="py-2 text-center">Efetividade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((r) => {
+                  const pos = posicao.get(r.solicitante_id) ?? 0;
+                  return (
+                    <tr key={r.solicitante_id} className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-muted/40" title="Filtrar por este solicitante"
+                      onClick={() => onFiltrar(r.solicitante_id)}>
+                      <td className="py-2">
+                        <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold", pos <= 3 ? MEDALHA[pos - 1] : "bg-muted text-muted-foreground")}>{pos}</span>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold", corAvatar(r.solicitante_id))}>{iniciais(r.nome)}</span>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{r.nome}</p>
+                            <p className="truncate text-[10px] text-muted-foreground">{r.setor || "sem setor"}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 text-center">
+                        <p className="font-semibold">{r.total}</p>
+                        <p className="text-[10px] text-muted-foreground">{r.concluidos} concl. · {r.emAndamento} andam.</p>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={cn("inline-block min-w-[44px] rounded border px-2 py-0.5 text-center font-semibold", pilulaIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</span>
+                          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                            <span className={cn("block h-full rounded-full", bgIndice(r.notaRanking))} style={{ width: `${Math.min(100, r.notaRanking * 10)}%` }} />
+                          </span>
+                        </div>
+                      </td>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</td>
+                      <td className={cn("py-2 text-center", corIndice(r.melhorIndice))}>{fmt1(r.melhorIndice)}</td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                            <span className="block h-full rounded-full bg-success" style={{ width: `${r.pctBons}%` }} />
+                          </span>
+                          <span className="w-9 text-right font-medium">{r.pctBons}%</span>
+                        </div>
+                      </td>
+                      <td className="py-2">
+                        {r.temaPrincipal ? (
+                          <span className="inline-block max-w-[180px] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                            style={{ color: temaCor(r.temaPrincipal), backgroundColor: `${temaCor(r.temaPrincipal)}1a` }}>{temaLabel(r.temaPrincipal)}</span>
+                        ) : "—"}
+                      </td>
+                      <td className="py-2 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
+                    </tr>
+                  );
+                })}
+                {lista.length === 0 && (
+                  <tr><td colSpan={9} className="py-4 text-center text-muted-foreground">Ninguém encontrado com "{busca}".</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {!q && ranking.length > 10 && (
+            <button type="button" className="mt-2 text-xs font-medium text-primary hover:underline" onClick={() => setTodos((v) => !v)}>
+              {todos ? "Mostrar só os 10 primeiros" : `Ver o ranking completo (${ranking.length})`}
+            </button>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+const normalizarBusca = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 function BarraQualidade({ label, pct, cor }: { label: string; pct: number; cor: string }) {
   return (
@@ -647,6 +783,9 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
             <p className="text-[11px] text-muted-foreground">Índice de inteligência {a.preliminar && "(preliminar)"}</p>
             <p className={`text-2xl font-bold ${corIndice(a.indice)}`}>{fmt1(a.indice)}<span className="text-sm text-muted-foreground"> / 10</span></p>
             {a.ajustado.includes("indice") && <p className="text-[10px] text-muted-foreground">automático: {fmt1(a.indiceAuto)}</p>}
+            <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+              {a.fonte === "ia" ? <><Sparkles className="h-3 w-3 text-violet-500" /> avaliado pela I.A{c.ia?.reavaliando ? " · reavaliando" : ""}</> : "regra automática — a I.A ainda não avaliou"}
+            </p>
           </Card>
           <Card className="p-3">
             <p className="text-[11px] text-muted-foreground">Efetividade da entrega</p>
@@ -665,6 +804,11 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
 
         <div>
           <p id="monitor-criterios" className="mb-1 scroll-mt-4 text-xs font-bold">Critérios do índice de inteligência</p>
+          {a.resumoIa && (
+            <p className="mb-2 flex items-start gap-1.5 rounded-md border border-violet-300/40 bg-violet-500/5 p-2 text-xs">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-500" /><span>{a.resumoIa}</span>
+            </p>
+          )}
           <Table className="text-xs">
             <TableBody>
               {CRITERIOS_INDICE.map((k) => {

@@ -4,6 +4,7 @@ const { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } =
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { prepararArquivos, executarNoGithub } = require('../src/nfse/github-actions.js');
+const { processarFilaNfse } = require('../src/nfse/index.js');
 const pastas = [];
 afterEach(() => { for (const pasta of pastas.splice(0)) rmSync(pasta, { recursive: true, force: true }); });
 function ambiente() {
@@ -105,14 +106,49 @@ describe('NFS-e no GitHub Actions', () => {
     });
     assert.equal(ciclos,4); assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
   });
-  it('encerra após três falhas consecutivas sem expor o erro bruto e remove o certificado', async () => {
-    const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'10' };
+  it('mantém tentativas até o prazo e termina com falha se a infraestrutura continuar indisponível', async t => {
+    const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'5' };
     let tempo = 0; let ciclos = 0;
+    const avisos = [];
+    t.mock.method(console,'warn',mensagem=>avisos.push(mensagem));
     await assert.rejects(executarNoGithub(env, { carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
       processarFilaNfse:async()=>{ciclos++;throw new Error('segredo-sintetico-nao-deve-sair');},
-      aguardar:async ms=>{tempo+=ms;},
-    }),/Três ciclos consecutivos/);
-    assert.equal(ciclos,3); assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+      aguardar:async ms=>{assert.equal(ms,60_000);tempo+=ms;},
+    }),/Prazo.*infraestrutura/);
+    assert.equal(ciclos,5); assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+    assert.equal(avisos.join(' ').includes('segredo-sintetico'),false);
+  });
+  it('recupera o banco após mais de três falhas sem encerrar o processador antecipadamente', async t => {
+    const env = { ...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'7' };
+    let tempo = 0; let ciclos = 0; const avisos = []; const logs = [];
+    t.mock.method(console,'warn',mensagem=>avisos.push(mensagem));
+    t.mock.method(console,'log',mensagem=>logs.push(mensagem));
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{if(++ciclos<=4)throw new Error('segredo-sintetico-nao-deve-sair');},
+      aguardar:async ms=>{assert.equal(ms,60_000);tempo+=ms;},
+    });
+    assert.equal(ciclos,7); assert.equal(avisos.length,4);
+    assert.match(logs.join(' '),/restabelecido.*4/);
+    assert.equal([...avisos,...logs].join(' ').includes('segredo-sintetico'),false);
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('preserva diagnóstico seguro da RPC sem expor mensagem, URL ou detalhes retornados pelo banco', async t => {
+    const banco = {rpc:async()=>({data:null,status:503,error:{code:'PGRST002',message:'senha-na-mensagem',details:'https://privado.invalid/segredo'}})};
+    let erro;
+    await assert.rejects(processarFilaNfse(banco,{NFSE_HABILITADO:'1'}),e=>{
+      erro=e;assert.equal(e.codigo,'FALHA_BANCO');
+      assert.deepEqual(e.diagnostico,{operacao:'nfse_reservar_trabalho',http:503,codigoBanco:'PGRST002'});return true;
+    });
+    const env = {...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0;let ciclos=0;const avisos=[];
+    t.mock.method(console,'warn',mensagem=>avisos.push(mensagem));
+    t.mock.method(console,'log',()=>{});
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{if(++ciclos===1)throw erro;},aguardar:async ms=>{tempo+=ms;},
+    });
+    assert.match(avisos.join(' '),/FALHA_BANCO.*503.*PGRST002/);
+    assert.doesNotMatch(avisos.join(' '),/senha-na-mensagem|privado.invalid|segredo/);
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
   });
   it('recusa duração maior que o teto do runner ou inválida', async () => {
     for (const duracao of ['0','341','abc','1.5']) {

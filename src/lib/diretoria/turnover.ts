@@ -36,6 +36,20 @@ export interface PainelTurnover {
   de: string; ate: string; fator_projecao: number; efetivo_medio: number;
   mensal: MesTurnover[]; por_empresa: EmpresaTurnover[]; por_contrato: ContratoTurnover[];
   causas: { causa: string; n: number }[]; contratos: string[];
+  /**
+   * Desligamentos do período que ficaram FORA da conta por encerramento do
+   * contrato com o cliente (SIS-2026-0854, mig 20261114085400). A RPC já tira
+   * esses casos das demissões; aqui é só para a tela dizer quantos foram.
+   */
+  fora_turnover?: number;
+}
+
+/** Nota do painel sobre os desligamentos por encerramento de contrato (null = nada a dizer). */
+export function notaForaTurnover(n: number | null | undefined): string | null {
+  if (!n || n <= 0) return null;
+  return n === 1
+    ? "1 desligamento por encerramento de contrato com o cliente ficou fora da conta."
+    : `${n.toLocaleString("pt-BR")} desligamentos por encerramento de contrato com o cliente ficaram fora da conta.`;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
