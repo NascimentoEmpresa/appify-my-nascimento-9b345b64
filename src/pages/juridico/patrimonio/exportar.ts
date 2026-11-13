@@ -16,7 +16,7 @@ import {
   num, simNao, slug, txt,
 } from "@/lib/exportarRelatorio";
 import { rotuloTipoLancamento, ehContratoParcelado, mapaValorQueFalta } from "./parcelas";
-import { aplicarBaixaDasContas } from "./baixaParcelas";
+import { aplicarBaixaDasContas, type ParcelaPlanilha, type ContaDoContrato } from "./baixaParcelas";
 
 export { baixar };
 export type { Linha };
@@ -223,13 +223,13 @@ function montarBlocos(d: DadosExportacao, o: OpcoesExportacao): Bloco<Linha>[] {
       // Mesma baixa da aba da tela: a planilha + o que foi pago depois pelas
       // contas (Malote ou baixa manual) — ver baixaParcelas.ts.
       linhas: p => aplicarBaixaDasContas(
-        [...parcelas(p)].sort((a, b) => (num(a.ordem) ?? 0) - (num(b.ordem) ?? 0)) as any[],
-        contas(p) as any[],
+        [...parcelas(p)].sort((a, b) => (num(a.ordem) ?? 0) - (num(b.ordem) ?? 0)) as unknown as ParcelaPlanilha[],
+        contas(p) as unknown as ContaDoContrato[],
         c => {
           const l = c as unknown as Linha;
           return o.seloDaConta(l) !== "Pago" ? null : l.status === "Pago" ? "conta" : "malote";
         },
-      ) as Linha[] },
+      ) as unknown as Linha[] },
     { titulo: "Acessos (portais)", aba: "Acessos", colunas: COLUNAS_ACESSOS, linhas: acessos },
     { titulo: "Contatos", aba: "Contatos", colunas: COLUNAS_CONTATOS, linhas: contatos },
     { titulo: "Documentos", aba: "Documentos", colunas: COLUNAS_DOCUMENTOS, linhas: p => [...documentos(p)].sort(porData("created_at", true)) },
