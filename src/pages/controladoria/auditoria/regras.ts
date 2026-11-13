@@ -3,7 +3,9 @@
 // aprova/rejeita. Aqui ficam o catálogo das 7 validações, o cálculo dos totais
 // que não dependem de tela e as comparações — tudo testável.
 
-export type TipoValidacao = "malote_fluxo" | "fluxo_extrato" | "centros_malote" | "orcado_realizado" | "faturado" | "recebido" | "descontos";
+import type { Indicador, ResultadoConciliacao } from "@/pages/financeiro/conciliacao-servicos/regras";
+
+export type TipoValidacao = "malote_fluxo" | "fluxo_extrato" | "centros_malote" | "orcado_realizado" | "faturado" | "recebido" | "descontos" | "conciliacao_faturamento";
 export type StatusValidacao = "pendente" | "aprovado" | "rejeitado";
 
 export interface DefValidacao {
@@ -28,6 +30,8 @@ export const VALIDACOES: DefValidacao[] = [
   { tipo: "faturado", numero: 5, titulo: "Totais de notas faturadas × falta faturar", rotuloA: "Total Faturado", rotuloB: "Falta Faturar", comparacao: "livre", link: "/app/financeiro/controle-faturamento", linkRotulo: "Controle de Faturamento" },
   { tipo: "recebido", numero: 6, titulo: "Totais de notas recebidas × falta receber", rotuloA: "Total Recebido", rotuloB: "Falta Receber", comparacao: "livre", link: "/app/financeiro/relatorio-servicos", linkRotulo: "Relatório de Serviços" },
   { tipo: "descontos", numero: 7, titulo: "Totais de descontos de contratos por categoria × valor total descontado", rotuloA: "Descontos por Categoria", rotuloB: "Valor Total Descontado", comparacao: "igual", link: "/app/financeiro/relatorio-servicos", linkRotulo: "Relatório de Serviços" },
+  // SIS-2026-0874: confere a conciliação do Relatório de Serviços (SIS-2026-0869) contra o Faturamento da Empresa. As NFs são lidas pela competência do mês.
+  { tipo: "conciliacao_faturamento", numero: 8, titulo: "Conciliação do Faturamento de Notas", rotuloA: "Relatório de Serviços", rotuloB: "Faturamento da Empresa", comparacao: "igual", link: "/app/financeiro/relatorio-servicos", linkRotulo: "Relatório de Serviços" },
 ];
 
 export const STATUS_LABEL: Record<StatusValidacao, string> = {
@@ -171,7 +175,22 @@ export interface PainelCentrosFluxo {
   faltaDistribuir: number;
   lancamentos: LancamentoFaltaDistribuir[];
 }
-export type PainelCard = PainelMaloteFluxo | PainelFluxoExtrato | PainelOrcadoRealizado | PainelCentros | PainelCentrosFluxo;
+// SIS-2026-0874: item 8. Os quatro indicadores do Relatório de Serviços contra os do Faturamento da Empresa (Resumo Mensal), para as NFs da
+// competência do mês. Relatório "pendente" × Faturamento "a receber" são o mesmo conceito com nomes diferentes nas duas telas.
+export interface NotaDivergenteFaturamento { id: string; numero: string; contratoNome: string; difTotal: number; motivo: string | null }
+export interface PainelConciliacaoFaturamento {
+  kind: "conciliacao_faturamento";
+  relatorio: Record<Indicador, number>;
+  faturamento: Record<Indicador, number>;
+  // Relatório − Faturamento (com sinal): positivo = o Relatório mostra mais.
+  diferencas: Record<Indicador, number>;
+  conciliado: boolean;
+  notasAvaliadas: number;
+  notasDivergentes: number;
+  // As maiores divergências por NF (até 5), com o motivo apontado pela conciliação.
+  maioresDivergencias: NotaDivergenteFaturamento[];
+}
+export type PainelCard = PainelMaloteFluxo | PainelFluxoExtrato | PainelOrcadoRealizado | PainelCentros | PainelCentrosFluxo | PainelConciliacaoFaturamento;
 
 
 export function diferenca(t: Pick<TotaisCard, "a" | "b">): { valor: number; percentual: number | null } {
@@ -187,7 +206,32 @@ export function situacaoComparacao(def: Pick<DefValidacao, "comparacao">, t: Pic
   if (t.painel?.kind === "fluxo_extrato") {
     return Math.abs(t.painel.difEntradas) <= TOLERANCIA && Math.abs(t.painel.difSaidas) <= TOLERANCIA ? "confere" : "diverge";
   }
+  // Faturamento de Notas: os quatro indicadores têm que bater (a soma dos dois lados escondia uma diferença que se compensa).
+  if (t.painel?.kind === "conciliacao_faturamento") return t.painel.conciliado ? "confere" : "diverge";
   return Math.abs(t.a - t.b) <= TOLERANCIA ? "confere" : "diverge";
+}
+
+// SIS-2026-0874: monta o card 8 a partir da conciliação do Relatório de Serviços (a mesma conta da aba Conciliação, sem refazê-la).
+// a/b = soma dos quatro indicadores de cada lado: servem só para o aviso "os valores mudaram desde a aprovação".
+export function totaisConciliacaoFaturamento(r: Pick<ResultadoConciliacao, "indicadores" | "notas" | "resumo">): TotaisCard {
+  const vazio = (): Record<Indicador, number> => ({ bruto: 0, liquido: 0, recebido: 0, pendente: 0 });
+  const relatorio = vazio(), faturamento = vazio(), diferencas = vazio();
+  for (const i of r.indicadores) {
+    relatorio[i.id] = i.valores.geral;
+    faturamento[i.id] = i.valores.faturamento;
+    diferencas[i.id] = r2(i.valores.geral - i.valores.faturamento);
+  }
+  const soma = (v: Record<Indicador, number>) => r2(v.bruto + v.liquido + v.recebido + v.pendente);
+  const painel: PainelConciliacaoFaturamento = {
+    kind: "conciliacao_faturamento",
+    relatorio, faturamento, diferencas,
+    conciliado: r.indicadores.every((i) => Math.abs(i.valores.geral - i.valores.faturamento) < 0.005),
+    notasAvaliadas: r.resumo.notasAvaliadas,
+    notasDivergentes: r.resumo.notasDivergentes,
+    // `notas` já vem ordenada da maior para a menor divergência.
+    maioresDivergencias: r.notas.filter((n) => n.divergente).slice(0, 5).map((n) => ({ id: n.id, numero: n.numero, contratoNome: n.contratoNome, difTotal: n.difTotal, motivo: n.motivos[0] ?? null })),
+  };
+  return { a: soma(relatorio), b: soma(faturamento), painel };
 }
 
 export interface ResumoStatus {
@@ -765,6 +809,7 @@ export function linksDoCard(tipo: TipoValidacao, mes: string, empresaId: string 
     case "fluxo_extrato": return [malote, fluxo, { rotulo: "Conciliação Bancária", to: linkConciliacao(mes, empresaId) }];
     case "centros_malote": return [{ rotulo: "Fluxo de Caixa", to: linkFluxoCaixa(mes, empresaId) }, { rotulo: "Centros de Custo", to: "/app/controladoria/centros-custo" }];
     case "orcado_realizado": return [fluxo, { rotulo: "Orçamento Geral", to: "/app/malote/orcamento-geral" }];
+    case "conciliacao_faturamento": return [{ rotulo: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos" }, { rotulo: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa" }];
     default: return [];
   }
 }

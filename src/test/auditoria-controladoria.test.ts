@@ -8,18 +8,18 @@ const sem = { empresaId: null, contratoId: null };
 const desp = (o: Partial<DespesaMalote> & { id: string }): DespesaMalote => ({ empresa_id: "E1", contrato_id: null, valor_aprovado: 100, valor_total: 100, parcelado: false, ...o });
 
 describe("status geral", () => {
-  it("conta sempre as 7 validações; sem decisão = pendente", () => {
-    expect(statusGeral([])).toEqual({ aprovadas: 0, pendentes: 7, rejeitadas: 0, total: 7 });
+  it("conta sempre as 8 validações; sem decisão = pendente", () => {
+    expect(statusGeral([])).toEqual({ aprovadas: 0, pendentes: 8, rejeitadas: 0, total: 8 });
     const r = statusGeral([
       { tipo: "malote_fluxo", status: "aprovado" },
       { tipo: "fluxo_extrato", status: "aprovado" },
       { tipo: "faturado", status: "rejeitado" },
       { tipo: "recebido", status: "pendente" },
     ]);
-    expect(r).toEqual({ aprovadas: 2, pendentes: 4, rejeitadas: 1, total: 7 });
+    expect(r).toEqual({ aprovadas: 2, pendentes: 5, rejeitadas: 1, total: 8 });
   });
-  it("catálogo tem as 7 validações do chamado", () => {
-    expect(VALIDACOES.map((v) => v.numero)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it("catálogo tem as 8 validações (SIS-2026-0874 criou o item 8)", () => {
+    expect(VALIDACOES.map((v) => v.numero)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });
 
