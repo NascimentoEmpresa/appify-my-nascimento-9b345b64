@@ -16,6 +16,7 @@ import {
   num, simNao, slug, txt,
 } from "@/lib/exportarRelatorio";
 import { rotuloTipoLancamento, ehContratoParcelado, mapaValorQueFalta } from "./parcelas";
+import { aplicarBaixaDasContas } from "./baixaParcelas";
 
 export { baixar };
 export type { Linha };
@@ -219,7 +220,16 @@ function montarBlocos(d: DadosExportacao, o: OpcoesExportacao): Bloco<Linha>[] {
     { titulo: "Contas e obrigações", aba: "Contas e obrigações", colunas: colunasContas(o.seloDaConta),
       linhas: p => [...contas(p)].sort(porData("vencimento")), resumoHtml: totaisContas(o.seloDaConta) },
     { titulo: "Parcelas do contrato", aba: "Parcelas", colunas: COLUNAS_PARCELAS,
-      linhas: p => [...parcelas(p)].sort((a, b) => (num(a.ordem) ?? 0) - (num(b.ordem) ?? 0)) },
+      // Mesma baixa da aba da tela: a planilha + o que foi pago depois pelas
+      // contas (Malote ou baixa manual) — ver baixaParcelas.ts.
+      linhas: p => aplicarBaixaDasContas(
+        [...parcelas(p)].sort((a, b) => (num(a.ordem) ?? 0) - (num(b.ordem) ?? 0)) as any[],
+        contas(p) as any[],
+        c => {
+          const l = c as unknown as Linha;
+          return o.seloDaConta(l) !== "Pago" ? null : l.status === "Pago" ? "conta" : "malote";
+        },
+      ) as Linha[] },
     { titulo: "Acessos (portais)", aba: "Acessos", colunas: COLUNAS_ACESSOS, linhas: acessos },
     { titulo: "Contatos", aba: "Contatos", colunas: COLUNAS_CONTATOS, linhas: contatos },
     { titulo: "Documentos", aba: "Documentos", colunas: COLUNAS_DOCUMENTOS, linhas: p => [...documentos(p)].sort(porData("created_at", true)) },
@@ -234,13 +244,14 @@ function montarBlocos(d: DadosExportacao, o: OpcoesExportacao): Bloco<Linha>[] {
  * valor_falta da JUR_PATRIMONIOS é o número da importação e ninguém atualiza
  * — exportar ela faria o arquivo discordar do cartão da tela.
  */
-function comFaltaCalculada(d: DadosExportacao): DadosExportacao {
-  const falta = mapaValorQueFalta(d.obrigacoes as unknown as Parameters<typeof mapaValorQueFalta>[0]);
+function comFaltaCalculada(d: DadosExportacao, seloDaConta: (o: Linha) => string): DadosExportacao {
+  const falta = mapaValorQueFalta(d.obrigacoes as unknown as Parameters<typeof mapaValorQueFalta>[0],
+    c => seloDaConta(c as unknown as Linha) === "Pago");
   return { ...d, patrimonios: d.patrimonios.map(p => ({ ...p, valor_falta: falta.get(Number(p.id)) ?? 0 })) };
 }
 
 function modelo(bruto: DadosExportacao, o: OpcoesExportacao): ModeloRelatorio<Linha> {
-  const d = comFaltaCalculada(bruto);
+  const d = comFaltaCalculada(bruto, o.seloDaConta);
   const sit = (p: Linha) => txt(p.situacao_pagamento).toUpperCase();
   const soma = (campo: string) => d.patrimonios.reduce((s, p) => s + (num(p[campo]) ?? 0), 0);
   return {
