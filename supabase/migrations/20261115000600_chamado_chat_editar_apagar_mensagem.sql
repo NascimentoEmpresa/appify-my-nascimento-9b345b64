@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS public."CHAMADO_SISTEMA_EVENTO_VERSAO" (
 );
 CREATE INDEX IF NOT EXISTS idx_chamado_evento_versao_evento
   ON public."CHAMADO_SISTEMA_EVENTO_VERSAO"(evento_id, feito_em);
+-- Guardião de desempenho (M2): FK sem índice faz o DELETE de um usuário
+-- varrer a tabela inteira.
+CREATE INDEX IF NOT EXISTS chamado_sistema_evento_versao_feito_por_idx
+  ON public."CHAMADO_SISTEMA_EVENTO_VERSAO"(feito_por);
 
 ALTER TABLE public."CHAMADO_SISTEMA_EVENTO_VERSAO" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."CHAMADO_SISTEMA_EVENTO_VERSAO" FROM PUBLIC, anon;
