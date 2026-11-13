@@ -284,6 +284,7 @@ import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
 import AsoDemissional from "./pages/sst/AsoDemissional";
+import AsoPeriodico from "./pages/sst/AsoPeriodico";
 import ConferenciaPonto from "./pages/rh/ConferenciaPonto";
 import ConferenciaPontoPainel from "./pages/rh/ConferenciaPontoPainel";
 import OperacionalConferenciaPonto from "./pages/operacional/ConferenciaPonto";
@@ -1169,6 +1170,8 @@ const App = () => (
             {/* SST — ASO demissional. Desde 02/09/2026 vem ANTES do RH: o SST
                 marca o exame e o RH confirma o desligamento. */}
             <Route path="sst/aso-demissional" element={<AsoDemissional />} />
+            {/* SST — ASO periódico: vencimento automático pelo último ASO (mig 20261114100000). */}
+            <Route path="sst/aso-periodico" element={<AsoPeriodico />} />
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
             <Route path="sst/afastamentos" element={<SstAfastamentos />} />
