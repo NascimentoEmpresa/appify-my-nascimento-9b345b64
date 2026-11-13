@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  useDecidirMural, useHabilitarTriagem, useMuralModeracao, useTriagemMural, type ItemModeracao,
+  useDecidirMural, useDefinirVisibilidadeMural, useHabilitarTriagem, useMuralModeracao, useTriagemMural,
+  useVisibilidadeMural, type ItemModeracao, type VisibilidadeMural,
 } from "@/hooks/useMuralReconhecimento";
 import {
   itensDaPrevia, mesAnterior, rankingMural, rotuloMes, somarMes,
@@ -116,6 +117,34 @@ function Caixa({ marcado, parcial = false, onChange, rotulo }: {
   );
 }
 
+/** "Todos veem" × "Cada um vê só os seus" (13/11/2026). */
+function SeletorModo({ modo, onTrocar, desabilitado, compacto = false }: {
+  modo: VisibilidadeMural; onTrocar: (m: VisibilidadeMural) => void; desabilitado?: boolean; compacto?: boolean;
+}) {
+  const opcoes: { v: VisibilidadeMural; rot: string; dica: string }[] = [
+    { v: "todos", rot: "👥 Todos veem os comentários bons", dica: "Todo mundo logado vê os recados liberados do mês." },
+    { v: "proprios", rot: "🔒 Cada um vê só os seus", dica: "Cada pessoa vê no Início só os recados feitos para ela." },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Quem vê no Início"
+      style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, padding: 3, borderRadius: 10, background: "#f1f5f9", border: "1px solid #e2e8f0" }}>
+      {opcoes.map((o) => {
+        const on = modo === o.v;
+        return (
+          <button key={o.v} type="button" role="radio" aria-checked={on} disabled={desabilitado} title={o.dica}
+            onClick={() => onTrocar(o.v)}
+            style={{ border: 0, borderRadius: 8, cursor: desabilitado ? "default" : "pointer", fontWeight: 800,
+              fontSize: compacto ? 11 : 12, padding: compacto ? "5px 9px" : "7px 11px",
+              background: on ? (o.v === "proprios" ? "#7c3aed" : "#0f3171") : "transparent",
+              color: on ? "#fff" : "#475569", transition: "background .2s" }}>
+            {o.rot}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function MuralModeracao({ formId, onFechar }: { formId: string; onFechar: () => void }) {
   const noInicio = mesAnterior();
   const [mes, setMes] = useState(noInicio);
@@ -123,7 +152,8 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   // etapa 1 = "Tem certeza?", etapa 2 = "Confirma sua certeza?" — só a 2 libera.
-  const [confirmar, setConfirmar] = useState<{ lista: ItemModeracao[]; quem?: string; etapa: 1 | 2; desde?: number; foraIA?: number } | null>(null);
+  // modo: quem vê no Início — escolhido aqui na confirmação (13/11/2026).
+  const [confirmar, setConfirmar] = useState<{ lista: ItemModeracao[]; quem?: string; etapa: 1 | 2; desde?: number; foraIA?: number; modo: VisibilidadeMural } | null>(null);
   // Prévia: o que vai ser liberado (somado ao que já está no mural).
   const [previa, setPrevia] = useState<{ aLiberar: ItemModeracao[]; quem?: string } | null>(null);
   const [cardIAAberto, setCardIAAberto] = useState(true);
@@ -135,6 +165,21 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   useEffect(() => { setMarcados(new Set()); }, [mes]);
   const { data: itens = [], isLoading, error } = useMuralModeracao(formId, mes, true);
   const decidir = useDecidirMural();
+  // Quem vê no Início, por formulário + mês (13/11/2026, Pablo: "CADA UM VER
+  // SÓ OS SEUS COMENTÁRIOS ou TODOS VEREM OS COMENTÁRIOS BONS").
+  const visQ = useVisibilidadeMural(formId, mes);
+  const modoAtual: VisibilidadeMural = visQ.data?.modo ?? "todos";
+  const modoDisponivel = visQ.data?.disponivel ?? false;
+  const definirModo = useDefinirVisibilidadeMural(formId, mes);
+  const trocarModo = (modo: VisibilidadeMural) => {
+    if (modo === modoAtual) return;
+    definirModo.mutate(modo, {
+      onSuccess: () => toast.success(modo === "proprios"
+        ? `${MESES_CAP(mes)}: cada um vê só os comentários feitos para si.`
+        : `${MESES_CAP(mes)}: todos veem os comentários bons.`),
+      onError: (e: Error) => toast.error(e?.message ?? "Não foi possível salvar."),
+    });
+  };
   // Triagem por IA: só depois que a fila carregou e se há pendente.
   const temPendente = itens.some((i) => i.status === "pendente");
   const triagemQ = useTriagemMural(formId, mes, !isLoading && temPendente);
@@ -184,7 +229,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
   };
   const pedirLiberacao = (lista: ItemModeracao[], quem?: string, foraIA = 0) => {
     if (!lista.length) return;
-    setConfirmar({ lista, quem, etapa: 1, foraIA });
+    setConfirmar({ lista, quem, etapa: 1, foraIA, modo: modoAtual });
   };
   const mudarHabilitado = (i: ItemModeracao, habilitado: boolean) =>
     habilitar.mutate({ item: i, habilitado }, {
@@ -197,7 +242,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
     return n;
   });
 
-  const ocupado = decidir.isPending;
+  const ocupado = decidir.isPending || definirModo.isPending;
   const travaLiberar = ocupado || triando;
 
   return (
@@ -213,7 +258,7 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
               </div>
               <ul style={{ fontSize: 11.5, opacity: .9, margin: "6px 0 0", paddingLeft: 16, lineHeight: 1.5 }}>
                 <li><b>Ranking:</b> do 1º ao último pela quantidade de comentários positivos no mês; empate vai para a nota média.</li>
-                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e todo mundo logado vê, sem precisar de permissão. <b>🗑 Tirar mês do Início</b> (ao lado do mês) tira o mês inteiro do Início na hora; <b>⤺ Tirar do Início</b> (em cada pessoa) tira só os dela. O que sai volta para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
+                <li><b>Liberação:</b> quando quiser — pede <b>duas confirmações</b> antes de publicar. No Início, cada mês publicado vira uma página do cartão — e, por mês, você escolhe quem vê: <b>👥 todos veem os comentários bons</b> ou <b>🔒 cada um vê só os seus</b> (ao lado do mês e na confirmação de publicar). <b>🗑 Tirar mês do Início</b> (ao lado do mês) tira o mês inteiro do Início na hora; <b>⤺ Tirar do Início</b> (em cada pessoa) tira só os dela. O que sai volta para pendente. Para liberar só alguns, <b>marque as caixinhas</b> e use <b>Liberar selecionados</b>.</li>
                 <li><b>Triagem por IA:</b> comentários que não cabem num mural público (comparação com o líder, crítica a terceiros, assunto pessoal…) já vêm <b>desabilitados</b>; habilite se quiser enviar.</li>
               </ul>
             </div>
@@ -249,6 +294,9 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                      ...(contagem.liberado === 0 ? { opacity: 0.45, cursor: "not-allowed" } : {}) }}>
             🗑 Tirar mês do Início ({contagem.liberado})
           </button>
+          {modoDisponivel && (
+            <SeletorModo modo={modoAtual} desabilitado={ocupado} onTrocar={trocarModo} compacto />
+          )}
           <div style={{ flex: 1 }} />
           {(["pendente", "liberado", "recusado", "todos"] as Filtro[]).map((f) => (
             <button key={f} onClick={() => setFiltro(f)}
@@ -511,10 +559,19 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                 Vão para o mural do Início <b>{plural(confirmar.lista.length, "comentário", "comentários")}</b> dos
                 votos de <b>{MESES_CAP(mes)}</b>
                 {confirmar.quem ? <> para <b>{confirmar.quem}</b></> : <> de <b>{plural(new Set(confirmar.lista.map((i) => i.colaborador.trim().toUpperCase())).size, "pessoa", "pessoas")}</b></>}.
-                Todos que entram no ERP vão ler, sem o nome de quem votou.
+                {confirmar.modo === "proprios"
+                  ? <> <b>Cada pessoa vai ver só os comentários feitos para ela</b>, sem o nome de quem votou.</>
+                  : <> Todos que entram no ERP vão ler, sem o nome de quem votou.</>}
                 {!!confirmar.foraIA && <> <b>{plural(confirmar.foraIA, "comentário desabilitado", "comentários desabilitados")} pela IA {confirmar.foraIA === 1 ? "fica" : "ficam"} de fora.</b></>}
                 {confirmar.etapa === 2 && <> <b>Depois deste sim, já está publicado.</b></>}
               </div>
+              {modoDisponivel && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#475569", marginBottom: 6 }}>QUEM VÊ NO INÍCIO ({MESES_CAP(mes).toUpperCase()})</div>
+                  <SeletorModo modo={confirmar.modo} desabilitado={ocupado}
+                    onTrocar={(m) => setConfirmar({ ...confirmar, modo: m, etapa: 1 })} />
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
                 <button onClick={() => setPrevia({ aLiberar: confirmar.lista, quem: confirmar.quem })}
                   style={{ ...btn("#fff", "#0f3171", "1px solid #c7d2fe"), marginRight: "auto" }}>👁 Ver prévia</button>
@@ -530,7 +587,16 @@ export default function MuralModeracao({ formId, onFechar }: { formId: string; o
                   <button key="etapa2" autoFocus disabled={ocupado}
                     onClick={() => {
                       if (Date.now() - (confirmar.desde ?? 0) < 700) return;
-                      aplicar(confirmar.lista, "liberado"); setConfirmar(null);
+                      const { lista, modo } = confirmar;
+                      setConfirmar(null);
+                      // Grava o modo ANTES de liberar: o recado nunca fica
+                      // um instante visível para todos quando era "só os seus".
+                      if (modoDisponivel && modo !== modoAtual) {
+                        definirModo.mutate(modo, {
+                          onSuccess: () => aplicar(lista, "liberado"),
+                          onError: (e: Error) => toast.error(e?.message ?? "Não foi possível salvar quem vê. Nada foi publicado."),
+                        });
+                      } else aplicar(lista, "liberado");
                     }}
                     style={btn("#b91c1c")}>✓ Confirmo, liberar {confirmar.lista.length}</button>
                 )}

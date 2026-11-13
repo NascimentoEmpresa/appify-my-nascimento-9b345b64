@@ -65,6 +65,60 @@ export interface LinhaSetor {
   comum: boolean;
   plano_acao: string | null;
   onde: string | null;
+  /** Aba da página do setor (ver categoriaDaPergunta). */
+  categoria: CategoriaSetor;
+}
+
+// ── CATEGORIAS DA PÁGINA DO SETOR ─────────────────────────────────────
+// Pedido do Pablo em 13/11/2026, com o protótipo
+// implantacao_contratual_apenas_setores.html: a página do setor separa as
+// perguntas em abas. O checklist não tem esse agrupamento gravado; as
+// regras abaixo são as do protótipo, aplicadas ao texto da pergunta.
+// As comuns ("Todos") vão para "Dados do contrato" ou "Informações gerais";
+// as do setor, para um dos quatro grupos temáticos.
+export const CATEGORIAS_SETOR = [
+  "Dados do contrato",
+  "Informações gerais",
+  "Uniformes e compras",
+  "Saúde e treinamentos",
+  "Documentação e faturamento",
+  "Informações específicas",
+] as const;
+export type CategoriaSetor = (typeof CATEGORIAS_SETOR)[number];
+
+export function categoriaDaPergunta(pergunta: string, comum: boolean): CategoriaSetor {
+  const s = pergunta.toLocaleLowerCase("pt-BR");
+  if (comum) {
+    return /cnpj|data|edital|valor global|nº pessoas/.test(s) ? "Dados do contrato" : "Informações gerais";
+  }
+  if (/uniform|epi|crachá|compras|pedido de compra/.test(s)) return "Uniformes e compras";
+  if (/treinamento|aso|vacina|exames|cbo|agentes|pcds|atividade especial/.test(s)) return "Saúde e treinamentos";
+  if (/nota|document|fatura|conta vinculada|competência|pagamento|envio/.test(s)) return "Documentação e faturamento";
+  return "Informações específicas";
+}
+
+/** Abas que o setor usa, na ordem fixa de CATEGORIAS_SETOR. */
+export function categoriasDasLinhas(linhas: readonly LinhaSetor[]): CategoriaSetor[] {
+  const usadas = new Set(linhas.map((l) => l.categoria));
+  return CATEGORIAS_SETOR.filter((c) => usadas.has(c));
+}
+
+export type FiltroStatusLinha = "todos" | "pendentes" | "preenchidos";
+
+/** Busca (pergunta, resposta, plano, onde, categoria), status e categoria. */
+export function filtrarLinhas(
+  linhas: readonly LinhaSetor[],
+  busca: string,
+  status: FiltroStatusLinha,
+  categoria: CategoriaSetor | "todas",
+): LinhaSetor[] {
+  const q = busca.trim().toLocaleLowerCase("pt-BR");
+  return linhas.filter((l) =>
+    (categoria === "todas" || l.categoria === categoria) &&
+    (status === "todos" || (status === "pendentes" ? !l.respondido : l.respondido)) &&
+    (!q || [l.pergunta, l.valor, l.plano_acao ?? "", l.onde ?? "", l.categoria]
+      .join(" ").toLocaleLowerCase("pt-BR").includes(q)),
+  );
 }
 
 export interface ResumoSetor {
@@ -217,14 +271,16 @@ export function montarResumoSetor(
   const linhas: LinhaSetor[] = doSetor.map((i) => {
     const r = respostaMap.get(i.row_index);
     const ok = respondido(r);
+    const comum = setoresDoResponsavel(i.responsavel_acao).includes(SETOR_TODOS);
     return {
       row_index: i.row_index,
       pergunta: i.item,
       valor: ok ? resumir(i.row_index, r!.resposta!) : "",
       respondido: ok,
-      comum: setoresDoResponsavel(i.responsavel_acao).includes(SETOR_TODOS),
+      comum,
       plano_acao: i.plano_acao ?? null,
       onde: i.onde ?? null,
+      categoria: categoriaDaPergunta(i.item, comum),
     };
   });
   const total = linhas.length;
