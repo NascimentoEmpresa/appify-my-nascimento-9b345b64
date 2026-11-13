@@ -80,7 +80,10 @@ const CORES_AVATAR = [
   "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-orange-100 text-orange-700",
   "bg-violet-100 text-violet-700", "bg-rose-100 text-rose-700", "bg-cyan-100 text-cyan-700", "bg-amber-100 text-amber-700",
 ];
-const corAvatar = (chave: string) => CORES_AVATAR[[...chave].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
+// 13/11/2026: chamado sem solicitante_id (aberto por quem saiu, ou importado)
+// derrubava a tela inteira no "Ver o ranking completo" — `[...null]` quebra.
+const corAvatar = (chave: string | null | undefined) =>
+  CORES_AVATAR[[...String(chave ?? "")].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
 
 interface Filtros {
   de: string; ate: string; solic: string; setor: string; modulo: string; tema: string; prioridade: string; status: string;
@@ -445,7 +448,15 @@ export default function MonitoramentoChamados() {
       <RankingCard
         ranking={ranking}
         mediaGeral={kpis.indiceMedio}
-        onFiltrar={(id) => { setRascunho((x) => ({ ...x, solic: id })); setF((x) => ({ ...x, solic: id })); setPagina(1); }}
+        // 13/11/2026, Pablo: "ao clicar no nome de alguém pra ver o ranking
+        // também não dá pra voltar". Clicar de novo na mesma pessoa, ou no
+        // "Voltar ao ranking de todos", desfaz só o filtro de solicitante.
+        filtradoPor={f.solic !== TODOS ? f.solic : null}
+        onFiltrar={(id) => {
+          const solic = f.solic === id ? TODOS : id;
+          setRascunho((x) => ({ ...x, solic })); setF((x) => ({ ...x, solic })); setPagina(1);
+        }}
+        onVoltar={() => { setRascunho((x) => ({ ...x, solic: TODOS })); setF((x) => ({ ...x, solic: TODOS })); setPagina(1); }}
       />
 
       {/* ── Análise de qualidade ── */}
@@ -518,8 +529,9 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
 const MEDALHA = ["bg-amber-400 text-white", "bg-slate-400 text-white", "bg-orange-500 text-white"];
 const MOLDURA_PODIO = ["border-amber-300 bg-amber-50/60 dark:bg-amber-500/10", "border-slate-300 bg-slate-50/60 dark:bg-slate-500/10", "border-orange-300 bg-orange-50/60 dark:bg-orange-500/10"];
 
-function RankingCard({ ranking, mediaGeral, onFiltrar }: {
+function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: {
   ranking: RankingSolicitante[]; mediaGeral: number | null; onFiltrar: (solicitanteId: string) => void;
+  filtradoPor: string | null; onVoltar: () => void;
 }) {
   const [busca, setBusca] = useState("");
   const [todos, setTodos] = useState(false);
@@ -548,6 +560,17 @@ function RankingCard({ ranking, mediaGeral, onFiltrar }: {
           <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar solicitante ou setor" className="h-8 pl-8 text-xs" />
         </div>
       </div>
+
+      {filtradoPor && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+          <span>
+            A tela está mostrando só os chamados de <b>{ranking.find((r) => r.solicitante_id === filtradoPor)?.nome ?? "um solicitante"}</b>.
+          </span>
+          <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onVoltar}>
+            <RotateCcw className="h-3.5 w-3.5" /> Voltar ao ranking de todos
+          </Button>
+        </div>
+      )}
 
       {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
         <>
