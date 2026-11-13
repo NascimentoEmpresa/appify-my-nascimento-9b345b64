@@ -112,7 +112,7 @@ interface LinhaTriagem {
   recomendado: boolean | null;
   motivo: string | null;
   habilitado: boolean;
-  /** "v2|gemini:..." — versão da régua que leu (mig 20261113230000). */
+  /** "v2|gemini:..." — versão da régua que leu (mig 20261114000100). */
   modelo?: string | null;
 }
 

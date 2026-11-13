@@ -190,7 +190,7 @@ export function precisaTriagem(l: LinhaParaDecidir): boolean {
   if (l.status !== "pendente") return false;
   if (!l.triado) return true;
   if (l.recomendado === false || l.habilitado) return false;
-  // Banco sem a mig 20261113230000 não devolve `modelo` (undefined, não
+  // Banco sem a mig 20261114000100 não devolve `modelo` (undefined, não
   // null): sem saber a versão, não relê — senão gastaria token relendo
   // tudo a cada abertura do modal.
   if (l.modelo === undefined) return false;
