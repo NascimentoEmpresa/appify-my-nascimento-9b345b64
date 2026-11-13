@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface ParametrosNfse {
   serie: string;
+  data_competencia?: string;
   municipio_emissor: string;
   inscricao_municipal: string;
   opcao_simples: string;

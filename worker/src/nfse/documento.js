@@ -51,7 +51,9 @@ function validarSolicitacao(s) {
   const cnpj = codigo(s.dados.empresa?.cnpj, 14, 'o CNPJ do prestador');
   exigir(Number.isSafeInteger(Number(s.numero_dps)) && Number(s.numero_dps) > 0 && Number(s.numero_dps) <= 999999999999999, 'Número de DPS inválido.');
   exigir(Number.isInteger(Number(s.serie)) && Number(s.serie) >= 1 && Number(s.serie) <= 49999, 'Série inválida.');
-  const competencia = String(n.competencia ?? '');
+  // O mês interno da preparação pode usar dia 01. A escolha fiscal é salva
+  // nos parâmetros; pedidos antigos continuam com a data do snapshot original.
+  const competencia = String(p.data_competencia ?? n.competencia ?? '');
   exigir(/^\d{4}-\d{2}-\d{2}$/.test(competencia) && !Number.isNaN(Date.parse(competencia)) && new Date(competencia).toISOString().slice(0,10) === competencia, 'Data de competência inválida.');
   codigo(p.municipio_emissor, 7, 'o município emissor');
   codigo(p.local_prestacao, 7, 'o local da prestação');
@@ -100,7 +102,7 @@ function validarSolicitacao(s) {
   }
   exigir(['0','1'].includes(p.consumidor_final), 'Informe o indicador de consumidor final.');
   for (const campo of ['tributos_aproximados_federais','tributos_aproximados_estaduais','tributos_aproximados_municipais']) centavos(p[campo]);
-  return { p, n, cnpj };
+  return { p, n, cnpj, competencia };
 }
 
 function identificadorDps(s) {
@@ -108,7 +110,7 @@ function identificadorDps(s) {
   return `DPS${digitos(p.municipio_emissor)}2${cnpj}${String(s.serie).padStart(5,'0')}${String(s.numero_dps).padStart(15,'0')}`;
 }
 function gerarDps(s) {
-  const { p, n, cnpj } = validarSolicitacao(s);
+  const { p, n, cnpj, competencia } = validarSolicitacao(s);
   const t = p.tomador;
   const documento = digitos(t.documento);
   const identificacaoTomador = tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento) +
@@ -136,7 +138,7 @@ function gerarDps(s) {
   const i = p.imovel;
   const imovel = p.informar_imovel ? `<imovel>${i.inscricao ? tag('inscImobFisc',i.inscricao) : ''}<end>${tag('CEP',digitos(i.cep))}${tag('xLgr',i.logradouro)}${tag('nro',i.numero)}${i.complemento ? tag('xCpl',i.complemento) : ''}${tag('xBairro',i.bairro)}</end></imovel>` : '';
   const ibsCbs = `<IBSCBS>${tag('finNFSe','0')}${tag('indFinal',p.consumidor_final)}${tag('cIndOp',p.ibs_indicador_operacao)}${p.tipo_operacao ? tag('tpOper',p.tipo_operacao) : ''}${p.tipo_ente_governamental ? tag('tpEnteGov',p.tipo_ente_governamental) : ''}${tag('indDest','0')}${imovel}<valores><trib><gIBSCBS>${tag('CST',p.ibs_cst)}${tag('cClassTrib',p.ibs_classificacao)}</gIBSCBS></trib></valores></IBSCBS>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',n.competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${identificacaoTomador}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${identificacaoTomador}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
 }
 
 function abrirCertificado(caminho, senha, cnpj, agora = new Date()) {
@@ -212,6 +214,7 @@ function conferirNota(xml, s, chave) {
   const info = elementos(dps[0],'infDPS')[0];
   exigir(info?.getAttribute('Id') === identificadorDps(s), 'A DPS retornada não corresponde à solicitação.');
   exigir(valor(info,'tpAmb') === (s.ambiente === 'producao' ? '1' : '2'), 'O provedor retornou um documento de outro ambiente fiscal.');
+  if (s.dados.parametros.data_competencia != null) exigir(valor(info,'dCompet') === s.dados.parametros.data_competencia, 'A competência fiscal retornada diverge da data selecionada. Confira o documento oficial com a prefeitura.');
   const emit = elementos(doc,'emit')[0];
   exigir(emit && valor(emit,'CNPJ') === s.dados.empresa.cnpj, 'O CNPJ do documento retornado diverge do prestador.');
   exigir(/^\d{50}$/.test(chave) && elementos(doc,'infNFSe')[0]?.getAttribute('Id') === `NFS${chave}`, 'Chave de NFS-e inconsistente.');

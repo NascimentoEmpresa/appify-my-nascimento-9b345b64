@@ -7,6 +7,10 @@ function codigo(valor: string, nome: string, tamanho: number) {
 }
 
 export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: AmbienteNfse = "homologacao", exigirInscricaoTomador = false): ParametrosNfse {
+  const dataCompetencia = parametros.data_competencia?.trim();
+  if (dataCompetencia !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(dataCompetencia) || Number.isNaN(Date.parse(dataCompetencia)) || new Date(dataCompetencia).toISOString().slice(0, 10) !== dataCompetencia)) {
+    throw new Error("Data de execução do serviço / competência da NFS-e: informe uma data válida.");
+  }
   const inscricaoTomador = String(parametros.tomador.inscricao_municipal ?? "").trim();
   if (exigirInscricaoTomador && !inscricaoTomador) throw new Error("Informe a inscrição municipal do tomador confirmada no cadastro da prefeitura para corrigir a rejeição P4016.");
   if (inscricaoTomador.length > 15 || [...inscricaoTomador].some(caractere => caractere.charCodeAt(0) < 32)) throw new Error("Inscrição municipal do tomador: informe até 15 caracteres válidos, conforme o cadastro da prefeitura.");
@@ -16,6 +20,7 @@ export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: Ambi
     throw new Error("Informe o Código do serviço na prefeitura para o serviço 170501 de Triunfo. Confirme o código usado no portal com o responsável fiscal.");
   }
   return { ...parametros,
+    data_competencia: dataCompetencia,
     codigo_integracao_municipal: integracaoMunicipal,
     municipio_emissor: codigo(parametros.municipio_emissor, "Município emissor — código IBGE", 7),
     local_prestacao: codigo(parametros.local_prestacao, "Local da prestação — código IBGE", 7),
