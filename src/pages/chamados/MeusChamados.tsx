@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
@@ -20,10 +21,32 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star, Lock, GraduationCap } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import {
-  StatCard, StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star, Lock, GraduationCap, Search, Eye, Archive, FilterX, MessageCircle, Users } from "lucide-react";
+import {
+  StatCard, StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, Estrelas, fmtData, fmtDataHora, moduloLabel,
+  chamadoAtivo, mediaAvaliacao, STATUS_CHAMADO, PRIORIDADES, type Chamado, type AvaliacaoChamado,
 } from "./types";
+import {
+  chamadoComPendencia, motivoNaListaPadrao, passaNosFiltros, filtrosAtivos, rankingDevs, mediaSimples, FILTROS_VAZIOS,
+  type ConversaSolicitante, type FiltrosMeusChamados, type MotivoNaLista,
+} from "./listaSolicitante";
+
+// RPC/tabela fora do types.ts gerado: um ponto sem tipo, em vez de mais
+// "(supabase as any)" — a catraca do lint não deixa o arquivo subir de erro.
+type RespostaSemTipo = { data: unknown; error: { message: string } | null };
+const rpcSemTipo = (fn: string, args?: Record<string, unknown>): Promise<RespostaSemTipo> =>
+  (supabase.rpc as unknown as (this: typeof supabase, f: string, a?: Record<string, unknown>) => Promise<RespostaSemTipo>).call(supabase, fn, args);
+const tabelaSemTipo = supabase as unknown as {
+  from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => Promise<RespostaSemTipo> } };
+};
+
+type Visao = "pendentes" | "historico" | "todos";
+const TODOS = "__todos";
+const fmtDias = (n: number | null) => (n == null ? "—" : `${n.toFixed(1).replace(".", ",")} dias`);
 
 const POR_PAGINA = 8;
 
@@ -113,15 +136,100 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   // e a trava da avaliação enquanto a Presidência valida.
   const { data: validacoes = {} } = useValidacoesChamados(chamados.map((c) => c.id));
 
+  // Estado da conversa de cada chamado meu (mig 20261115000900), numa consulta
+  // só: decide se o encerrado volta para a lista padrão. Sem a migration
+  // aplicada, o mapa fica vazio e só a mensagem não lida traz o chamado de volta.
+  const qc = useQueryClient();
+  const { data: conversas = {} } = useQuery({
+    queryKey: ["chamados-meus-conversa", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await rpcSemTipo("chamados_meus_conversa");
+      if (error) return {} as Record<string, ConversaSolicitante>;
+      const m: Record<string, ConversaSolicitante> = {};
+      ((data ?? []) as Array<ConversaSolicitante & { chamado_id: string }>).forEach((r: ConversaSolicitante & { chamado_id: string }) => { m[r.chamado_id] = r; });
+      return m;
+    },
+  });
+
+  // Notas que EU dei (painel do solicitante): uma consulta, conta no front.
+  const { data: minhasNotas = {} } = useQuery({
+    queryKey: ["chamados-minhas-avaliacoes", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await tabelaSemTipo
+        .from("CHAMADO_SISTEMA_AVALIACAO")
+        .select("chamado_id, qualidade, prazo, comunicacao, clareza, facilidade, satisfacao")
+        .eq("solicitante_id", user!.id);
+      const m: Record<string, number> = {};
+      ((data ?? []) as AvaliacaoChamado[]).forEach((a) => { m[a.chamado_id] = mediaAvaliacao(a); });
+      return m;
+    },
+  });
+
+  // Padrão: só o que tem pendência (pedido do solicitante + Pablo, 13/11/2026).
+  const [visao, setVisao] = useState<Visao>("pendentes");
+  const [filtros, setFiltros] = useState<FiltrosMeusChamados>(FILTROS_VAZIOS);
+  const mudarFiltro = (patch: Partial<FiltrosMeusChamados>) => { setFiltros((f) => ({ ...f, ...patch })); setPagina(1); };
+  const mudarVisao = (v: Visao) => { setVisao(v); setPagina(1); };
+
+  const todasPendencias = useMemo(() => new Set(avaliacoesPendentes.map((p) => p.id)), [avaliacoesPendentes]);
+  const motivos = useMemo(() => {
+    const m: Record<string, MotivoNaLista> = {};
+    for (const c of chamados) {
+      m[c.id] = motivoNaListaPadrao({
+        pendente: chamadoComPendencia(c, todasPendencias.has(c.id), !avaliacaoLiberada(validacoes[c.id]).liberada),
+        naoLidos: naoLidos[c.id] ?? 0,
+        conversa: conversas[c.id],
+      });
+    }
+    return m;
+  }, [chamados, todasPendencias, validacoes, naoLidos, conversas]);
+
+  const qtdPendentes = chamados.filter((c) => motivos[c.id]).length;
+  const qtdHistorico = chamados.length - qtdPendentes;
+
+  const opcoesResponsavel = [...new Set(chamados.map((c) => c.responsavel_id).filter(Boolean) as string[])]
+    .map((id) => ({ id, nome: nomeDe(id) })).sort((a, b) => a.nome.localeCompare(b.nome));
+  const opcoesModulo = useMemo(() => [...new Set(chamados.map((c) => moduloLabel(c)))].sort(), [chamados]);
+
+  const filtrados = useMemo(() => chamados.filter((c) => {
+    const naLista = !!motivos[c.id];
+    if (visao === "pendentes" && !naLista) return false;
+    if (visao === "historico" && naLista) return false;
+    return passaNosFiltros(c, moduloLabel(c), filtros);
+  }), [chamados, motivos, visao, filtros]);
+
+  const marcarVisto = async (c: Chamado) => {
+    let { error } = await rpcSemTipo("chamado_marcar_visto", { p_chamado_id: c.id });
+    // Antes da migration entrar: ao menos zera a bolinha (arquiva se não respondeu).
+    if (error) ({ error } = await rpcSemTipo("chamado_marcar_lido", { p_chamado_id: c.id }));
+    if (error) { toast.error(`Não foi possível marcar como visto: ${error.message}`); return; }
+    toast.success(`#${c.numero} arquivado — volta se chegar mensagem nova.`);
+    qc.invalidateQueries({ queryKey: ["chamados-nao-lidos"] });
+    qc.invalidateQueries({ queryKey: ["chamados-meus-conversa"] });
+  };
+
+  // Painel do solicitante: só os MEUS chamados (já carregados acima).
+  const painel = useMemo(() => {
+    const notas = Object.values(minhasNotas);
+    return {
+      abertos: chamados.filter((c) => chamadoAtivo(c.status)).length,
+      notaMedia: mediaSimples(notas),
+      qtdNotas: notas.length,
+      devs: rankingDevs(chamados, minhasNotas).slice(0, 6),
+    };
+  }, [chamados, minhasNotas]);
+
   // Paginação (client-side) para não renderizar centenas de linhas de uma vez.
-  const totalPaginas = Math.max(1, Math.ceil(chamados.length / POR_PAGINA));
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = useMemo(
-    () => chamados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA),
-    [chamados, paginaAtual],
+    () => filtrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA),
+    [filtrados, paginaAtual],
   );
-  const de = chamados.length === 0 ? 0 : (paginaAtual - 1) * POR_PAGINA + 1;
-  const ate = Math.min(paginaAtual * POR_PAGINA, chamados.length);
+  const de = filtrados.length === 0 ? 0 : (paginaAtual - 1) * POR_PAGINA + 1;
+  const ate = Math.min(paginaAtual * POR_PAGINA, filtrados.length);
 
   return (
     <div>
@@ -206,12 +314,168 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         <StatCard icon={CalendarClock} tone="muted" label="Prazo médio de conclusão" value={stats?.tempo_medio != null ? `${stats.tempo_medio} dias` : "—"} hint="Tempo médio" />
       </div>
 
+      {/* Painel do solicitante (13/11/2026): só com os MEUS chamados. */}
+      {chamados.length > 0 && (
+        <Card className="mb-4 grid gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <div className="space-y-3 lg:border-r lg:pr-4">
+            <p className="text-sm font-bold">Meu painel</p>
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="rounded-md bg-muted/50 p-2">
+                <p className="text-xl font-bold">{painel.abertos}</p>
+                <p className="text-[11px] text-muted-foreground">Em aberto</p>
+              </div>
+              <div className="rounded-md bg-muted/50 p-2">
+                <p className="text-xl font-bold">{stats?.concluidos ?? 0}</p>
+                <p className="text-[11px] text-muted-foreground">Concluídos</p>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Sua avaliação média dos atendimentos</p>
+              {painel.notaMedia != null ? (
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="text-xl font-bold">{painel.notaMedia.toFixed(1).replace(".", ",")}</span>
+                  <Estrelas valor={painel.notaMedia} />
+                  <span className="text-[11px] text-muted-foreground">({painel.qtdNotas} {painel.qtdNotas === 1 ? "avaliação" : "avaliações"})</span>
+                </div>
+              ) : (
+                <p className="mt-1 text-sm text-muted-foreground">Você ainda não avaliou chamados.</p>
+              )}
+            </div>
+          </div>
+          <div className="min-w-0">
+            <p className="mb-2 flex items-center gap-1.5 text-sm font-bold"><Users className="h-4 w-4 text-primary" /> Quem mais atende seus chamados</p>
+            {painel.devs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum chamado seu tem responsável ainda.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table className="[&_td]:px-2 [&_td]:py-1.5 [&_th]:h-8 [&_th]:px-2">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Responsável</TableHead>
+                      <TableHead className="text-center">Chamados</TableHead>
+                      <TableHead className="text-center">Concluídos</TableHead>
+                      <TableHead className="text-center">Prazo médio</TableHead>
+                      <TableHead>Sua nota</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {painel.devs.map((d) => (
+                      <TableRow key={d.responsavel_id}>
+                        <TableCell className="text-xs font-medium">{nomeDe(d.responsavel_id)}</TableCell>
+                        <TableCell className="text-center text-xs">{d.quantidade}</TableCell>
+                        <TableCell className="text-center text-xs">{d.concluidos}</TableCell>
+                        <TableCell className="text-center text-xs">{fmtDias(d.prazo_medio)}</TableCell>
+                        <TableCell className="text-xs">
+                          {d.nota_media != null ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Estrelas valor={d.nota_media} size={12} /> {d.nota_media.toFixed(1).replace(".", ",")}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
       <Card className="p-4">
-        <p className="mb-3 text-sm font-bold">Meus últimos chamados</p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-bold">
+            {visao === "pendentes" ? "Meus chamados com pendência" : visao === "historico" ? "Histórico (concluídos e encerrados)" : "Todos os meus chamados"}
+          </p>
+          <div className="inline-flex rounded-md border p-0.5">
+            {([
+              ["pendentes", `Com pendência (${qtdPendentes})`],
+              ["historico", `Histórico (${qtdHistorico})`],
+              ["todos", `Todos (${chamados.length})`],
+            ] as const).map(([v, rot]) => (
+              <Button key={v} size="sm" variant={visao === v ? "default" : "ghost"} className="h-7 px-2.5 text-xs" onClick={() => mudarVisao(v)}>
+                {rot}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* Filtros do topo — por padrão nenhum, e a visão é "com pendência". */}
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+          <div className="relative sm:col-span-2 lg:col-span-1 2xl:col-span-2">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input value={filtros.busca} onChange={(e) => mudarFiltro({ busca: e.target.value })} placeholder="Nº ou assunto" className="h-9 pl-8" />
+          </div>
+          <Select value={filtros.status || TODOS} onValueChange={(v) => {
+            const status = v === TODOS ? "" : v;
+            mudarFiltro({ status });
+            // Status de encerrado só existe fora da visão de pendências.
+            if (status && !chamadoAtivo(status) && visao === "pendentes") setVisao("todos");
+          }}>
+            <SelectTrigger className="h-9"><SelectValue placeholder="Status" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os status</SelectItem>
+              {Object.entries(STATUS_CHAMADO).map(([k, s]) => <SelectItem key={k} value={k}>{s.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filtros.responsavel || TODOS} onValueChange={(v) => mudarFiltro({ responsavel: v === TODOS ? "" : v })}>
+            <SelectTrigger className="h-9"><SelectValue placeholder="Responsável" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os responsáveis</SelectItem>
+              <SelectItem value="sem">Sem responsável</SelectItem>
+              {opcoesResponsavel.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filtros.modulo || TODOS} onValueChange={(v) => mudarFiltro({ modulo: v === TODOS ? "" : v })}>
+            <SelectTrigger className="h-9"><SelectValue placeholder="Módulo" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os módulos</SelectItem>
+              {opcoesModulo.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filtros.prioridade || TODOS} onValueChange={(v) => mudarFiltro({ prioridade: v === TODOS ? "" : v })}>
+            <SelectTrigger className="h-9"><SelectValue placeholder="Prioridade" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todas as prioridades</SelectItem>
+              {Object.entries(PRIORIDADES).map(([k, p]) => <SelectItem key={k} value={k}>{p.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filtros.campoData} onValueChange={(v) => mudarFiltro({ campoData: v as FiltrosMeusChamados["campoData"] })}>
+            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="abertura">Data de abertura</SelectItem>
+              <SelectItem value="conclusao">Data de conclusão</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-1 sm:col-span-2 lg:col-span-2 2xl:col-span-1">
+            <Input type="date" value={filtros.de} onChange={(e) => mudarFiltro({ de: e.target.value })} className="h-9 px-2 text-xs" title="De" />
+            <Input type="date" value={filtros.ate} onChange={(e) => mudarFiltro({ ate: e.target.value })} className="h-9 px-2 text-xs" title="Até" />
+          </div>
+        </div>
+        {filtrosAtivos(filtros) && (
+          <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{filtrados.length} chamado(s) com esses filtros</span>
+            <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => mudarFiltro(FILTROS_VAZIOS)}>
+              <FilterX className="h-3.5 w-3.5" /> Limpar filtros
+            </Button>
+          </div>
+        )}
+
         {isLoading ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
         ) : chamados.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Você ainda não abriu chamados. Clique em <b>Abrir Novo Chamado</b>.</p>
+        ) : filtrados.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {visao === "pendentes" && !filtrosAtivos(filtros)
+              ? <p>Nenhum chamado com pendência. Tudo em dia!</p>
+              : <p>Nenhum chamado encontrado.</p>}
+            {visao === "pendentes" && qtdHistorico > 0 && (
+              <Button variant="outline" size="sm" className="mt-3 gap-1.5" onClick={() => mudarVisao("historico")}>
+                <Archive className="h-4 w-4" /> Mostrar chamados já concluídos ({qtdHistorico})
+              </Button>
+            )}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             {/* Células compactas (como os painéis): com o padding padrão a
@@ -266,6 +530,17 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                           <MessageSquarePlus className="h-3 w-3" /> Adicionar mais informações
                         </span>
                       )}
+                      {/* Encerrado que voltou à lista por causa da conversa. */}
+                      {motivos[c.id] === "mensagem_nova" && (
+                        <span className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-destructive">
+                          <MessageCircle className="h-3 w-3" /> Mensagem nova no chat
+                        </span>
+                      )}
+                      {motivos[c.id] === "respondeu" && (
+                        <span className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-info">
+                          <MessageCircle className="h-3 w-3" /> Você respondeu — aguardando retorno
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs">{moduloLabel(c)}</TableCell>
                     <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
@@ -294,6 +569,13 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                         naoLidos={naoLidos[c.id] ?? 0}
                         responsavelNome={nomeDe(c.responsavel_id)}
                       />
+                      {(motivos[c.id] === "mensagem_nova" || motivos[c.id] === "respondeu") && (
+                        <Button variant="outline" size="sm" onClick={() => marcarVisto(c)}
+                          title="Tira o chamado da lista de pendências — ele volta se chegar mensagem nova"
+                          className="h-8 gap-1.5 transition-transform active:scale-90">
+                          <Eye className="h-3.5 w-3.5" /> Marcar como visto
+                        </Button>
+                      )}
                       {c.status === "cancelado" ? null : c.status !== "concluido" ? (
                         <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
@@ -333,7 +615,14 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
               </TableBody>
             </Table>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">Mostrando {de} a {ate} de {chamados.length} chamados</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-muted-foreground">Mostrando {de} a {ate} de {filtrados.length} chamados</p>
+                {visao === "pendentes" && qtdHistorico > 0 && (
+                  <Button variant="link" size="sm" className="h-7 gap-1 px-1 text-xs" onClick={() => mudarVisao("historico")}>
+                    <Archive className="h-3.5 w-3.5" /> Mostrar chamados já concluídos ({qtdHistorico})
+                  </Button>
+                )}
+              </div>
               {totalPaginas > 1 && (
                 <div className="flex items-center gap-1">
                   <Button variant="outline" size="sm" className="h-8 gap-1 px-2" disabled={paginaAtual <= 1} onClick={() => setPagina((p) => Math.max(1, p - 1))}>
