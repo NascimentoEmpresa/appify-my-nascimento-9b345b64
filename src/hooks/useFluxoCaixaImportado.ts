@@ -48,6 +48,41 @@ export function useRatearLinhaImportada() {
   });
 }
 
+// SIS-2026-0877: ratear Débito Automático pelo Fluxo (RPC fluxo_caixa_debito_ratear; cotas com contrato, classificação e valor).
+export interface CotaDebitoRateio { contrato_id: string | null; classificacao_id: string | null; valor: number }
+
+export function useRatearDebitoAutomatico() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (i: { debitoId: string; cotas: { contrato_id: string | null; classificacao_id?: string | null; valor: number }[] }) => {
+      const { error } = await (supabase as any).rpc("fluxo_caixa_debito_ratear", { _debito_id: i.debitoId, _cotas: i.cotas });
+      if (error) throw error;
+    },
+    onSuccess: (_d, vars) => {
+      invalidarFluxo(qc);
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_ajuste"] });
+      qc.invalidateQueries({ queryKey: ["debito_automatico_rateio", vars.debitoId] });
+    },
+  });
+}
+
+/** Cotas gravadas do rateio de um Débito Automático (para refazer). */
+export function useCotasRateioDebito(debitoId: string | null | undefined, ativo: boolean) {
+  return useQuery({
+    queryKey: ["debito_automatico_rateio", debitoId],
+    enabled: !!debitoId && ativo,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("DEBITO_AUTOMATICO_RATEIO")
+        .select("contrato_id, classificacao_id, valor")
+        .eq("debito_id", debitoId)
+        .order("ordem");
+      if (error) throw error;
+      return (data ?? []).map((r: any) => ({ contrato_id: r.contrato_id, classificacao_id: r.classificacao_id, valor: Number(r.valor) })) as CotaDebitoRateio[];
+    },
+  });
+}
+
 export interface ImportadaNaLixeira {
   /** despesa_id da tela: id da linha, ou id do grupo de rateio. */
   despesaId: string;
