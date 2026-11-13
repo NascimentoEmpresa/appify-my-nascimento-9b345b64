@@ -1423,7 +1423,14 @@ const operacionalModule: ModuleDef = {
   ],
 };
 
-// SST — ASO / Admissão (fila do Recrutamento)
+// SST — os cinco ASOs, EPIs e saúde ocupacional.
+//
+// 15/11/2026 (SIS-2026-0852): padrão único de nome para os ASOs — "ASO <tipo>"
+// — e os cinco juntos, nesta ordem, que é a mesma de app_menu.ordem (mig
+// 20261115210000). Antes estavam espalhados em "Recrutamento" (ASO / Admissão
+// e Mudança de Função — ASO), "Desligamento" e "Saúde ocupacional" (Periódico).
+// Só o rótulo mudou: rota e código de menu são os mesmos, então ninguém perdeu
+// acesso nem link salvo.
 const sstModule: ModuleDef = {
   id: "sst",
   label: "SST",
@@ -1433,19 +1440,15 @@ const sstModule: ModuleDef = {
   status: "active",
   groups: [
     {
-      label: "Recrutamento",
+      label: "ASO",
       defaultOpen: true,
       items: [
-        { label: "ASO / Admissão", to: "/app/sst/aso", icon: HardHat },
-        { label: "Mudança de Função — ASO", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-      ],
-    },
-    {
-      // A outra ponta: o desligamento também passa pelo SST, depois do RH.
-      label: "Desligamento",
-      defaultOpen: true,
-      items: [
+        { label: "ASO Admissional", to: "/app/sst/aso", icon: HardHat },
         { label: "ASO Demissional", to: "/app/sst/aso-demissional", icon: UserMinus },
+        { label: "ASO Mudança de Função", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        { label: "ASO Periódico", to: "/app/sst/aso-periodico", icon: CalendarClock },
+        // A fila do exame sobre os casos do Controle de Afastamentos — não é cadastro novo.
+        { label: "ASO de Retorno ao Trabalho", to: "/app/sst/aso-retorno", icon: UserCheck },
       ],
     },
     {
@@ -1463,7 +1466,6 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
         { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
-        { label: "ASO Periódico", to: "/app/sst/aso-periodico", icon: CalendarClock },
       ],
     },
   ],

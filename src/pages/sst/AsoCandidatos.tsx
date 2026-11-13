@@ -198,10 +198,10 @@ export default function AsoCandidatos() {
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
-        title="ASO Admissão"
+        title="ASO Admissional"
         subtitle="Receba a solicitação (visto) e agende o exame admissional — agendar conclui a parte do SST. O candidato segue para a Admissão quando o Compras também aprovar."
         module="SST"
-        breadcrumb={["ASO Admissão"]}
+        breadcrumb={["ASO Admissional"]}
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
