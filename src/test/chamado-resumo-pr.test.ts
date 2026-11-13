@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import {
   limparCorpoPr, limparResumoIa, listaDeTextos, montarMensagemResumo, montarPromptResumo, resumoSemIa, urlsValidas,
+  commitsPorPalavras, detalhesValidos, separarRespostaIa, urlsDosEscolhidos,
   type EntradaResumo,
 } from "../../supabase/functions/_shared/chamado-resumo-pr";
 
@@ -148,7 +149,7 @@ describe("Resumo da entrega no chat do chamado", () => {
     const [sys, user] = montarPromptResumo(entrada);
     expect(sys.role).toBe("system");
     expect(user.content).toContain("Falta a coluna de valor");
-    expect(user.content).toContain("- ajusta total do mês");
+    expect(user.content).toContain("[2] ajusta total do mês");
     expect(user.content).toContain("Adiciona a coluna.");
     expect(user.content).not.toContain("chamado:auto");
     // O código alterado vai junto, e a regra diz que a prova é ele, não o pedido.
@@ -172,5 +173,59 @@ describe("Resumo da entrega no chat do chamado", () => {
     expect(m).toContain("Onde acessar:\n- https://app.grpnascimento.com.br/app/relatorios/comissoes");
     expect(m).toContain("Confirmar conclusão");
     expect(montarMensagemResumo("x", [])).not.toContain("Onde acessar");
+  });
+});
+
+describe("Resumo do chamado — só o que o chamado pediu (SIS-2026-0895, 13/11/2026)", () => {
+  const URL = "https://app.grpnascimento.com.br";
+  // O caso real: chamado da Implantação, PR com commits [SEM-CHAMADO] de TVs e do Monitoramento junto.
+  const entrada: EntradaResumo = {
+    numero: "SIS-2026-0895",
+    assunto: "Ajuste no Implantação dos contratos (Parte 2)",
+    descricao: "Fazer com que as informações preenchidas na tela de Implantação de Contratos alimentem os gráficos e resumos. Criar uma página para cada setor.",
+    prTitulo: "SIS-2026-0895: Ajuste no Implantação dos contratos (Parte 2)",
+    prCorpo: null,
+    commits: [
+      "[SEM-CHAMADO] Implantação: página do setor no layout do protótipo \"apenas setores\"",
+      "[SEM-CHAMADO] TVs: no máximo ~940 consultas por dia para as 13 TVs (era ~23 mil)",
+      "[SEM-CHAMADO] Licitações: submódulo \"Resumo dos Contratos\" no menu, com o resumo geral e uma tela por setor",
+      "[SEM-CHAMADO] Monitoramento de Chamados: nota da I.A de verdade e ranking pelo volume",
+    ],
+    arquivos: [],
+    urls: [`${URL}/app/sistemas/tvs`, `${URL}/app/licitacoes/implantacao/painel`],
+  };
+  entrada.detalhes = [
+    { mensagem: entrada.commits[0], urls: [`${URL}/app/licitacoes/implantacao/painel`] },
+    { mensagem: entrada.commits[1], urls: [`${URL}/app/sistemas/tvs`, `${URL}/tv`] },
+    { mensagem: entrada.commits[2], urls: [`${URL}/app/licitacoes/implantacao/painel`] },
+    { mensagem: entrada.commits[3], urls: [`${URL}/app/central-servicos/chamados/monitoramento`] },
+  ];
+
+  it("a I.A recebe os commits numerados e a regra de ignorar outros assuntos", () => {
+    const [sys, user] = montarPromptResumo(entrada);
+    expect(sys.content).toContain("COMMITS: ");
+    expect(sys.content).toMatch(/ignore os outros por completo/);
+    expect(user.content).toContain("[2] [SEM-CHAMADO] TVs:");
+  });
+
+  it("a linha COMMITS sai do texto e só as URLs dos commits escolhidos vão ao solicitante", () => {
+    const r = separarRespostaIa("COMMITS: 1, 3, 9\nA tela do setor ficou igual ao modelo.\n\nO que mudou:\n- abas", 4);
+    expect(r.escolhidos).toEqual([0, 2]);
+    expect(r.texto.startsWith("A tela do setor")).toBe(true);
+    expect(urlsDosEscolhidos(entrada, r.escolhidos!)).toEqual([`${URL}/app/licitacoes/implantacao/painel`]);
+    expect(separarRespostaIa("Sem a linha.", 4).escolhidos).toBeNull();
+  });
+
+  it("sem a I.A, escolhe pelas palavras do assunto: nada de TVs nem Monitoramento", () => {
+    const idx = commitsPorPalavras(entrada);
+    expect(idx).toEqual([0, 2]);
+    expect(urlsDosEscolhidos(entrada, idx)).not.toContain(`${URL}/app/sistemas/tvs`);
+    expect(resumoSemIa(entrada, idx)).not.toMatch(/TVs|Monitoramento/);
+  });
+
+  it("detalhe inválido do CI é descartado; sem detalhe, URLs como antes", () => {
+    expect(detalhesValidos([{ mensagem: "x", urls: ["https://evil.com/a", `${URL}/app/a`] }, { urls: [] }, null]))
+      .toEqual([{ mensagem: "x", urls: [`${URL}/app/a`] }]);
+    expect(urlsDosEscolhidos({ ...entrada, detalhes: undefined }, [0])).toEqual(entrada.urls);
   });
 });
