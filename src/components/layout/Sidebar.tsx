@@ -186,6 +186,28 @@ const licitacoesModule: ModuleDef = {
       ],
     },
     {
+      // Resumo dos Contratos (13/11/2026): o painel da Implantação ganha
+      // submódulo próprio, uma tela por setor, como nos protótipos HTML do
+      // Pablo. Sem menu novo no banco: as rotas ficam sob
+      // /app/licitacoes/implantacao/painel e herdam o acesso da Implantação
+      // pelo prefixo (rotaVisivelNoMenu) — quem preenche o checklist vê o
+      // resumo. Os slugs são os de slugSetor() (painelSetores.ts); setor que
+      // não existir no checklist abre "Setor não encontrado".
+      label: "Resumo dos Contratos",
+      defaultOpen: true,
+      items: [
+        { label: "Resumo geral", to: "/app/licitacoes/implantacao/painel", icon: LayoutDashboard },
+        { label: "Compras", to: "/app/licitacoes/implantacao/painel/compras", icon: ShoppingCart },
+        { label: "Financeiro", to: "/app/licitacoes/implantacao/painel/financeiro", icon: Wallet },
+        { label: "Licitação", to: "/app/licitacoes/implantacao/painel/licitacao", icon: Gavel },
+        { label: "Operacional", to: "/app/licitacoes/implantacao/painel/operacional", icon: ClipboardList },
+        { label: "Recrutamento", to: "/app/licitacoes/implantacao/painel/recrutamento", icon: UserPlus },
+        { label: "RH", to: "/app/licitacoes/implantacao/painel/rh", icon: UserCog },
+        { label: "SST", to: "/app/licitacoes/implantacao/painel/sst", icon: HardHat },
+        { label: "Treinamentos", to: "/app/licitacoes/implantacao/painel/treinamentos", icon: GraduationCap },
+      ],
+    },
+    {
       // Analistas Validações (02/09/2026): a PRIMEIRA porta dos três fluxos
       // que antes começavam no Operacional. Ele não perdeu as telas — perdeu
       // os botões, e ficou só com o acompanhamento.

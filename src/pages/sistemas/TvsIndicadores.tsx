@@ -118,7 +118,7 @@ export default function TvsIndicadores() {
     qc.invalidateQueries({ queryKey: [K, "painel", slug] });
     if (slug === "ger-operacional") qc.invalidateQueries({ queryKey: [K, "ope-tv"] });
     recarregarTvs.mutateAsync().then(
-      (n) => toast.success(n > 0 ? `Atualizado. ${n} TV${n === 1 ? "" : "s"} desta área recarrega${n === 1 ? "" : "m"} em até 1 minuto.` : "Atualizado. Nenhuma TV está tocando esta área agora."),
+      (n) => toast.success(n > 0 ? `Atualizado. ${n} TV${n === 1 ? "" : "s"} desta área recarrega${n === 1 ? "" : "m"} em até 20 minutos.` : "Atualizado. Nenhuma TV está tocando esta área agora."),
       (e) => toast.error(`Atualizado aqui, mas o aviso às TVs falhou: ${(e as Error).message}`),
     );
   };

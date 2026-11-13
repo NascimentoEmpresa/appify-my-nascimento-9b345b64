@@ -242,3 +242,8 @@ verify_jwt = true
 # cs_form_pode(_, 'acesso') dentro das RPCs cs_form_mural_triagem*.
 [functions.mural-triagem-ia]
 verify_jwt = true
+
+# Monitoramento de Chamados (mig 20261115000100): só a fila_http chama
+# (Bearer = service_role, conferido dentro da function).
+[functions.chamado-monitor-ia]
+verify_jwt = true

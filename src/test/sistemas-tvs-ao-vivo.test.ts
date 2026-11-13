@@ -82,8 +82,8 @@ describe("tela AO VIVO", () => {
     expect(comAviso.tela.alerta).toEqual({ texto: "Simulado", cor: "#dc2626", imagem: null, layout: "cheia" });
     expect(telaAoVivo({ ...base, tv: { ...tvOnline, ativo: false }, aoVivo: null }).tela.modo).toBe("pausada");
     expect(telaAoVivo({ ...base, itens: [], aoVivo: null }).tela.modo).toBe("relogio");
-    const off = telaAoVivo({ ...base, tv: { ...tvOnline, ultimo_ping: "2026-10-08T11:50:00Z" }, aoVivo: null });
-    expect(off.tela).toMatchObject({ modo: "offline", visto: "há 10 min" });
+    const off = telaAoVivo({ ...base, tv: { ...tvOnline, ultimo_ping: "2026-10-08T11:10:00Z" }, aoVivo: null });
+    expect(off.tela).toMatchObject({ modo: "offline", visto: "há 50 min" });
   });
 
   it("a chave só muda quando a tela muda (o vídeo não recomeça a cada consulta)", () => {
@@ -106,7 +106,7 @@ describe("ao vivo confiável (mig 20261020000004)", () => {
 
   it("confirmação fresca vale; velha (player antigo) cai na simulação; sem a coluna, vale como antes", () => {
     const fresca = { suportado: true, atual_item_id: "a", atual_desde: "2026-10-08T11:50:00Z", atual_em: "2026-10-08T11:59:50Z" };
-    const velha = { ...fresca, atual_em: "2026-10-08T11:50:00Z" };
+    const velha = { ...fresca, atual_em: "2026-10-08T11:10:00Z" };
     expect(aoVivoFresco(fresca, agora)).toBe(true);
     expect(aoVivoFresco(velha, agora)).toBe(false);
     expect(aoVivoFresco({ ...fresca, atual_em: null }, agora)).toBe(false);

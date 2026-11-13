@@ -57,6 +57,17 @@ export interface ChamadoMonitor {
   validacao_devolucoes: number | null;
   /** Ajustes manuais vigentes (último por campo). */
   ajustes?: Partial<Record<CampoAjuste, string | null>>;
+  /** Avaliação da I.A (mig 20261115000100); null = ainda não avaliado → regra por palavras. */
+  ia?: AvaliacaoIaMonitor | null;
+}
+
+/** O que a Edge chamado-monitor-ia grava (chaves = CRITERIOS_IA do _shared). */
+export interface AvaliacaoIaMonitor {
+  criterios: Partial<Record<string, { nota: number | string | null; motivo?: string | null }>>;
+  resumo: string | null;
+  avaliado_em: string | null;
+  /** O texto mudou (ou o chamado foi concluído) e a nota nova ainda não chegou. */
+  reavaliando?: boolean | null;
 }
 
 export type CampoAjuste = "tema" | "complexidade" | "aderencia" | "efetividade" | "indice";
@@ -174,17 +185,22 @@ export function classificarTema(c: Pick<ChamadoMonitor, "assunto" | "descricao" 
 }
 
 // ---- Critérios do índice (0–10) --------------------------------------
+// PESOS (13/11/2026): o índice mede a QUALIDADE DO PEDIDO, então clareza e
+// completude passaram a pesar quase metade (eram 34%). Os critérios de valor
+// da ideia (reaproveitamento, trabalho manual, confiabilidade) caíram para 6%
+// cada: antes um ótimo pedido de correção de tela perdia ponto por não falar
+// de planilha. "Resultado" é da entrega, não do pedido — 6%.
 export const CRITERIOS_INDICE = [
-  { key: "clareza_problema",  titulo: "Clareza do problema",                peso: 0.12 },
-  { key: "clareza_resultado", titulo: "Clareza do resultado esperado",       peso: 0.12 },
-  { key: "descricao",         titulo: "Qualidade da descrição",              peso: 0.10 },
+  { key: "clareza_problema",  titulo: "Clareza do problema",                peso: 0.16 },
+  { key: "clareza_resultado", titulo: "Clareza do resultado esperado",       peso: 0.16 },
+  { key: "descricao",         titulo: "Qualidade da descrição",              peso: 0.16 },
   { key: "evidencias",        titulo: "Exemplos, anexos e evidências",       peso: 0.10 },
-  { key: "importancia",       titulo: "Importância operacional",             peso: 0.12 },
-  { key: "aderencia",         titulo: "Aderência aos objetivos da empresa",  peso: 0.10 },
-  { key: "reaproveitamento",  titulo: "Reaproveitamento em outros módulos",  peso: 0.08 },
-  { key: "reducao_manual",    titulo: "Redução de trabalho manual",          peso: 0.10 },
-  { key: "confiabilidade",    titulo: "Confiabilidade da informação",        peso: 0.08 },
-  { key: "resultado",         titulo: "Resultado após a implantação",        peso: 0.08 },
+  { key: "importancia",       titulo: "Importância operacional",             peso: 0.10 },
+  { key: "aderencia",         titulo: "Aderência aos objetivos da empresa",  peso: 0.08 },
+  { key: "reaproveitamento",  titulo: "Reaproveitamento em outros módulos",  peso: 0.06 },
+  { key: "reducao_manual",    titulo: "Redução de trabalho manual",          peso: 0.06 },
+  { key: "confiabilidade",    titulo: "Confiabilidade da informação",        peso: 0.06 },
+  { key: "resultado",         titulo: "Resultado após a implantação",        peso: 0.06 },
 ] as const;
 
 export type CriterioIndice = (typeof CRITERIOS_INDICE)[number]["key"];
@@ -222,6 +238,10 @@ export interface AvaliacaoChamadoMonitor {
   prazoDias: number | null;
   cancelado: boolean;
   ajustado: CampoAjuste[];
+  /** "ia" = critérios lidos pela I.A; "regra" = palavras-chave (I.A ainda não avaliou). */
+  fonte: "ia" | "regra";
+  /** Frase da I.A sobre o pedido (só com fonte "ia"). */
+  resumoIa: string | null;
   flags: {
     objetivoClaro: boolean;
     relevanciaOperacional: boolean;
@@ -332,7 +352,7 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
     }
   }
 
-  const criterios: Record<CriterioIndice, NotaCriterio> = {
+  const criteriosRegra: Record<CriterioIndice, NotaCriterio> = {
     clareza_problema: { nota: arred1(clarezaProb), motivo: motivoProb },
     clareza_resultado: { nota: arred1(clarezaRes), motivo: motivoRes },
     descricao: { nota: arred1(notaDesc), motivo: motivoDesc },
@@ -344,6 +364,15 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
     confiabilidade: { nota: arred1(conf), motivo: motivoConf },
     resultado: { nota: resultado == null ? null : arred1(resultado), motivo: motivoResultado },
   };
+
+  // A I.A (mig 20261115000100) substitui os critérios de texto quando já
+  // avaliou; "resultado" segue vindo da entrega. Só vale com os 9 critérios.
+  const notasIa = criteriosDaIa(c.ia);
+  const fonte: AvaliacaoChamadoMonitor["fonte"] = notasIa ? "ia" : "regra";
+  const criterios: Record<CriterioIndice, NotaCriterio> = notasIa
+    ? { ...notasIa, resultado: criteriosRegra.resultado }
+    : criteriosRegra;
+  const nt = (k: CriterioIndice) => criterios[k].nota ?? 0;
 
   // Índice = média ponderada dos critérios que existem (o "resultado" de quem
   // não concluiu fica de fora e o peso dele se redistribui).
@@ -372,7 +401,8 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
   const complexAj = ["baixa", "media", "alta"].includes(aj.complexidade ?? "") ? (aj.complexidade as AvaliacaoChamadoMonitor["complexidade"]) : null;
   if (complexAj) ajustado.push("complexidade");
 
-  const aderAuto: AvaliacaoChamadoMonitor["aderencia"] = ader >= 7.5 ? "alta" : ader >= 5 ? "media" : "baixa";
+  const aderFinal = nt("aderencia");
+  const aderAuto: AvaliacaoChamadoMonitor["aderencia"] = aderFinal >= 7.5 ? "alta" : aderFinal >= 5 ? "media" : "baixa";
   const aderAj = ["alta", "media", "baixa"].includes(aj.aderencia ?? "") ? (aj.aderencia as AvaliacaoChamadoMonitor["aderencia"]) : null;
   if (aderAj) ajustado.push("aderencia");
 
@@ -403,14 +433,29 @@ export function avaliarChamado(c: ChamadoMonitor, agora = new Date()): Avaliacao
     complexidade: complexAj ?? complexAuto,
     aderencia: aderAj ?? aderAuto,
     efetividade, efetividadeMotivo, prazoDias, cancelado, ajustado,
+    fonte, resumoIa: notasIa ? (c.ia?.resumo?.trim() || null) : null,
     flags: {
-      objetivoClaro: clarezaRes >= 6,
-      relevanciaOperacional: imp >= 7,
-      melhoriaProcesso: manual >= 6 || tema === "automatizacao",
-      visaoEstrategica: tema === "visao_estrategica" || tema === "fluxo_caixa" || ader >= 9,
-      baixaEspecificacao: notaDesc <= 3.5 && evid <= 4,
+      objetivoClaro: nt("clareza_resultado") >= 6,
+      relevanciaOperacional: nt("importancia") >= 7,
+      melhoriaProcesso: nt("reducao_manual") >= 6 || tema === "automatizacao",
+      visaoEstrategica: tema === "visao_estrategica" || tema === "fluxo_caixa" || aderFinal >= 9,
+      baixaEspecificacao: nt("descricao") <= 3.5 && nt("evidencias") <= 4,
     },
   };
+}
+
+/** Os 9 critérios de texto vindos da I.A, ou null se faltar algum. */
+export function criteriosDaIa(ia: AvaliacaoIaMonitor | null | undefined): Record<Exclude<CriterioIndice, "resultado">, NotaCriterio> | null {
+  if (!ia?.criterios) return null;
+  const out = {} as Record<Exclude<CriterioIndice, "resultado">, NotaCriterio>;
+  for (const k of CRITERIOS_INDICE) {
+    if (k.key === "resultado") continue;
+    const item = ia.criterios[k.key];
+    const n = Number(String(item?.nota ?? "").replace(",", "."));
+    if (item?.nota == null || item.nota === "" || !Number.isFinite(n)) return null;
+    out[k.key] = { nota: arred1(lim(n)), motivo: String(item.motivo ?? "").trim() || "avaliado pela I.A" };
+  }
+  return out;
 }
 
 function numeroAjuste(v: string | null | undefined, min: number, max: number): number | null {
@@ -477,15 +522,36 @@ export interface RankingSolicitante {
   setor: string | null;
   total: number;
   concluidos: number;
+  emAndamento: number;
+  /** Média simples do índice dos chamados dele. */
   indiceMedio: number;
+  /** Nota que ORDENA o ranking: média puxada para a média geral quando há poucos chamados. */
+  notaRanking: number;
+  melhorIndice: number;
+  /** % dos chamados com índice ≥ 8 (bem especificados). */
+  pctBons: number;
   efetividadeMedia: number | null;
+  temaPrincipal: Tema | null;
+  /** Quantos chamados dele já têm a nota da I.A (o resto ainda é a regra antiga). */
+  avaliadosIa: number;
 }
 
-/** Ordem: média do índice, depois efetividade, depois volume. */
-export function rankingSolicitantes(linhas: LinhaMonitor[]): RankingSolicitante[] {
+/**
+ * Peso da média geral no ranking, em "chamados de mentira" (13/11/2026,
+ * Pablo: "como alguém que abriu DOIS chamados tá em primeiro? e quem abriu
+ * 25 tá em segundo?"). Média bayesiana: nota = (n·média + M·geral) / (n + M).
+ * Com M = 5, quem tem 2 chamados fica com ~30% da própria média e ~70% da
+ * geral; quem tem 25 fica com ~83% da própria. Ninguém some do ranking —
+ * só não passa à frente de quem provou a qualidade em volume.
+ */
+export const RANKING_PESO_MEDIA_GERAL = 5;
+
+/** Ordem: nota bayesiana, depois volume, depois efetividade. */
+export function rankingSolicitantes(linhas: LinhaMonitor[], m = RANKING_PESO_MEDIA_GERAL): RankingSolicitante[] {
+  const validas = linhas.filter((l) => !l.a.cancelado);
+  const geral = media(validas.map((l) => l.a.indice)) ?? 0;
   const por = new Map<string, LinhaMonitor[]>();
-  for (const l of linhas) {
-    if (l.a.cancelado) continue;
+  for (const l of validas) {
     const k = l.c.solicitante_id;
     if (!por.has(k)) por.set(k, []);
     por.get(k)!.push(l);
@@ -493,16 +559,27 @@ export function rankingSolicitantes(linhas: LinhaMonitor[]): RankingSolicitante[
   return [...por.entries()].map(([id, ls]) => {
     const ef = ls.map((l) => l.a.efetividade).filter((x): x is number => x != null);
     const em = media(ef);
+    const idx = ls.map((l) => l.a.indice);
+    const soma = idx.reduce((s, x) => s + x, 0);
+    const contTema = new Map<Tema, number>();
+    for (const l of ls) contTema.set(l.a.tema, (contTema.get(l.a.tema) ?? 0) + 1);
+    const temaPrincipal = [...contTema.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
     return {
       solicitante_id: id,
       nome: ls[0].c.solicitante_nome ?? "—",
       setor: ls[0].c.setor,
       total: ls.length,
       concluidos: ls.filter((l) => l.c.status === "concluido").length,
-      indiceMedio: arred1(media(ls.map((l) => l.a.indice)) ?? 0),
+      emAndamento: ls.filter((l) => STATUS_ANDAMENTO.includes(l.c.status)).length,
+      indiceMedio: arred1(soma / ls.length),
+      notaRanking: arred1((soma + m * geral) / (ls.length + m)),
+      melhorIndice: arred1(Math.max(...idx)),
+      pctBons: Math.round((idx.filter((x) => x >= 8).length / ls.length) * 100),
       efetividadeMedia: em == null ? null : Math.round(em),
+      temaPrincipal,
+      avaliadosIa: ls.filter((l) => l.a.fonte === "ia").length,
     };
-  }).sort((a, b) => b.indiceMedio - a.indiceMedio || (b.efetividadeMedia ?? -1) - (a.efetividadeMedia ?? -1) || b.total - a.total);
+  }).sort((a, b) => b.notaRanking - a.notaRanking || b.total - a.total || (b.efetividadeMedia ?? -1) - (a.efetividadeMedia ?? -1));
 }
 
 export interface QualidadeResumo {
