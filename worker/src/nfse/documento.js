@@ -9,6 +9,11 @@ const { validateXML } = require('xmllint-wasm');
 const NAMESPACE = 'http://www.sped.fazenda.gov.br/nfse';
 const C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
 const PREFIXO_DS = 'http://www.w3.org/2000/09/xmldsig#';
+const FORMATO_EMISSAO = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo', calendar: 'gregory', numberingSystem: 'latn',
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+  minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZoneName: 'longOffset',
+});
 
 class ErroNfse extends Error {
   constructor(codigo, mensagem) { super(mensagem); this.name = 'ErroNfse'; this.codigo = codigo; }
@@ -18,6 +23,15 @@ const digitos = valor => String(valor ?? '').replace(/[.\-/\s]/g, '');
 // P9022 da GOVBR: até quebras dentro da descrição devem sair antes da assinatura.
 const escapar = valor => String(valor).replace(/\r\n|[\r\n\t]/g, ' ').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
 const tag = (nome, valor) => `<${nome}>${escapar(valor)}</${nome}>`;
+function dataHoraEmissao(valor) {
+  const instante = new Date(valor);
+  exigir(typeof valor === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/i.test(valor) && Number.isFinite(instante.getTime()), 'Data e hora de emissão inválidas: informe o instante com fuso horário.');
+  // Compatibilidade E0008: o portal municipal usa o fuso brasileiro. Converter
+  // a representação antes de assinar, preservando o instante original do banco.
+  const p = Object.fromEntries(FORMATO_EMISSAO.formatToParts(instante).map(({ type, value }) => [type, value]));
+  const fuso = p.timeZoneName.replace(/^GMT/, '') || '+00:00';
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${fuso}`;
+}
 function centavos(valor) {
   exigir(valor !== null && valor !== undefined && valor !== '' && Number.isFinite(Number(valor)), 'Valor monetário ausente ou inválido.');
   const numero = Number(valor);
@@ -138,7 +152,7 @@ function gerarDps(s) {
   const i = p.imovel;
   const imovel = p.informar_imovel ? `<imovel>${i.inscricao ? tag('inscImobFisc',i.inscricao) : ''}<end>${tag('CEP',digitos(i.cep))}${tag('xLgr',i.logradouro)}${tag('nro',i.numero)}${i.complemento ? tag('xCpl',i.complemento) : ''}${tag('xBairro',i.bairro)}</end></imovel>` : '';
   const ibsCbs = `<IBSCBS>${tag('finNFSe','0')}${tag('indFinal',p.consumidor_final)}${tag('cIndOp',p.ibs_indicador_operacao)}${p.tipo_operacao ? tag('tpOper',p.tipo_operacao) : ''}${p.tipo_ente_governamental ? tag('tpEnteGov',p.tipo_ente_governamental) : ''}${tag('indDest','0')}${imovel}<valores><trib><gIBSCBS>${tag('CST',p.ibs_cst)}${tag('cClassTrib',p.ibs_classificacao)}</gIBSCBS></trib></valores></IBSCBS>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',new Date(s.criado_em).toISOString().replace(/\.\d{3}Z$/,'+00:00'))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${identificacaoTomador}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="${NAMESPACE}" versao="1.01"><infDPS Id="${identificadorDps(s)}">${tag('tpAmb',s.ambiente === 'producao' ? '1' : '2')}${tag('dhEmi',dataHoraEmissao(s.criado_em))}${tag('verAplic','ERP-0841-1.0')}${tag('serie',s.serie)}${tag('nDPS',s.numero_dps)}${tag('dCompet',competencia)}${tag('tpEmit','1')}${tag('cLocEmi',digitos(p.municipio_emissor))}<prest>${tag('CNPJ',cnpj)}${tag('IM',p.inscricao_municipal)}${regTrib}</prest><toma>${identificacaoTomador}${tag('xNome',t.nome.trim())}${endereco}${t.email ? tag('email',t.email.trim()) : ''}</toma>${servico}${valores}${ibsCbs}</infDPS></DPS>`;
 }
 
 function abrirCertificado(caminho, senha, cnpj, agora = new Date()) {
