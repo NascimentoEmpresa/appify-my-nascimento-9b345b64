@@ -415,6 +415,41 @@ ausência de envio, rejeição e atraso de publicação antes de propor uma corr
 Não emitir uma segunda nota, cancelar a primeira ou alterar um XML oficial
 apenas para tentar descobrir essa causa.
 
+### E0008 no compartilhamento e fuso da emissão
+
+O E0008 se refere a `dhEmi` (data/hora de emissão), que deve ser anterior ou
+igual ao processamento nacional. É um campo diferente de `dCompet`, a data
+de competência escolhida pelo Financeiro. A série da DPS também não é a causa
+indicada por esse código: a série é fixa por emissor, enquanto o número da DPS
+avança por solicitação, inclusive quando uma solicitação acaba rejeitada.
+
+O número da DPS é reservado pelo ERP antes do envio. O número da NFS-e é
+atribuído pelo autorizador e obtido no XML oficial após o processamento.
+São campos distintos: por exemplo, uma DPS 42 / série 123 pode resultar na
+NFS-e 900. A coincidência entre esses números em documentos feitos pelo
+portal municipal é uma característica do fluxo do portal; não se deve
+copiar a série desse portal nem tentar adivinhar o próximo número da NFS-e
+para forçar igualdade na integração. O painel exibe os dois identificadores
+e a série tal como registrados na solicitação e na resposta oficial.
+
+Os documentos emitidos pelo portal de Triunfo e recebidos no ADN usam o fuso
+brasileiro. O ERP agora formata `dhEmi` com `America/Sao_Paulo` antes de assinar,
+independentemente do fuso do computador/runner. Por exemplo,
+`14:45:00+00:00` vira `11:45:00-03:00`: é o mesmo instante, sem retroagir a
+emissão em três horas, alterar a competência ou editar o horário no banco.
+O fuso é calculado pela base IANA, incluindo a passagem de dia/ano. Entradas
+inválidas ou sem fuso explícito são recusadas antes de transmitir.
+
+Essa compatibilidade vale para DPS ainda não transmitidas. Uma nota já
+autorizada permanece com seu XML original. Se seu compartilhamento ao ADN
+foi rejeitado, o município/provedor deve conferir `dhEmi`, `dhProc` e respectivos
+fusos no XML efetivamente compartilhado e reprocessar a mesma chave pelo
+procedimento oficial. Não basta substituir o sufixo `+00:00` por `-03:00`:
+isso mudaria o instante e invalidaria a assinatura de um documento emitido.
+O log de rejeição e as comparações apontam a causa provável, mas a confirmação
+do ponto que desconsiderou o fuso exige o conteúdo e o retorno da transmissão
+municipal ao ADN. Nenhuma alteração automática de documentos oficiais é feita.
+
 O piloto cobre emissão regular de serviços nacionais para tomador identificado,
 com endereço de imóvel quando exigido por IBS/CBS, sem obra, intermediário,
 substituição ou evento fiscal de cancelamento.
