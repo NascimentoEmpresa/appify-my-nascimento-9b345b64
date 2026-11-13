@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { useChecklistItems, useImplantacaoContratos, useRespostas } from "@/hooks/useImplantacao";
 import { resumoResposta } from "@/lib/implantacao/camposResposta";
+import { CHAVE_CONFIRMACAO_NOTIF } from "@/hooks/useImplantacaoConfirmacaoNotif";
 import {
   montarPainel,
   valorLegivel,
@@ -77,6 +78,8 @@ export function useConfirmarSetor() {
     },
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: [CHAVE_CONFIRMACOES, v.contratoId] });
+      // Apaga a bolinha do menu na hora (useImplantacaoConfirmacaoNotif).
+      qc.invalidateQueries({ queryKey: [CHAVE_CONFIRMACAO_NOTIF] });
       toast({ title: `Recebimento confirmado — ${v.setor}` });
     },
     onError: (e: Error) => toast({ title: "Erro ao confirmar", description: e.message, variant: "destructive" }),
@@ -94,7 +97,10 @@ export function useDesfazerConfirmacaoSetor() {
         .eq("setor", v.setor);
       if (error) throw error;
     },
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: [CHAVE_CONFIRMACOES, v.contratoId] }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: [CHAVE_CONFIRMACOES, v.contratoId] });
+      qc.invalidateQueries({ queryKey: [CHAVE_CONFIRMACAO_NOTIF] });
+    },
     onError: (e: Error) => toast({ title: "Erro ao desfazer", description: e.message, variant: "destructive" }),
   });
 }

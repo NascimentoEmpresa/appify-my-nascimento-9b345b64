@@ -84,6 +84,8 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { usePrazosRecursosNotif } from "@/hooks/usePrazosRecursosNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
+import { useImplantacaoConfirmacaoNotif } from "@/hooks/useImplantacaoConfirmacaoNotif";
+import { itemComBolinha } from "@/lib/implantacao/notifConfirmacao";
 import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { FileX2 } from "lucide-react";
@@ -1681,6 +1683,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // rota, então acende qualquer item cujo link tenha pendência, sem precisar
   // marcar `notif` item a item.
   const aprovacoesNotif = useAprovacoesNotif();
+  // 13/11/2026 (mig 20261115000800): Resumo dos Contratos — setor com contrato
+  // pronto esperando "Confirmar recebimento". Também vem por rota.
+  const confirmacaoNotif = useImplantacaoConfirmacaoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
@@ -1728,6 +1733,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // `notif`, e cada um acende pelo status da própria etapa.
     const resolvedDot = (item: NavItem) =>
       (aprovacoesNotif.porRota[item.to] ?? 0) > 0 ? true
+      : itemComBolinha(confirmacaoNotif.porRota, item.to) ? true
       : item.notif === "meus" ? chamadosNotif.meus
       : item.notif === "dev" ? chamadosNotif.dev
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
@@ -1751,7 +1757,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         })),
       })),
     }));
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif, confirmacaoNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"
