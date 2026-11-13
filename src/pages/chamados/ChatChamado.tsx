@@ -108,6 +108,12 @@ const diaDe = (s: string) => new Date(s).toDateString();
 // leitura: assim as conversas antigas também ficam legíveis, sem migrar dados.
 interface Aviso { texto: string; interno: boolean }
 
+// RPCs que ainda não estão no types.ts gerado: um único ponto sem tipo, em vez
+// de "(supabase as any)" espalhado (catraca do lint, 13/11/2026).
+type RespostaRpc = { data: unknown; error: { message: string } | null };
+const rpcSemTipo = (fn: string, args?: Record<string, unknown>): Promise<RespostaRpc> =>
+  (supabase.rpc as unknown as (this: typeof supabase, f: string, a?: Record<string, unknown>) => Promise<RespostaRpc>).call(supabase, fn, args);
+
 function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Aviso | null {
   const meta = (e.meta ?? {}) as Record<string, any>;
   const t = (e.texto ?? "").trim();
@@ -239,7 +245,7 @@ export function ChatChamado({
     enabled: !!chamadoId,
     // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
-      const { data } = await (supabase as any).rpc("chamado_participantes", { p_chamado_id: chamadoId });
+      const { data } = await rpcSemTipo("chamado_participantes", { p_chamado_id: chamadoId });
       return (data ?? []) as Participante[];
     },
   });
@@ -271,7 +277,7 @@ export function ChatChamado({
   useEffect(() => {
     if (!chamadoId) return;
     (async () => {
-      const { error } = await (supabase as any).rpc("chamado_marcar_lido", { p_chamado_id: chamadoId });
+      const { error } = await rpcSemTipo("chamado_marcar_lido", { p_chamado_id: chamadoId });
       if (!error) {
         qc.invalidateQueries({ queryKey: ["chamado-participantes", chamadoId] });
         qc.invalidateQueries({ queryKey: ["chamados-nao-lidos"] });
@@ -302,7 +308,7 @@ export function ChatChamado({
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
     queryFn: async () => {
-      const { data } = await (supabase as any).rpc("listar_usuarios_ativos");
+      const { data } = await rpcSemTipo("listar_usuarios_ativos");
       return (data ?? []) as Array<{ id: string; display_name: string }>;
     },
   });
@@ -442,7 +448,7 @@ export function ChatChamado({
     const txt = textoEdicao.trim();
     if (!editandoId || !txt || salvandoEdicao) return;
     setSalvandoEdicao(true);
-    const { error } = await (supabase as any).rpc("chamado_editar_mensagem", {
+    const { error } = await rpcSemTipo("chamado_editar_mensagem", {
       p_evento_id: editandoId, p_texto: txt,
     });
     setSalvandoEdicao(false);
@@ -457,7 +463,7 @@ export function ChatChamado({
   const confirmarApagar = async () => {
     if (!apagarId || apagando) return;
     setApagando(true);
-    const { error } = await (supabase as any).rpc("chamado_apagar_mensagem", { p_evento_id: apagarId });
+    const { error } = await rpcSemTipo("chamado_apagar_mensagem", { p_evento_id: apagarId });
     setApagando(false);
     setApagarId(null);
     if (error) {
