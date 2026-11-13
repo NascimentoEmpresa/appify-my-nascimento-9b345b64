@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AcessoGate } from "@/components/auth/AcessoGate";
-import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST, menuDoPainel } from "@/lib/implantacao/permissaoChecklist";
+import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST } from "@/lib/implantacao/permissaoChecklist";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -185,30 +185,19 @@ export function FluxoImplantacao({ painel, contratoId }: { painel: PainelImplant
         <Etapa icone={Cog} titulo="ERP abre processo de implantação" status="concluido" />
         <Seta />
         <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[340px] xl:flex-[3]">
-          {painel.setores.map((s) => {
-            const conteudo = (
+          {painel.setores.map((s) => (
+            <Link
+              key={s.setor}
+              to={rotaSetor(s.slug, contratoId)}
+              className={cn("flex items-center justify-between gap-2 rounded-lg border px-3 py-2 transition-shadow hover:shadow-sm", BORDA_STATUS[s.status])}
+            >
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{s.setor}</p>
                 <SeloStatus status={s.status} />
               </div>
-            );
-            const classe = cn("flex items-center justify-between gap-2 rounded-lg border px-3 py-2", BORDA_STATUS[s.status]);
-            // O status do setor aparece para todos do Resumo geral; o link só
-            // para quem pode abrir o painel daquele setor (acesso próprio).
-            return (
-              <AcessoGate
-                key={s.setor}
-                menu={menuDoPainel(s.slug)}
-                acao="visualizar"
-                fallback={<div className={classe}>{conteudo}</div>}
-              >
-                <Link to={rotaSetor(s.slug, contratoId)} className={cn(classe, "transition-shadow hover:shadow-sm")}>
-                  {conteudo}
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                </Link>
-              </AcessoGate>
-            );
-          })}
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </Link>
+          ))}
         </div>
         <Seta />
         <Etapa icone={ClipboardCheck} titulo="Confirmação de recebimento por setor" status={etapaConfirmacao} />
@@ -263,11 +252,9 @@ export function CartaoSetor({ resumo, contratoId, limite = 7 }: { resumo: Resumo
         </p>
       )}
       <div className="mt-3 flex flex-wrap justify-between gap-2">
-        <AcessoGate menu={menuDoPainel(resumo.slug)} acao="visualizar">
-          <Button asChild size="sm" variant="outline" className="h-8 text-xs">
-            <Link to={rotaSetor(resumo.slug, contratoId)}>Abrir setor <ChevronRight className="ml-1 h-3.5 w-3.5" /></Link>
-          </Button>
-        </AcessoGate>
+        <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+          <Link to={rotaSetor(resumo.slug, contratoId)}>Abrir setor <ChevronRight className="ml-1 h-3.5 w-3.5" /></Link>
+        </Button>
         <AcessoGate menu={MENU_EDITAR_CHECKLIST} acao={ACAO_EDITAR_CHECKLIST}>
           <Button asChild size="sm" className="h-8 text-xs">
             <Link to={rotaFormulario(contratoId, resumo.setor)}><Pencil className="mr-1 h-3.5 w-3.5" /> Preencher / Atualizar</Link>

@@ -23,7 +23,7 @@
 --      painéis — senão liberar só "Compras" abriria uma tela vazia.
 --      A conta mora numa função só (implantacao_pode_ler) para não repetir
 --      a lista em três policies.
---   3) Gravar não muda: checklist exige 'licitacoes-implantacao-editar-checklist'
+--   3) Gravar não muda: checklist exige 'alterar' na Implantação
 --      (20261115000300) e confirmar recebimento exige
 --      'licitacoes-implantacao-confirmar-setor' (20261113220000).
 --
@@ -42,15 +42,15 @@ INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
 SELECT m.id, v.codigo, v.nome, v.rota, v.ordem, true
   FROM public.app_modulo m
   CROSS JOIN (VALUES
-    ('licitacoes-implantacao-painel',              'Resumo dos Contratos — Resumo geral', '/app/licitacoes/implantacao/painel',              40),
-    ('licitacoes-implantacao-painel-compras',      'Resumo dos Contratos — Compras',      '/app/licitacoes/implantacao/painel/compras',      41),
-    ('licitacoes-implantacao-painel-financeiro',   'Resumo dos Contratos — Financeiro',   '/app/licitacoes/implantacao/painel/financeiro',   42),
-    ('licitacoes-implantacao-painel-licitacao',    'Resumo dos Contratos — Licitação',    '/app/licitacoes/implantacao/painel/licitacao',    43),
-    ('licitacoes-implantacao-painel-operacional',  'Resumo dos Contratos — Operacional',  '/app/licitacoes/implantacao/painel/operacional',  44),
-    ('licitacoes-implantacao-painel-recrutamento', 'Resumo dos Contratos — Recrutamento', '/app/licitacoes/implantacao/painel/recrutamento', 45),
-    ('licitacoes-implantacao-painel-rh',           'Resumo dos Contratos — RH',           '/app/licitacoes/implantacao/painel/rh',           46),
-    ('licitacoes-implantacao-painel-sst',          'Resumo dos Contratos — SST',          '/app/licitacoes/implantacao/painel/sst',          47),
-    ('licitacoes-implantacao-painel-treinamentos', 'Resumo dos Contratos — Treinamentos', '/app/licitacoes/implantacao/painel/treinamentos', 48)
+    ('licitacoes-implantacao-painel',              'Resumo Geral dos Contratos', '/app/licitacoes/implantacao/painel',              40),
+    ('licitacoes-implantacao-painel-compras',      'Resumo dos Contratos - Compras',      '/app/licitacoes/implantacao/painel/compras',      41),
+    ('licitacoes-implantacao-painel-financeiro',   'Resumo dos Contratos - Financeiro',   '/app/licitacoes/implantacao/painel/financeiro',   42),
+    ('licitacoes-implantacao-painel-licitacao',    'Resumo dos Contratos - Licitação',    '/app/licitacoes/implantacao/painel/licitacao',    43),
+    ('licitacoes-implantacao-painel-operacional',  'Resumo dos Contratos - Operacional',  '/app/licitacoes/implantacao/painel/operacional',  44),
+    ('licitacoes-implantacao-painel-recrutamento', 'Resumo dos Contratos - Recrutamento', '/app/licitacoes/implantacao/painel/recrutamento', 45),
+    ('licitacoes-implantacao-painel-rh',           'Resumo dos Contratos - RH',           '/app/licitacoes/implantacao/painel/rh',           46),
+    ('licitacoes-implantacao-painel-sst',          'Resumo dos Contratos - SST',          '/app/licitacoes/implantacao/painel/sst',          47),
+    ('licitacoes-implantacao-painel-treinamentos', 'Resumo dos Contratos - Treinamentos', '/app/licitacoes/implantacao/painel/treinamentos', 48)
   ) AS v(codigo, nome, rota, ordem)
  WHERE m.codigo = 'licitacoes'
 ON CONFLICT (modulo_id, codigo) DO NOTHING;

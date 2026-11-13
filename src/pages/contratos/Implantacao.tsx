@@ -33,8 +33,7 @@ import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 import { useDocTipos } from "@/hooks/useDocumentos";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST, MENU_RESUMO_GERAL } from "@/lib/implantacao/permissaoChecklist";
-import { AcessoGate } from "@/components/auth/AcessoGate";
+import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST } from "@/lib/implantacao/permissaoChecklist";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -170,13 +169,11 @@ export default function Implantacao() {
         breadcrumb={["Contratos", "Implantação"]}
         subtitle="Checklist de implantação por contrato — acompanhe cada setor até a operação plena."
         actions={
-          <AcessoGate menu={MENU_RESUMO_GERAL} acao="visualizar">
-            <Button asChild variant="outline" size="sm">
-              <Link to={`/app/licitacoes/implantacao/painel${contratoSelecionado ? `?contrato=${contratoSelecionado}` : ""}`}>
-                <LayoutDashboard className="mr-1.5 h-4 w-4" /> Painel por setor
-              </Link>
-            </Button>
-          </AcessoGate>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/licitacoes/implantacao/painel${contratoSelecionado ? `?contrato=${contratoSelecionado}` : ""}`}>
+              <LayoutDashboard className="mr-1.5 h-4 w-4" /> Painel por setor
+            </Link>
+          </Button>
         }
       />
 

@@ -445,6 +445,7 @@ const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, strin
   "controle-faturamento": { visao_completa: "Ver Visão Geral e Visão Anual" },
   // SIS-2026-0872: as duas ações do Fechamento dos Sócios.
   "fechamento-socios": { alterar: "Sócios e percentuais", aprovar: "Fechar competência" },
+  "licitacoes.implantacao": { alterar: "Pode editar o checklist" },
 };
 
 // O que cada switch libera, em uma frase, mostrado ao lado do rótulo. Só nos menus em que o rótulo sozinho não diz o suficiente.
@@ -457,6 +458,9 @@ const ACAO_DESCRICAO_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, s
   "fechamento-socios": {
     alterar: "Define o percentual de cada sócio (padrão e o de um mês). Mexe na divisão do lucro.",
     aprovar: "Fecha e reabre a competência e registra o complemento pago a cada sócio.",
+  },
+  "licitacoes.implantacao": {
+    alterar: "Confirmar, Preencher, Editar e Salvar no checklist de implantação. Sem ele, a pessoa só lê.",
   },
   "controle-faturamento": {
     visao_completa: "Sem este switch, a pessoa vê só a aba NFs Não Emitidas (ex.: supervisores). Com ele, vê também Visão Geral e Visão Anual.",
