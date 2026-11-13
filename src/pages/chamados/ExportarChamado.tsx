@@ -9,6 +9,7 @@ import { FileDown, FolderDown, Loader2 } from "lucide-react";
 import { PdfDocumento, fmtDataHoraPdf } from "@/lib/pdf/PdfDocumento";
 import { bytesLegivel, nomeNoZip, pastaDe } from "./exportarUtils";
 import { metricasGithubDaConclusao, somarMetricasGithub } from "./githubConclusao";
+import { textoParaRelatorio } from "@/lib/chamados/mensagemEditavel";
 import {
   BUCKET_CHAMADOS, CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   PRIORIDADES, STATUS_CHAMADO, CRITERIOS_AVALIACAO, labelDe, moduloLabel,
@@ -199,7 +200,8 @@ function gerarRelatorio(d: Dados) {
     eventos.forEach((ev) => {
       pdf.paragrafo(`${fmtDataHora(ev.created_at)} · ${quem(ev.autor_id)}${ev.tipo && ev.tipo !== "mensagem" ? ` · ${ev.tipo}` : ""}`,
         { negrito: true, tamanho: 8.5, cor: [90, 90, 90], espacoDepois: 0.5 });
-      pdf.paragrafo(ev.texto?.trim() || "—", { espacoDepois: 3 });
+      // Apagada/editada (mig 20261115000600): o PDF mostra o aviso, nunca o conteúdo apagado.
+      pdf.paragrafo(textoParaRelatorio(ev, (id) => quem(id))?.trim() || "—", { espacoDepois: 3 });
     });
   }
 
