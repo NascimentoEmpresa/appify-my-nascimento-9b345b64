@@ -104,7 +104,7 @@ VALUES (1, $$
 }
 $$::jsonb, '20000000-0000-4000-8000-000000000003');
 
-\ir ../migrations/20261115110000_sis_2026_0837_permissao_independente_copias_menu.sql
+\ir ../migrations/20261115130000_sis_2026_0837_permissao_independente_copias_menu.sql
 
 DO $$
 DECLARE
