@@ -143,6 +143,12 @@ export const LAYOUTS_AVISO: { valor: LayoutAviso; rotulo: string }[] = [
  */
 export const INTERVALO_PING_S = 240;
 export const OFFLINE_APOS_S = INTERVALO_PING_S * 2 + 30;
+/**
+ * Entre dois pings, a TV pergunta só se tem comando ("Recarregar"), por uma
+ * consulta de índice sem escrita (tv_tem_comando, 14/11/2026): o Recarregar
+ * chega em até 1 min, não em até 4. 13 TVs ≈ 19 mil consultas leves/dia.
+ */
+export const INTERVALO_COMANDO_S = 60;
 
 /**
  * Aviso geral com tempo (duracao_seg): a TV conta a partir de quando ELA o
