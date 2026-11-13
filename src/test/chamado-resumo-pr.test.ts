@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import {
-  limparCorpoPr, limparResumoIa, listaDeTextos, montarMensagemResumo, montarPromptResumo, resumoSemIa, urlsValidas,
+  AVISO_MENSAGEM_AUTOMATICA, limparCorpoPr, limparResumoIa, listaDeTextos, montarMensagemResumo, montarPromptResumo, resumoSemIa, urlsValidas,
   commitsPorPalavras, detalhesValidos, separarRespostaIa, urlsDosEscolhidos,
   type EntradaResumo,
 } from "../../supabase/functions/_shared/chamado-resumo-pr";
@@ -173,6 +173,14 @@ describe("Resumo da entrega no chat do chamado", () => {
     expect(m).toContain("Onde acessar:\n- https://app.grpnascimento.com.br/app/relatorios/comissoes");
     expect(m).toContain("Confirmar conclusão");
     expect(montarMensagemResumo("x", [])).not.toContain("Onde acessar");
+  });
+
+  it("termina sempre com o aviso de mensagem automática e dos 15 minutos", () => {
+    for (const m of [montarMensagemResumo("Coluna nova.", entrada.urls), montarMensagemResumo(resumoSemIa(entrada), [])]) {
+      expect(m.endsWith(AVISO_MENSAGEM_AUTOMATICA)).toBe(true);
+    }
+    expect(AVISO_MENSAGEM_AUTOMATICA).toMatch(/mensagem automática/);
+    expect(AVISO_MENSAGEM_AUTOMATICA).toMatch(/15 minutos/);
   });
 });
 

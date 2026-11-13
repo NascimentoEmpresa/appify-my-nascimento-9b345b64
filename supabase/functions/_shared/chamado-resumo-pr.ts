@@ -226,12 +226,23 @@ export function resumoSemIa(e: EntradaResumo, escolhidos?: number[]): string {
   return [`Desenvolvimento pronto: ${titulo}.`, ...(itens.length ? ["", "O que mudou:", ...itens.map((i) => `- ${i}`)] : [])].join("\n");
 }
 
-/** A mensagem que vai para o chat: cabeçalho, resumo e "Onde acessar". */
+/**
+ * Última linha, sempre (13/11/2026, pedido do Pablo): a mensagem chega no
+ * merge, mas a tela nova só aparece depois que o front publica e a migration
+ * entra — minutos depois. Sem o aviso, o solicitante abria a tela na hora,
+ * não via nada e reabria o chamado. Texto fixo, fora da I.A, para sair igual
+ * também no resumo sem I.A.
+ */
+export const AVISO_MENSAGEM_AUTOMATICA =
+  "Esta é uma mensagem automática. Por gentileza, aguarde: em até 15 minutos a atualização estará disponível no sistema.";
+
+/** A mensagem que vai para o chat: cabeçalho, resumo, "Onde acessar" e o aviso dos 15 minutos. */
 export function montarMensagemResumo(resumo: string, urls: string[]): string {
   const partes = ["✅ Seu chamado foi desenvolvido. Resumo do que foi feito:", "", resumo.trim()];
   if (urls.length) {
     partes.push("", urls.length === 1 ? "Onde acessar:" : "Onde acessar (telas alteradas):", ...urls.map((u) => `- ${u}`));
   }
   partes.push("", "Confira e, se estiver tudo certo, clique em Confirmar conclusão. Se não atendeu, use Reabrir chamado.");
+  partes.push("", AVISO_MENSAGEM_AUTOMATICA);
   return partes.join("\n");
 }
