@@ -77,6 +77,30 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it.each([
+    ["2026-11-13T14:45:00.396536+00:00", "2026-11-13T11:45:00-03:00"],
+    ["2026-11-13T14:45:00Z", "2026-11-13T11:45:00-03:00"],
+    ["2026-11-13T11:45:00-03:00", "2026-11-13T11:45:00-03:00"],
+    ["2026-11-13T02:15:00Z", "2026-11-12T23:15:00-03:00"],
+    ["2026-01-01T01:30:00Z", "2025-12-31T22:30:00-03:00"],
+  ])("emite dhEmi no fuso brasileiro preservando o instante de %s", async (entrada, esperado) => {
+    const s = solicitacao(); s.criado_em = entrada;
+    const antes = JSON.stringify(s);
+    const xml = documento.gerarDps(s);
+    const emitido = documento.valor(documento.lerXml(xml), "dhEmi");
+    expect(emitido).toBe(esperado);
+    expect(Date.parse(emitido)).toBe(Math.floor(Date.parse(entrada) / 1000) * 1000);
+    expect(xml).toContain("<dCompet>2026-10-01</dCompet>");
+    await documento.validarEsquema(xml);
+    expect(JSON.stringify(s)).toBe(antes);
+  });
+  it.each(["", "data-invalida", "2026-11-13T14:45:00"])("recusa data de emissão inválida ou sem fuso: %s", async entrada => {
+    const s = solicitacao(); s.criado_em = entrada;
+    const deps = dependencias();
+    await expect(executarSolicitacao(s, deps)).rejects.toThrow(/data e hora de emissão inválidas/i);
+    expect(deps.cliente.consultarDps).not.toHaveBeenCalled();
+    expect(deps.cliente.enviar).not.toHaveBeenCalled();
+  });
   it("envia a data fiscal escolhida no dCompet sem alterar a competência mensal nem os valores", async () => {
     const s = solicitacao();
     Object.assign(s.dados.parametros, { data_competencia: "2026-10-31" });
