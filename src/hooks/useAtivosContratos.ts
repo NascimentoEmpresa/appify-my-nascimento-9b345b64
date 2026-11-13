@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { AtestadoDia, PainelAtivos } from "@/pages/rh/conferenciaAtivos";
+import type { SaneamentoPostos } from "@/lib/rh/saneamentoPostos";
 
 // =====================================================================
 // RH › Ativos/Contratos — acesso a dados (RPCs rh_ac_*, migs 20260930000279 e 20261005000001).
@@ -206,5 +207,22 @@ export function useExcluirObservacaoAtivos() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rh-ativos-contratos", "observacoes"] }),
+  });
+}
+
+/**
+ * Saneamento de postos Senior × ERP (13/11/2026, mig 20261115200000). Só
+ * carrega quando alguém abre o relatório — o painel continua numa RPC só.
+ */
+export function useSaneamentoPostos(ativo: boolean) {
+  return useQuery({
+    queryKey: ["rh-ativos-contratos", "saneamento"],
+    enabled: ativo,
+    staleTime: 2 * 60_000,
+    queryFn: async (): Promise<SaneamentoPostos> => {
+      const { data, error } = await sb.rpc<SaneamentoPostos>("rh_ac_saneamento_postos");
+      if (error) throw new Error(error.message);
+      return { gerado_em: data?.gerado_em ?? new Date().toISOString(), senior: data?.senior ?? [], erp: data?.erp ?? [] };
+    },
   });
 }
