@@ -36,6 +36,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   limparResumoIa, listaDeTextos, MAX_ALTERACOES_CHARS, MAX_ARQUIVOS, MAX_COMMIT_CHARS, MAX_COMMITS, montarMensagemResumo, montarPromptResumo,
   resumoSemIa, urlsValidas, type EntradaResumo,
+  commitsPorPalavras, detalhesValidos, separarRespostaIa, urlsDosEscolhidos,
 } from "../_shared/chamado-resumo-pr.ts";
 import { perfilDoLoginGithub } from "../_shared/dev-github-login.ts";
 
@@ -78,6 +79,8 @@ interface Body {
   arquivos?: unknown;
   urls?: unknown;
   alteracoes?: unknown;
+  /** [{ mensagem, urls }] por commit, na ordem de `commits` (13/11/2026). */
+  commits_detalhe?: unknown;
 }
 
 // Métricas da PR são contagens inteiras. null mantém compatibilidade com
@@ -240,14 +243,26 @@ Deno.serve(async (req) => {
           urls: urlsValidas(body.urls),
           alteracoes: typeof body.alteracoes === "string" ? body.alteracoes.slice(0, MAX_ALTERACOES_CHARS) : null,
         };
+        // Detalhe por commit só vale se casar 1:1 com `commits` (mesma ordem).
+        const detalhes = detalhesValidos(body.commits_detalhe);
+        if (detalhes.length === entrada.commits.length) entrada.detalhes = detalhes;
+        // 13/11/2026: a I.A diz na 1ª linha quais commits são deste chamado
+        // (SIS-2026-0895 levou as URLs das TVs); sem a linha, vale o plano B
+        // pelas palavras do pedido. URLs só dos commits escolhidos.
         const ia = await resumirComIa(montarPromptResumo(entrada));
-        const resumo = (ia && limparResumoIa(ia)) || resumoSemIa(entrada);
+        const separado = ia ? separarRespostaIa(ia, entrada.commits.length) : null;
+        const escolhidos = separado?.escolhidos ?? commitsPorPalavras(entrada);
+        const urls = urlsDosEscolhidos(entrada, escolhidos);
+        const resumo = (separado && limparResumoIa(separado.texto)) || resumoSemIa(entrada, escolhidos);
         const { error: resErr } = await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
           chamado_id: chamado.id,
           autor_id: autorId,
           tipo: "comentario",
-          texto: montarMensagemResumo(resumo, entrada.urls),
-          meta: { canal: "github", origem: "resumo_pr", pr_url: prUrl, pr_numero: prNumero, ia: !!ia, urls: entrada.urls },
+          texto: montarMensagemResumo(resumo, urls),
+          meta: {
+            canal: "github", origem: "resumo_pr", pr_url: prUrl, pr_numero: prNumero, ia: !!ia, urls,
+            commits_escolhidos: escolhidos.map((i) => i + 1), escolha: separado?.escolhidos ? "ia" : "palavras",
+          },
         });
         if (resErr) console.error("Falha ao gravar o resumo no chat:", resErr.message);
         else resumoGravado = true;
