@@ -24,6 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users, ExternalLink, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { ReordenarRateio } from "./ReordenarRateio";
+import { ResumoRateioPorClassificacao } from "./ResumoRateioPorClassificacao";
 import { useReordenarRateioAjuste } from "@/hooks/useMaloteDespesa";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -2543,6 +2544,13 @@ export default function DespesaVisualizar() {
               souSolicitante={souSolicitante}
             />
           )}
+          {/* SIS-2026-0900: total de cada classificação do rateio (e por empresa), para conferir a despesa que mistura classificações (FGTS + consignado). */}
+          <ResumoRateioPorClassificacao
+            linhas={linhasRateio}
+            classificacaoPadraoId={despesa.classificacao_id}
+            valorDespesa={Number(valorAprovado) || despesa.valor_total}
+            empresas={empresas}
+          />
           {/* [SEM-CHAMADO] SD-2026-0211: reordenar as linhas (a 1ª é a que as listas mostram), inclusive em despesa parcelada com rateio travado. */}
           {podeCorrigirNecessidadeDeAjuste && despesa.status === "ajuste_pagamento" && (
             <ReordenarRateio despesaId={despesa.id} linhas={data?.rateio ?? []} contratos={contratos} empresas={empresas} onPendente={setOrdemRateioPendente} />
