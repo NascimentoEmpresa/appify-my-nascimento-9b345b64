@@ -140,15 +140,20 @@ export const LAYOUTS_AVISO: { valor: LayoutAviso; rotulo: string }[] = [
  * → ping volta, a cada 2 min; no mesmo dia, "deixa pela metade" → 4 min: 7 TVs
  * ≈ 2.500 consultas/dia, contra as 16 mil de tv_estado + tv_reportar a 15 s
  * (docs/infra/sem-busca-automatica.md).
+ *
+ * 13/11/2026 — TETO DE 2 MIL CONSULTAS POR DIA PARA TODAS AS TVs. Pablo,
+ * vendo a conta da pergunta de comando a cada 1 min (13 TVs ≈ 19 mil
+ * consultas/dia, mais 4,7 mil do ping): "não pode ter nem 2k de requisições
+ * por dia". Agora a TV fala com o banco SÓ neste ping, de 20 em 20 min:
+ * 72 por TV/dia, 13 TVs ≈ 940. A pergunta de comando (tv_tem_comando) saiu;
+ * Recarregar, item novo e aviso chegam no próximo ping (até 20 min), e o
+ * tv_estado segura o comando por 1 h (mig 20261114150000) para ele não se
+ * perder entre dois pings. Relatório na tela é reconsultado no máximo 1 vez
+ * por hora (VALIDADE_MS em TvRelatorio.tsx). Antes de encurtar qualquer
+ * intervalo, refaça a conta: TVs × (86.400 / intervalo) tem que caber em 2 mil.
  */
-export const INTERVALO_PING_S = 240;
+export const INTERVALO_PING_S = 20 * 60;
 export const OFFLINE_APOS_S = INTERVALO_PING_S * 2 + 30;
-/**
- * Entre dois pings, a TV pergunta só se tem comando ("Recarregar"), por uma
- * consulta de índice sem escrita (tv_tem_comando, 14/11/2026): o Recarregar
- * chega em até 1 min, não em até 4. 13 TVs ≈ 19 mil consultas leves/dia.
- */
-export const INTERVALO_COMANDO_S = 60;
 
 /**
  * Aviso geral com tempo (duracao_seg): a TV conta a partir de quando ELA o

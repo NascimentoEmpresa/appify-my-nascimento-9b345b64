@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { corAviso, INTERVALO_COMANDO_S, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type AlertaNaTv, type EstadoTv, type ItemTv, type LayoutAviso } from "@/lib/tv/tv";
+import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type AlertaNaTv, type EstadoTv, type ItemTv, type LayoutAviso } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
 import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_ANTI_ESTATICA_MS, rotuloTelaAcordada, type ModoTelaAcordada } from "@/lib/tv/telaAcordada";
@@ -166,28 +166,16 @@ export default function TvPlayer() {
   useEffect(() => {
     if (chaveFixa) gravarToken(chaveFixa);
     consultar();
-    // guardiao-ok: ping da TV a cada 4 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega)
+    // guardiao-ok: ping da TV a cada 20 min (exceção de 04/11/2026: sem ele toda TV aparece offline e o Recarregar não chega; teto de 2 mil/dia, 13/11/2026)
     const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
     return () => window.clearInterval(t);
   }, [consultar]);
 
-  // 14/11/2026 — "clico para recarregar e a TV não atualiza": o comando só
-  // chegava no ping de 4 min. Entre um ping e outro, a TV pergunta só se TEM
-  // comando (tv_tem_comando, mig 20261114140000: uma linha pelo índice único,
-  // sem escrita). Sim → a tv_estado de sempre entrega, limpa e recarrega.
-  // Banco sem a função ainda → para de perguntar até a próxima recarga.
-  const perguntaLigada = useRef(true);
-  useEffect(() => {
-    // guardiao-ok: só na rota pública /tv (a TV não tem quem clique); 1 consulta de índice por minuto, sem escrita, o resto segue no ping de 4 min
-    const t = window.setInterval(() => {
-      if (!perguntaLigada.current || !tokenRef.current || document.visibilityState === "hidden") return;
-      rpc("tv_tem_comando", { p_token: tokenRef.current }).then(({ data, error }) => {
-        if (error) { if (/tv_tem_comando|function|PGRST202/i.test(error.message)) perguntaLigada.current = false; return; }
-        if (data === true) consultar();
-      }, () => { /* sem rede: o cão de guarda cuida */ });
-    }, INTERVALO_COMANDO_S * 1000);
-    return () => window.clearInterval(t);
-  }, [consultar]);
+  // 14/11/2026 a TV passou a perguntar a cada 1 min se tinha comando
+  // (tv_tem_comando, mig 20261114140000). 13/11/2026: saiu — 13 TVs davam
+  // ~19 mil consultas/dia, e o teto pedido pelo Pablo é 2 mil para TODAS as
+  // TVs (ver INTERVALO_PING_S em src/lib/tv/tv.ts). O Recarregar volta a
+  // chegar no ping, agora de 20 min; não recoloque um segundo timer de rede.
 
   // AO VIVO: avisa o ERP do item que entrou na tela (null = relógio/pausada).
   // Fogo e esquece — nunca atrapalha a reprodução.

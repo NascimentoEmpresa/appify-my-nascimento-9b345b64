@@ -67,7 +67,11 @@ import { codigoDoIndicador, ehDashboard, ehIndicadorAvulso, ehPainelGerencial, i
 const ICONE_GERENCIAL: Record<string, LucideIcon> = { Briefcase, Gavel, Package, Truck, UserPlus, Users, HardHat, GraduationCap, Wallet, Scale, Calculator, Server, Crown };
 
 const CACHE = new Map<string, { em: number; dados: DadosRelTv }>();
-const VALIDADE_MS = 5 * 60_000;
+// 13/11/2026: 5 min -> 1 h. Numa playlist com vários relatórios, cada um é
+// consultado de novo ao voltar à tela depois de vencer o cache; com 5 min isso
+// era uma consulta por volta da playlist. Teto de 2 mil consultas/dia para
+// todas as TVs (ver INTERVALO_PING_S em src/lib/tv/tv.ts).
+const VALIDADE_MS = 60 * 60_000;
 const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record<string, unknown>) => Promise<{ data: any; error: { message: string } | null }>;
 
 const ORDEM_GERAL = ["recrutamento", "demissoes", "materiais", "ferias", "medida-disciplinar", "mudanca-funcao", "chamados", "orientacoes"];
