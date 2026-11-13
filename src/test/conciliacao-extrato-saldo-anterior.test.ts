@@ -26,7 +26,7 @@ describe("parseOFX — SALDO ANTERIOR do extrato", () => {
     expect(t.map((x) => x.memo)).toEqual(["SALDO APLICACAO AUTOMATICA"]);
   });
 
-  it("continua ignorando o rótulo do BB Rende Fácil", () => {
-    expect(parseOFX(ofx(["20261001", "5.00", "BB RENDE FACIL"]), "x.ofx")).toHaveLength(0);
+  it("o BB Rende Fácil passa a contar (pedido do Financeiro; o SIS-2026-0491 o ignorava)", () => {
+    expect(parseOFX(ofx(["20261001", "5.00", "BB RENDE FACIL"]), "x.ofx").map((x) => x.memo)).toEqual(["BB RENDE FACIL"]);
   });
 });
