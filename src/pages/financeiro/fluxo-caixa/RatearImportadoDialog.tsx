@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useContratosAtivos } from "@/hooks/useMaloteDespesa";
-import { useRatearLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
+import { useCotasRateioDebito, useRatearDebitoAutomatico, useRatearLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
 import {
   cotasIniciais, cotasParaRpc, diferencaCotas, distribuirIgualmente, erroCotas, SEM_CONTRATO, somaCotas, type CotaRateio,
 } from "./rateioImportado";
@@ -20,32 +20,59 @@ export interface LinhaParaRatear {
   valor: number;
   contrato_id: string | null;
   rateioDetalhe?: { id: string; nome: string; valor: number }[];
+  /** SIS-2026-0877: Débito Automático — rateia contrato e classificação, só entre contratos da empresa do lançamento. */
+  origem?: "importacao_historica" | "debito_automatico";
+  empresa_id?: string | null;
+  classificacao_id?: string | null;
 }
+
+export interface OpcaoClassificacao { value: string; label: string }
 
 interface Props {
   linha: LinhaParaRatear | null;
   /** true = rateio criado no ERP (dá para refazer ou desfazer); false = linha avulsa. */
   refazendo: boolean;
+  /** Débito Automático: classificações para escolher em cada cota. */
+  classificacoes?: OpcaoClassificacao[];
   onClose: () => void;
 }
 
 // Fluxo de Caixa: ratear uma linha importada da planilha entre contratos (cada cota vira uma linha do mesmo grupo).
-export function RatearImportadoDialog({ linha, refazendo, onClose }: Props) {
+export function RatearImportadoDialog({ linha, refazendo, classificacoes = [], onClose }: Props) {
   const { data: contratos = [] } = useContratosAtivos();
-  const ratear = useRatearLinhaImportada();
+  const ratearImportada = useRatearLinhaImportada();
+  const ratearDebito = useRatearDebitoAutomatico();
   const [cotas, setCotas] = useState<CotaRateio[]>([]);
+  const ehDebito = linha?.origem === "debito_automatico";
+  const ratear = ehDebito ? ratearDebito : ratearImportada;
+  // Débito Automático: ao refazer, as cotas (com a classificação de cada uma) vêm da tabela do rateio.
+  const { data: cotasSalvas, isLoading: carregandoCotas } = useCotasRateioDebito(linha?.despesa_id, ehDebito && refazendo);
 
   useEffect(() => {
-    if (linha) setCotas(cotasIniciais(linha.valor, linha.contrato_id, linha.rateioDetalhe, refazendo));
-  }, [linha, refazendo]);
+    if (!linha) return;
+    if (ehDebito) {
+      if (refazendo) {
+        if (cotasSalvas?.length) {
+          setCotas(cotasSalvas.map((c) => ({ contratoId: c.contrato_id ?? SEM_CONTRATO, classificacaoId: c.classificacao_id ?? "", valor: String(c.valor).replace(".", ",") })));
+        }
+      } else {
+        setCotas(cotasIniciais(linha.valor, linha.contrato_id, undefined, false).map((c) => ({ ...c, classificacaoId: "" })));
+      }
+      return;
+    }
+    setCotas(cotasIniciais(linha.valor, linha.contrato_id, linha.rateioDetalhe, refazendo));
+  }, [linha, refazendo, ehDebito, cotasSalvas]);
 
   const opcoes = useMemo(
     () => [
       { value: SEM_CONTRATO, label: "Sem contrato (administrativo)" },
-      ...contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status !== "ativo" })),
+      ...contratos
+        .filter((c) => !ehDebito || !linha?.empresa_id || c.empresa_id === linha.empresa_id)
+        .map((c) => ({ value: c.id, label: c.nome, muted: c.status !== "ativo" })),
     ],
-    [contratos],
+    [contratos, ehDebito, linha?.empresa_id],
   );
+  const opcoesClassificacao = useMemo(() => [{ value: "", label: "A do lançamento" }, ...classificacoes], [classificacoes]);
 
   if (!linha) return null;
   const total = linha.valor;
@@ -71,7 +98,8 @@ export function RatearImportadoDialog({ linha, refazendo, onClose }: Props) {
       return;
     }
     try {
-      await ratear.mutateAsync({ despesaId: linha!.despesa_id, cotas: cotasParaRpc(cotas) });
+      if (ehDebito) await ratearDebito.mutateAsync({ debitoId: linha!.despesa_id, cotas: cotasParaRpc(desfazendo ? cotas.map(({ classificacaoId: _c, ...resto }) => resto) : cotas) });
+      else await ratearImportada.mutateAsync({ despesaId: linha!.despesa_id, cotas: cotasParaRpc(cotas) });
       toast.success(desfazendo ? "Rateio desfeito." : refazendo ? "Rateio atualizado." : "Linha rateada.");
       onClose();
     } catch (e: any) {
@@ -86,14 +114,18 @@ export function RatearImportadoDialog({ linha, refazendo, onClose }: Props) {
           <DialogTitle>{refazendo ? "Refazer rateio" : "Ratear lançamento"} {linha.id_malote}</DialogTitle>
           <DialogDescription>
             {linha.descricao} — valor <span className="font-medium text-foreground">{brl(total)}</span>. Cada cota vira uma linha do mesmo lançamento,
-            no contrato escolhido; a soma tem que fechar o valor.
+            no contrato{ehDebito ? " e na classificação" : ""} escolhido{ehDebito ? "s" : ""}; a soma tem que fechar o valor.
+            {ehDebito && " O lançamento original (tela Débito Automático) não muda: o rateio vale para o Fluxo de Caixa."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">
           {cotas.map((c, i) => (
-            <div key={i} className="grid grid-cols-[minmax(0,1fr)_140px_auto] items-center gap-2">
+            <div key={i} className={ehDebito && !desfazendo ? "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_auto] items-center gap-2" : "grid grid-cols-[minmax(0,1fr)_140px_auto] items-center gap-2"}>
               <SearchableSelect value={c.contratoId} onChange={(v) => mudar(i, { contratoId: v })} options={opcoes} placeholder="Contrato" />
+              {ehDebito && !desfazendo && (
+                <SearchableSelect value={c.classificacaoId ?? ""} onChange={(v) => mudar(i, { classificacaoId: v })} options={opcoesClassificacao} placeholder="Classificação" />
+              )}
               <Input
                 inputMode="decimal"
                 value={c.valor}
@@ -117,7 +149,7 @@ export function RatearImportadoDialog({ linha, refazendo, onClose }: Props) {
           ))}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
             <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setCotas((cs) => [...cs, { contratoId: "", valor: "" }])}>
+              <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setCotas((cs) => [...cs, { contratoId: "", valor: "", ...(ehDebito ? { classificacaoId: "" } : {}) }])}>
                 <Plus className="h-3.5 w-3.5" />Adicionar cota
               </Button>
               <Button type="button" variant="outline" size="sm" onClick={dividirIgualmente} disabled={desfazendo}>Dividir igualmente</Button>
@@ -136,7 +168,7 @@ export function RatearImportadoDialog({ linha, refazendo, onClose }: Props) {
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={ratear.isPending}>Cancelar</Button>
-          <Button onClick={() => void confirmar()} disabled={ratear.isPending || !!erro}>
+          <Button onClick={() => void confirmar()} disabled={ratear.isPending || !!erro || (ehDebito && refazendo && carregandoCotas)}>
             {ratear.isPending ? "Salvando…" : desfazendo ? "Desfazer rateio" : refazendo ? "Salvar rateio" : "Ratear"}
           </Button>
         </DialogFooter>
