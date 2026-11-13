@@ -21,6 +21,7 @@ import { AvisoAjusteDemissao, BotaoAjustarDemissao } from "@/components/demissao
 import {
   ACCEPT_ANEXO, BUCKET, MODELOS_AVISO, MOTIVOS_PEDIDO, MOTIVOS_SOLICITACAO,
   JUSTIFICATIVAS_DESLIGAMENTO, JUSTIFICATIVA_OUTROS, erroJustificativa,
+  ROTULO_ENCERRAMENTO_CONTRATO, encerramentoParaGravar, erroEncerramentoContrato, textoEncerramentoContrato,
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
   corDoStatus, emailValido, erroDoArquivo, explicaStatus, faltaVagaDeReposicao, fmtData, fmtTamanho,
   hojeISO, mascaraTelefone, statusInicialDemissao, telefoneCompleto, type SolicitacaoDemissao,
@@ -70,6 +71,9 @@ const VAZIO = {
   // Justificativa do desligamento (10/11/2026): obrigatória, para a estatística.
   justificativa_desligamento: "",
   justificativa_complemento: "",
+  // Encerramento do contrato com o cliente (SIS-2026-0854) — "sim" | "nao".
+  // "Sim" tira o desligamento do turnover; sem resposta não avança.
+  encerramento_contrato: "",
   relato: "",
   termino_experiencia: "",
   data_aviso: "",
@@ -332,6 +336,8 @@ export default function SolicitarDemissao() {
       if (!form.motivo_pedido) return "Selecione o motivo do pedido de demissão.";
       const just = erroJustificativa(form.justificativa_desligamento, form.justificativa_complemento);
       if (just) return just;
+      const enc = erroEncerramentoContrato(form.encerramento_contrato);
+      if (enc) return enc;
       if (form.relato.trim().length < 20) return "Relate o motivo com pelo menos 20 caracteres.";
       return null;
     }
@@ -386,6 +392,7 @@ export default function SolicitarDemissao() {
       motivo_pedido: form.motivo_pedido,
       justificativa_desligamento: form.justificativa_desligamento,
       justificativa_complemento: form.justificativa_complemento.trim() || null,
+      encerramento_contrato: encerramentoParaGravar(form.encerramento_contrato),
       relato: form.relato.trim(),
       termino_experiencia: form.termino_experiencia,
       data_aviso: form.data_aviso,
@@ -701,6 +708,28 @@ export default function SolicitarDemissao() {
                     value={form.justificativa_complemento} onChange={(e) => setCampo("justificativa_complemento", e.target.value)} />
                 </div>
               )}
+              {/* Encerramento do contrato com o cliente (SIS-2026-0854): quando o
+                  contrato de prestação de serviços acaba, o desligamento não é
+                  rotatividade — "Sim" tira esta saída do turnover. O contrato
+                  é o do colaborador, que já vai gravado na solicitação. */}
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                <Label className="text-sm font-semibold">{ROTULO_ENCERRAMENTO_CONTRATO}? *</Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Marque "Sim" quando o colaborador sai porque o contrato
+                  {nomeContrato ? ` ${semCodigoFilial(nomeContrato)}` : " dele"} com o cliente chegou ao fim.
+                  Esse desligamento fica fora do cálculo do turnover.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <Button type="button" variant={form.encerramento_contrato === "sim" ? "default" : "outline"}
+                    onClick={() => setCampo("encerramento_contrato", "sim")}>
+                    Sim — o contrato com o cliente encerrou
+                  </Button>
+                  <Button type="button" variant={form.encerramento_contrato === "nao" ? "default" : "outline"}
+                    onClick={() => setCampo("encerramento_contrato", "nao")}>
+                    Não — outro motivo
+                  </Button>
+                </div>
+              </div>
               <div>
                 <Label htmlFor="relato">Relate abaixo o motivo da solicitação de demissão *</Label>
                 <Textarea id="relato" className="mt-1 min-h-32" placeholder="Descreva detalhadamente o motivo…"
@@ -824,6 +853,8 @@ export default function SolicitarDemissao() {
                 ["Motivo do pedido", form.motivo_pedido],
                 ["Justificativa do desligamento", form.justificativa_desligamento
                   + (form.justificativa_complemento.trim() ? ` — ${form.justificativa_complemento.trim()}` : "")],
+                ["Encerramento do contrato com o cliente",
+                  textoEncerramentoContrato(encerramentoParaGravar(form.encerramento_contrato), nomeContrato)],
                 ["Relato", form.relato],
               ]} />
               <Bloco titulo="Aviso e contato" itens={[

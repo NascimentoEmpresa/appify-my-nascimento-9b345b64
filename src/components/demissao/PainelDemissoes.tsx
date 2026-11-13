@@ -19,7 +19,7 @@ import {
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
   erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
   fmtData, fmtDataHora, fmtTamanho, linkDoLocalASO, normSetorDemissao, patchDevolucao, podeDevolver, podePedirAjuste,
-  resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao,
+  resumoDevolucao, resumoDoASO, statusDaEtapa1, visivelNaEtapaDemissao, textoEncerramentoContrato,
   type AnexoDemissao, type EtapaQueDevolve, type SolicitacaoDemissao,
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
@@ -750,6 +750,8 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
           ["Justificativa do desligamento", s.justificativa_desligamento
             ? s.justificativa_desligamento + (s.justificativa_complemento ? ` — ${s.justificativa_complemento}` : "")
             : "Não informada (aberta antes de 10/11/2026)"],
+          // SIS-2026-0854: marcado = fora do turnover.
+          ["Encerramento do contrato com o cliente", textoEncerramentoContrato(s.encerramento_contrato, s.contrato)],
         ]} />
 
         <div className="rounded-lg border p-4">

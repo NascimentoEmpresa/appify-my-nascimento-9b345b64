@@ -96,6 +96,32 @@ export function erroJustificativa(just: string | null | undefined, complemento: 
   return null;
 }
 
+/**
+ * Encerramento do contrato com o cliente (SIS-2026-0854, mig 20261114085400):
+ * quem abre a solicitação diz se o desligamento é porque o contrato de
+ * prestação de serviços com o cliente acabou. Marcado, o desligamento sai do
+ * turnover — a regra mora no banco (turnover_desconsidera), em todas as
+ * contas. Resposta obrigatória ("sim" | "nao"): esquecer não pode virar "não".
+ */
+export const ROTULO_ENCERRAMENTO_CONTRATO = "Desligamento por encerramento do contrato de prestação de serviços com o cliente";
+export type RespostaEncerramento = "" | "sim" | "nao";
+
+export function erroEncerramentoContrato(resposta: string | null | undefined): string | null {
+  return resposta === "sim" || resposta === "nao"
+    ? null
+    : "Responda se o desligamento é por encerramento do contrato com o cliente.";
+}
+
+/** O que vai gravado na coluna encerramento_contrato. */
+export const encerramentoParaGravar = (resposta: string | null | undefined): boolean => resposta === "sim";
+
+/** Texto para o painel, a conferência e o Excel. */
+export function textoEncerramentoContrato(valor: boolean | null | undefined, contrato?: string | null): string {
+  if (!valor) return "Não";
+  const c = (contrato ?? "").trim();
+  return `Sim — contrato ${c || "do colaborador"} encerrado (fora do turnover)`;
+}
+
 export const MOTIVOS_PEDIDO = [
   "Insatisfação salarial",
   "Proposta de outro emprego",
@@ -331,6 +357,8 @@ export interface SolicitacaoDemissao {
   /** Justificativa do desligamento (NULL só nas abertas antes de 10/11/2026). */
   justificativa_desligamento?: string | null;
   justificativa_complemento?: string | null;
+  /** Encerramento do contrato com o cliente — fora do turnover (SIS-2026-0854). */
+  encerramento_contrato?: boolean | null;
   relato: string | null;
 
   termino_experiencia: string | null;
