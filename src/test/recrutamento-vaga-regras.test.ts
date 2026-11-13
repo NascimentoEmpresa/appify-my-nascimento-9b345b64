@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   diasUteisEntre, somaDiasUteis, dataMinimaVaga, avaliarPrazo, grauPorDiasUteis,
+  diasCorridosEntre, MIN_DIAS_ANTECEDENCIA,
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
@@ -31,38 +32,70 @@ describe("dias úteis", () => {
     expect(somaDiasUteis("2026-08-14", 7)).toBe("2026-08-25");
   });
 
-  it("data mínima da vaga é hoje + 7 dias úteis", () => {
-    expect(dataMinimaVaga("2026-08-14")).toBe("2026-08-25");
+});
+
+// Regra de 13/11/2026: mínimo de 3 dias CORRIDOS de antecedência.
+describe("prazo mínimo da vaga — 3 dias corridos", () => {
+  it("a constante é 3", () => {
+    expect(MIN_DIAS_ANTECEDENCIA).toBe(3);
+  });
+
+  it("primeira data possível é hoje + 3 dias corridos (conta fim de semana)", () => {
+    expect(dataMinimaVaga("2026-08-14")).toBe("2026-08-17");   // sex -> seg
+    expect(dataMinimaVaga("2026-11-30")).toBe("2026-12-03");   // vira o mês
+    expect(dataMinimaVaga("2026-12-30")).toBe("2027-01-02");   // vira o ano
+  });
+
+  it("conta dias corridos", () => {
+    expect(diasCorridosEntre("2026-08-14", "2026-08-17")).toBe(3);
+    expect(diasCorridosEntre("2026-08-14", "2026-08-10")).toBe(-4);
+  });
+
+  it("2 dias: bloqueia e diz a primeira data possível", () => {
+    const r = avaliarPrazo("2026-08-16", "2026-08-14");
+    expect(r.ok).toBe(false);
+    expect(r.grau).toBeNull();
+    expect(r.dias).toBe(2);
+    expect(r.minima).toBe("2026-08-17");
+    expect(r.erro).toBe(
+      "A vaga precisa de no mínimo 3 dias de antecedência (a data escolhida tem 2). A primeira data possível é 17/08/2026.",
+    );
+  });
+
+  it("3 dias: passa, mesmo caindo em 1 dia útil só (urgente)", () => {
+    const r = avaliarPrazo("2026-08-17", "2026-08-14");
+    expect(r.ok).toBe(true);
+    expect(r.erro).toBeNull();
+    expect(r.dias).toBe(3);
+    expect(r.diasUteis).toBe(1);
+    expect(r.grau).toBe(GRAU_ALTA);
+  });
+
+  it("4 dias: passa", () => {
+    const r = avaliarPrazo("2026-08-18", "2026-08-14");
+    expect(r.ok).toBe(true);
+    expect(r.dias).toBe(4);
+  });
+
+  it("o caso do print (data com 6 dias úteis) agora passa", () => {
+    // sex 13/11 -> sáb 21/11: 8 dias corridos
+    expect(avaliarPrazo("2026-11-21", "2026-11-13").ok).toBe(true);
+  });
+
+  it("data no passado não passa", () => {
+    expect(avaliarPrazo("2026-08-10", "2026-08-14").ok).toBe(false);
+    expect(avaliarPrazo("2026-08-10", "2026-08-14").erro).toContain("tem 0");
   });
 });
 
-describe("grau de urgência pelo prazo", () => {
-  it("mapeia as faixas pedidas", () => {
-    expect(grauPorDiasUteis(6)).toBeNull();      // abaixo do mínimo
-    expect(grauPorDiasUteis(7)).toBe(GRAU_ALTA);
+describe("grau de urgência pelo prazo (dias úteis)", () => {
+  it("mapeia as faixas", () => {
+    expect(grauPorDiasUteis(1)).toBe(GRAU_ALTA);
     expect(grauPorDiasUteis(13)).toBe(GRAU_ALTA);
     expect(grauPorDiasUteis(14)).toBe(GRAU_MEDIA);
     expect(grauPorDiasUteis(20)).toBe(GRAU_MEDIA);
     expect(grauPorDiasUteis(21)).toBe(GRAU_BAIXA);
     expect(grauPorDiasUteis(40)).toBe(GRAU_BAIXA);
-  });
-
-  it("barra data abaixo do mínimo e explica a primeira data possível", () => {
-    const r = avaliarPrazo("2026-08-18", "2026-08-14");   // 2 dias úteis
-    expect(r.ok).toBe(false);
-    expect(r.grau).toBeNull();
-    expect(r.erro).toContain("25/08/2026");
-  });
-
-  it("aceita exatamente 7 dias úteis como urgente", () => {
-    const r = avaliarPrazo("2026-08-25", "2026-08-14");
-    expect(r.ok).toBe(true);
-    expect(r.dias).toBe(7);
-    expect(r.grau).toBe(GRAU_ALTA);
-  });
-
-  it("data no passado não passa", () => {
-    expect(avaliarPrazo("2026-08-10", "2026-08-14").ok).toBe(false);
   });
 });
 

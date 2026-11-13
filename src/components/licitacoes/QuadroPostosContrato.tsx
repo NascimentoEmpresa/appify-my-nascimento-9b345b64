@@ -34,7 +34,7 @@ import { Plus, Trash2, Users, ChevronDown, ChevronUp, Sparkles, TriangleAlert, L
 import { cn } from "@/lib/utils";
 import { usePostos, useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
-import { MOTIVOS_VAGA, dataMinimaVaga, fmtBr } from "@/lib/recrutamento/vagaRegras";
+import { MOTIVOS_VAGA, dataMinimaVaga, fmtBr, TEXTO_ANTECEDENCIA } from "@/lib/recrutamento/vagaRegras";
 import { buscarCustoDoPosto, beneficiosDoCusto, insalubridadeDoCusto } from "@/lib/recrutamento/custoPosto";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
@@ -592,7 +592,7 @@ function LinhaDoQuadro({
                 onChange={e => onMexer({ data_inicio_prevista: e.target.value })}
               />
               <span className="text-[11px] text-muted-foreground">
-                A partir de {fmtBr(dataMinima)} — a vaga exige 7 dias úteis de antecedência.
+                A partir de {fmtBr(dataMinima)} — {TEXTO_ANTECEDENCIA}.
               </span>
             </div>
           </div>
