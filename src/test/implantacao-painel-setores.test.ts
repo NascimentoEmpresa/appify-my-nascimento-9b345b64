@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   assinaturaRespostas,
   categoriaDaPergunta,
@@ -156,5 +158,16 @@ describe("Implantação › página do setor — categorias e filtros", () => {
     expect(filtrarLinhas(linhas, "", "pendentes", "todas").map((l) => l.row_index)).toEqual([1]);
     expect(filtrarLinhas(linhas, "pedido", "todos", "todas").map((l) => l.row_index)).toEqual([3]);
     expect(filtrarLinhas(linhas, "", "preenchidos", "Dados do contrato").map((l) => l.row_index)).toEqual([2]);
+  });
+});
+
+describe("Implantação › submódulo Resumo dos Contratos (Sidebar)", () => {
+  it("os links do menu batem com o slug de cada setor do checklist", () => {
+    const fonte = readFileSync(resolve(__dirname, "../components/layout/Sidebar.tsx"), "utf8");
+    const nomes = ["Compras", "Financeiro", "Licitação", "Operação", "Recrutamento", "RH", "SST", "Treinamentos"];
+    for (const nome of nomes) {
+      const setor = setoresDoResponsavel(nome)[0];
+      expect(fonte).toContain(`"/app/licitacoes/implantacao/painel/${slugSetor(setor)}"`);
+    }
   });
 });
