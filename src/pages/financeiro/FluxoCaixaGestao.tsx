@@ -52,7 +52,7 @@ import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
-import { FILTRO_SEM_VALOR, casaSelecao, classificacoesDoFiltro, classificacoesDoTipo, contratosDasEmpresas, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos, type CotaContratoClassificacao } from "./fluxo-caixa/filtrosMultiplos";
+import { FILTRO_SEM_VALOR, baseDaFaceta, casaSelecao, classificacoesDoFiltro, classificacoesDoTipo, contratosDasEmpresas, contratosDasLinhas, manterSelecionadasDisponiveis, nomesSelecionados, opcoesDe, opcoesDeTextos, opcoesFacetadas, paresDasLinhas, separarPorFacetas, type ChaveFiltroFacetado, type CotaContratoClassificacao } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { competenciaNoIntervalo } from "./fluxo-caixa/filtroCompetencia";
 import { AlteracaoEmMassaBar } from "./fluxo-caixa/AlteracaoEmMassaBar";
@@ -570,8 +570,8 @@ export default function FluxoCaixaGestao() {
 
   // Todos os contratos — usada para os nomes no resumo da planilha.
   const contratosDisponiveis = useMemo(() => contratosDasEmpresas(linhas, []), [linhas]);
-  // O filtro Centro de Custo acompanha o filtro Empresa: com uma empresa marcada só lista os contratos dela (antes listava todos).
-  const contratosDaEmpresaFiltro = useMemo(() => contratosDasEmpresas(linhas, empresaIds), [linhas, empresaIds]);
+  // SIS-2026-0913: todos os centros, inclusive os que só aparecem em cota de rateio — nome de item já marcado no filtro.
+  const contratosTodos = useMemo(() => contratosDasLinhas(linhas), [linhas]);
 
   // As opções saem das linhas brutas: a linha agrupada de uma despesa rateada entre pessoas só carrega "Vários".
   const integrantesDisponiveis = useMemo(() => {
@@ -585,9 +585,8 @@ export default function FluxoCaixaGestao() {
 
   // Todas as classificações (entrada e saída) — usada para os nomes no resumo da planilha.
   const classificacoesDisponiveis = useMemo(() => classificacoesDoTipo(linhas, []), [linhas]);
-  // O filtro Classificação acompanha os filtros Tipo e Centro de Custo (SIS-2026-0868): só lista as classificações
-  // que têm lançamento no(s) tipo(s) e centro(s) escolhidos.
-  const classificacoesDoTipoFiltro = useMemo(() => classificacoesDoFiltro(linhas, tiposFiltro, contratoIds), [linhas, tiposFiltro, contratoIds]);
+  // As opções dos filtros da tela (Centro de Custo, Classificação, Empresa…) acompanham todos os outros filtros
+  // desde a SIS-2026-0913 — ver `opcoesFiltro`, abaixo de `filtradas`.
 
   // SIS-2026-0307: mesmo padrão dos filtros acima — deriva direto das
   // linhas já carregadas (a view já entrega banco_nome pronto), sem
@@ -634,30 +633,101 @@ export default function FluxoCaixaGestao() {
     setPage(1);
   }
 
-  const filtradas = useMemo(() => {
+  // SIS-2026-0913: cada linha é avaliada uma vez; quem falha em UM filtro de lista só entra na base das opções
+  // daquele filtro (ver separarPorFacetas em filtrosMultiplos.ts). O resultado da tabela é `facetas.passam`.
+  const facetas = useMemo(() => {
     const buscaNorm = busca.trim().toLowerCase();
     const valorNum = parseValorBR(valor);
-    return filtrarPorSituacaoFluxo(linhas, situacoes, hoje).filter((l) => {
-      if (valorNaLinha(l, valorNum) === null) return false;
-      if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
-      if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
-      if (!competenciaNoIntervalo(l, competencia, competenciaAte)) return false;
-      if (tiposFiltro.length > 0 && !tiposFiltro.includes(l.tipo)) return false;
-      if (empresaIds.length > 0 && !empresaIds.includes(l.empresa_id ?? "")) return false;
-      if (origensFiltro.length > 0 && !origensFiltro.some((o) => linhaDaOrigemDoCard(l, o))) return false;
-      // Rateio com cota no contrato escolhido também entra (a fatia dele é somada abaixo).
-      if (!casaSelecao(contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) return false;
-      if (!casaSelecao(integranteIds, !!l.integrante_nome, (id) => !!l.integrantesIds?.includes(Number(id)))) return false;
-      if (!casaSelecao(classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
-      if (formasFiltro.length > 0 && !formasFiltro.includes(l.forma_pagamento ?? "")) return false;
-      if (bancoIds.length > 0 && !bancoIds.includes(l.banco_id ?? "")) return false;
-      if (!casaSelecao(contaIds, !!l.conta_banco_id, (id) => l.conta_banco_id === id)) return false;
-      if (soInconsistentes && !l.inconsistencia) return false;
+    return separarPorFacetas(filtrarPorSituacaoFluxo(linhas, situacoes, hoje), (l): ChaveFiltroFacetado[] | null => {
+      // Filtros sem faceta (campo livre / intervalo): reprovou aqui, a linha não conta para nenhuma opção.
+      if (valorNaLinha(l, valorNum) === null) return null;
+      if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return null;
+      if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return null;
+      if (!competenciaNoIntervalo(l, competencia, competenciaAte)) return null;
+      if (soInconsistentes && !l.inconsistencia) return null;
       // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
-      if (!linhaCasaBusca(l, buscaNorm)) return false;
-      return true;
-    }).map((l) => fatiaDoContratoNaLinha(l, contratoIds.filter((id) => id !== FILTRO_SEM_VALOR)));
+      if (!linhaCasaBusca(l, buscaNorm)) return null;
+      const falhas: ChaveFiltroFacetado[] = [];
+      if (tiposFiltro.length > 0 && !tiposFiltro.includes(l.tipo)) falhas.push("tipo");
+      if (empresaIds.length > 0 && !empresaIds.includes(l.empresa_id ?? "")) falhas.push("empresa");
+      if (origensFiltro.length > 0 && !origensFiltro.some((o) => linhaDaOrigemDoCard(l, o))) falhas.push("origem");
+      // Rateio com cota no contrato escolhido também entra (a fatia dele é somada abaixo).
+      if (!casaSelecao(contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) falhas.push("contrato");
+      if (!casaSelecao(integranteIds, !!l.integrante_nome, (id) => !!l.integrantesIds?.includes(Number(id)))) falhas.push("integrante");
+      if (!casaSelecao(classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) falhas.push("classificacao");
+      if (formasFiltro.length > 0 && !formasFiltro.includes(l.forma_pagamento ?? "")) falhas.push("forma");
+      if (bancoIds.length > 0 && !bancoIds.includes(l.banco_id ?? "")) falhas.push("banco");
+      if (!casaSelecao(contaIds, !!l.conta_banco_id, (id) => l.conta_banco_id === id)) falhas.push("conta");
+      return falhas;
+    });
   }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, competenciaAte, tiposFiltro, empresaIds, origensFiltro, contratoIds, integranteIds, classificacaoIds, formasFiltro, bancoIds, contaIds, soInconsistentes, busca, valor]);
+
+  const filtradas = useMemo(
+    () => facetas.passam.map((l) => fatiaDoContratoNaLinha(l, contratoIds.filter((id) => id !== FILTRO_SEM_VALOR))),
+    [facetas, contratoIds],
+  );
+
+  // SIS-2026-0913: opções de cada filtro = o que existe nas linhas que passam nos OUTROS filtros.
+  // Item já marcado continua na lista (opcoesFacetadas); "Sem …" só aparece se houver linha sem o campo.
+  const opcoesFiltro = useMemo(() => {
+    const base = (k: ChaveFiltroFacetado) => baseDaFaceta(facetas, k);
+    const bTipo = base("tipo");
+    const bEmpresa = base("empresa");
+    const bOrigem = base("origem");
+    const bContrato = base("contrato");
+    const bIntegrante = base("integrante");
+    const bClassificacao = base("classificacao");
+    const bForma = base("forma");
+    const bBanco = base("banco");
+    const bConta = base("conta");
+
+    const tiposComLinha = new Set<string>(bTipo.map((l) => l.tipo));
+    const tipo = [{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }].filter((o) => tiposComLinha.has(o.value) || tiposFiltro.includes(o.value));
+
+    const empresa = opcoesFacetadas(paresDasLinhas(bEmpresa, (l) => [l.empresa_id, l.empresa_nome]), empresaIds, empresasDisponiveis);
+
+    const origem = opcoesOrigem.filter((o) => origensFiltro.includes(o.value) || bOrigem.some((l) => linhaDaOrigemDoCard(l, o.value)));
+
+    const contrato = opcoesFacetadas(contratosDasLinhas(bContrato), contratoIds, contratosTodos, {
+      rotulo: "Sem centro de custo (—)",
+      temLinhaSem: bContrato.some((l) => !l.contrato_nome),
+    });
+
+    // Integrante: os nomes vêm das linhas brutas (a agrupada só traz "Vários"); aqui só restringe aos ids presentes.
+    // "Empresa" (SIS-2026-0873) continua sempre na lista, logo abaixo de "Sem integrante".
+    const idsIntegrante = new Set<string>();
+    bIntegrante.forEach((l) => l.integrantesIds?.forEach((id) => idsIntegrante.add(String(id))));
+    const integrante = opcoesFacetadas(
+      integrantesDisponiveis.filter(([id]) => id === String(INTEGRANTE_EMPRESA.id) || idsIntegrante.has(id)),
+      integranteIds,
+      integrantesDisponiveis,
+      { rotulo: "Sem integrante (—)", temLinhaSem: bIntegrante.some((l) => !l.integrante_nome) },
+    );
+
+    // Base da Classificação já vem com o filtro de centro aplicado; classificacoesDoFiltro ainda separa as cotas
+    // de rateio por centro (SIS-2026-0868). Tipo já está aplicado na base, por isso a lista de tipos vai vazia.
+    const classificacao = opcoesFacetadas(classificacoesDoFiltro(bClassificacao, [], contratoIds), classificacaoIds, classificacoesDisponiveis, {
+      rotulo: "Sem classificação (—)",
+      temLinhaSem: bClassificacao.some((l) => !l.classificacao_nome),
+    });
+
+    const formasComLinha = new Set(bForma.map((l) => l.forma_pagamento).filter((f): f is string => !!f));
+    formasFiltro.forEach((f) => formasComLinha.add(f));
+    const forma = opcoesDeTextos(Array.from(formasComLinha).sort((a, b) => a.localeCompare(b, "pt-BR")));
+
+    const banco = opcoesFacetadas(paresDasLinhas(bBanco, (l) => [l.banco_id, l.banco_nome]), bancoIds, bancosDisponiveis);
+
+    const idsConta = new Set(bConta.map((l) => l.conta_banco_id).filter(Boolean));
+    const contasRotuladas = contasBanco
+      .filter((c) => (c.ativo && (bancoIds.length === 0 || bancoIds.includes(c.banco_id))) || contaIds.includes(c.id))
+      .map((c) => [c.id, `${bancosDisponiveis.find(([id]) => id === c.banco_id)?.[1] ?? "Banco"} · ${empresasDisponiveis.find(([id]) => id === c.empresa_id)?.[1] ?? "Empresa"} · ${rotuloConta(c)}`] as [string, string]);
+    const conta = opcoesFacetadas(contasRotuladas.filter(([id]) => idsConta.has(id)), contaIds, contasRotuladas, {
+      rotulo: "Sem conta definida (—)",
+      temLinhaSem: bConta.some((l) => !l.conta_banco_id),
+    });
+
+    return { tipo, empresa, origem, contrato, integrante, classificacao, forma, banco, conta };
+  }, [facetas, tiposFiltro, empresaIds, origensFiltro, contratoIds, integranteIds, classificacaoIds, formasFiltro, bancoIds, contaIds, empresasDisponiveis, contratosTodos, integrantesDisponiveis, classificacoesDisponiveis, bancosDisponiveis, contasBanco, opcoesOrigem]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -1158,19 +1228,19 @@ export default function FluxoCaixaGestao() {
             </div>
             <div>
               <Label className="text-xs">Tipo</Label>
-              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, v, contratoIds))); setPage(1); }} options={[{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }]} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
+              <SearchableMultiSelect className="text-xs" value={tiposFiltro} onChange={(v) => { setTiposFiltro(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, v, contratoIds))); setPage(1); }} options={opcoesFiltro.tipo} placeholder="Entrada e Saída" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
-              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={(v) => { const contratos = manterSelecionadasDisponiveis(contratoIds, contratosDasEmpresas(linhas, v)); setEmpresaIds(v); setContratoIds(contratos); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, tiposFiltro, contratos))); setPage(1); }} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={(v) => { const contratos = manterSelecionadasDisponiveis(contratoIds, contratosDasEmpresas(linhas, v)); setEmpresaIds(v); setContratoIds(contratos); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, tiposFiltro, contratos))); setPage(1); }} options={opcoesFiltro.empresa} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Centro de Custo</Label>
-              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={(v) => { setContratoIds(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, tiposFiltro, v))); setPage(1); }} options={opcoesDe(contratosDaEmpresaFiltro, "Sem centro de custo (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={(v) => { setContratoIds(v); setClassificacaoIds((sel) => manterSelecionadasDisponiveis(sel, classificacoesDoFiltro(linhas, tiposFiltro, v))); setPage(1); }} options={opcoesFiltro.contrato} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs" title="Só despesas do Malote, Débito Automático e lançamentos importados da planilha têm integrante: ao escolher uma pessoa, as linhas de outras origens saem da lista.">Integrante</Label>
-              <SearchableMultiSelect className="text-xs" value={integranteIds} onChange={(v) => { setIntegranteIds(v); setPage(1); }} options={opcoesDe(integrantesDisponiveis, "Sem integrante (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={integranteIds} onChange={(v) => { setIntegranteIds(v); setPage(1); }} options={opcoesFiltro.integrante} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             {aba !== "realizado" && (
               <div>
@@ -1180,19 +1250,19 @@ export default function FluxoCaixaGestao() {
             )}
             <div>
               <Label className="text-xs">Classificação</Label>
-              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesDe(classificacoesDoTipoFiltro, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesFiltro.classificacao} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Forma de Pagamento</Label>
-              <SearchableMultiSelect className="text-xs" value={formasFiltro} onChange={setFormasFiltro} options={opcoesDeTextos(formasPagamentoDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={formasFiltro} onChange={setFormasFiltro} options={opcoesFiltro.forma} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Origem</Label>
-              <SearchableMultiSelect className="text-xs" value={origensFiltro} onChange={(v) => { setOrigensFiltro(v); setPage(1); }} options={opcoesOrigem} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={origensFiltro} onChange={(v) => { setOrigensFiltro(v); setPage(1); }} options={opcoesFiltro.origem} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Banco</Label>
-              <SearchableMultiSelect className="text-xs" value={bancoIds} onChange={setBancoIds} options={opcoesDe(bancosDisponiveis)} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
+              <SearchableMultiSelect className="text-xs" value={bancoIds} onChange={setBancoIds} options={opcoesFiltro.banco} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             {contasBanco.length > 0 && (
               <div>
@@ -1201,12 +1271,7 @@ export default function FluxoCaixaGestao() {
                   className="text-xs"
                   value={contaIds}
                   onChange={setContaIds}
-                  options={opcoesDe(
-                    contasBanco
-                      .filter((c) => c.ativo && (bancoIds.length === 0 || bancoIds.includes(c.banco_id)))
-                      .map((c) => [c.id, `${bancosDisponiveis.find(([id]) => id === c.banco_id)?.[1] ?? "Banco"} · ${empresasDisponiveis.find(([id]) => id === c.empresa_id)?.[1] ?? "Empresa"} · ${rotuloConta(c)}`] as [string, string]),
-                    "Sem conta definida (—)",
-                  )}
+                  options={opcoesFiltro.conta}
                   placeholder="Todas"
                   searchPlaceholder="Buscar..."
                   maxBadges={1}
