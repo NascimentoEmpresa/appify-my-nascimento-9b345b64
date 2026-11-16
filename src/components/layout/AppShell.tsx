@@ -16,6 +16,8 @@ import { GateTermoCiencia } from "@/components/documentos/GateTermoCiencia";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { AlertaUrgenteAdmissao } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 import { PainelOnline, LARGURA_PAINEL_ONLINE } from "./PainelOnline";
+import { supabase } from "@/integrations/supabase/client";
+import { conferirRecarga, instalarRecargaGeral } from "@/lib/recargaGeral";
 
 export function AppShell() {
   // Encarregado externo (sessão anônima) não tem cadastro em EMPREGADOS para
@@ -54,6 +56,16 @@ export function AppShell() {
     : painelOnlineAberto
       ? LARGURA_PAINEL_ONLINE.aberto
       : LARGURA_PAINEL_ONLINE.recolhido;
+
+  // Recarga geral (12/11/2026): o botão "Forçar todos a recarregar" do Quadro
+  // de Avisos faz esta aba recarregar — ver src/lib/recargaGeral.ts.
+  useEffect(() => {
+    instalarRecargaGeral(supabase as any);
+  }, []);
+  // Trocar de tela também é "usar o sistema": confere (no máximo 1x/min).
+  useEffect(() => {
+    void conferirRecarga();
+  }, [location.pathname]);
 
   // Fecha drawer mobile ao mudar de rota
   useEffect(() => {

@@ -4,13 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-import { ArrowRight, Info, Pencil, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
+import { ArrowRight, Clock, Info, Pencil, Wallet, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
   ComposicaoLinha, diferenca, DivergenciaMalote, EntradasSaidas, fmtPercentual, LABEL_MOTIVO_DIVERGENCIA, LABEL_MOTIVO_SEM_CENTRO, LABEL_ORIGEM_FINANCEIRO, LABEL_ORIGEM_LANCAMENTO,
-  LancamentoSemCentro, LinhaComposta, LinkCard, linkReclassificarFluxo, PainelCentrosFluxo, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
+  LancamentoSemCentro, LinhaComposta, LinkCard, linkReclassificarFluxo, PainelCentrosFluxo, PainelConciliacaoFaturamento, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
 } from "./regras";
 import { AjusteRegistrado, useAjustesDasDespesas } from "./useAuditoriaDados";
 import { DialogEntenderDiferenca } from "./DialogEntenderDiferenca";
@@ -549,6 +549,98 @@ export function CorpoOrcadoRealizado({ p, t }: { p: PainelOrcadoRealizado; t: To
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+// SIS-2026-0874: item 8 — Relatório de Serviços × Faturamento da Empresa (Resumo Mensal), quatro indicadores de cada lado.
+const INDICADORES_FATURAMENTO: { id: "bruto" | "liquido" | "recebido" | "pendente"; rotuloRelatorio: string; rotuloFaturamento: string; icone: ReactNode; cor: string }[] = [
+  { id: "bruto", rotuloRelatorio: "Valor Faturado", rotuloFaturamento: "Valor Faturado (Bruto)", icone: <FileText className="h-4 w-4" />, cor: "bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400" },
+  { id: "liquido", rotuloRelatorio: "Valor Líquido", rotuloFaturamento: "Valor Líquido (Após Descontos)", icone: <Wallet className="h-4 w-4" />, cor: "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" },
+  { id: "recebido", rotuloRelatorio: "Valor Recebido", rotuloFaturamento: "Notas Recebidas", icone: <CheckCircle2 className="h-4 w-4" />, cor: "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" },
+  { id: "pendente", rotuloRelatorio: "Valor Pendente de Recebimento", rotuloFaturamento: "A Receber", icone: <Clock className="h-4 w-4" />, cor: "bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400" },
+];
+const ROTULO_DIFERENCA_FATURAMENTO: Record<"bruto" | "liquido" | "recebido" | "pendente", string> = {
+  bruto: "Diferença do faturado bruto", liquido: "Diferença do líquido", recebido: "Diferença do recebido", pendente: "Diferença do a receber",
+};
+
+export function CorpoConciliacaoFaturamento({ p, situacao, links }: { p: PainelConciliacaoFaturamento; situacao: SituacaoComparacao | null; links: { relatorio: LinkCard; faturamento: LinkCard } }) {
+  const confere = situacao === "confere";
+  const lado = (titulo: string, icone: ReactNode, link: LinkCard, valores: PainelConciliacaoFaturamento["relatorio"], qual: "relatorio" | "faturamento", legenda: string) => (
+    <Painel titulo={titulo} icone={icone} link={link}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {INDICADORES_FATURAMENTO.map((i) => (
+          <div key={i.id} className="flex items-center gap-2.5 rounded-lg border p-2.5">
+            <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", i.cor)}>{i.icone}</span>
+            <div className="min-w-0">
+              <p className="text-[11px] leading-tight text-muted-foreground">{qual === "relatorio" ? i.rotuloRelatorio : i.rotuloFaturamento}</p>
+              <p className="text-base font-bold leading-tight">{fmtMoney(valores[i.id])}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-center text-[11px] text-muted-foreground">{legenda}</p>
+    </Painel>
+  );
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr]">
+        {lado("Relatório de Serviços", <FileText className="h-4 w-4" />, links.relatorio, p.relatorio, "relatorio", "Totais do Relatório de Serviços (soma das NFs da competência, código N). O Pendente é o que falta receber já descontando multas, glosas e outros descontos pós-emissão.")}
+        <div className="flex items-center justify-center"><span className="flex h-10 w-10 items-center justify-center rounded-full border bg-muted text-xs font-bold text-muted-foreground">VS</span></div>
+        {lado("Faturamento da Empresa", <TrendingUp className="h-4 w-4" />, links.faturamento, p.faturamento, "faturamento", "Totais do Resumo Mensal do Faturamento da Empresa, no mesmo mês e empresa.")}
+      </div>
+
+      <div className={cn("flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm", confere
+        ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+        : "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300")}>
+        {confere ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
+        <span>Status da Conciliação: <strong>{confere ? "Conciliado" : "Há diferença"}</strong></span>
+        <span className="ml-auto text-xs opacity-80">{p.notasAvaliadas} NF(s) avaliadas · {p.notasDivergentes} com divergência</span>
+      </div>
+
+      <div className="rounded-lg border overflow-hidden">
+        <p className="border-b bg-muted/40 px-3 py-2 text-xs font-semibold">Resumo da Conciliação</p>
+        <div className="grid grid-cols-2 divide-x divide-y lg:grid-cols-4 lg:divide-y-0">
+          {INDICADORES_FATURAMENTO.map((i) => {
+            const d = p.diferencas[i.id];
+            const ok = Math.abs(d) < 0.005;
+            return (
+              <div key={i.id} className="flex items-center gap-2.5 p-3">
+                <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full", ok ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" : "bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400")}>
+                  {ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] leading-tight text-muted-foreground">{ROTULO_DIFERENCA_FATURAMENTO[i.id]}</p>
+                  <p className={cn("text-base font-bold leading-tight", ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>{fmtMoney(Math.abs(d))}</p>
+                  <p className="text-[10px] text-muted-foreground">{ok ? "Confere" : d > 0 ? "Relatório maior" : "Faturamento maior"}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {!confere && (
+          <p className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+            Há diferença entre o Relatório de Serviços e o Faturamento da Empresa. Os totais de faturado, líquido, recebido e a receber precisam ser reconciliados para que a leitura do faturamento siga correta no fechamento.
+          </p>
+        )}
+      </div>
+
+      {p.maioresDivergencias.length > 0 && (
+        <div className="rounded-lg border overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+            <p className="text-xs font-semibold">Onde está a diferença — maiores divergências por NF</p>
+            <Link to={links.relatorio.to} className="text-[11px] text-primary hover:underline whitespace-nowrap">Conciliação completa no Relatório de Serviços →</Link>
+          </div>
+          <ul className="divide-y text-xs">
+            {p.maioresDivergencias.map((n) => (
+              <li key={n.id} className="px-3 py-2">
+                <div className="flex justify-between gap-2"><span className="truncate font-medium" title={n.contratoNome}>NF {n.numero} · {n.contratoNome}</span><span className="font-semibold text-red-600 dark:text-red-400">{fmtMoney(n.difTotal)}</span></div>
+                {n.motivo && <p className="mt-0.5 text-muted-foreground">{n.motivo}</p>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

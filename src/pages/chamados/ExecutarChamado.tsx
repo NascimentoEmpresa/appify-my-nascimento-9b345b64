@@ -44,6 +44,7 @@ import {
   CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
+import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
 
 /** Início da regra das horas gastas (mig 20261029002400): concluído antes disso fica "—". */
 const HORAS_GASTAS_DESDE = "2026-10-29T00:00:00-03:00";
@@ -610,6 +611,17 @@ export default function ExecutarChamado() {
                   <RotateCcw className="h-4 w-4 text-primary" />
                   {agindo === "cancelar_info" ? "Cancelando…" : "Cancelar solicitação de informações"}
                 </Button>
+              )}
+              {/* Prazo de 3 dias úteis (mig 20261114130000). */}
+              {chamado.status === "aguardando_retorno" && prazoRetornoTexto(chamado.aguardando_retorno_ate) && (
+                <p className="rounded bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
+                  Sem resposta até <b>{prazoRetornoTexto(chamado.aguardando_retorno_ate)}</b>, o chamado é concluído automaticamente por falta de retorno.
+                </p>
+              )}
+              {chamado.status === "concluido" && chamado.concluido_sem_retorno && (
+                <p className="rounded bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
+                  Concluído automaticamente por falta de retorno do solicitante.
+                </p>
               )}
               {/* Só o responsável pede; o Gestor de Sistemas aprova ou recusa
                   (chamado_transferencia_solicitar, mig 20261112190000). */}

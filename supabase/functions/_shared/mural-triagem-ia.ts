@@ -8,14 +8,39 @@
 // src/test/mural-triagem-ia.test.ts trava o formato.
 //
 // A IA só SUGERE: o comentário não recomendado fica pendente e desabilitado
-// na tela, e quem modera pode habilitar. Por isso, na dúvida, o prompt pede
-// para recomendar — o freio é para o que claramente não cabe num mural
-// público, não para elogio simples.
+// na tela, e quem modera pode habilitar.
+//
+// v2 (12/11/2026, Pablo: "a i.a não tá sugerindo nada de descente [...] dá
+// pra tirar bem mais comentários que podem ser um risco"). A v1 deixou passar,
+// nos meses de setembro e outubro, quase tudo o que a revisão humana tirou:
+// crítica a quem ocupava o cargo antes ("antes tinha muitas pendências",
+// "superior ao seu antecessor"), problema interno exposto ("não consigo
+// apresentar à minha líder", "agora que estamos precisando de ajuda"),
+// ressalva no meio do elogio ("às vezes fica bem bravo", "pouco tímida",
+// "ponto de desenvolvimento") e comentário sobre gênero. E travou o que a
+// revisão LIBEROU: bênção religiosa, carinho ("segunda mãe"), elogio leve à
+// aparência, "melhor líder". Por isso a v2:
+//   - inverte o desempate: na dúvida, NÃO recomenda (desabilitar custa um
+//     clique para habilitar; publicar o errado no Início não tem volta);
+//   - dá a régua com exemplos do que a revisão tirou e do que ela deixou;
+//   - exige o TRECHO exato que pesou, que vai junto do motivo na tela — quem
+//     modera vê na hora por que caiu, e a IA precisa apontar algo concreto;
+//   - lê em lotes menores (20), que é onde ela parava de prestar atenção.
+//
+// VERSAO_TRIAGEM vai gravada no início do `modelo`. Comentário pendente que
+// uma versão anterior RECOMENDOU é lido de novo pela atual (ver
+// precisaTriagem); o que já foi desabilitado, ou habilitado à mão, não é
+// tocado — a releitura só pode acrescentar sinalização, nunca desfazer uma
+// decisão de quem modera.
 
-/** Comentários por chamada à IA — cabe folgado no contexto e responde rápido. */
-export const TAMANHO_LOTE = 40;
-/** Motivo mostrado na tela: uma frase curta. */
+/** Gravada no começo de `modelo` ("v2|gemini:..."). Troque ao mudar a régua. */
+export const VERSAO_TRIAGEM = "v2";
+/** Comentários por chamada à IA — lote pequeno para ela ler cada um com atenção. */
+export const TAMANHO_LOTE = 20;
+/** Motivo mostrado na tela: frase curta + o trecho que pesou. */
 export const LIMITE_MOTIVO = 160;
+/** Trecho citado no motivo. */
+const LIMITE_TRECHO = 90;
 
 export interface ComentarioParaTriagem {
   colaborador: string;
@@ -30,21 +55,35 @@ export interface ResultadoTriagem {
   motivo: string | null;
 }
 
-export const SYSTEM_PROMPT_TRIAGEM = `Você revisa elogios entre colegas de trabalho antes de irem para um MURAL PÚBLICO de reconhecimento, que todos os funcionários da empresa leem (o nome de quem escreveu não aparece; o nome de quem recebeu, sim).
+export const SYSTEM_PROMPT_TRIAGEM = `Você revisa elogios entre colegas de trabalho antes de irem para um MURAL PÚBLICO de reconhecimento no sistema da empresa. Todos os funcionários leem — inclusive os líderes, a diretoria e as pessoas citadas ou insinuadas no texto. O nome de quem escreveu não aparece; o de quem recebeu, sim.
 
-Marque como NÃO recomendado ("publicar": false) o comentário que, mesmo elogiando, tenha algo disto:
-- comparação com o líder, chefe, gestor ou colegas ("mais competente que o líder", "deveria ser o líder do setor", "faz o trabalho que o chefe não faz", "o único que trabalha aqui");
-- crítica, reclamação ou indireta a outra pessoa, setor ou à empresa (inclusive disfarçada de elogio);
-- pedido ou sugestão de promoção, aumento, troca de cargo ou de liderança;
-- assunto pessoal ou sensível: saúde, família, religião, política, aparência física, vida amorosa, salário, dados pessoais;
-- tom de flerte, intimidade excessiva, ironia, deboche, palavrão;
-- informação interna/confidencial (cliente, contrato, valores, processo, denúncia).
+O risco não é o elogio: é a FRASE que, lida por outra pessoa da empresa, expõe, constrange ou acusa alguém. Leia o comentário inteiro, frase por frase — o problema costuma estar escondido no meio de um elogio longo, depois de um "mas", "mesmo", "às vezes", "antes", "agora que", "inclusive", "é uma pena".
 
-Elogio simples, genérico, curto ou com erro de português É recomendado ("publicar": true). Na dúvida, recomende.
+NÃO recomende ("publicar": false) se QUALQUER trecho tiver:
+1. Crítica, indireta ou comparação que diminui OUTRA pessoa, setor, liderança ou a empresa — mesmo sem nome, mesmo de leve:
+   "superior ao seu antecessor"; "antes tinha muitas pendências e não era seguido processo"; "alguns setores são liderados por pessoas sem capacidade"; "os líderes deveriam ser um pouco como ela"; "mais conhecimento do que muitos que estão há anos"; "sem procurar culpados"; "uma injustiça terem tirado ele do cargo"; "uma ajuda melhor do que a do SST".
+2. Problema interno exposto: conflito, dificuldade com o próprio líder, setor sobrecarregado ou desorganizado, decisão da empresa contestada:
+   "dificuldade que não consigo apresentar à minha líder"; "agora que estamos precisando de ajuda no setor"; "mesmo com toda a correria"; "comparando com quando ela liderava".
+3. Defeito, ressalva ou ponto de melhoria sobre a própria pessoa elogiada, mesmo em tom de brincadeira:
+   "às vezes fica bem bravo"; "pouco tímida só"; "como ponto de desenvolvimento, pode aprimorar..."; "traz problemas kkkk"; "muito chato mas parceiro"; "às vezes se apega a coisas supérfluas"; "passei a olhar para ele de outra forma desde que assumiu".
+4. Pedido ou sugestão de promoção, efetivação, aumento, cargo, liderança ou "mais oportunidades": "deveria estar como líder do setor"; "merece uma efetivação"; "deveria estar em um cargo mais alto".
+5. Gênero, idade, raça, corpo, saúde, salário, política ou vida amorosa usados como critério ou comentário: "independente se é homem ou mulher tem o respeito"; flerte ou duplo sentido.
+6. Informação interna sensível: valores, cliente, denúncia, processo judicial, demissão, punição.
+7. Texto quebrado ou ilegível que vai aparecer assim no mural ("TEM AÇ~~ÕES").
+
+PODE publicar ("publicar": true) — a revisão humana desta empresa libera isto:
+- elogio simples, curto, genérico, repetido ou com erro de português ("comprometido", "dedidaca", "SEMPRE DISPOSTO A AJUDAR");
+- carinho e proximidade sem duplo sentido ("segunda mãe", "te adoro", "minha best", "mora no meu coração");
+- bênção ou menção religiosa leve ("que Deus te abençoe", "sempre traz uma palavra de Deus");
+- elogio leve à aparência ou ao jeito ("linda, maravilhosa", "seu bigode é um querido");
+- elogio à liderança da própria pessoa ("ótima líder", "melhor líder", "um dos melhores líderes") — desde que não rebaixe outra pessoa;
+- contar que a pessoa assumiu cargo novo e está indo bem ("está se saindo muito bem na nova função").
+
+Na dúvida entre os dois, NÃO recomende: quem modera habilita com um clique, mas o que for ao mural não tem volta.
 
 Responda SOMENTE com JSON, sem texto fora dele, no formato:
-{"itens":[{"id":0,"publicar":true},{"id":1,"publicar":false,"motivo":"Compara com o líder do setor"}]}
-Um item por comentário recebido, com o mesmo id. "motivo" só quando "publicar" for false: uma frase curta em português (até 12 palavras), sem repetir o comentário.`;
+{"itens":[{"id":0,"publicar":true},{"id":1,"publicar":false,"motivo":"Critica quem ocupava o cargo antes","trecho":"superior ao seu antecessor"}]}
+Um item por comentário recebido, com o mesmo id. Quando "publicar" for false: "motivo" é uma frase curta em português (até 10 palavras) e "trecho" é a parte EXATA do comentário que pesou, copiada letra por letra (até 12 palavras).`;
 
 const limpar = (s: unknown, max: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
@@ -105,8 +144,55 @@ export function lerResultadoTriagem(bruto: string, tamanhoLote: number): Resulta
     const recomendado = lerBool(o.publicar ?? o.recomendado);
     if (recomendado == null) continue;
     vistos.add(indice);
-    const motivo = recomendado ? null : (limpar(o.motivo, LIMITE_MOTIVO) || "Pode não ser adequado para o mural público");
+    const motivo = recomendado ? null : motivoComTrecho(o.motivo, o.trecho);
     saida.push({ indice, recomendado, motivo });
   }
   return saida.sort((a, b) => a.indice - b.indice);
+}
+
+/**
+ * Motivo da tela: "Critica quem ocupava o cargo antes — “superior ao seu
+ * antecessor”". O trecho é cortado primeiro, para o motivo nunca sumir.
+ */
+export function motivoComTrecho(motivoBruto: unknown, trechoBruto: unknown): string {
+  const motivo = limpar(motivoBruto, LIMITE_MOTIVO) || "Pode não ser adequado para o mural público";
+  const trecho = limpar(trechoBruto, LIMITE_TRECHO).replace(/^["“”']+|["“”']+$/g, "");
+  if (!trecho) return motivo;
+  const cabe = LIMITE_MOTIVO - motivo.length - 5; // " — “" + "”"
+  if (cabe < 12) return motivo;
+  const t = trecho.length > cabe ? `${trecho.slice(0, cabe - 1).trimEnd()}…` : trecho;
+  return `${motivo} — “${t}”`;
+}
+
+/** `modelo` gravado: versão da régua + provedor ("v2|gemini:gemini-3.6-flash"). */
+export function modeloComVersao(modelo: string | null | undefined): string {
+  return `${VERSAO_TRIAGEM}|${modelo ?? "?"}`.slice(0, 80);
+}
+
+interface LinhaParaDecidir {
+  status: string;
+  triado: boolean;
+  recomendado: boolean | null;
+  habilitado?: boolean;
+  modelo?: string | null;
+}
+
+/**
+ * A IA precisa ler (ou reler) este comentário?
+ *   - só pendente (o que está no mural ou recusado já foi decidido);
+ *   - nunca lido → sim;
+ *   - lido por uma versão ANTERIOR da régua e recomendado → sim, para a régua
+ *     nova poder sinalizar o que a antiga deixou passar;
+ *   - já sinalizado (desabilitado ou habilitado à mão) → não: a releitura
+ *     não pode desfazer o que quem modera decidiu.
+ */
+export function precisaTriagem(l: LinhaParaDecidir): boolean {
+  if (l.status !== "pendente") return false;
+  if (!l.triado) return true;
+  if (l.recomendado === false || l.habilitado) return false;
+  // Banco sem a mig 20261114000100 não devolve `modelo` (undefined, não
+  // null): sem saber a versão, não relê — senão gastaria token relendo
+  // tudo a cada abertura do modal.
+  if (l.modelo === undefined) return false;
+  return !String(l.modelo ?? "").startsWith(`${VERSAO_TRIAGEM}|`);
 }

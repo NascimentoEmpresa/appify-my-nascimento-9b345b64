@@ -828,6 +828,11 @@ function ConfigColegas({ p, i, muda }: { p: Pergunta; i: number; muda: (i: numbe
         {check("excluir_proprio", "Não pode indicar a si mesmo", "O próprio respondente some da lista de colegas.", true)}
         {check("nota_obrigatoria", "Nota obrigatória em cada colega indicado", "Sem a nota, o envio é barrado.")}
         {check("comentario_obrigatorio", "Comentário obrigatório em cada colega indicado", "Por padrão o comentário é opcional.")}
+        {/* Incidente 12/11/2026 (mig 20261113110000): o mural lia TODAS as
+            perguntas "colegas" e a "Quem pode melhorar" com nota 5 foi parar
+            no Início. Agora só a pergunta marcada aqui vai para o mural. */}
+        {check("mural", "Vai para o Mural do Início",
+          "Marque SÓ na pergunta de ELOGIO, em que nota alta é coisa boa. Pergunta de \"quem pode melhorar\" nunca. Com duas ou mais perguntas de colegas no formulário, só a marcada entra no mural.")}
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

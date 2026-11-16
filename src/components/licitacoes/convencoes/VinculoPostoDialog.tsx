@@ -7,10 +7,10 @@ import { Switch } from "@/components/ui/switch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  useConvencoes, useRemoverVinculoPosto, useSalvarVinculoPosto, useVinculosPosto, vinculoDe, type Convencao,
+  useConvencaoDoContrato, useConvencoes, useRemoverVinculoPosto, useSalvarVinculoPosto, useVinculosPosto, vinculoDe, type Convencao,
 } from "@/hooks/useConvencoes";
 import {
-  BENEFICIOS_CCT, identificacaoCct, vigenciaTxt,
+  BENEFICIOS_CCT, identificacaoCct, urlEditarConvencao, vigenciaTxt,
   type ChaveBeneficio, type ReferenciaConvencao, type RespostaReferencia,
 } from "@/lib/licitacoes/convencoes";
 import { IconeBeneficio } from "./IconeBeneficio";
@@ -29,7 +29,7 @@ export const rotuloConvencao = (c: Pick<Convencao, "identificacao" | "vigencia_i
     ? [c.decreto_numero, c.municipio].filter(Boolean).join(" · ")
     : [c.contrato?.nome, identificacaoCct(c), c.decreto_numero, c.sindicato].filter(Boolean).join(" · ");
 
-const comoReferencia = (c: Convencao): ReferenciaConvencao => ({
+export const comoReferencia = (c: Convencao): ReferenciaConvencao => ({
   id: c.id, versao: c.versao, identificacao: c.identificacao, categoria_profissional: c.categoria_profissional,
   sindicato: c.sindicato, municipio: c.municipio, vigencia_inicio: c.vigencia_inicio, vigencia_fim: c.vigencia_fim,
   cct_arquivo_path: c.cct_arquivo_path, decreto_numero: c.decreto_numero, decreto_arquivo_path: c.decreto_arquivo_path,
@@ -46,6 +46,8 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
   const salvar = useSalvarVinculoPosto();
   const remover = useRemoverVinculoPosto();
   const atual = alvo ? vinculoDe(vinculos, alvo.contrato_id, alvo.posto) : null;
+  // Convenção do contrato (mig 20261113100500) vence o vínculo do posto.
+  const { data: doContrato } = useConvencaoDoContrato(alvo?.contrato_id ?? null);
 
   const [principal, setPrincipal] = useState("");
   const [varias, setVarias] = useState(false);
@@ -125,6 +127,14 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
           <DialogTitle>CCT / Decreto do posto</DialogTitle>
           <p className="text-sm text-muted-foreground">{alvo?.contrato} · <b className="text-foreground">{alvo?.posto}</b></p>
         </DialogHeader>
+
+        {doContrato && (
+          <p className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+            Este contrato tem Convenção Coletiva própria (cadastro do contrato, em Licitações › Contratos): ela vale para
+            <b> todos os postos</b> dele, e o vínculo deste posto não é usado enquanto ela estiver lá.{" "}
+            <Link to={urlEditarConvencao(doContrato.convencao_id)} className="font-semibold underline">Editar a convenção</Link>
+          </p>
+        )}
 
         {!alvo?.contrato_id ? (
           <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">

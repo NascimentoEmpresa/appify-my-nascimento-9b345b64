@@ -605,6 +605,23 @@ export function useReabrirNfCancelada() {
   });
 }
 
+// [SEM-CHAMADO] (Ruan): a analista exclui da Emissão uma NF cancelada pelo Financeiro. Vai para a lixeira (o Financeiro restaura) e só vale para NF
+// cancelada sem pagamento nem situação cancelada/substituída no site/Domínio — a função nf_emissao_excluir_cancelada confere tudo no servidor.
+export function useExcluirNfCancelada() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const cliente = supabase as unknown as { rpc: (nome: string, args: object) => Promise<{ error: { message: string } | null }> };
+      const { error } = await cliente.rpc("nf_emissao_excluir_cancelada", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] });
+      qc.invalidateQueries({ queryKey: ["nf_emissao_historico"] });
+    },
+  });
+}
+
 export interface NfEmissaoItemRow {
   id: string;
   nf_emissao_id: string;

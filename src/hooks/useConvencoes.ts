@@ -139,7 +139,7 @@ export function useExcluirConvencao() {
       const { error } = await sb.from("LIC_CONVENCAO_COLETIVA").delete().eq("id", c.id);
       if (error) {
         // FK RESTRICT do vínculo do posto (23503): diz onde está em uso.
-        if (error.code === "23503") throw new Error("Esta convenção está vinculada a posto(s) na Planilha de Custo. Troque o vínculo lá antes de excluir.");
+        if (error.code === "23503") throw new Error("Esta convenção está vinculada a contrato(s) ou a posto(s) na Planilha de Custo. Troque o vínculo lá antes de excluir.");
         throw error;
       }
       // As linhas de anexo saem pelo CASCADE; os arquivos, aqui (todos).
@@ -286,6 +286,45 @@ export function useSincronizarPostosConvencao() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["lic_posto_convencao"] });
       qc.invalidateQueries({ queryKey: ["lic_postos_do_contrato"] });
+      qc.invalidateQueries({ queryKey: ["lic_referencia_posto"] });
+    },
+  });
+}
+
+// ── Convenção do CONTRATO (mig 20261113100500) ─────────────────────────────
+// Vinculada no contrato, vale para TODOS os postos dele (vence o vínculo do
+// posto no resolvedor lic_referencia_do_posto_interno).
+
+export interface ConvencaoDoContrato { contrato_id: string; convencao_id: string; decreto_id: string | null; atualizado_em: string }
+
+export function useConvencaoDoContrato(contratoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["lic_contrato_convencao", contratoId ?? ""],
+    enabled: !!contratoId,
+    queryFn: async (): Promise<ConvencaoDoContrato | null> => {
+      const { data, error } = await sb.from("LIC_CONTRATO_CONVENCAO")
+        .select("contrato_id, convencao_id, decreto_id, atualizado_em").eq("contrato_id", contratoId!).maybeSingle();
+      // Banco ainda sem a tabela: o contrato aparece sem convenção, sem quebrar o modal.
+      if (error) return null;
+      return (data as ConvencaoDoContrato | null) ?? null;
+    },
+  });
+}
+
+/** Grava (ou tira, com convencao_id null) a convenção do contrato. */
+export function useSalvarConvencaoDoContrato() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ contratoId, convencaoId, decretoId }: { contratoId: string; convencaoId: string | null; decretoId: string | null }) => {
+      const { error } = convencaoId
+        ? await sb.from("LIC_CONTRATO_CONVENCAO").upsert(
+            { contrato_id: contratoId, convencao_id: convencaoId, decreto_id: decretoId || null },
+            { onConflict: "contrato_id" })
+        : await sb.from("LIC_CONTRATO_CONVENCAO").delete().eq("contrato_id", contratoId);
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["lic_contrato_convencao", v.contratoId] });
       qc.invalidateQueries({ queryKey: ["lic_referencia_posto"] });
     },
   });

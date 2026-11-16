@@ -74,13 +74,26 @@ export default function SolicitarTrocaFuncao() {
   // Já tem mudança de função em andamento para quem foi escolhido? O banco
   // responde (solicitacao_em_aberto) e o envio não passa.
   const [duplicada, setDuplicada] = useState<SolicitacaoEmAberto | null>(null);
+  // `rechecar` (12/11/2026, caso FERNANDA MIRA / #119): a Carla escolheu a
+  // colaboradora com a #119 ainda "Pendente Operacional"; o Operacional
+  // reprovou depois, mas a tela guardou a resposta velha e seguiu barrando.
+  // Enquanto o bloqueio estiver na tela, pergunta de novo quando a pessoa
+  // volta para a aba ou clica em "Conferir de novo" — sem temporizador.
+  const [rechecar, setRechecar] = useState(0);
   useEffect(() => {
     let vivo = true;
-    setDuplicada(null);
+    if (rechecar === 0) setDuplicada(null);
     if (!colaborador?.id) return;
     solicitacaoEmAberto(sb, "troca_funcao", colaborador.id).then((d) => { if (vivo) setDuplicada(d); });
     return () => { vivo = false; };
-  }, [colaborador?.id]);
+  }, [colaborador?.id, rechecar]);
+  useEffect(() => { setRechecar(0); }, [colaborador?.id]);
+  useEffect(() => {
+    if (!duplicada) return;
+    const voltou = () => { if (document.visibilityState === "visible") setRechecar((n) => n + 1); };
+    document.addEventListener("visibilitychange", voltou);
+    return () => document.removeEventListener("visibilitychange", voltou);
+  }, [duplicada]);
   const [cargoNovo, setCargoNovo] = useState("");
   // Três tipos (23/10/2026). Só horário (15/09/2026): a função fica a mesma
   // e o que muda é a carga horária/escala. Só posto: muda o posto de
@@ -250,6 +263,10 @@ export default function SolicitarTrocaFuncao() {
               <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                 <p className="font-semibold">🚫 Este colaborador já tem mudança de função em andamento.</p>
                 <p className="mt-0.5 text-destructive/90">{duplicada.mensagem}</p>
+                <button type="button" onClick={() => setRechecar((n) => n + 1)}
+                  className="mt-2 text-xs font-semibold underline underline-offset-2 hover:no-underline">
+                  Já foi reprovada ou concluída? Conferir de novo
+                </button>
               </div>
             )}
           </div>

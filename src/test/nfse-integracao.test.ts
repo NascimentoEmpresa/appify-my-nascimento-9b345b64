@@ -77,6 +77,78 @@ beforeAll(() => {
 afterAll(() => { unlinkSync(arquivo); rmdirSync(pasta); });
 
 describe("NFS-e: documento fiscal e certificado", () => {
+  it.each([
+    ["2026-11-13T14:45:00.396536+00:00", "2026-11-13T11:45:00-03:00"],
+    ["2026-11-13T14:45:00Z", "2026-11-13T11:45:00-03:00"],
+    ["2026-11-13T11:45:00-03:00", "2026-11-13T11:45:00-03:00"],
+    ["2026-11-13T02:15:00Z", "2026-11-12T23:15:00-03:00"],
+    ["2026-01-01T01:30:00Z", "2025-12-31T22:30:00-03:00"],
+  ])("emite dhEmi no fuso brasileiro preservando o instante de %s", async (entrada, esperado) => {
+    const s = solicitacao(); s.criado_em = entrada;
+    const antes = JSON.stringify(s);
+    const xml = documento.gerarDps(s);
+    const emitido = documento.valor(documento.lerXml(xml), "dhEmi");
+    expect(emitido).toBe(esperado);
+    expect(Date.parse(emitido)).toBe(Math.floor(Date.parse(entrada) / 1000) * 1000);
+    expect(xml).toContain("<dCompet>2026-10-01</dCompet>");
+    await documento.validarEsquema(xml);
+    expect(JSON.stringify(s)).toBe(antes);
+  });
+  it.each(["", "data-invalida", "2026-11-13T14:45:00"])("recusa data de emissão inválida ou sem fuso: %s", async entrada => {
+    const s = solicitacao(); s.criado_em = entrada;
+    const deps = dependencias();
+    await expect(executarSolicitacao(s, deps)).rejects.toThrow(/data e hora de emissão inválidas/i);
+    expect(deps.cliente.consultarDps).not.toHaveBeenCalled();
+    expect(deps.cliente.enviar).not.toHaveBeenCalled();
+  });
+  it("envia a data fiscal escolhida no dCompet sem alterar a competência mensal nem os valores", async () => {
+    const s = solicitacao();
+    Object.assign(s.dados.parametros, { data_competencia: "2026-10-31" });
+    const antes = JSON.stringify(s);
+    const xml = documento.assinarDps(documento.gerarDps(s), documento.identificadorDps(s), cert, "sha1");
+    expect(xml).toContain("<dCompet>2026-10-31</dCompet>");
+    expect(s.dados.nota.competencia).toBe("2026-10-01");
+    await documento.validarEsquema(xml);
+    const verificador = new SignedXml({ publicCert: cert.certPem, getCertFromKeyInfo: () => null });
+    verificador.loadSignature(documento.elementos(documento.lerXml(xml), "Signature")[0]);
+    expect(verificador.checkSignature(xml)).toBe(true);
+    expect(JSON.stringify(s)).toBe(antes);
+    const nota = retornoXml(s);
+    expect(documento.conferirNota(documento.descompactar(nota.xmlGZipB64).toString(), s, nota.chave).numero).toBe("900");
+    const divergente = documento.descompactar(nota.xmlGZipB64).toString().replace("<dCompet>2026-10-31</dCompet>", "<dCompet>2026-10-01</dCompet>");
+    expect(() => documento.conferirNota(divergente, s, nota.chave)).toThrow(/competência.*diverge/i);
+  });
+  it("preserva pedidos antigos sem data fiscal e recusa datas inexistentes antes de iniciar envio", async () => {
+    const antiga = solicitacao();
+    expect(documento.gerarDps(antiga)).toContain("<dCompet>2026-10-01</dCompet>");
+    for (const data of ["2026-02-29", "2026-02-30", "2026-13-01", "31/10/2026", ""]) {
+      const s = solicitacao(); Object.assign(s.dados.parametros, { data_competencia: data });
+      const deps = dependencias();
+      await expect(executarSolicitacao(s, deps)).rejects.toThrow(/competência.*inválida/i);
+      expect(deps.cliente.consultarDps).not.toHaveBeenCalled(); expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    }
+    const bissexto = solicitacao(); Object.assign(bissexto.dados.parametros, { data_competencia: "2024-02-29" });
+    await documento.validarEsquema(documento.gerarDps(bissexto));
+  });
+  it("omite marcador vazio no código municipal e preserva o código fiscal informado com três dígitos", async () => {
+    for (const codigo of ["", "   ", "-", " - ", "007"]) {
+      const s = solicitacao(); s.dados.parametros.codigo_municipal = codigo;
+      const antes = JSON.stringify(s);
+      const xml = documento.gerarDps(s);
+      if (codigo === "007") expect(xml).toContain("<cTribMun>007</cTribMun>");
+      else expect(xml).not.toContain("<cTribMun>");
+      await documento.validarEsquema(documento.assinarDps(xml, documento.identificadorDps(s), cert, "sha1"));
+      expect(JSON.stringify(s)).toBe(antes);
+    }
+  });
+  it("recusa código municipal inválido com orientação antes de consultar ou enviar à prefeitura", async () => {
+    for (const codigo of ["12", "1234", "8111700", "ABC"]) {
+      const s = solicitacao(); s.dados.parametros.codigo_municipal = codigo;
+      const deps = dependencias();
+      await expect(executarSolicitacao(s, deps)).rejects.toThrow(/código municipal.*três dígitos/i);
+      expect(deps.cliente.consultarDps).not.toHaveBeenCalled(); expect(deps.cliente.enviar).not.toHaveBeenCalled();
+    }
+  });
   it("preserva a assinatura da DPS nos namespaces herdados da NFSe municipal", async () => {
     const s = solicitacao();
     for (const algoritmo of ["sha1", "sha256"]) {

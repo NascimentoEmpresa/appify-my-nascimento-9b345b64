@@ -33,7 +33,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { QuadroBeneficiosDoPosto } from "@/components/licitacoes/convencoes/QuadroBeneficios";
-import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { useReferenciaDoPosto } from "@/hooks/useConvencoes";
+import { herancaDaConvencao, urlEditarConvencao } from "@/lib/licitacoes/convencoes";
+import { Link } from "react-router-dom";
+import { VinculoCatalogoVaga, type EnderecoPostoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
+import { avisoEnderecoPosto, proximoEndereco } from "@/lib/recrutamento/postosPlanilhaVaga";
 import { useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
@@ -98,7 +102,7 @@ function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
     <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
       {!prazo.ok
         ? <><AlertTriangle size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{prazo.erro}</>
-        : <><CheckCircle2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+        : <><CheckCircle2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{prazo.dias} dias</b> de antecedência ({prazo.diasUteis} úteis) → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
     </div>
   );
 }
@@ -362,6 +366,19 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // O que o catálogo oferece pro contrato da vaga (postos/funções) e o
   // colaborador escolhido nesta sessão (pro fallback do cadastro).
   const [catListas, setCatListas] = useState<ListasCatalogo>({ postos: [], funcoes: [] });
+  // Endereço do posto na Planilha de Custo (13/11/2026): preenche o
+  // "Endereço efetivo" sozinho; `enderecoAuto` guarda o que a tela pôs, pra
+  // nunca sobrescrever o que a pessoa digitou.
+  const [endPosto, setEndPosto] = useState<EnderecoPostoVaga | null>(null);
+  const enderecoAuto = useRef("");
+  const aplicarEnderecoPosto = (e: EnderecoPostoVaga) => {
+    setEndPosto(e);
+    setVaga(v => {
+      const r = proximoEndereco(v.endereco_trabalho, enderecoAuto.current, e.endereco);
+      enderecoAuto.current = r.auto;
+      return r.valor === v.endereco_trabalho ? v : { ...v, endereco_trabalho: r.valor };
+    });
+  };
   // Catálogo de setores do ERP (o mesmo do Acesso por Usuário e da troca de função).
   const [setoresCatalogo, setSetoresCatalogo] = useState<string[]>([]);
   useEffect(() => {
@@ -412,6 +429,20 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vagaManual, vaga.escala]);
+
+  // Benefícios pela CONVENÇÃO COLETIVA (13/11/2026, mig 20261113100500):
+  // posto escolhido → convenção do contrato (ou a do posto, na Planilha de
+  // Custo) → TODOS os benefícios. Com convenção, ela manda sobre o V.A/V.T da
+  // planilha e o campo fica só leitura — mudar é no cadastro da convenção.
+  // Mesma consulta (e mesmo cache) do quadro "Benefícios e adicionais da vaga".
+  const refConvencao = useReferenciaDoPosto(vaga.contrato_id || null, postoNomeEscolhido || null);
+  const herancaVaga = postoNomeEscolhido && vaga.contrato_id ? herancaDaConvencao(refConvencao.data) : null;
+  const convencaoDaVagaId = herancaVaga ? refConvencao.data?.principal_id ?? null : null;
+  useEffect(() => {
+    if (!herancaVaga || custoBuscando) return;
+    if (vaga.beneficios !== herancaVaga.beneficios) setVaga(v => ({ ...v, beneficios: herancaVaga.beneficios }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [herancaVaga?.beneficios, custoBuscando, vaga.beneficios]);
 
   const selecionarEmpregado = (emp: EmpregadoRef, motivo: string = vaga.motivo_vaga, contratos: Record<string, unknown>[] = contratosFull) => {
     const jaTem = ehSubstituicao(motivo) ? presos.get(Number(emp.ID)) : undefined;
@@ -1168,6 +1199,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             valor={{ contrato_id: vaga.contrato_id, posto_id: vaga.posto_id, funcao_id: vaga.funcao_id }}
             onChange={v => setVaga(x => ({ ...x, ...v }))}
             onListas={setCatListas}
+            onEnderecoPosto={aplicarEnderecoPosto}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
           {/* #0849 (11/11/2026): Contrato → Cargo → Posto → ENDEREÇO EFETIVO →
@@ -1178,6 +1210,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             <input className="nvg-fi" value={vaga.endereco_trabalho} maxLength={300}
               placeholder={ENDERECO_TRABALHO_AJUDA}
               onChange={e => setVaga(v => ({ ...v, endereco_trabalho: e.target.value }))} />
+            {avisoEnderecoPosto(endPosto, vaga.endereco_trabalho) && (
+              <div style={{ marginTop: 4, fontSize: 12, color: endPosto?.endereco ? "#64748b" : "#92400e" }}>
+                {avisoEnderecoPosto(endPosto, vaga.endereco_trabalho)}
+              </div>
+            )}
           </div>
           {/* Benefícios e adicionais da vaga (27/10/2026, Convenções Coletivas):
               contrato + posto → CCT/decreto vinculado na Planilha de Custo. */}
@@ -1330,6 +1367,17 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               puxados quando o posto do catálogo é escolhido, mas o campo
               deixou de ser só leitura (16/09/2026) — a planilha nem sempre
               batia com o posto real e a vaga abria com benefício errado. */}
+          {herancaVaga ? (
+            <div className="nvg-fg">
+              <label>Benefícios <span style={{ color: "#64748b", fontWeight: 600 }}>— da Convenção Coletiva do posto</span></label>
+              <textarea className="nvg-fi" rows={3} readOnly value={vaga.beneficios || "A convenção não tem benefício preenchido."}
+                style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              <div style={{ marginTop: 6, fontSize: 13, color: "#1e3a8a", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "6px 9px" }}>
+                Os benefícios deste posto vêm da Convenção Coletiva e não são editados na vaga. Para mudar algum valor, atualize o cadastro da convenção
+                {convencaoDaVagaId && <> — <Link to={urlEditarConvencao(convencaoDaVagaId)} target="_blank" style={{ fontWeight: 700, textDecoration: "underline" }}>editar convenção</Link></>}.
+              </div>
+            </div>
+          ) : (
           <div className="nvg-fg">
             <label>Benefícios{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — VT e VA da Planilha de Custo; corrija se não bater</span>}</label>
             <textarea className="nvg-fi" rows={2}
@@ -1337,6 +1385,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               value={vaga.beneficios} onChange={e => setVaga(v => ({ ...v, beneficios: e.target.value }))} />
             {!vagaManual && custoNota && <div style={{ marginTop: 4, fontSize: 14, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#64748b" : "#92400e" }}>{custoNota}</div>}
           </div>
+          )}
           {/* Local exato voltou (16/09/2026), obrigatório e sempre manual: o
               posto do catálogo identifica o contrato, não a unidade/endereço
               onde a pessoa vai trabalhar. Sem isso o Recrutamento não sabia

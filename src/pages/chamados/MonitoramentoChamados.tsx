@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,17 +14,18 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  AlertCircle, BarChart3, CalendarDays, CheckCircle2, Download, Eye, FileText, Info, Loader2, MessageSquare, Pencil,
-  RotateCcw, Search, Star, Users, XCircle,
+  AlertCircle, BarChart3, CalendarDays, CheckCircle2, Download, Eye, FileText, Info, Loader2, MessageSquare,
+  RotateCcw, Search, Sparkles, Star, Trophy, Users,
 } from "lucide-react";
 import {
   PRIORIDADES, STATUS_CHAMADO, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
 } from "./types";
+import { atinge, listaImpactados, rotuloModuloImpactado } from "./impactados";
 import {
-  ADERENCIA_LABEL, CAMPO_AJUSTE_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
-  analiseQualidade, avaliarChamado, calcularKpis, leituraControladoria, rankingSolicitantes, resumoTemas,
+  ADERENCIA_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
+  analiseQualidade, avaliarChamado, calcularKpis, entraNoMonitoramento, leituraControladoria, rankingSolicitantes, resumoTemas,
   temaCor, temaLabel,
-  type AjusteMonitor, type CampoAjuste, type ChamadoMonitor, type LinhaMonitor,
+  type ChamadoMonitor, type LinhaMonitor, type RankingSolicitante,
 } from "@/lib/chamados/monitoramento";
 import { cn } from "@/lib/utils";
 
@@ -48,16 +46,22 @@ import { cn } from "@/lib/utils";
 // histórico, critérios), Ranking e Análise de qualidade lado a lado. Na tela
 // o índice se chama "inteligência", como no mockup; as regras não mudaram.
 //
-// Ajuste manual (ação "alterar" do menu): grava em
-// CHAMADO_SISTEMA_MONITOR_AJUSTE com justificativa; o histórico aparece no
-// detalhe do chamado.
+// 15/11/2026 (SIS-2026-0904):
+//   · CANCELADO FORA: chamado cancelado sai da tela inteira — lista, opções
+//     dos filtros, totais, índice médio, temas, ranking e leitura. Ele segue
+//     normal nos Chamados de Sistemas; só não é avaliado aqui, porque não teve
+//     entrega (entraNoMonitoramento, na lib). Antes ficava na lista, apagado,
+//     e aparecia como "+ N cancelada(s) à parte" no total.
+//   · SEM AJUSTE MANUAL: saiu o bloco "Ajuste manual (fica no histórico)" do
+//     detalhe — tema, índice, complexidade, aderência e efetividade são só os
+//     automáticos (I.A ou regra). CHAMADO_SISTEMA_MONITOR_AJUSTE e a RPC
+//     chamado_monitoramento_ajustar ficam no banco como histórico, sem uso.
 // =====================================================================
 
 // As três RPCs da mig 20261022000180 não estão no types.ts gerado.
 const rpc = (fn: string, args: Record<string, unknown>) =>
   (supabase as unknown as { rpc: (f: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args);
 
-const MENU = "central_servicos_chamados_monitoramento";
 const TODOS = "__todos__";
 const POR_PAGINA = 25;
 
@@ -80,20 +84,24 @@ const CORES_AVATAR = [
   "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-orange-100 text-orange-700",
   "bg-violet-100 text-violet-700", "bg-rose-100 text-rose-700", "bg-cyan-100 text-cyan-700", "bg-amber-100 text-amber-700",
 ];
-const corAvatar = (chave: string) => CORES_AVATAR[[...chave].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
+// 13/11/2026: chamado sem solicitante_id (aberto por quem saiu, ou importado)
+// derrubava a tela inteira no "Ver o ranking completo" — `[...null]` quebra.
+const corAvatar = (chave: string | null | undefined) =>
+  CORES_AVATAR[[...String(chave ?? "")].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
 
 interface Filtros {
   de: string; ate: string; solic: string; setor: string; modulo: string; tema: string; prioridade: string; status: string;
+  /** Setores/módulos IMPACTADOS informados na abertura (mig 20261115001000). */
+  setorImpactado: string; moduloImpactado: string;
 }
 const filtrosIniciais = (): Filtros => ({
   de: inicioAnoISO(), ate: hojeISO(), solic: TODOS, setor: TODOS, modulo: TODOS, tema: TODOS, prioridade: TODOS, status: TODOS,
+  setorImpactado: TODOS, moduloImpactado: TODOS,
 });
 
 type Foco = "resumo" | "historico" | "criterios";
 
 export default function MonitoramentoChamados() {
-  const { data: podeAlterar = false } = useScreenAccess(MENU, "alterar");
-
   // Rascunho (o que está nos campos) × aplicado (o que a tela mostra): os
   // filtros valem no "Pesquisar", como no mockup. O tema clicado no resumo
   // aplica na hora.
@@ -107,7 +115,6 @@ export default function MonitoramentoChamados() {
   const [pagina, setPagina] = useState(1);
   const [detalhe, setDetalhe] = useState<{ id: string; foco: Foco } | null>(null);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  const [rankingCompleto, setRankingCompleto] = useState(false);
 
   const periodoOk = !!f.de && !!f.ate && f.de <= f.ate;
   const { data: chamados = [], isLoading, error } = useQuery({
@@ -117,7 +124,7 @@ export default function MonitoramentoChamados() {
     queryFn: async () => {
       const { data, error } = await rpc("chamados_monitoramento", { p_de: f.de, p_ate: f.ate });
       if (error) throw error;
-      return (data ?? []) as ChamadoMonitor[];
+      return ((data ?? []) as ChamadoMonitor[]).filter(entraNoMonitoramento);
     },
   });
 
@@ -131,13 +138,20 @@ export default function MonitoramentoChamados() {
     const solic = new Map<string, string>();
     const setores = new Set<string>();
     const modulos = new Map<string, string>();
+    const setoresImp = new Set<string>();
+    const modulosImp = new Set<string>();
     for (const { c } of todas) {
       solic.set(c.solicitante_id, c.solicitante_nome ?? "—");
       if (c.setor?.trim()) setores.add(c.setor.trim());
       const mk = c.modulo_sistema ?? "";
       if (mk) modulos.set(mk, moduloLabel(c));
+      (c.setores_impactados ?? []).forEach((s) => setoresImp.add(s));
+      (c.modulos_impactados ?? []).forEach((m) => modulosImp.add(m));
     }
     return {
+      setoresImpactados: [...setoresImp].sort((a, b) => a.localeCompare(b, "pt-BR")).map((s) => ({ value: s, label: s })),
+      modulosImpactados: [...modulosImp].map((m) => ({ value: m, label: rotuloModuloImpactado(m) }))
+        .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       solicitantes: [...solic.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       setores: [...setores].sort((a, b) => a.localeCompare(b, "pt-BR")),
       modulos: [...modulos.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
@@ -148,6 +162,8 @@ export default function MonitoramentoChamados() {
     (f.solic === TODOS || c.solicitante_id === f.solic)
     && (f.setor === TODOS || (c.setor?.trim() ?? "") === f.setor)
     && (f.modulo === TODOS || c.modulo_sistema === f.modulo)
+    && atinge(c.setores_impactados, f.setorImpactado, TODOS)
+    && atinge(c.modulos_impactados, f.moduloImpactado, TODOS)
     && (f.tema === TODOS || a.tema === f.tema)
     && (f.prioridade === TODOS || c.prioridade === f.prioridade)
     && (f.status === TODOS || c.status === f.status),
@@ -172,10 +188,12 @@ export default function MonitoramentoChamados() {
 
   const exportarSelecionados = () => {
     const linhas = filtradas.filter(({ c }) => selecionados.has(c.id));
-    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo / Sistema", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
+    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo / Sistema", "Setores impactados", "Módulos impactados", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const corpo = linhas.map(({ c, a }) => [
-      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c), PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
+      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c),
+      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloModuloImpactado),
+      PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
       a.efetividade ?? "", fmt1(a.indice), STATUS_CHAMADO[c.status]?.label ?? c.status, fmt1(a.prazoDias),
       fmtData(c.created_at), c.status === "concluido" ? fmtData(c.concluido_em) : "",
     ].map(esc).join(";"));
@@ -246,7 +264,7 @@ export default function MonitoramentoChamados() {
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <Indicador icone={Users} cor="bg-info/10 text-info" valor={kpis.solicitantes} rotulo="Solicitantes avaliados" dica="Total de solicitantes no período" />
         <Indicador icone={FileText} cor="bg-info/10 text-info" valor={kpis.total} rotulo="Total de solicitações"
-          dica={kpis.canceladas ? `Período selecionado · + ${kpis.canceladas} cancelada(s) à parte` : "Período selecionado"} />
+          dica="Período selecionado · sem os cancelados" />
         <Indicador icone={CheckCircle2} cor="bg-success/10 text-success" valor={kpis.concluidas} rotulo="Concluídas" dica={`${pct(kpis.concluidas)}% do total`} />
         <Indicador icone={RotateCcw} cor="bg-warning/10 text-warning" valor={kpis.emAndamento} rotulo="Em andamento" dica={`${pct(kpis.emAndamento)}% do total`} />
         <Indicador icone={AlertCircle} cor="bg-destructive/10 text-destructive" valor={kpis.pendentes} rotulo="Pendentes" dica={`${pct(kpis.pendentes)}% do total`} />
@@ -290,12 +308,17 @@ export default function MonitoramentoChamados() {
         <FiltroSelect label="Setor" value={rascunho.setor} onChange={(v) => muda({ setor: v })} todos="Todos os setores"
           opcoes={opcoes.setores.map((s) => ({ value: s, label: s }))} />
         <FiltroSelect label="Módulo / Sistema" value={rascunho.modulo} onChange={(v) => muda({ modulo: v })} todos="Todos os módulos" opcoes={opcoes.modulos} />
+        <FiltroSelect label="Setor impactado" value={rascunho.setorImpactado} onChange={(v) => muda({ setorImpactado: v })} todos="Todos"
+          opcoes={opcoes.setoresImpactados} />
+        <FiltroSelect label="Módulo impactado" value={rascunho.moduloImpactado} onChange={(v) => muda({ moduloImpactado: v })} todos="Todos"
+          opcoes={opcoes.modulosImpactados} />
         <FiltroSelect label="Resumo do Tema da Solicitação" value={rascunho.tema} onChange={(v) => muda({ tema: v })} todos="Todos os temas"
           opcoes={TEMAS.map((t) => ({ value: t.value, label: t.label }))} />
         <FiltroSelect label="Prioridade" value={rascunho.prioridade} onChange={(v) => muda({ prioridade: v })} todos="Todas"
           opcoes={Object.entries(PRIORIDADES).map(([value, p]) => ({ value, label: p.label }))} />
         <FiltroSelect label="Status" value={rascunho.status} onChange={(v) => muda({ status: v })} todos="Todos"
-          opcoes={Object.entries(STATUS_CHAMADO).map(([value, s]) => ({ value, label: s.label }))} />
+          opcoes={Object.entries(STATUS_CHAMADO)
+            .filter(([value]) => value !== "cancelado").map(([value, s]) => ({ value, label: s.label }))} />
         <Button variant="outline" className="h-10 gap-1.5 bg-background" onClick={limpar}><RotateCcw className="h-4 w-4" /> Limpar filtros</Button>
         <Button className="h-10 gap-1.5 px-6" onClick={pesquisar} disabled={!rascunho.de || !rascunho.ate || rascunho.de > rascunho.ate}>
           <Search className="h-4 w-4" /> Pesquisar
@@ -354,7 +377,7 @@ export default function MonitoramentoChamados() {
                 </thead>
                 <tbody>
                   {visiveis.map(({ c, a }) => (
-                    <tr key={c.id} className={cn("border-b last:border-0 hover:bg-muted/40", a.cancelado && "opacity-70")}>
+                    <tr key={c.id} className="border-b last:border-0 hover:bg-muted/40">
                       <td className="py-2 pl-1">
                         <Checkbox
                           checked={selecionados.has(c.id)}
@@ -377,12 +400,21 @@ export default function MonitoramentoChamados() {
                         <span
                           className="line-clamp-2 block max-w-[160px] rounded-md px-2 py-1 text-[11px] font-semibold leading-tight"
                           style={{ color: temaCor(a.tema), background: `${temaCor(a.tema)}1f` }}
-                          title={`${temaLabel(a.tema)}${a.ajustado.includes("tema") ? " (ajustado manualmente)" : ""}`}
+                          title={temaLabel(a.tema)}
                         >
-                          {temaLabel(a.tema)}{a.ajustado.includes("tema") && " *"}
+                          {temaLabel(a.tema)}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap py-2 pr-2">{moduloLabel(c)}</td>
+                      <td className="py-2 pr-2">
+                        <span className="whitespace-nowrap">{moduloLabel(c)}</span>
+                        {/* Alcance informado na abertura (mig 20261115001000). */}
+                        {(c.setores_impactados?.length || c.modulos_impactados?.length) ? (
+                          <span className="mt-0.5 block max-w-[170px] truncate text-[10px] text-muted-foreground"
+                            title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}`}>
+                            Impacta: {[...(c.setores_impactados ?? []), ...(c.modulos_impactados ?? []).map(rotuloModuloImpactado)].join(", ")}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="py-2 pr-2"><PrioridadeBadge prioridade={c.prioridade} /></td>
                       <td className="py-2 pr-2">
                         {a.efetividade == null ? (
@@ -400,19 +432,18 @@ export default function MonitoramentoChamados() {
                         <span className="flex items-center gap-1.5 whitespace-nowrap" title={a.preliminar ? "Avaliação preliminar — chamado ainda não concluído" : "Avaliação final"}>
                           <span className={cn("h-2 w-2 rounded-full", bgIndice(a.indice))} />
                           <b>{fmt1(a.indice)}</b>
-                          {a.ajustado.includes("indice") && " *"}
                         </span>
                       </td>
                       <td className="whitespace-nowrap py-2 pr-2 [&>*]:whitespace-nowrap"><StatusBadge status={c.status} /></td>
                       <td className="py-2 pr-2">{a.prazoDias == null ? "-" : a.prazoDias.toFixed(1)}</td>
                       <td className="whitespace-nowrap py-2 pr-2">{fmtData(c.created_at)}</td>
-                      <td className="whitespace-nowrap py-2 pr-2">{c.status === "concluido" || c.status === "cancelado" ? fmtData(c.concluido_em) : "-"}</td>
+                      <td className="whitespace-nowrap py-2 pr-2">{c.status === "concluido" ? fmtData(c.concluido_em) : "-"}</td>
                       <td className="py-2 pr-1">
                         <div className="flex items-center justify-center gap-0.5">
                           <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver o chamado" onClick={() => setDetalhe({ id: c.id, foco: "resumo" })}>
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Histórico do chamado e dos ajustes" onClick={() => setDetalhe({ id: c.id, foco: "historico" })}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Histórico do chamado" onClick={() => setDetalhe({ id: c.id, foco: "historico" })}>
                             <MessageSquare className="h-4 w-4" />
                           </Button>
                           <Button variant="ghost" size="icon" className="h-7 w-7" title="Critérios da avaliação" onClick={() => setDetalhe({ id: c.id, foco: "criterios" })}>
@@ -427,7 +458,7 @@ export default function MonitoramentoChamados() {
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
               <span>
-                * ajustado manualmente · não concluído = avaliação preliminar · cancelados à parte, sem pesar no solicitante
+                não concluído = avaliação preliminar · cancelados não entram no monitoramento
                 {kpis.efetividadeMedia != null && <> · efetividade média das entregas: <b className="text-foreground">{kpis.efetividadeMedia}%</b></>}
               </span>
               {totalPaginas > 1 && (
@@ -442,51 +473,23 @@ export default function MonitoramentoChamados() {
         )}
       </Card>
 
-      {/* ── Ranking | Análise de qualidade ── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <Card className="p-4">
-          <p className="mb-2 text-sm font-bold">Ranking dos solicitantes</p>
-          {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
-            <>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
-                    <th className="w-10 py-1.5">#</th>
-                    <th className="py-1.5">Solicitante</th>
-                    <th className="py-1.5 text-center">Total de chamados</th>
-                    <th className="py-1.5 text-center">Média de inteligência</th>
-                    <th className="py-1.5 text-center">Efetividade média</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(rankingCompleto ? ranking : ranking.slice(0, 5)).map((r, i) => (
-                    <tr key={r.solicitante_id} className="cursor-pointer hover:bg-muted/40" title="Filtrar por este solicitante"
-                      onClick={() => { setRascunho((x) => ({ ...x, solic: r.solicitante_id })); setF((x) => ({ ...x, solic: r.solicitante_id })); setPagina(1); }}>
-                      <td className="py-1.5">
-                        <span className={cn("inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
-                          i === 0 ? "bg-amber-400 text-white" : i === 1 ? "bg-slate-400 text-white" : i === 2 ? "bg-orange-500 text-white" : "")}>
-                          {i + 1}
-                        </span>
-                      </td>
-                      <td className="py-1.5 font-medium">{r.nome}</td>
-                      <td className="py-1.5 text-center">{r.total}</td>
-                      <td className="py-1.5 text-center">
-                        <span className={cn("inline-block min-w-[44px] rounded border px-2 py-0.5 font-semibold", pilulaIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</span>
-                      </td>
-                      <td className="py-1.5 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {ranking.length > 5 && (
-                <button type="button" className="mt-2 text-xs font-medium text-primary hover:underline" onClick={() => setRankingCompleto((v) => !v)}>
-                  {rankingCompleto ? "Mostrar só os 5 primeiros" : `Ver o ranking completo (${ranking.length})`}
-                </button>
-              )}
-            </>
-          )}
-        </Card>
+      {/* ── Ranking (largura inteira) ── */}
+      <RankingCard
+        ranking={ranking}
+        mediaGeral={kpis.indiceMedio}
+        // 13/11/2026, Pablo: "ao clicar no nome de alguém pra ver o ranking
+        // também não dá pra voltar". Clicar de novo na mesma pessoa, ou no
+        // "Voltar ao ranking de todos", desfaz só o filtro de solicitante.
+        filtradoPor={f.solic !== TODOS ? f.solic : null}
+        onFiltrar={(id) => {
+          const solic = f.solic === id ? TODOS : id;
+          setRascunho((x) => ({ ...x, solic })); setF((x) => ({ ...x, solic })); setPagina(1);
+        }}
+        onVoltar={() => { setRascunho((x) => ({ ...x, solic: TODOS })); setF((x) => ({ ...x, solic: TODOS })); setPagina(1); }}
+      />
 
+      {/* ── Análise de qualidade ── */}
+      <div className="grid gap-4">
         <Card className="p-4">
           <p className="mb-3 text-sm font-bold">Análise de qualidade das solicitações</p>
           <div className="space-y-2.5">
@@ -505,7 +508,7 @@ export default function MonitoramentoChamados() {
       </div>
 
       {linhaDetalhe && detalhe && (
-        <DetalheDialog linha={linhaDetalhe} foco={detalhe.foco} podeAlterar={podeAlterar} onClose={() => setDetalhe(null)} />
+        <DetalheDialog linha={linhaDetalhe} foco={detalhe.foco} onClose={() => setDetalhe(null)} />
       )}
     </div>
   );
@@ -544,6 +547,168 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
   );
 }
 
+// =====================================================================
+// RANKING DOS SOLICITANTES (13/11/2026, Pablo: "o ranking tá bem fraco o
+// layout, ajusta ele e deixa melhor, mais completo"). Pódio com os 3
+// primeiros e tabela com tudo o que explica a posição: nota do ranking
+// (média ajustada pelo volume — rankingSolicitantes na lib), média simples,
+// melhor chamado, % bem especificados, tema mais pedido, efetividade e
+// quantos já têm a nota da I.A. Clicar numa pessoa filtra a tela por ela.
+// =====================================================================
+const MEDALHA = ["bg-amber-400 text-white", "bg-slate-400 text-white", "bg-orange-500 text-white"];
+const MOLDURA_PODIO = ["border-amber-300 bg-amber-50/60 dark:bg-amber-500/10", "border-slate-300 bg-slate-50/60 dark:bg-slate-500/10", "border-orange-300 bg-orange-50/60 dark:bg-orange-500/10"];
+
+function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: {
+  ranking: RankingSolicitante[]; mediaGeral: number | null; onFiltrar: (solicitanteId: string) => void;
+  filtradoPor: string | null; onVoltar: () => void;
+}) {
+  const [busca, setBusca] = useState("");
+  const [todos, setTodos] = useState(false);
+  const posicao = useMemo(() => new Map(ranking.map((r, i) => [r.solicitante_id, i + 1])), [ranking]);
+  const q = normalizarBusca(busca);
+  const filtrado = q ? ranking.filter((r) => normalizarBusca(`${r.nome} ${r.setor ?? ""}`).includes(q)) : ranking;
+  const lista = q || todos ? filtrado : filtrado.slice(0, 10);
+  const podio = ranking.slice(0, 3);
+  const totalIa = ranking.reduce((s, r) => s + r.avaliadosIa, 0);
+  const totalCh = ranking.reduce((s, r) => s + r.total, 0);
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-amber-500" /> Ranking dos solicitantes</p>
+          <p className="mt-0.5 max-w-3xl text-[11px] text-muted-foreground">
+            Ordem pela <b>nota do ranking</b>: a média de inteligência dos chamados de cada pessoa, ajustada pelo volume —
+            quem abriu poucos chamados tem a nota puxada para a média geral{mediaGeral != null && <> ({fmt1(mediaGeral)})</>},
+            então não passa à frente de quem mantém a qualidade em muitos pedidos.
+            {totalCh > 0 && totalIa < totalCh && <> A I.A já avaliou {totalIa} de {totalCh} chamados; o restante ainda usa a regra automática.</>}
+          </p>
+        </div>
+        <div className="relative w-full sm:w-64">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar solicitante ou setor" className="h-8 pl-8 text-xs" />
+        </div>
+      </div>
+
+      {filtradoPor && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+          <span>
+            A tela está mostrando só os chamados de <b>{ranking.find((r) => r.solicitante_id === filtradoPor)?.nome ?? "um solicitante"}</b>.
+          </span>
+          <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onVoltar}>
+            <RotateCcw className="h-3.5 w-3.5" /> Voltar ao ranking de todos
+          </Button>
+        </div>
+      )}
+
+      {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
+        <>
+          {!q && (
+            <div className="mb-4 grid gap-3 md:grid-cols-3">
+              {podio.map((r, i) => (
+                <button key={r.solicitante_id} type="button" onClick={() => onFiltrar(r.solicitante_id)} title="Filtrar por este solicitante"
+                  className={cn("flex items-center gap-3 rounded-lg border p-3 text-left transition hover:shadow-sm", MOLDURA_PODIO[i])}>
+                  <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold", MEDALHA[i])}>{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{r.nome}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{r.setor || "sem setor"}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {r.total} chamado(s) · média {fmt1(r.indiceMedio)} · {r.pctBons}% bem especificados
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("text-2xl font-bold leading-none", corIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</p>
+                    <p className="text-[10px] text-muted-foreground">nota do ranking</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-xs">
+              <thead>
+                <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
+                  <th className="w-10 py-2">#</th>
+                  <th className="py-2">Solicitante</th>
+                  <th className="py-2 text-center">Chamados</th>
+                  <th className="py-2" title="Média ajustada pelo volume — é o que ordena">Nota do ranking</th>
+                  <th className="py-2 text-center" title="Média simples dos chamados">Média</th>
+                  <th className="py-2 text-center">Melhor chamado</th>
+                  <th className="py-2" title="Chamados com índice 8 ou mais">Bem especificados</th>
+                  <th className="py-2">Tema mais pedido</th>
+                  <th className="py-2 text-center">Efetividade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((r) => {
+                  const pos = posicao.get(r.solicitante_id) ?? 0;
+                  return (
+                    <tr key={r.solicitante_id} className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-muted/40" title="Filtrar por este solicitante"
+                      onClick={() => onFiltrar(r.solicitante_id)}>
+                      <td className="py-2">
+                        <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold", pos <= 3 ? MEDALHA[pos - 1] : "bg-muted text-muted-foreground")}>{pos}</span>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold", corAvatar(r.solicitante_id))}>{iniciais(r.nome)}</span>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{r.nome}</p>
+                            <p className="truncate text-[10px] text-muted-foreground">{r.setor || "sem setor"}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 text-center">
+                        <p className="font-semibold">{r.total}</p>
+                        <p className="text-[10px] text-muted-foreground">{r.concluidos} concl. · {r.emAndamento} andam.</p>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={cn("inline-block min-w-[44px] rounded border px-2 py-0.5 text-center font-semibold", pilulaIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</span>
+                          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                            <span className={cn("block h-full rounded-full", bgIndice(r.notaRanking))} style={{ width: `${Math.min(100, r.notaRanking * 10)}%` }} />
+                          </span>
+                        </div>
+                      </td>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</td>
+                      <td className={cn("py-2 text-center", corIndice(r.melhorIndice))}>{fmt1(r.melhorIndice)}</td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                            <span className="block h-full rounded-full bg-success" style={{ width: `${r.pctBons}%` }} />
+                          </span>
+                          <span className="w-9 text-right font-medium">{r.pctBons}%</span>
+                        </div>
+                      </td>
+                      <td className="py-2">
+                        {r.temaPrincipal ? (
+                          <span className="inline-block max-w-[180px] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                            style={{ color: temaCor(r.temaPrincipal), backgroundColor: `${temaCor(r.temaPrincipal)}1a` }}>{temaLabel(r.temaPrincipal)}</span>
+                        ) : "—"}
+                      </td>
+                      <td className="py-2 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
+                    </tr>
+                  );
+                })}
+                {lista.length === 0 && (
+                  <tr><td colSpan={9} className="py-4 text-center text-muted-foreground">Ninguém encontrado com "{busca}".</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {!q && ranking.length > 10 && (
+            <button type="button" className="mt-2 text-xs font-medium text-primary hover:underline" onClick={() => setTodos((v) => !v)}>
+              {todos ? "Mostrar só os 10 primeiros" : `Ver o ranking completo (${ranking.length})`}
+            </button>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+const normalizarBusca = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
 function BarraQualidade({ label, pct, cor }: { label: string; pct: number; cor: string }) {
   return (
     <div className="grid grid-cols-[minmax(0,1.3fr)_2.75rem_minmax(0,1fr)] items-center gap-3 text-xs">
@@ -554,34 +719,13 @@ function BarraQualidade({ label, pct, cor }: { label: string; pct: number; cor: 
   );
 }
 
-// ---- Detalhe: critérios, conversa e histórico de ajustes -----------------
+// ---- Detalhe: critérios e conversa ----------------------------------------
 interface DetalheRpc {
   eventos: Array<{ id: string; tipo: string; texto: string | null; autor: string | null; created_at: string }>;
   anexos: Array<{ nome: string; campo: string; created_at: string }>;
-  ajustes: AjusteMonitor[];
 }
 
-function valorExibido(campo: CampoAjuste, l: LinhaMonitor): string {
-  const { a } = l;
-  switch (campo) {
-    case "tema": return a.tema;
-    case "complexidade": return a.complexidade;
-    case "aderencia": return a.aderencia;
-    case "efetividade": return a.efetividade == null ? "" : String(a.efetividade);
-    case "indice": return String(a.indice);
-  }
-}
-
-function rotuloValor(campo: string, v: string | null): string {
-  if (v == null || v === "") return "automático";
-  if (campo === "tema") return temaLabel(v);
-  if (campo === "complexidade") return COMPLEXIDADE_LABEL[v as keyof typeof COMPLEXIDADE_LABEL] ?? v;
-  if (campo === "aderencia") return ADERENCIA_LABEL[v as keyof typeof ADERENCIA_LABEL] ?? v;
-  if (campo === "efetividade") return `${v}%`;
-  return v.replace(".", ",");
-}
-
-function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMonitor; foco: Foco; podeAlterar: boolean; onClose: () => void }) {
+function DetalheDialog({ linha, foco, onClose }: { linha: LinhaMonitor; foco: Foco; onClose: () => void }) {
   // As três ações da linha abrem o mesmo detalhe, cada uma na sua seção.
   useEffect(() => {
     if (foco === "resumo") return;
@@ -589,8 +733,6 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
     return () => clearTimeout(t);
   }, [foco]);
   const { c, a } = linha;
-  const qc = useQueryClient();
-  const { toast } = useToast();
   const { data, isLoading } = useQuery({
     queryKey: ["chamado-monitoramento-detalhe", c.id],
     queryFn: async () => {
@@ -600,38 +742,6 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
     },
   });
 
-  const [campo, setCampo] = useState<CampoAjuste>("tema");
-  const [valor, setValor] = useState<string>("");
-  const [justificativa, setJustificativa] = useState("");
-  const [salvando, setSalvando] = useState(false);
-
-  const salvar = async (voltarAutomatico: boolean) => {
-    if (justificativa.trim().length < 10) {
-      toast({ title: "Explique o ajuste", description: "A justificativa precisa de pelo menos 10 caracteres.", variant: "destructive" });
-      return;
-    }
-    if (!voltarAutomatico && !valor.trim()) {
-      toast({ title: "Informe o novo valor", variant: "destructive" });
-      return;
-    }
-    setSalvando(true);
-    const { error } = await rpc("chamado_monitoramento_ajustar", {
-      p_chamado_id: c.id, p_campo: campo, p_valor: voltarAutomatico ? null : valor.trim(),
-      p_valor_anterior: valorExibido(campo, linha), p_justificativa: justificativa.trim(),
-    });
-    setSalvando(false);
-    if (error) {
-      toast({ title: "Não foi possível ajustar", description: error.message, variant: "destructive" });
-      return;
-    }
-    toast({ title: "Ajuste registrado", description: `${CAMPO_AJUSTE_LABEL[campo]}: ${voltarAutomatico ? "voltou ao automático" : rotuloValor(campo, valor.trim())}` });
-    setValor(""); setJustificativa("");
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ["chamados-monitoramento"] }),
-      qc.invalidateQueries({ queryKey: ["chamado-monitoramento-detalhe", c.id] }),
-    ]);
-  };
-
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
@@ -640,13 +750,20 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
             {c.numero} <StatusBadge status={c.status} /> <PrioridadeBadge prioridade={c.prioridade} />
           </DialogTitle>
           <DialogDescription>{c.assunto} — {c.solicitante_nome ?? "—"} ({c.setor ?? "sem setor"}) · aberto em {fmtData(c.created_at)}</DialogDescription>
+          <p className="text-xs text-muted-foreground">
+            <b className="text-foreground">Setores impactados:</b> {listaImpactados(c.setores_impactados)}
+            {" · "}
+            <b className="text-foreground">Módulos impactados:</b> {listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}
+          </p>
         </DialogHeader>
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Card className="p-3">
             <p className="text-[11px] text-muted-foreground">Índice de inteligência {a.preliminar && "(preliminar)"}</p>
             <p className={`text-2xl font-bold ${corIndice(a.indice)}`}>{fmt1(a.indice)}<span className="text-sm text-muted-foreground"> / 10</span></p>
-            {a.ajustado.includes("indice") && <p className="text-[10px] text-muted-foreground">automático: {fmt1(a.indiceAuto)}</p>}
+            <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+              {a.fonte === "ia" ? <><Sparkles className="h-3 w-3 text-violet-500" /> avaliado pela I.A{c.ia?.reavaliando ? " · reavaliando" : ""}</> : "regra automática — a I.A ainda não avaliou"}
+            </p>
           </Card>
           <Card className="p-3">
             <p className="text-[11px] text-muted-foreground">Efetividade da entrega</p>
@@ -657,7 +774,7 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
             <p className="text-[11px] text-muted-foreground">Tema</p>
             <p className="text-sm font-bold" style={{ color: temaCor(a.tema) }}>{temaLabel(a.tema)}</p>
             <p className="text-[10px] text-muted-foreground">
-              {a.ajustado.includes("tema") ? `ajustado (automático: ${temaLabel(a.temaAuto.tema)})` : a.temaAuto.motivo}
+              {a.temaAuto.motivo}
             </p>
             <p className="mt-1 text-[10px] text-muted-foreground">Complexidade {COMPLEXIDADE_LABEL[a.complexidade]} · Aderência {ADERENCIA_LABEL[a.aderencia]}</p>
           </Card>
@@ -665,6 +782,11 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
 
         <div>
           <p id="monitor-criterios" className="mb-1 scroll-mt-4 text-xs font-bold">Critérios do índice de inteligência</p>
+          {a.resumoIa && (
+            <p className="mb-2 flex items-start gap-1.5 rounded-md border border-violet-300/40 bg-violet-500/5 p-2 text-xs">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-500" /><span>{a.resumoIa}</span>
+            </p>
+          )}
           <Table className="text-xs">
             <TableBody>
               {CRITERIOS_INDICE.map((k) => {
@@ -690,71 +812,8 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
           </p>
         </div>
 
-        {podeAlterar && (
-          <Card className="space-y-2 border-warning/30 bg-warning/5 p-3">
-            <p className="flex items-center gap-1.5 text-xs font-bold"><Pencil className="h-3.5 w-3.5" /> Ajuste manual (fica no histórico)</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Select value={campo} onValueChange={(v) => { setCampo(v as CampoAjuste); setValor(""); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(CAMPO_AJUSTE_LABEL) as CampoAjuste[]).map((k) => <SelectItem key={k} value={k}>{CAMPO_AJUSTE_LABEL[k]}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {campo === "tema" ? (
-                <Select value={valor} onValueChange={setValor}>
-                  <SelectTrigger><SelectValue placeholder="Novo tema" /></SelectTrigger>
-                  <SelectContent>{TEMAS.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
-                </Select>
-              ) : campo === "complexidade" || campo === "aderencia" ? (
-                <Select value={valor} onValueChange={setValor}>
-                  <SelectTrigger><SelectValue placeholder="Novo valor" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="baixa">Baixa</SelectItem>
-                    <SelectItem value="media">Média</SelectItem>
-                    <SelectItem value="alta">Alta</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  inputMode="decimal"
-                  placeholder={campo === "indice" ? "0 a 10" : "0 a 100"}
-                  value={valor}
-                  onChange={(e) => setValor(e.target.value.replace(/[^\d,.]/g, ""))}
-                />
-              )}
-            </div>
-            <Textarea rows={2} placeholder="Justificativa (obrigatória)" value={justificativa} onChange={(e) => setJustificativa(e.target.value)} />
-            <p className="text-[11px] text-muted-foreground">Atual: {rotuloValor(campo, valorExibido(campo, linha))}{a.ajustado.includes(campo) ? " (ajustado)" : " (automático)"}</p>
-            <div className="flex flex-wrap justify-end gap-2">
-              {a.ajustado.includes(campo) && (
-                <Button variant="outline" size="sm" disabled={salvando} onClick={() => salvar(true)}>Voltar ao automático</Button>
-              )}
-              <Button size="sm" disabled={salvando} onClick={() => salvar(false)} className="gap-1.5">
-                {salvando && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Registrar ajuste
-              </Button>
-            </div>
-          </Card>
-        )}
-
         <div>
-          <p id="monitor-historico" className="mb-1 scroll-mt-4 text-xs font-bold">Histórico de ajustes</p>
-          {isLoading ? <p className="text-xs text-muted-foreground">Carregando…</p>
-            : !data?.ajustes.length ? <p className="text-xs text-muted-foreground">Nenhum ajuste manual — tudo automático.</p>
-            : (
-              <ul className="space-y-1.5">
-                {data.ajustes.map((j) => (
-                  <li key={j.id} className="rounded-md border p-2 text-xs">
-                    <p><b>{CAMPO_AJUSTE_LABEL[j.campo] ?? j.campo}</b>: {rotuloValor(j.campo, j.valor_anterior)} → <b>{rotuloValor(j.campo, j.valor)}</b></p>
-                    <p className="text-muted-foreground">{j.justificativa}</p>
-                    <p className="text-[10px] text-muted-foreground">{j.autor_nome ?? "—"} · {fmtDataHora(j.created_at)}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-        </div>
-
-        <div>
-          <p className="mb-1 text-xs font-bold">Histórico do chamado</p>
+          <p id="monitor-historico" className="mb-1 scroll-mt-4 text-xs font-bold">Histórico do chamado</p>
           {isLoading ? <p className="text-xs text-muted-foreground">Carregando…</p>
             : !data?.eventos.length ? <p className="text-xs text-muted-foreground">Sem movimentações.</p>
             : (
@@ -772,9 +831,6 @@ function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMoni
           )}
         </div>
 
-        {c.status === "cancelado" && (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><XCircle className="h-3.5 w-3.5" /> Cancelado pelo solicitante — fora das médias e do ranking.</p>
-        )}
       </DialogContent>
     </Dialog>
   );

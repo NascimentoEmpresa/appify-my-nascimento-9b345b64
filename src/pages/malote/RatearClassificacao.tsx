@@ -18,6 +18,7 @@ import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/ho
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { cn } from "@/lib/utils";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
+import { ResumoRateioPorClassificacao } from "./ResumoRateioPorClassificacao";
 import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
@@ -445,6 +446,10 @@ export default function RatearClassificacao() {
               onDistribuirIgualmenteChange={setDistribuirIgualmente}
               contratoPorClassificacao
             />
+            {/* SIS-2026-0900: total de cada classificação (e por empresa) para conferir o rateio antes de enviar — ex.: boleto de FGTS + consignado. */}
+            <div className="mt-3">
+              <ResumoRateioPorClassificacao linhas={linhasRateio} classificacaoPadraoId={null} valorDespesa={Number(valorTotal) || 0} empresas={empresas} />
+            </div>
           </div>
 
           <div className="border-t border-border pt-4 space-y-3">

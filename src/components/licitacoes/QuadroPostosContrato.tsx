@@ -25,7 +25,7 @@
 // 20260930000081), e função nova nasce aguardando aprovação, entrando no
 // mesmo lote do Catálogo — não aprovada por fora.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,16 +34,18 @@ import { Plus, Trash2, Users, ChevronDown, ChevronUp, Sparkles, TriangleAlert, L
 import { cn } from "@/lib/utils";
 import { usePostos, useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
-import { MOTIVOS_VAGA, dataMinimaVaga, fmtBr } from "@/lib/recrutamento/vagaRegras";
+import { MOTIVOS_VAGA, dataMinimaVaga, fmtBr, TEXTO_ANTECEDENCIA } from "@/lib/recrutamento/vagaRegras";
 import { buscarCustoDoPosto, beneficiosDoCusto, insalubridadeDoCusto } from "@/lib/recrutamento/custoPosto";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import {
   type LinhaQuadroForm, LINHA_VAZIA, faltamNaLinha, erroDaLinha, rotuloDaLinha,
   totalDeColaboradores, totalDePostos, totalDeFuncoes, totalDeVagas, totalSalarialMensal,
-  brl, paraInteiro, paraNumero, chavePosto, linhaEmUso,
-  paresDoCatalogo, mesclarComCatalogo,
+  brl, paraInteiro, paraNumero, chavePosto, chaveLinha, linhaEmUso,
+  paresDoCatalogo, mesclarComCatalogo, aplicarHerancaNoQuadro,
 } from "@/lib/licitacoes/quadroPostos";
+import type { HerancaConvencao } from "@/lib/licitacoes/convencoes";
+import { AvisoConvencaoDoContrato } from "@/components/licitacoes/convencoes/ConvencaoDoContrato";
 import type { LinhaQuadro } from "@/hooks/useContratoQuadro";
 
 const db = supabase as any;
@@ -91,10 +93,16 @@ interface Props {
   geradasPorId?: Record<string, { geradas: number; vivas: number }>;
   /** Some com os botões de escrita para quem só pode olhar. */
   somenteLeitura?: boolean;
+  /**
+   * Convenção Coletiva do contrato (13/11/2026, mig 20261113100500): com
+   * ela, benefícios e percentuais de TODOS os postos saem da convenção, só
+   * leitura — mudar é no cadastro dela.
+   */
+  heranca?: { convencaoId: string; valores: HerancaConvencao } | null;
 }
 
 export function QuadroPostosContrato({
-  contratoId, contratoNome, linhas, onChange, geradasPorId = {}, somenteLeitura = false,
+  contratoId, contratoNome, linhas, onChange, geradasPorId = {}, somenteLeitura = false, heranca = null,
 }: Props) {
   const [aberta, setAberta] = useState<number | null>(null);
   const [soEmUso, setSoEmUso] = useState(false);
@@ -110,7 +118,10 @@ export function QuadroPostosContrato({
     () => paresDoCatalogo(postosCatalogo, funcoesCatalogo),
     [postosCatalogo, funcoesCatalogo],
   );
-  const exibidas = useMemo(() => mesclarComCatalogo(linhas, pares), [linhas, pares]);
+  const exibidas = useMemo(
+    () => aplicarHerancaNoQuadro(mesclarComCatalogo(linhas, pares), heranca?.valores),
+    [linhas, pares, heranca?.valores],
+  );
   const visiveis = soEmUso ? exibidas.filter(linhaEmUso) : exibidas;
 
   const total = totalDeColaboradores(exibidas);
@@ -124,7 +135,17 @@ export function QuadroPostosContrato({
   // permite editar uma linha que veio do catálogo sem tratá-la diferente; o
   // que não tem quantidade é descartado por `paraPayload` na hora de gravar.
   function mexer(i: number, patch: Partial<LinhaQuadroForm>) {
-    onChange(exibidas.map((l, k) => (k === i ? { ...l, ...patch } : l)));
+    const editada = { ...exibidas[i], ...patch };
+    const novas = exibidas.map((l, k) => (k === i ? editada : l));
+    onChange(novas);
+    // Posto/função mudam a ordem da cascata: a linha aberta acompanha a
+    // linha editada para o novo lugar, em vez de abrir a vizinha.
+    if (aberta === i && ("posto_nome" in patch || "funcao_nome" in patch)) {
+      const k = chaveLinha(editada) || chavePosto(editada.posto_nome);
+      const nova = mesclarComCatalogo(novas, pares)
+        .findIndex(l => (editada.id ? l.id === editada.id : (chaveLinha(l) || chavePosto(l.posto_nome)) === k));
+      if (nova >= 0) setAberta(nova);
+    }
   }
 
   function adicionar(base?: Partial<LinhaQuadroForm>) {
@@ -217,6 +238,7 @@ export function QuadroPostosContrato({
             contratoNome={contratoNome}
             geradas={l.id ? geradasPorId[l.id] : undefined}
             somenteLeitura={somenteLeitura}
+            convencaoId={heranca?.convencaoId ?? null}
           />
         ) : null
       ))}
@@ -251,12 +273,53 @@ interface LinhaProps {
   contratoNome: string;
   geradas?: { geradas: number; vivas: number };
   somenteLeitura: boolean;
+  /** Convenção do contrato: benefícios/percentuais só leitura, vindos dela. */
+  convencaoId: string | null;
+}
+
+/**
+ * Caixa de Posto/Função que só manda o valor para o quadro ao SAIR do campo
+ * (blur/Enter) ou ao escolher uma opção da lista.
+ *
+ * 13/11/2026 — "coloca uma letra e precisa preencher de novo": posto e função
+ * são a identidade da linha (chave do React e ordem da cascata, ver
+ * `mesclarComCatalogo`). Mandar cada tecla reordenava/recriava a linha e o
+ * cursor saía do campo a cada letra. Enquanto a pessoa digita, o texto fica
+ * só aqui.
+ */
+function CampoAoSair({
+  valor, onConfirmar, ...props
+}: Omit<React.ComponentProps<typeof Input>, "value" | "onChange" | "onBlur"> & {
+  valor: string;
+  onConfirmar: (v: string) => void;
+}) {
+  const [rascunho, setRascunho] = useState(valor);
+  const [editando, setEditando] = useState(false);
+  useEffect(() => { if (!editando) setRascunho(valor); }, [valor, editando]);
+  const confirmar = (v: string) => { if (v !== valor) onConfirmar(v); };
+  return (
+    <Input
+      {...props}
+      value={rascunho}
+      onFocus={() => setEditando(true)}
+      onChange={e => {
+        setRascunho(e.target.value);
+        // Escolheu da lista (datalist): grava na hora.
+        if ((e.nativeEvent as InputEvent).inputType === "insertReplacementText" || !(e.nativeEvent as InputEvent).inputType) {
+          confirmar(e.target.value);
+        }
+      }}
+      onBlur={() => { setEditando(false); confirmar(rascunho); }}
+      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); confirmar(rascunho); } }}
+    />
+  );
 }
 
 function LinhaDoQuadro({
   linha: l, indice: i, aberta, onAbrir, onMexer, onRemover, onOutraFuncao,
-  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura,
+  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura, convencaoId,
 }: LinhaProps) {
+  const daConvencao = !!convencaoId;
   // O posto do catálogo é achado pelo NOME a cada render, em vez de guardado
   // no estado do formulário. Guardar exigiria manter nome e id em dia a cada
   // tecla, e um id desencontrado do nome é pior que id nenhum: as funções
@@ -318,7 +381,9 @@ function LinhaDoQuadro({
       title: `Da Planilha de Custo — posto "${custo.posto}"`,
       description: custo.por_posto === false
         ? "O nome não casou exato; foi usado o posto de mesma cidade e jornada. Confira os valores."
-        : "Salário, insalubridade e benefícios preenchidos.",
+        : daConvencao
+          ? "Salário preenchido. Benefícios e insalubridade continuam os da Convenção Coletiva do contrato."
+          : "Salário, insalubridade e benefícios preenchidos.",
     });
   }
 
@@ -406,18 +471,18 @@ function LinhaDoQuadro({
               {/* Datalist e não <select>: escolher do catálogo e digitar um
                   posto novo é a MESMA caixa. Um select com item "＋ criar
                   novo" abriria um segundo campo para a mesma informação. */}
-              <Input
+              <CampoAoSair
                 list={`postos-${i}`}
                 className="h-9"
                 placeholder="Ex: BLOCO CIRURGICO"
-                value={l.posto_nome}
+                valor={l.posto_nome}
                 disabled={somenteLeitura}
                 // Trocar de posto zera a função: a função pertence ao posto, e
                 // manter "SERVENTE DE LIMPEZA" ao pular para outro posto
                 // gravaria uma função que não é daquela cascata.
-                onChange={e => onMexer({
-                  posto_nome: e.target.value,
-                  ...(chavePosto(e.target.value) !== chavePosto(l.posto_nome)
+                onConfirmar={v => onMexer({
+                  posto_nome: v,
+                  ...(chavePosto(v) !== chavePosto(l.posto_nome)
                     ? { funcao_nome: "", sup_funcao_id: "" } : {}),
                 })}
               />
@@ -437,20 +502,20 @@ function LinhaDoQuadro({
 
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Função <span className="text-destructive">*</span></Label>
-              <Input
+              <CampoAoSair
                 list={`funcoes-${i}`}
                 className="h-9"
                 placeholder="Ex: SERVENTE DE LIMPEZA"
-                value={l.funcao_nome}
+                valor={l.funcao_nome}
                 disabled={somenteLeitura}
-                onChange={e => onMexer({
-                  funcao_nome: e.target.value,
+                onConfirmar={v => onMexer({
+                  funcao_nome: v,
                   // O cargo da vaga começa igual à função — é o que o
                   // ModalNovaVaga já faz no modo manual (onFuncaoNome). Só
                   // preenche enquanto o cargo está vazio ou ainda espelha a
                   // função: quem editou o cargo à mão não é sobrescrito.
                   ...(!l.cargo.trim() || chavePosto(l.cargo) === chavePosto(l.funcao_nome)
-                    ? { cargo: e.target.value } : {}),
+                    ? { cargo: v } : {}),
                 })}
               />
               <datalist id={`funcoes-${i}`}>
@@ -498,7 +563,8 @@ function LinhaDoQuadro({
               <Input
                 className="h-9" placeholder="Ex: 40"
                 value={l.insalubridade_pct}
-                disabled={somenteLeitura}
+                disabled={somenteLeitura || daConvencao}
+                title={daConvencao ? "Vem da Convenção Coletiva do contrato" : undefined}
                 onChange={e => onMexer({ insalubridade_pct: e.target.value })}
               />
             </div>
@@ -507,7 +573,8 @@ function LinhaDoQuadro({
               <Input
                 className="h-9" placeholder="Ex: 30"
                 value={l.periculosidade_pct}
-                disabled={somenteLeitura}
+                disabled={somenteLeitura || daConvencao}
+                title={daConvencao ? "Vem da Convenção Coletiva do contrato" : undefined}
                 onChange={e => onMexer({ periculosidade_pct: e.target.value })}
               />
             </div>
@@ -522,16 +589,25 @@ function LinhaDoQuadro({
           </div>
 
           <div className="flex flex-col gap-1">
-            <Label className="text-xs">Benefícios</Label>
-            <Input
-              className="h-9" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
-              value={l.beneficios}
-              disabled={somenteLeitura}
-              onChange={e => onMexer({ beneficios: e.target.value })}
-            />
-            <span className="text-[11px] text-muted-foreground">
-              Vai para a vaga exatamente como está escrito aqui. "Puxar da Planilha" preenche no formato do Recrutamento.
-            </span>
+            <Label className="text-xs">Benefícios{daConvencao && <span className="font-normal text-muted-foreground"> — da Convenção Coletiva do contrato</span>}</Label>
+            {daConvencao ? (
+              <>
+                <Textarea className="min-h-[60px] text-xs" value={l.beneficios || "A convenção não tem benefício preenchido."} disabled readOnly />
+                <AvisoConvencaoDoContrato convencaoId={convencaoId!} compacto />
+              </>
+            ) : (
+              <>
+                <Input
+                  className="h-9" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
+                  value={l.beneficios}
+                  disabled={somenteLeitura}
+                  onChange={e => onMexer({ beneficios: e.target.value })}
+                />
+                <span className="text-[11px] text-muted-foreground">
+                  Vai para a vaga exatamente como está escrito aqui. "Puxar da Planilha" preenche no formato do Recrutamento.
+                </span>
+              </>
+            )}
           </div>
 
           {/* Jornada */}
@@ -564,7 +640,7 @@ function LinhaDoQuadro({
                 onChange={e => onMexer({ data_inicio_prevista: e.target.value })}
               />
               <span className="text-[11px] text-muted-foreground">
-                A partir de {fmtBr(dataMinima)} — a vaga exige 7 dias úteis de antecedência.
+                A partir de {fmtBr(dataMinima)} — {TEXTO_ANTECEDENCIA}.
               </span>
             </div>
           </div>

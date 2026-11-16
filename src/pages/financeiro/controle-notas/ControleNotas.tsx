@@ -400,10 +400,6 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
       toast.error("Informe o número da NF para validar.");
       return;
     }
-    // Pedido do Ruan: Código de Serviço, CNAE e NBS são obrigatórios para concluir (cancelar segue sem eles).
-    if (status === "concluida" && !codigoServico.trim()) { toast.error("Informe o Código de Serviço para validar."); return; }
-    if (status === "concluida" && !cnae.trim()) { toast.error("Informe o CNAE para validar."); return; }
-    if (status === "concluida" && !nbs.trim()) { toast.error("Informe o Código NBS para validar."); return; }
     try {
       await validar.mutateAsync({
         id: nf.id,
@@ -491,15 +487,15 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
               </div>
               <div className="col-span-4 grid grid-cols-3 gap-3">
                 <div>
-                  <Label>Código de Serviço{!readOnly && <span className="text-destructive"> *</span>}</Label>
+                  <Label>Código de Serviço</Label>
                   <Input value={codigoServico} onChange={(e) => setCodigoServico(e.target.value)} placeholder="Ex: 17.05" disabled={readOnly} />
                 </div>
                 <div>
-                  <Label>CNAE{!readOnly && <span className="text-destructive"> *</span>}</Label>
+                  <Label>CNAE</Label>
                   <Input value={cnae} onChange={(e) => setCnae(e.target.value)} disabled={readOnly} />
                 </div>
                 <div>
-                  <Label>Código NBS{!readOnly && <span className="text-destructive"> *</span>}</Label>
+                  <Label>Código NBS</Label>
                   <Input value={nbs} onChange={(e) => setNbs(e.target.value)} disabled={readOnly} />
                 </div>
               </div>

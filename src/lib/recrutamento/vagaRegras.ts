@@ -551,46 +551,70 @@ export function somaDiasUteis(deIso: string, dias: number): string {
   return iso(cur);
 }
 
+/** Soma dias CORRIDOS a uma data (conta sábado, domingo e feriado). */
+export function somaDiasCorridos(deIso: string, dias: number): string {
+  const cur = doIso(deIso);
+  cur.setDate(cur.getDate() + dias);
+  return iso(cur);
+}
+
+/** Dias corridos de `de` até `ate` (negativo = passado). */
+export function diasCorridosEntre(deIso: string, ateIso: string): number {
+  if (!deIso || !ateIso) return 0;
+  // Meio-dia nas duas pontas: a virada do horário de verão não come um dia.
+  const a = doIso(deIso); a.setHours(12);
+  const b = doIso(ateIso); b.setHours(12);
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
 // ── Prazo mínimo e grau de urgência ─────────────────────────────────────
-// Vaga não abre para daqui a menos de 7 dias ÚTEIS. Dentro disso, o grau sai
-// do próprio prazo — ninguém escolhe na mão:
-//   7 a 13 dias úteis  → Alta — Urgente
-//   14 a 20            → Média
-//   21 ou mais         → Baixa
-export const MIN_DIAS_UTEIS = 7;
+// 13/11/2026: o mínimo caiu de 7 dias ÚTEIS para 3 dias CORRIDOS ("no máximo
+// 3 dias de antecedência" — o pedido não fala em úteis). Data com 3 dias ou
+// mais à frente passa; menos que isso, bloqueia. O banco (guard da vaga e
+// contrato_quadro_gerar_vagas, mig 20261115000700) usa o mesmo número.
+//
+// O grau continua saindo do prazo em dias ÚTEIS — ninguém escolhe na mão:
+//   até 13 dias úteis → Alta — Urgente (inclui tudo entre 3 corridos e 13 úteis)
+//   14 a 20           → Média
+//   21 ou mais        → Baixa
+export const MIN_DIAS_ANTECEDENCIA = 3;
 export const GRAU_ALTA = "Alta — Urgente";
 export const GRAU_MEDIA = "Média";
 export const GRAU_BAIXA = "Baixa";
 
-/** Primeira data que a vaga pode ter (hoje + 7 dias úteis). */
-export const dataMinimaVaga = (hoje = hojeIso()): string => somaDiasUteis(hoje, MIN_DIAS_UTEIS);
+/** Primeira data que a vaga pode ter (hoje + 3 dias corridos). */
+export const dataMinimaVaga = (hoje = hojeIso()): string => somaDiasCorridos(hoje, MIN_DIAS_ANTECEDENCIA);
 
-export function grauPorDiasUteis(dias: number): string | null {
+/** Texto curto da regra, para os avisos das telas. */
+export const TEXTO_ANTECEDENCIA = `a vaga exige no mínimo ${MIN_DIAS_ANTECEDENCIA} dias de antecedência`;
+
+/** Grau pelos dias úteis. Só vale para data que já passou no mínimo. */
+export function grauPorDiasUteis(dias: number): string {
   if (dias >= 21) return GRAU_BAIXA;
   if (dias >= 14) return GRAU_MEDIA;
-  if (dias >= MIN_DIAS_UTEIS) return GRAU_ALTA;
-  return null;   // abaixo do mínimo: não tem grau, tem impedimento
+  return GRAU_ALTA;
 }
 
 export interface PrazoVaga {
-  dias: number;          // dias úteis entre hoje e a data escolhida
+  dias: number;          // dias corridos entre hoje e a data escolhida
+  diasUteis: number;     // dias úteis no mesmo intervalo (decide o grau)
   grau: string | null;   // null = abaixo do mínimo
   ok: boolean;
   erro: string | null;   // mensagem pronta pro usuário
   minima: string;        // primeira data aceita (yyyy-mm-dd)
 }
 
-/** Avalia a data escolhida: quantos dias úteis faltam, qual grau e se passa. */
+/** Avalia a data escolhida: quantos dias faltam, qual grau e se passa. */
 export function avaliarPrazo(dataIso: string, hoje = hojeIso()): PrazoVaga {
   const minima = dataMinimaVaga(hoje);
-  if (!dataIso) return { dias: 0, grau: null, ok: false, erro: "Informe a data de início prevista.", minima };
-  const dias = diasUteisEntre(hoje, dataIso);
-  const grau = grauPorDiasUteis(dias);
-  if (!grau) return {
-    dias, grau: null, ok: false, minima,
-    erro: `A vaga precisa de no mínimo ${MIN_DIAS_UTEIS} dias úteis de antecedência (a data escolhida tem ${dias < 0 ? 0 : dias}). A primeira data possível é ${fmtBr(minima)}.`,
+  if (!dataIso) return { dias: 0, diasUteis: 0, grau: null, ok: false, erro: "Informe a data de início prevista.", minima };
+  const dias = diasCorridosEntre(hoje, dataIso);
+  const diasUteis = diasUteisEntre(hoje, dataIso);
+  if (dias < MIN_DIAS_ANTECEDENCIA) return {
+    dias, diasUteis, grau: null, ok: false, minima,
+    erro: `A vaga precisa de no mínimo ${MIN_DIAS_ANTECEDENCIA} dias de antecedência (a data escolhida tem ${dias < 0 ? 0 : dias}). A primeira data possível é ${fmtBr(minima)}.`,
   };
-  return { dias, grau, ok: true, erro: null, minima };
+  return { dias, diasUteis, grau: grauPorDiasUteis(diasUteis), ok: true, erro: null, minima };
 }
 
 export const fmtBr = (dataIso?: string | null): string => {

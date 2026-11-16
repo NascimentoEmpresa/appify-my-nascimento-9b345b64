@@ -16,6 +16,12 @@
 //
 // Toda a escrita passa por chamado_enviar_mensagem() e a leitura é carimbada
 // por chamado_marcar_lido() — migration 20260831000001_chamados_chat_grupo.
+//
+// 13/11/2026: o autor EDITA ou APAGA a própria mensagem (chamado_editar_mensagem
+// / chamado_apagar_mensagem, mig 20261115000600). Nada some: a editada ganha
+// "(editada)" com o original a um clique; a apagada vira "Mensagem apagada por
+// <nome> em <data/hora>" e o conteúdo fica em CHAMADO_SISTEMA_EVENTO_VERSAO
+// (autor e gestão ainda leem, para auditoria). Regra em lib/chamados/mensagemEditavel.
 // =====================================================================
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,9 +33,18 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Check, CheckCheck, Paperclip, Send, X, Lock, Users, Download, ImageIcon, Loader2,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Check, CheckCheck, Paperclip, Send, X, Lock, Users, Download, ImageIcon, Loader2, Pencil, Trash2, Ban,
 } from "lucide-react";
-import { BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Evento } from "./types";
+import {
+  BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Evento, type VersaoMensagem,
+} from "./types";
+import {
+  podeAlterarMensagem, rotuloMensagemApagada, rotuloEditada, dicaEditada,
+} from "@/lib/chamados/mensagemEditavel";
 import { useAnexoChamado, useImagensAnexo } from "./useAnexoChamado";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { TextoComLinks } from "@/components/notificacoes/ConteudoAviso";
@@ -92,6 +107,12 @@ const diaDe = (s: string) => new Date(s).toDateString();
 // O texto vem gravado no banco desde sempre, então a tradução acontece aqui na
 // leitura: assim as conversas antigas também ficam legíveis, sem migrar dados.
 interface Aviso { texto: string; interno: boolean }
+
+// RPCs que ainda não estão no types.ts gerado: um único ponto sem tipo, em vez
+// de "(supabase as any)" espalhado (catraca do lint, 13/11/2026).
+type RespostaRpc = { data: unknown; error: { message: string } | null };
+const rpcSemTipo = (fn: string, args?: Record<string, unknown>): Promise<RespostaRpc> =>
+  (supabase.rpc as unknown as (this: typeof supabase, f: string, a?: Record<string, unknown>) => Promise<RespostaRpc>).call(supabase, fn, args);
 
 function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Aviso | null {
   const meta = (e.meta ?? {}) as Record<string, any>;
@@ -224,10 +245,29 @@ export function ChatChamado({
     enabled: !!chamadoId,
     // 03/11/2026: sem busca automática — só quando o usuário pede (src/lib/atualizarTela.ts).
     queryFn: async () => {
-      const { data } = await (supabase as any).rpc("chamado_participantes", { p_chamado_id: chamadoId });
+      const { data } = await rpcSemTipo("chamado_participantes", { p_chamado_id: chamadoId });
       return (data ?? []) as Participante[];
     },
   });
+
+  // Versões antigas (editadas/apagadas). A RLS só devolve o conteúdo apagado
+  // para o autor e a gestão — o grupo vê só o aviso.
+  const temAlteradas = eventosDesc.some((e) => e.editado_em || e.apagado_em);
+  const { data: versoes = [] } = useQuery({
+    queryKey: ["chamado-versoes", chamadoId],
+    enabled: !!chamadoId && temAlteradas,
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("CHAMADO_SISTEMA_EVENTO_VERSAO").select("*").eq("chamado_id", chamadoId)
+        .order("feito_em", { ascending: true });
+      return (data ?? []) as VersaoMensagem[];
+    },
+  });
+  const versoesPorEvento = useMemo(() => {
+    const m: Record<string, VersaoMensagem[]> = {};
+    versoes.forEach((v) => { (m[v.evento_id] ??= []).push(v); });
+    return m;
+  }, [versoes]);
 
   const mensagens = useMemo(() => [...eventosDesc].reverse(), [eventosDesc]);
   const ultimoId = eventosDesc[0]?.id ?? null;
@@ -237,7 +277,7 @@ export function ChatChamado({
   useEffect(() => {
     if (!chamadoId) return;
     (async () => {
-      const { error } = await (supabase as any).rpc("chamado_marcar_lido", { p_chamado_id: chamadoId });
+      const { error } = await rpcSemTipo("chamado_marcar_lido", { p_chamado_id: chamadoId });
       if (!error) {
         qc.invalidateQueries({ queryKey: ["chamado-participantes", chamadoId] });
         qc.invalidateQueries({ queryKey: ["chamados-nao-lidos"] });
@@ -268,7 +308,7 @@ export function ChatChamado({
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
     queryFn: async () => {
-      const { data } = await (supabase as any).rpc("listar_usuarios_ativos");
+      const { data } = await rpcSemTipo("listar_usuarios_ativos");
       return (data ?? []) as Array<{ id: string; display_name: string }>;
     },
   });
@@ -392,6 +432,47 @@ export function ChatChamado({
     qc.invalidateQueries({ queryKey: ["chamado-participantes", chamadoId] });
   };
 
+  // ---- Editar / apagar a própria mensagem ----------------------------
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [textoEdicao, setTextoEdicao] = useState("");
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [apagarId, setApagarId] = useState<string | null>(null);
+  const [apagando, setApagando] = useState(false);
+
+  const recarregarConversa = () => {
+    qc.invalidateQueries({ queryKey: ["chamado-eventos", chamadoId] });
+    qc.invalidateQueries({ queryKey: ["chamado-versoes", chamadoId] });
+  };
+
+  const salvarEdicao = async () => {
+    const txt = textoEdicao.trim();
+    if (!editandoId || !txt || salvandoEdicao) return;
+    setSalvandoEdicao(true);
+    const { error } = await rpcSemTipo("chamado_editar_mensagem", {
+      p_evento_id: editandoId, p_texto: txt,
+    });
+    setSalvandoEdicao(false);
+    if (error) {
+      toast({ title: "Não foi possível editar", description: error.message, variant: "destructive" });
+      return;
+    }
+    setEditandoId(null); setTextoEdicao("");
+    recarregarConversa();
+  };
+
+  const confirmarApagar = async () => {
+    if (!apagarId || apagando) return;
+    setApagando(true);
+    const { error } = await rpcSemTipo("chamado_apagar_mensagem", { p_evento_id: apagarId });
+    setApagando(false);
+    setApagarId(null);
+    if (error) {
+      toast({ title: "Não foi possível apagar", description: error.message, variant: "destructive" });
+      return;
+    }
+    recarregarConversa();
+  };
+
   // Imagem abre num card no centro; o resto, em nova aba (useAnexoChamado).
   const { abrirAnexo: baixarAnexo, visualizador } = useAnexoChamado();
 
@@ -408,6 +489,27 @@ export function ChatChamado({
     <Card className="flex flex-col overflow-hidden">
       {/* Imagem do anexo aberta num card no centro (useAnexoChamado). */}
       {visualizador}
+      <AlertDialog open={!!apagarId} onOpenChange={(o) => { if (!o && !apagando) setApagarId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Apagar esta mensagem?</AlertDialogTitle>
+            <AlertDialogDescription>
+              No lugar dela o grupo vai ver “Mensagem apagada por você”, com a data e a hora.
+              O conteúdo fica guardado no histórico do chamado para auditoria e não dá para desfazer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={apagando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={apagando}
+              onClick={(ev) => { ev.preventDefault(); confirmarApagar(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {apagando ? "Apagando…" : "Apagar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* Cabeçalho: o grupo */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-muted/40 px-4 py-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -494,7 +596,12 @@ export function ChatChamado({
           const meu = e.autor_id === user?.id;
           const ehInterna = e.tipo === "observacao_interna";
           const doSolicitante = e.autor_id === solicitanteId;
-          const anexosMsg = anexosPorEvento[e.id] ?? [];
+          // Apagada: o balão fica no lugar com o aviso; anexo some junto.
+          const apagada = !!e.apagado_em;
+          const anexosMsg = apagada ? [] : anexosPorEvento[e.id] ?? [];
+          const versoesMsg = versoesPorEvento[e.id] ?? [];
+          const podeAlterar = !somenteLeitura && podeAlterarMensagem(e, user?.id, encerrado ? "cancelado" : null);
+          const editando = editandoId === e.id;
           const { estado, leram, faltam, destinos, gestao, enviadoEm } = leitura(e);
 
           // Sequência da mesma pessoa (mesmo tipo, até 5 min) vira um bloco só:
@@ -537,7 +644,37 @@ export function ChatChamado({
                       "palavra" gigante sem espaço — e aí o balão estoura.
                       URL colada na mensagem vira link azul clicável (29/10/2026,
                       pedido do Pablo) — mesmo componente dos avisos. */}
-                  {e.texto && <TextoComLinks texto={e.texto} className="break-words leading-normal [overflow-wrap:anywhere]" />}
+                  {apagada ? (
+                    <p className="flex items-center gap-1 text-xs italic text-muted-foreground">
+                      <Ban className="h-3.5 w-3.5 shrink-0" />
+                      {rotuloMensagemApagada(nomeDe(e.apagado_por ?? e.autor_id), e.apagado_em!)}
+                    </p>
+                  ) : editando ? (
+                    <div className="space-y-1.5 py-0.5">
+                      <Textarea
+                        autoFocus rows={3} maxLength={LIMITE_TEXTO} value={textoEdicao}
+                        className="min-h-[60px] text-sm"
+                        onChange={(ev) => setTextoEdicao(ev.target.value)}
+                        onKeyDown={(ev) => {
+                          if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); salvarEdicao(); }
+                          if (ev.key === "Escape") { setEditandoId(null); setTextoEdicao(""); }
+                        }}
+                      />
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span className="mr-auto text-[10px] text-muted-foreground">O texto anterior fica guardado no histórico.</span>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                          onClick={() => { setEditandoId(null); setTextoEdicao(""); }}>
+                          Cancelar
+                        </Button>
+                        <Button size="sm" className="h-7 px-2 text-xs" onClick={salvarEdicao}
+                          disabled={salvandoEdicao || !textoEdicao.trim() || textoEdicao.trim() === (e.texto ?? "").trim()}>
+                          {salvandoEdicao ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    e.texto && <TextoComLinks texto={e.texto} className="break-words leading-normal [overflow-wrap:anywhere]" />
+                  )}
 
                   {anexosMsg.length > 0 && (
                     <div className="mt-1.5 space-y-1.5">
@@ -577,6 +714,67 @@ export function ChatChamado({
 
                   {/* Hora + confirmação de leitura (só nas MINHAS mensagens) */}
                   <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] font-medium text-muted-foreground">
+                    {podeAlterar && !editando && (
+                      <span className="mr-auto flex items-center gap-0.5">
+                        <button
+                          type="button" title="Editar mensagem" aria-label="Editar mensagem"
+                          onClick={() => { setEditandoId(e.id); setTextoEdicao(e.texto ?? ""); }}
+                          className="flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-foreground/5 hover:text-foreground"
+                        >
+                          <Pencil className="h-3 w-3" /> Editar
+                        </button>
+                        <button
+                          type="button" title="Apagar mensagem" aria-label="Apagar mensagem"
+                          onClick={() => setApagarId(e.id)}
+                          className="flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" /> Apagar
+                        </button>
+                      </span>
+                    )}
+                    {/* "(editada)" abre as versões; na apagada, o autor e a gestão
+                        veem o que foi apagado (a RLS não devolve para o resto). */}
+                    {((!apagada && e.editado_em) || (apagada && versoesMsg.length > 0)) && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="rounded px-0.5 italic hover:bg-foreground/5 hover:text-foreground"
+                            title={apagada ? "Ver o conteúdo apagado (auditoria)" : dicaEditada(e.editado_em!)}
+                          >
+                            {apagada ? "ver conteúdo" : rotuloEditada(e.editado_em)}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-80 p-3">
+                          <p className="mb-2 text-xs font-bold">
+                            {apagada ? "Conteúdo apagado (só você e a gestão veem)" : "Histórico da mensagem"}
+                          </p>
+                          {versoesMsg.length === 0 ? (
+                            <p className="text-[11px] text-muted-foreground">Carregando…</p>
+                          ) : (
+                            <div className="max-h-72 space-y-2 overflow-y-auto">
+                              {versoesMsg.map((v, idx) => (
+                                <div key={v.id} className="rounded-md border border-border bg-muted/30 p-2">
+                                  <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {idx === 0 ? "Original" : `Versão ${idx + 1}`} · trocada em {fmtDataHora(v.feito_em)}
+                                    {v.acao === "apagada" && " (apagada)"}
+                                  </p>
+                                  <p className="whitespace-pre-wrap text-[11px] [overflow-wrap:anywhere]">{v.texto || "(sem texto — só anexo)"}</p>
+                                </div>
+                              ))}
+                              {!apagada && (
+                                <div className="rounded-md border border-primary/30 bg-primary/5 p-2">
+                                  <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                                    Atual · {fmtDataHora(e.editado_em!)}
+                                  </p>
+                                  <p className="whitespace-pre-wrap text-[11px] [overflow-wrap:anywhere]">{e.texto}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </PopoverContent>
+                      </Popover>
+                    )}
                     <span>{soHora(e.created_at)}</span>
                     {meu && (
                       <Popover>

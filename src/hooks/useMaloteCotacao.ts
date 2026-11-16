@@ -204,9 +204,11 @@ const paraPayload = (cots: Cotacao[]) =>
 export function useSalvarRascunhoCotacao() {
   const invalidar = useInvalidar();
   return useMutation({
-    mutationFn: async (v: { id: string; cotacoes: Cotacao[] }) => {
-      const { error } = await sb.rpc("sup_malote_salvar_rascunho", {
-        p_id: v.id, p_cotacoes: paraPayload(v.cotacoes),
+    mutationFn: async (v: { id: string; cotacoes: Cotacao[]; valorPrevisto: number }) => {
+      const { error } = await sb.rpc("sup_malote_salvar_rascunho_previsto", {
+        p_id: v.id,
+        p_cotacoes: paraPayload(v.cotacoes),
+        p_valor_previsto: v.valorPrevisto,
       });
       if (error) throw error;
     },
@@ -258,9 +260,11 @@ export function useLiberarCotacao() {
 export function useEnviarCotacao() {
   const invalidar = useInvalidar();
   return useMutation({
-    mutationFn: async (v: { id: string; cotacoes: Cotacao[] }) => {
-      const { error } = await sb.rpc("sup_malote_enviar_cotacao", {
-        p_id: v.id, p_cotacoes: paraPayload(v.cotacoes),
+    mutationFn: async (v: { id: string; cotacoes: Cotacao[]; valorPrevisto: number }) => {
+      const { error } = await sb.rpc("sup_malote_enviar_cotacao_previsto", {
+        p_id: v.id,
+        p_cotacoes: paraPayload(v.cotacoes),
+        p_valor_previsto: v.valorPrevisto,
       });
       if (error) throw error;
     },

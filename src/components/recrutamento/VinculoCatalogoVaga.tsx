@@ -13,11 +13,20 @@
 //
 // Os ids gravados (contrato_id/posto_id/funcao_id) são os do catálogo
 // (contratos / sup_posto / sup_funcao).
+//
+// 13/11/2026: o posto oferecido é SÓ o da Planilha de Custo do contrato
+// (DMAE - 895/0 mostrava os locais antigos do catálogo: GALERIA DE ARTES,
+// PORTARIA DA GDCE...). E o posto escolhido devolve o endereço cadastrado
+// nele na planilha (onEnderecoPosto) pra tela preencher o "Endereço efetivo".
+// Ver src/lib/recrutamento/postosPlanilhaVaga.ts.
 import { useEffect, useMemo, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { supabase } from "@/integrations/supabase/client";
 import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { chaveContrato } from "@/lib/recrutamento/vagaRegras";
+import { enderecoDoPosto, postoPlanilhaDe, postosDaPlanilha, type PostoPlanilha } from "@/lib/recrutamento/postosPlanilhaVaga";
 
 export interface VinculoCatalogo { contrato_id: string; posto_id: string; funcao_id: string }
 export interface OpcaoCatalogo { id: string; nome: string }
@@ -36,11 +45,15 @@ interface Props {
   /** Classe dos inputs da tela que está usando (nvg-fi / ini-fi). */
   classeInput: string;
   classeGrupo: string;
+  /** Endereço do posto escolhido na Planilha de Custo ("" = sem endereço; `opcoes` > 1 = vários locais). */
+  onEnderecoPosto?: (e: EnderecoPostoVaga) => void;
 }
+
+export interface EnderecoPostoVaga { posto_id: string; endereco: string; opcoes: string[] }
 
 const chaveNome = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
 
-export function VinculoCatalogoVaga({ contratoNome, valor, onChange, onFuncaoNome, onListas, classeInput, classeGrupo }: Props) {
+export function VinculoCatalogoVaga({ contratoNome, valor, onChange, onFuncaoNome, onListas, classeInput, classeGrupo, onEnderecoPosto }: Props) {
 
   const { data: contratos = [] } = useContratosCatalogo();
 
@@ -64,7 +77,41 @@ export function VinculoCatalogoVaga({ contratoNome, valor, onChange, onFuncaoNom
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contratoCatalogo?.id]);
 
-  const { data: postos = [] } = usePostos(valor.contrato_id || null);
+  const { data: postosCatalogo = [], isFetched: catalogoLido } = usePostos(valor.contrato_id || null);
+
+  // Postos da Planilha de Custo. Só depois do catálogo: é ele que cria o
+  // espelho em sup_posto (o id que a vaga grava). Erro (RPC ainda não
+  // aplicada, sem acesso) vira `null` e o filtro cai no na_planilha.
+  const { data: planilha = null, isFetched: planilhaLida } = useQuery({
+    queryKey: ["rec_postos_planilha_do_contrato", valor.contrato_id],
+    enabled: !!valor.contrato_id && catalogoLido,
+    staleTime: 0,
+    queryFn: async (): Promise<PostoPlanilha[] | null> => {
+      const { data, error } = await (supabase as any).rpc("rec_postos_planilha_do_contrato", { p_contrato_id: valor.contrato_id });
+      if (error) { console.warn("[rec_postos_planilha_do_contrato]", error.message); return null; }
+      return (data ?? []) as PostoPlanilha[];
+    },
+  });
+  const postos = useMemo(() => postosDaPlanilha(postosCatalogo, planilha), [postosCatalogo, planilha]);
+
+  // Posto que não é da planilha não fica na vaga — acontece quando o Cargo
+  // (Recrutamento) é uma função pendurada num local antigo do catálogo. Saem
+  // o posto e a função; o cargo escolhido fica.
+  useEffect(() => {
+    if (!valor.posto_id || !catalogoLido || !planilhaLida) return;
+    if (!postos.some(p => p.id === valor.posto_id)) onChange({ ...valor, posto_id: "", funcao_id: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valor.posto_id, postos, catalogoLido, planilhaLida]);
+
+  // Endereço do posto escolhido, sempre que muda (posto ou planilha).
+  const onEnderecoRef = useRef(onEnderecoPosto); onEnderecoRef.current = onEnderecoPosto;
+  const endPosto = useMemo(() => enderecoDoPosto(postoPlanilhaDe(planilha, valor.posto_id)), [planilha, valor.posto_id]);
+  const chaveEnd = `${valor.posto_id}|${endPosto.endereco}|${endPosto.opcoes.join("§")}`;
+  useEffect(() => {
+    if (valor.posto_id && !planilhaLida) return;
+    onEnderecoRef.current?.({ posto_id: valor.posto_id, ...endPosto });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveEnd, planilhaLida]);
   const { data: funcoes = [] } = useFuncoes(valor.posto_id || null);
 
   // Entrega as listas pra tela (validação + nome do posto pra planilha).
@@ -101,7 +148,7 @@ export function VinculoCatalogoVaga({ contratoNome, valor, onChange, onFuncaoNom
         <select className={classeInput} value={valor.posto_id} disabled={!valor.contrato_id}
           style={faltaPosto ? { borderColor: "#dc2626" } : undefined}
           onChange={e => onChange({ ...valor, posto_id: e.target.value, funcao_id: "" })}>
-          <option value="">{!valor.contrato_id ? "—" : exigePosto ? "Selecione o posto *" : "Contrato sem posto no catálogo"}</option>
+          <option value="">{!valor.contrato_id ? "—" : exigePosto ? "Selecione o posto *" : "Contrato sem posto na Planilha de Custo"}</option>
           {postos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
         </select>
         <select className={classeInput} value={valor.funcao_id} disabled={!valor.posto_id}

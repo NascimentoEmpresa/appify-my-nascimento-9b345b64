@@ -14,20 +14,41 @@ const item = (dados: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel => 
   base_id: "camisa", item: "CAMISA", tamanho: "M", ordem: 30,
   demanda_janela: 90, demanda_mensal: 30, disponivel: 10, em_transito: 20,
   alvo: 50, comprar: 20, aguardando_compra: 12, fora_do_plano: false, liquidar: false,
+  pendente_falta: 0, pedidos_falta: 0, giro_3m: 60, ja_em_compra: 32,
   ...dados,
 }) as ItemEstoqueSaudavel;
 
 describe("previsão de abastecimento", () => {
-  it("mostra a compra líquida calculada pela RPC junto do trânsito e do Malote, separados por tamanho", () => {
+  it("mostra a compra líquida calculada pela RPC junto dos pedidos parados e do que já está em compra, por tamanho", () => {
     render(<GradeReposicao itens={[
-      item(), item({ tamanho: "G", ordem: 40, em_transito: 5, comprar: 35, aguardando_compra: 4 }),
+      item({ pendente_falta: 2 }),
+      item({ tamanho: "G", ordem: 40, em_transito: 5, comprar: 35, aguardando_compra: 4, ja_em_compra: 9 }),
     ]} premissas={premissas} almoxarifadoSelecionado={false} />);
     expect(screen.getByText(/Giro dos últimos 3 meses/)).toHaveTextContent("01/09/2026 a 06/11/2026");
-    const linha = screen.getByRole("rowheader", { name: "Comprar para repor" }).closest("tr")!;
-    expect(within(linha).getAllByRole("cell").map((celula) => celula.textContent)).toEqual(["20", "35"]);
-    const transito = screen.getByRole("rowheader", { name: "Aguardando entrega" }).closest("tr")!;
-    expect(within(transito).getAllByRole("cell").map((celula) => celula.textContent)).toEqual(["20", "5"]);
-    expect(screen.getByText(/ainda precisam ser concluídas/)).toBeInTheDocument();
+    const celulas = (nome: string) => within(screen.getByRole("rowheader", { name: nome }).closest("tr")!)
+      .getAllByRole("cell").map((celula) => celula.textContent);
+    expect(celulas("Comprar para repor")).toEqual(["20", "35"]);
+    // Trânsito e Malote em cotação somados: é o que a conta desconta.
+    expect(celulas("Já em compra")).toEqual(["32", "9"]);
+    expect(celulas("Pedidos pendentes (falta)")).toEqual(["2", "0"]);
+    expect(celulas("Saiu p/ pedidos (3 meses)")).toEqual(["60", "60"]);
+    expect(screen.queryByRole("rowheader", { name: "Aguardando entrega" })).not.toBeInTheDocument();
+    expect(screen.getByText(/alvo saudável \+ pedidos pendentes − disponível − já em compra/)).toBeInTheDocument();
+  });
+
+  it("mostra a família que só tem pedido parado, mesmo sem compra, trânsito nem demanda na janela", () => {
+    const grade = montarGradeReposicao([item({
+      comprar: 0, em_transito: 0, aguardando_compra: 0, ja_em_compra: 0, demanda_janela: 0, disponivel: 0,
+      pendente_falta: 3,
+    })], "", true);
+    expect(grade.familias).toHaveLength(1);
+  });
+
+  it("mostra — e não zero enquanto o banco não manda as colunas novas", () => {
+    render(<GradeReposicao itens={[item({ pendente_falta: undefined, giro_3m: undefined, ja_em_compra: undefined })]}
+      premissas={premissas} almoxarifadoSelecionado={false} />);
+    const linha = screen.getByRole("rowheader", { name: "Já em compra" }).closest("tr")!;
+    expect(within(linha).getAllByRole("cell").map((celula) => celula.textContent)).toEqual(["—"]);
   });
 
   it("mantém item coberto pelo trânsito na grade mesmo sem compra adicional", () => {
@@ -66,12 +87,13 @@ describe("previsão de abastecimento", () => {
 
   it("exporta todos os resultados filtrados, distingue tamanho ausente de zero e preserva frações", () => {
     const csv = csvDaGradeReposicao(montarGradeReposicao([
-      item({ item: 'CAMISA; "AZUL"', comprar: 0, em_transito: 1.125 }),
+      item({ item: 'CAMISA; "AZUL"', comprar: 0, em_transito: 1.125, ja_em_compra: 1.125 }),
       item({ base_id: "calca", item: "CALÇA", tamanho: "G", ordem: 40 }),
     ], "", true));
     expect(csv).toContain('"Item";"Indicador";"M";"G"');
-    expect(csv).toContain('"CAMISA; ""AZUL""";"Aguardando entrega";"1,125";""');
+    expect(csv).toContain('"CAMISA; ""AZUL""";"Já em compra";"1,125";""');
     expect(csv).toContain('"CAMISA; ""AZUL""";"Comprar para repor";"0";""');
-    expect(csv.split("\r\n")).toHaveLength(13);
+    // Cabeçalho + 2 famílias × 7 indicadores.
+    expect(csv.split("\r\n")).toHaveLength(15);
   });
 });

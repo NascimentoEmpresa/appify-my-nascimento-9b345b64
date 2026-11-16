@@ -15,6 +15,7 @@ import {
   Hourglass, RefreshCw, XCircle, CheckCircle2, Ban, Search, Inbox, ShieldAlert, FilterX, PackageCheck, UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { obterValorPrevistoCompra } from "@/lib/suprimentos/valorPrevistoCompra";
 
 /**
  * SIS-2026-0112 — a fila de Suprimentos no fluxo do Malote.
@@ -86,7 +87,8 @@ export default function CotacoesMalote() {
       return [i.numero, i.nome, i.motivo, i.classificacao?.nome,
               // Quem assumiu a cotação entra na busca: "o que está com o
               // Marcos?" é pergunta de rotina na reunião de Suprimentos.
-              i.cotacao_iniciada_por_nome, i.cotacao_enviada_por_nome, String(i.valor_total)]
+              i.cotacao_iniciada_por_nome, i.cotacao_enviada_por_nome,
+              String(obterValorPrevistoCompra(i)), String(i.valor_aprovado_cotacao ?? "")]
         .filter(Boolean).join(" ").toLowerCase().includes(t);
     });
   }, [itens, status, classificacao, busca]);
@@ -250,6 +252,12 @@ function CardCotacao({
   /** [SEM-CHAMADO] 05/10/2026: fui eu que cliquei em "Iniciar cotação". */
   euAssumi: boolean;
 }) {
+  const mostraValorAprovado = i.status === "cotacao_aprovada"
+    && i.valor_aprovado_cotacao != null;
+  const valorExibido = mostraValorAprovado
+    ? Number(i.valor_aprovado_cotacao)
+    : obterValorPrevistoCompra(i);
+
   return (
     // Era um único <button> (o card inteiro clicável) — virou <div> com
     // role/tabIndex equivalentes porque agora pode ter um <Button> de
@@ -301,7 +309,12 @@ function CardCotacao({
           </span>
         )}
 
-        <p className="text-lg font-semibold tabular-nums">{fmtBRL(i.valor_total)}</p>
+        <div>
+          <p className="text-lg font-semibold tabular-nums">{fmtBRL(valorExibido)}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {mostraValorAprovado ? "Valor da cotação aprovada" : "Previsão para saving"}
+          </p>
+        </div>
 
         {i.motivo && (
           <p className="line-clamp-2 text-xs text-muted-foreground">{i.motivo}</p>

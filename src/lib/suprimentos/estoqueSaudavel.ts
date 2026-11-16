@@ -53,6 +53,26 @@ export interface ItemEstoqueSaudavel {
   em_transito: number;
   /** Solicitações do Malote em cotação, ainda sem compra enviada ao fornecedor. */
   aguardando_compra: number;
+  /*
+   * SIS-2026-0855. Opcionais porque a tela pode subir antes da migration
+   * 20261113210000 aplicar (ela desiste por lock_timeout). Sem o campo, a
+   * tela mostra "—", nunca 0: zero é uma quantidade conhecida.
+   */
+  /**
+   * Peças que pedidos JÁ SEPARADOS ainda esperam por falta de estoque, somadas
+   * de todos os pedidos (descontado o que saiu e o que está reservado).
+   * Pedido em preparação ou em separação não conta: o estoque ainda pode atendê-lo.
+   */
+  pendente_falta?: number;
+  /** Em quantos pedidos esse pendente está espalhado. */
+  pedidos_falta?: number;
+  /**
+   * O que SAIU de verdade do estoque para pedidos nos últimos 3 meses (janela
+   * fixa). Fica abaixo de `demanda_mensal` enquanto o estoque estiver baixo.
+   */
+  giro_3m?: number;
+  /** em_transito + aguardando_compra: o que não deve ser pedido de novo. */
+  ja_em_compra?: number;
 
   demanda_janela: number;
   demanda_mensal: number;
@@ -274,6 +294,15 @@ export interface EstoqueSaudavelDados {
    * pronta no chat, confira se há ranking que a sustente.
    */
   rankings: RankingsEstoque;
+  /** Totais da coluna "Pedidos pendentes". Ausente = banco ainda sem a 20261113210000. */
+  pedidos_falta?: {
+    unidades: number;
+    pedidos: number;
+    /** Pendente em linha de pedido sem item de catálogo: não tem linha na tabela. */
+    sem_vinculo: number;
+    /** Início do "giro dos últimos 3 meses". */
+    giro_desde: string;
+  };
   itens: ItemEstoqueSaudavel[];
   compra_por_familia: FamiliaCompra[];
   liquidar: LinhaLiquidar[];
@@ -480,8 +509,23 @@ export function explicarAlvo(item: ItemEstoqueSaudavel, premissas: PremissasEsto
 
 /**
  * A mesma explicação para a linha de compra: por que comprar ESTA quantidade.
+ *
+ * Desde o SIS-2026-0855 a conta é alvo + pedidos parados − em casa − já em
+ * compra: o que chega atende primeiro quem está esperando, e o que já está em
+ * compra (pedido enviado ou Malote em cotação) não se pede de novo. Sem os
+ * campos novos o banco ainda calcula pela conta antiga, e a frase acompanha.
  */
 export function explicarCompra(item: ItemEstoqueSaudavel): string {
+  if (item.pendente_falta != null && item.ja_em_compra != null) {
+    if (item.comprar <= 0) {
+      return item.disponivel + item.ja_em_compra >= item.alvo + item.pendente_falta
+        ? "Nada a comprar: o que está em casa e o que já está em compra cobrem o alvo e os pedidos parados."
+        : "Nada a comprar.";
+    }
+    const parados = item.pendente_falta > 0 ? ` + ${item.pendente_falta} em pedidos parados` : "";
+    const emCompra = item.ja_em_compra > 0 ? ` − ${item.ja_em_compra} já em compra` : "";
+    return `Alvo ${item.alvo}${parados} − ${item.disponivel} em casa${emCompra} = comprar ${item.comprar}.`;
+  }
   if (item.comprar <= 0) {
     return item.disponivel + item.em_transito >= item.alvo
       ? "Nada a comprar: o que está em casa e em trânsito já cobre o alvo."
@@ -489,6 +533,21 @@ export function explicarCompra(item: ItemEstoqueSaudavel): string {
   }
   const transito = item.em_transito > 0 ? ` − ${item.em_transito} em trânsito` : "";
   return `Alvo ${item.alvo} − ${item.disponivel} em casa${transito} = comprar ${item.comprar}.`;
+}
+
+/**
+ * Dos pedidos parados, quanto ainda NÃO está em compra.
+ *
+ * É o "complemento" do Cássio (SIS-2026-0855): dez pedidos somam 4 camisetas
+ * M e as 4 já foram compradas; os pedidos sobem para quinze e o pendente vai
+ * a 6 — só as 2 de diferença precisam de compra nova. `null` quando o banco
+ * ainda não manda os campos.
+ */
+export function complementoDosPedidos(
+  item: Pick<ItemEstoqueSaudavel, "pendente_falta" | "ja_em_compra">,
+): number | null {
+  if (item.pendente_falta == null || item.ja_em_compra == null) return null;
+  return Math.max(item.pendente_falta - item.ja_em_compra, 0);
 }
 
 /**
@@ -560,7 +619,9 @@ export function csvDaCompra(itens: ItemEstoqueSaudavel[]): string {
     "Item",
     "Tamanho",
     "Em casa",
-    "Em trânsito",
+    "Pedidos pendentes",
+    "Já em compra",
+    "Saiu p/ pedidos (3 meses)",
     "Consumo/mês",
     "Alvo saudável",
     "Comprar",
@@ -569,7 +630,7 @@ export function csvDaCompra(itens: ItemEstoqueSaudavel[]): string {
     "Classe",
     "Situação",
   ];
-  const numero = (n: number | null) =>
+  const numero = (n: number | null | undefined) =>
     n === null || n === undefined ? "" : String(n).replace(".", ",");
 
   const linhas = itens
@@ -580,7 +641,10 @@ export function csvDaCompra(itens: ItemEstoqueSaudavel[]): string {
         i.item,
         i.tamanho ?? "",
         numero(i.disponivel),
-        numero(i.em_transito),
+        // Vazio, e não zero, enquanto o banco não manda os campos.
+        numero(i.pendente_falta),
+        numero(i.ja_em_compra),
+        numero(i.giro_3m),
         numero(i.demanda_mensal),
         numero(i.alvo),
         numero(i.comprar),

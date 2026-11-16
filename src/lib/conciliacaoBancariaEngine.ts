@@ -133,7 +133,9 @@ export interface ReconciliacaoResult {
 // abertura, não um movimento — nunca tem par no Fluxo e sempre acusava divergência.
 // Aqui só some a LEITURA dele; o saldo anterior é conferido à parte (campo
 // "saldo anterior" da conciliação do Fluxo de Caixa).
-export const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F", "SALDO ANTERIOR", "SDO ANTERIOR"];
+// [SEM-CHAMADO] (pedido do Financeiro): o BB Rende Fácil (rótulo e rendimento) PASSA A CONTAR na conciliação — saiu desta lista. O
+// SIS-2026-0491 o ignorava; agora a linha do extrato entra e precisa ter o par no Fluxo de Caixa (aplicação/resgate e rendimento).
+export const MEMOS_IGNORAR = ["SALDO ANTERIOR", "SDO ANTERIOR"];
 
 // ── Parser OFX ─────────────────────────────────────────────────────────────
 

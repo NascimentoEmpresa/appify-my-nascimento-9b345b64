@@ -3,6 +3,16 @@ import { validarParametrosNfse } from "@/pages/financeiro/controle-notas/validar
 import { parametrosNfse } from "./fixtures/parametrosNfse";
 
 describe("NFS-e: revisão antes de entrar na fila", () => {
+  it("preserva a data fiscal escolhida, aceita ano bissexto e recusa datas inexistentes", () => {
+    for (const data of ["2026-10-31", "2024-02-29"]) {
+      const p = { ...parametrosNfse(), data_competencia: data };
+      expect(validarParametrosNfse(p).data_competencia).toBe(data);
+      expect(p.data_competencia).toBe(data);
+    }
+    for (const data of ["", "2026-02-29", "2026-02-30", "2026-13-01", "31/10/2026"]) {
+      expect(() => validarParametrosNfse({ ...parametrosNfse(), data_competencia: data })).toThrow(/data.*competência/i);
+    }
+  });
   it("preserva a inscrição municipal do tomador e exige preenchimento somente após P4016", () => {
     const p = parametrosNfse();
     expect(validarParametrosNfse(p).tomador.inscricao_municipal).toBe("");

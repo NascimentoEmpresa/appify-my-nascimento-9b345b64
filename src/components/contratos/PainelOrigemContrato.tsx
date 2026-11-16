@@ -52,6 +52,8 @@ interface Props {
   origem: OrigemContrato | null;
   carregando: boolean;
   respostaMap: Record<number, Resposta>;
+  /** Permissão "Pode editar o checklist" — sem ela o bloco é só leitura. */
+  podeEditar: boolean;
   onSalvar: (rowIndex: number, resposta: string) => Promise<unknown>;
   nomeConfirmado: boolean;
   onConfirmarNome: () => void;
@@ -59,7 +61,7 @@ interface Props {
 }
 
 export function PainelOrigemContrato({
-  contratoNome, origem, carregando, respostaMap,
+  contratoNome, origem, carregando, respostaMap, podeEditar,
   onSalvar, nomeConfirmado, onConfirmarNome, onEditarNome,
 }: Props) {
   const [confirmandoTodos, setConfirmandoTodos] = useState(false);
@@ -101,7 +103,7 @@ export function PainelOrigemContrato({
           <span className="text-xs text-muted-foreground">
             {confirmados}/{CAMPOS_ORIGEM.length} confirmados
           </span>
-          {pendentes.length > 0 && (
+          {podeEditar && pendentes.length > 0 && (
             <Button size="sm" className="h-8 gap-1.5 text-xs" disabled={confirmandoTodos} onClick={confirmarTodos}>
               <CheckCircle2 className="h-3.5 w-3.5" />
               {confirmandoTodos ? "Confirmando…" : `Confirmar todos (${pendentes.length})`}
@@ -114,6 +116,7 @@ export function PainelOrigemContrato({
         <BlocoNome
           nome={contratoNome}
           confirmado={nomeConfirmado}
+          podeEditar={podeEditar}
           onConfirmar={onConfirmarNome}
           onEditar={onEditarNome}
         />
@@ -124,6 +127,7 @@ export function PainelOrigemContrato({
             valorOrigem={valorFormatado(campo, origem)}
             respostaSalva={respostaMap[campo.rowIndex]?.resposta ?? ""}
             carregando={carregando}
+            podeEditar={podeEditar}
             onSalvar={(v) => onSalvar(campo.rowIndex, v)}
           />
         ))}
@@ -135,12 +139,13 @@ export function PainelOrigemContrato({
 // ── Bloco de um campo ────────────────────────────────────────────────────────
 
 function BlocoOrigem({
-  campo, valorOrigem, respostaSalva, carregando, onSalvar,
+  campo, valorOrigem, respostaSalva, carregando, podeEditar, onSalvar,
 }: {
   campo: CampoOrigem;
   valorOrigem: string;
   respostaSalva: string;
   carregando: boolean;
+  podeEditar: boolean;
   onSalvar: (valor: string) => Promise<unknown>;
 }) {
   const [editando, setEditando] = useState(false);
@@ -215,7 +220,7 @@ function BlocoOrigem({
             </p>
           )}
 
-          {divergente && !editando && (
+          {divergente && !editando && podeEditar && (
             <button
               onClick={() => salvar(valorOrigem)}
               className="mt-1 text-left text-[10px] text-amber-600 hover:underline"
@@ -229,7 +234,7 @@ function BlocoOrigem({
           <div className="flex shrink-0 items-center gap-1">
             {confirmado ? (
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            ) : temOrigem ? (
+            ) : !podeEditar ? null : temOrigem ? (
               <Button
                 size="sm"
                 className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] hover:bg-emerald-700"
@@ -243,7 +248,7 @@ function BlocoOrigem({
                 Preencher
               </Button>
             )}
-            {(confirmado || temOrigem) && (
+            {podeEditar && (confirmado || temOrigem) && (
               <Button size="sm" variant="ghost" className="h-7 px-1.5" title="Editar" onClick={abrirEdicao}>
                 <Pencil className="h-3 w-3" />
               </Button>
@@ -263,10 +268,11 @@ function BlocoOrigem({
  * gravar no banco. Some ao trocar de máquina; é o preço de não criar coluna.
  */
 function BlocoNome({
-  nome, confirmado, onConfirmar, onEditar,
+  nome, confirmado, podeEditar, onConfirmar, onEditar,
 }: {
   nome: string;
   confirmado: boolean;
+  podeEditar: boolean;
   onConfirmar: () => void;
   onEditar: () => void;
 }) {
@@ -286,14 +292,16 @@ function BlocoNome({
         <div className="flex shrink-0 items-center gap-1">
           {confirmado ? (
             <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          ) : (
+          ) : podeEditar ? (
             <Button size="sm" className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] hover:bg-emerald-700" onClick={onConfirmar}>
               <CheckCircle2 className="h-3 w-3" /> Confirmar
             </Button>
+          ) : null}
+          {podeEditar && (
+            <Button size="sm" variant="ghost" className="h-7 px-1.5" title="Editar nome" onClick={onEditar}>
+              <Pencil className="h-3 w-3" />
+            </Button>
           )}
-          <Button size="sm" variant="ghost" className="h-7 px-1.5" title="Editar nome" onClick={onEditar}>
-            <Pencil className="h-3 w-3" />
-          </Button>
         </div>
       </div>
     </div>

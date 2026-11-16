@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { setoresDoResponsavel, SETOR_TODOS } from "@/lib/implantacao/painelSetores";
 import { cn } from "@/lib/utils";
 import {
   useImplantacaoContratos,
@@ -26,10 +28,12 @@ import {
   type OpcaoSimNao,
 } from "@/lib/implantacao/camposResposta";
 import type { ImplantacaoContrato, ChecklistItem, Resposta, HistoricoEntry } from "@/hooks/useImplantacao";
-import { CheckCircle2, Circle, ChevronDown, Trash2, X as XIcon, CheckCircle, History, Plus } from "lucide-react";
+import { CheckCircle2, Circle, ChevronDown, Trash2, X as XIcon, CheckCircle, History, Plus, LayoutDashboard } from "lucide-react";
 import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 import { useDocTipos } from "@/hooks/useDocumentos";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST } from "@/lib/implantacao/permissaoChecklist";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -60,13 +64,21 @@ import { Label } from "@/components/ui/label";
 export default function Implantacao() {
   const { can } = usePermissoes();
   const podeExcluir = can("excluir", undefined, "implantacao");
+  // Ver a tela ≠ editar o checklist (permissão própria, ver permissaoChecklist.ts).
+  // Sem ela a pessoa lê tudo e não vê Confirmar / Preencher / Editar / Salvar.
+  const { data: podeEditar = false } = useScreenAccess(MENU_EDITAR_CHECKLIST, ACAO_EDITAR_CHECKLIST);
   // SIS-2026-0309: lê a implantação de todas as empresas do grupo — o
   // filtro de "empresa ativa" só limitava a visão, sem proteger nada
   // (acesso já é 100% por usuário, nunca por empresa).
   const { data: contratos = [], isLoading, error } = useImplantacaoContratos(null, { todasEmpresas: true });
   const { data: checklistItems = [] } = useChecklistItems();
 
-  const [contratoSelecionado, setContratoSelecionado] = useState<string | null>(null);
+  // Painel por setor: "Preencher / Atualizar" chega aqui com ?contrato= e
+  // ?setor=. O setor é o normalizado do painel ("SST" pega também
+  // "SST/Compras"), por isso é um filtro à parte do de responsável.
+  const [params] = useSearchParams();
+  const [contratoSelecionado, setContratoSelecionado] = useState<string | null>(() => params.get("contrato"));
+  const [setorFiltro, setSetorFiltro] = useState<string>(() => params.get("setor") ?? "");
   const [momentoFiltro, setMomentoFiltro] = useState<string>("");
   const [responsavelFiltro, setResponsavelFiltro] = useState<string>("");
   const [editandoNome, setEditandoNome] = useState(false);
@@ -82,7 +94,7 @@ export default function Implantacao() {
   const contrato = contratos.find((c) => c.id === contratoSelecionado) ?? null;
 
   useMemo(() => {
-    if (contratos.length > 0 && !contratoSelecionado) {
+    if (contratos.length > 0 && (!contratoSelecionado || !contratos.some((c) => c.id === contratoSelecionado))) {
       setContratoSelecionado(contratos[0].id);
     }
   }, [contratos, contratoSelecionado]);
@@ -98,9 +110,13 @@ export default function Implantacao() {
       if (ROW_INDEX_NO_TOPO.has(i.row_index)) return false;
       if (momentoFiltro && i.momento !== momentoFiltro) return false;
       if (responsavelFiltro && i.responsavel_acao !== responsavelFiltro && i.responsavel_acao !== "Todos") return false;
+      if (setorFiltro) {
+        const setores = setoresDoResponsavel(i.responsavel_acao);
+        if (!setores.includes(setorFiltro) && !setores.includes(SETOR_TODOS)) return false;
+      }
       return true;
     });
-  }, [checklistItems, momentoFiltro, responsavelFiltro]);
+  }, [checklistItems, momentoFiltro, responsavelFiltro, setorFiltro]);
 
   const responsaveisFiltrados = useMemo(() => [...new Set(itensFiltrados.map((i) => i.responsavel_acao))], [itensFiltrados]);
 
@@ -152,6 +168,13 @@ export default function Implantacao() {
         title="Implantação de Contratos"
         breadcrumb={["Contratos", "Implantação"]}
         subtitle="Checklist de implantação por contrato — acompanhe cada setor até a operação plena."
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/licitacoes/implantacao/painel${contratoSelecionado ? `?contrato=${contratoSelecionado}` : ""}`}>
+              <LayoutDashboard className="mr-1.5 h-4 w-4" /> Painel por setor
+            </Link>
+          </Button>
+        }
       />
 
       {/* KPIs */}
@@ -202,6 +225,7 @@ export default function Implantacao() {
               origem={origem}
               carregando={carregandoOrigem}
               respostaMap={respostaMap}
+              podeEditar={podeEditar}
               onSalvar={(rowIndex, resposta) =>
                 upsert.mutateAsync({ contratoId: contrato.id, rowIndex, resposta, obs: null })
               }
@@ -221,6 +245,18 @@ export default function Implantacao() {
               <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
                 <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
               </div>
+            </div>
+          )}
+
+          {setorFiltro && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Mostrando as perguntas do setor</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary px-3 py-1 font-semibold text-primary-foreground">
+                {setorFiltro}
+                <button type="button" onClick={() => setSetorFiltro("")} title="Mostrar todos os setores">
+                  <XIcon className="h-3 w-3" />
+                </button>
+              </span>
             </div>
           )}
 
@@ -281,6 +317,7 @@ export default function Implantacao() {
                           contrato={contrato}
                           resposta={respostaMap[item.row_index] ?? null}
                           usuariosMap={usuariosMap}
+                          podeEditar={podeEditar}
                           onSave={(resposta, obs) =>
                             upsert.mutateAsync({ contratoId: contratoSelecionado!, rowIndex: item.row_index, resposta, obs })
                           }
@@ -295,7 +332,7 @@ export default function Implantacao() {
         </div>
       )}
 
-      {editandoNome && contrato && (
+      {editandoNome && contrato && podeEditar && (
         <EditarNomeModal
           contrato={contrato}
           onClose={() => setEditandoNome(false)}
@@ -602,12 +639,14 @@ function LinhaChecklist({
   contrato,
   resposta: savedResp,
   usuariosMap,
+  podeEditar,
   onSave,
 }: {
   item: ChecklistItem;
   contrato: ImplantacaoContrato;
   resposta: Resposta | null;
   usuariosMap: Record<string, string>;
+  podeEditar: boolean;
   onSave: (resposta: string, obs: string) => Promise<unknown>;
 }) {
   const isSimNao         = item.tipo_resposta === "simnao";
@@ -638,7 +677,7 @@ function LinhaChecklist({
   }, [savedResp]);
 
   async function salvar(resposta: string, obs: string) {
-    if (!resposta) return;
+    if (!resposta || !podeEditar) return;
     setState("saving");
     try {
       await onSave(resposta, obs);
@@ -698,7 +737,7 @@ function LinhaChecklist({
         </div>
 
         {/* Sim/Não/N/A direto na linha: um clique salva, sem precisar abrir. */}
-        {isSimNao && !isDocs && !isFormaEnvio && !isEmissaoNota && !isTreinamentos && !isSimNaoDetalhe ? (
+        {podeEditar && isSimNao && !isDocs && !isFormaEnvio && !isEmissaoNota && !isTreinamentos && !isSimNaoDetalhe ? (
           <div className="flex shrink-0 gap-1">
             {(["Sim", "Não", "N/A"] as const).map((op) => (
               <button key={op} disabled={state === "saving"} onClick={() => salvar(op, localObs)}
@@ -725,6 +764,29 @@ function LinhaChecklist({
       {/* Corpo — abre pra responder */}
       {aberta && (
         <div className="space-y-3 border-t border-border/60 bg-muted/20 px-3 py-3">
+          {!podeEditar ? (
+            <div className="space-y-2 text-xs">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resposta</span>
+                <p className={cn("whitespace-pre-line break-words", !resumo && "italic text-muted-foreground")}>
+                  {resumo || "Ainda não respondido."}
+                </p>
+              </div>
+              {savedResp?.obs && (
+                <div className="space-y-0.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Observações</span>
+                  <p className="whitespace-pre-line break-words text-muted-foreground">{savedResp.obs}</p>
+                </div>
+              )}
+              {historico.length > 0 && (
+                <Button size="sm" variant="outline" className="px-2.5" title="Ver histórico" onClick={() => setShowHistorico(true)}>
+                  <History className="h-3.5 w-3.5" />
+                  <span className="ml-1 text-xs">{historico.length}</span>
+                </Button>
+              )}
+            </div>
+          ) : (
+          <>
           <div className="space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resposta</span>
             {isTreinamentos ? (
@@ -782,6 +844,8 @@ function LinhaChecklist({
               </Button>
             )}
           </div>
+          </>
+          )}
 
           {(item.plano_acao || item.responsavel_acao || item.onde || prazo) && (
             <div className="space-y-1.5 rounded-lg bg-muted/60 px-3 py-2.5 text-[11px]">

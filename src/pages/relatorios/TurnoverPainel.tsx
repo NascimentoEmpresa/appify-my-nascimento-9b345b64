@@ -14,7 +14,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useTurnoverPainel, useTurnoverRescisoes, useVariacaoEfetivo } from "@/hooks/useRelatoriosDiretoria";
 import { VariacaoEfetivoDetalhe, VariacaoEfetivoVisao } from "./VariacaoEfetivo";
 import {
-  LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, pctDe, rotuloMeses, tempoDeCasa, totalAnalistas, turnoverDoAno, turnoverPorContrato,
+  LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, notaForaTurnover, pctDe, rotuloMeses, tempoDeCasa, totalAnalistas, turnoverDoAno, turnoverPorContrato,
   type LinhaAnalista, type PainelTurnover, type RescisoesTurnover, type TipoLimite,
 } from "@/lib/diretoria/turnover";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -231,6 +231,9 @@ function Resumo({ p }: { p: PainelTurnover }) {
             <p className="mt-2 text-xs text-muted-foreground">
               Projeção para o ano: <b className={ano.projecao > META_ANUAL ? "text-destructive" : "text-success"}>{pct(ano.projecao)}</b>
             </p>
+          )}
+          {notaForaTurnover(p.fora_turnover) && (
+            <p className="mt-2 text-xs text-muted-foreground">{notaForaTurnover(p.fora_turnover)}</p>
           )}
         </Card>
         <Card className="p-4 lg:col-span-2">

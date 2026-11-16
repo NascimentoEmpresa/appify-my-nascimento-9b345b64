@@ -297,6 +297,13 @@ export interface ReferenciaConvencao {
 /** Saída de lic_referencia_do_posto / rec_beneficios_da_vaga. */
 export interface RespostaReferencia {
   status: "sem_posto" | "sem_vinculo" | "vinculado";
+  /**
+   * De onde veio o vínculo (mig 20261113100500): 'contrato' = convenção do
+   * contrato, que vale para todos os postos dele; 'posto' = vínculo do posto
+   * na Planilha de Custo (contrato sem convenção própria). Retrato antigo de
+   * vaga não tem o campo — é 'posto'.
+   */
+  origem?: "contrato" | "posto";
   contrato_id?: string | null;
   posto?: string | null;
   principal_id?: string;
@@ -347,7 +354,11 @@ export function montarQuadro(r: RespostaReferencia | null | undefined): Quadro {
     const v = ref.beneficios?.[def.chave];
     const texto = textoBeneficio(def, v);
     // VT sai do decreto municipal: CCT sem VT pede o decreto, não o VT na CCT.
-    if (!texto && def.chave === "vt" && !ref.decreto_numero) pendencias.push(`${def.nome}: o posto não tem decreto municipal para o VT — vincule na Planilha de Custo.`);
+    if (!texto && def.chave === "vt" && !ref.decreto_numero) {
+      pendencias.push(r.origem === "contrato"
+        ? `${def.nome}: o contrato não tem decreto municipal para o VT — escolha o decreto no cadastro do contrato.`
+        : `${def.nome}: o posto não tem decreto municipal para o VT — vincule na Planilha de Custo.`);
+    }
     else if (!texto) pendencias.push(`${def.nome}: não preenchido em ${identificacaoCct(ref) ?? ref.decreto_numero ?? "na convenção"}.`);
     return { def, texto, naoContem: !!v?.nao_contem && !!texto, referencia: ref };
   });
@@ -443,3 +454,43 @@ export function espelhoAnexoPrincipal(lista: AnexoLista[]) {
   const p = lista.find((a) => a.path);
   return { cct_arquivo_path: p?.path ?? null, cct_arquivo_nome: p?.nome ?? null, cct_arquivo_tamanho: p?.tamanho ?? null };
 }
+
+// ── Convenção do CONTRATO (13/11/2026, mig 20261113100500) ────────────────
+//
+// Pedido do Pablo: vinculada a convenção no contrato, TODOS os benefícios
+// dos postos dele vêm dela — no Quadro de Postos do contrato e na
+// Solicitação de Vaga. O posto não edita: mudar um valor é no cadastro da
+// convenção (a tela avisa e leva até lá).
+
+/** O que um posto herda da convenção, nos campos de texto do formulário. */
+export interface HerancaConvencao {
+  /** "Vale-Alimentação (VA): R$ 30,00 / dia · …" — o que vai para a vaga. */
+  beneficios: string;
+  /** "20" / "" — o campo "Insalubridade (%)" do posto. */
+  insalubridade_pct: string;
+  periculosidade_pct: string;
+}
+
+/**
+ * Referência vinculada → campos do posto. Benefício "Não contém" e pendente
+ * ficam de fora do texto (a pendência aparece no quadro, não na vaga).
+ * Sem vínculo: null (o posto continua preenchido à mão / pela planilha).
+ */
+export function herancaDaConvencao(r: RespostaReferencia | null | undefined): HerancaConvencao | null {
+  if (!r || r.status !== "vinculado") return null;
+  const q = montarQuadro(r);
+  const pctDe = (chave: ChaveBeneficio): string => {
+    const i = q.itens.find((x) => x.def.chave === chave);
+    const v = i?.referencia?.beneficios?.[chave];
+    if (!i?.texto || !v || v.nao_contem) return "";
+    return percentualTexto(v.percentual);
+  };
+  return {
+    beneficios: q.itens.filter((i) => i.texto && !i.naoContem).map((i) => `${i.def.nome}: ${i.texto}`).join(" · "),
+    insalubridade_pct: pctDe("insalubridade"),
+    periculosidade_pct: pctDe("periculosidade"),
+  };
+}
+
+/** Link do cadastro da convenção (abre já em edição). */
+export const urlEditarConvencao = (id: string) => `/app/licitacoes/convencoes?editar=${id}`;

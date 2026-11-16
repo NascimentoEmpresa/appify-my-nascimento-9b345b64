@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { History } from "lucide-react";
 import { fmtDataHora } from "./types";
+import { textoParaRelatorio } from "@/lib/chamados/mensagemEditavel";
 
 // Feed "Atualizações recentes" compartilhado pelos três painéis. O recorte NÃO
 // depende só da RLS (que é ampla para quem tem o painel/coordenação): cada tela
@@ -23,6 +24,9 @@ interface FeedEvento {
   tipo: string;
   texto: string | null;
   created_at: string;
+  editado_em?: string | null;
+  apagado_em?: string | null;
+  apagado_por?: string | null;
 }
 
 type ChamadoLabel = { numero: string; assunto: string; responsavel_id?: string | null };
@@ -86,7 +90,9 @@ export function FeedAtualizacoes({
 
       let eq = (supabase as any)
         .from("CHAMADO_SISTEMA_EVENTO")
-        .select("id, chamado_id, autor_id, tipo, texto, created_at")
+        // "*" e não lista de colunas: o feed não quebra enquanto a mig
+        // 20261115000600 (editado_em/apagado_em) não entra no banco.
+        .select("*")
         .order("created_at", { ascending: false })
         // scope recortado pode descartar observações internas no filtro JS, então
         // busca uma folga para não exibir menos itens que o limite.
@@ -145,7 +151,13 @@ export function FeedAtualizacoes({
             {/* `anywhere` e não `break-words`: a URL de um PR é UMA palavra de
                 60+ caracteres, e break-word só quebra quando a palavra sozinha
                 não cabe na linha — no meio de uma frase ela ainda vazava. */}
-            {e.texto && <p className="whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">{e.texto}</p>}
+            {/* Apagada (mig 20261115000600): o aviso no lugar, nunca o conteúdo. */}
+            {(() => {
+              const t = textoParaRelatorio(e, nomeDe);
+              return t ? (
+                <p className={`whitespace-pre-wrap text-xs [overflow-wrap:anywhere] ${e.apagado_em ? "italic text-muted-foreground" : ""}`}>{t}</p>
+              ) : null;
+            })()}
             <p className="text-[10px] text-muted-foreground [overflow-wrap:anywhere]">por {nomeDe(e.autor_id)}</p>
           </button>
           );

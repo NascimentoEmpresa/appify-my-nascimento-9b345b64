@@ -31,7 +31,17 @@ export interface ItemMuralInicio {
   formulario: string;
   enviado_em: string;
   status: StatusMural;
+  /** Modo do mês desse formulário (mig 20261114120000): 'proprios' = só a pessoa vê os dela. */
+  visibilidade?: VisibilidadeMural;
 }
+
+/**
+ * Quem vê no Início (13/11/2026, Pablo: "CADA UM VER SÓ OS SEUS COMENTÁRIOS
+ * ou TODOS VEREM OS COMENTÁRIOS BONS"). Por formulário + mês; o filtro é no
+ * banco (cs_form_mural_inicio), então no 'proprios' os recados dos outros
+ * nem chegam ao navegador.
+ */
+export type VisibilidadeMural = "todos" | "proprios";
 
 export interface ItemModeracao {
   resposta_id: string;
@@ -62,7 +72,10 @@ export function useMuralInicio() {
   return useQuery({
     queryKey: [CHAVE_INICIO, user?.id],
     enabled: !!user?.id,
-    staleTime: 10 * 60_000,
+    // 1 min (era 10): remover um mês do mural (MuralModeracao) tem que sumir
+    // do Início dos outros logo, não 10 min depois. Só reconsulta ao abrir o
+    // Início com o dado vencido — sem polling, sem refetch ao focar a janela.
+    staleTime: 60_000,
     queryFn: async (): Promise<{ mes: string; itens: ItemMuralInicio[] }[]> => {
       const { data, error } = await sb.rpc("cs_form_mural_inicio");
       if (error) throw error;
@@ -80,6 +93,40 @@ export function useMuralModeracao(formId: string | undefined, mes: string, ativo
       const { data, error } = await sb.rpc("cs_form_mural_moderacao", { _form_id: formId, _mes: `${mes}-01` });
       if (error) throw error;
       return (data ?? []) as ItemModeracao[];
+    },
+  });
+}
+
+const CHAVE_VISIBILIDADE = "mural-reconhecimento-visibilidade";
+
+/** Modo do mês na moderação. Sem a migration no banco ainda: 'todos' (o de sempre). */
+export function useVisibilidadeMural(formId: string | undefined, mes: string) {
+  return useQuery({
+    queryKey: [CHAVE_VISIBILIDADE, formId, mes],
+    enabled: !!formId,
+    queryFn: async (): Promise<{ modo: VisibilidadeMural; disponivel: boolean }> => {
+      const { data, error } = await sb.rpc("cs_form_mural_visibilidade", { _form_id: formId, _mes: `${mes}-01` });
+      if (error) {
+        if (error.code === "PGRST202") return { modo: "todos", disponivel: false };
+        throw error;
+      }
+      return { modo: data === "proprios" ? "proprios" : "todos", disponivel: true };
+    },
+  });
+}
+
+export function useDefinirVisibilidadeMural(formId: string | undefined, mes: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (modo: VisibilidadeMural) => {
+      const { error } = await sb.rpc("cs_form_mural_definir_visibilidade", {
+        _form_id: formId, _mes: `${mes}-01`, _visibilidade: modo,
+      });
+      if (error) throw error;
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: [CHAVE_VISIBILIDADE, formId, mes] });
+      qc.invalidateQueries({ queryKey: [CHAVE_INICIO] });
     },
   });
 }

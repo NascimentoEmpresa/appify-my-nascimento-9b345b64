@@ -299,38 +299,78 @@ export function resultadoDoCard(i: IndicadorGerencial): string {
 
 /** "lista": linhas de alerta com data, título e apoio (lic_prazo — o slide Alertas da TV de Licitações, 14/10/2026). */
 export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo" | "lista";
-/** O tipo de gráfico de cada indicador — o mesmo do protótipo HTML quando o dado do ERP permite. */
-const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /** unidade do detalhe quando difere da do indicador */ unidade?: Unidade }> = {
-  fin_notas_pendentes: { tipo: "colunas", unidade: "brl" }, sup_valor_estoque: { tipo: "colunas", unidade: "brl" }, sup_sem_mov: { tipo: "colunas", unidade: "brl" },
-  rh_ob_rescisoes: { tipo: "colunas", unidade: "qtd" }, fin_recebimentos: { tipo: "colunas", unidade: "brl" },
-  lic_prazo: { tipo: "lista", unidade: "dias" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_propostas: { tipo: "colunas", unidade: "dias" },
-  jur_prazos: { tipo: "colunas", unidade: "dias" }, fro_manutencoes: { tipo: "colunas", unidade: "dias" }, jur_audiencias: { tipo: "linha", unidade: "dias" },
-  op_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] }, pre_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] },
-  rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] },
-  // TV Supply = Dashboard de Compras (mig 20261014000028): os mesmos gráficos de lá.
+/**
+ * O tipo de gráfico de cada indicador — o do protótipo HTML ("TVs Gerenciais —
+ * 10 telas conforme o Word"). 14/11/2026, Pablo: "todos gráficos das TVs estão
+ * assim". Conferido card a card; o que o ERP não consegue desenhar igual:
+ *   · lic_prazo segue em LISTA de alertas (pedido do Pablo de 14/10/2026, no
+ *     lugar das colunas do protótipo);
+ *   · os EMPILHADOS do protótipo (lic_documentos, sup_valor_estoque, rec_risco,
+ *     rh_obrigacoes, jur_prazos, ctl_reincidentes, pre_caixa) precisam da
+ *     abertura por faixa, que o cálculo ainda não manda: ficam em colunas;
+ *   · agrupado sem as duas séries no dado (fin_recebimentos, lic_propostas,
+ *     rec_admissoes, rec_abertas, sst_acidentes) cai para colunas, sem perder a unidade.
+ * `metaSerie`: a segunda série é a própria meta (ctl_margem: "margem atual ×
+ * meta mínima" do protótipo).
+ */
+type DefGrafico = { tipo: TipoGrafico; series?: [string, string]; /** unidade do detalhe quando difere da do indicador */ unidade?: Unidade; metaSerie?: boolean };
+const GRAFICO: Record<string, DefGrafico> = {
+  // Gerência Operacional
+  op_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] }, op_lucratividade: { tipo: "combo" }, op_custo_direto: { tipo: "colunas" },
+  op_glosas: { tipo: "colunas" }, op_faltas: { tipo: "linha" }, op_turnover: { tipo: "linha" }, op_reclamacoes: { tipo: "combo" },
+  // Licitações
+  lic_prazo: { tipo: "lista", unidade: "dias" }, lic_documentos: { tipo: "colunas" }, lic_propostas: { tipo: "agrupado", series: ["Em elaboração", "Concluídas"], unidade: "dias" },
+  lic_risco: { tipo: "rosca" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_perdidas: { tipo: "rosca" }, lic_valor: { tipo: "colunas" },
+  // Supply
+  sup_compras_vencidas: { tipo: "colunas" }, sup_abaixo_minimo: { tipo: "rosca" }, sup_valor_estoque: { tipo: "colunas", unidade: "brl" },
+  sup_sem_mov: { tipo: "colunas", unidade: "brl" }, sup_fornecedor: { tipo: "colunas" }, sup_contratos_sem_entrega: { tipo: "linha" },
+  // Recrutamento e Seleção
+  rec_risco: { tipo: "colunas" }, rec_abertas: { tipo: "agrupado", series: ["Abertas", "Em preenchimento"] }, rec_prazo: { tipo: "colunas" },
+  rec_admissoes: { tipo: "agrupado", series: ["Previstas", "Concluídas"] }, rec_desistencias: { tipo: "rosca" },
+  // RH
+  rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] }, rh_salarios: { tipo: "colunas" }, rh_turnover: { tipo: "linha" },
+  rh_absenteismo: { tipo: "colunas" }, rh_obrigacoes: { tipo: "colunas" }, rh_ob_rescisoes: { tipo: "colunas", unidade: "qtd" },
+  // SST
+  sst_impedidos: { tipo: "colunas" }, sst_aso: { tipo: "rosca" }, sst_treinamentos: { tipo: "colunas" }, sst_epi: { tipo: "rosca" },
+  sst_afastamentos: { tipo: "linha" }, sst_acidentes: { tipo: "agrupado", series: ["Acidentes", "Quase acidentes"] },
+  // Financeira
+  fin_notas_pendentes: { tipo: "colunas", unidade: "brl" }, fin_valor_pendente: { tipo: "colunas" },
+  fin_recebimentos: { tipo: "agrupado", series: ["Previsto", "Realizado"], unidade: "brl" }, fin_inadimplencia: { tipo: "colunas" },
+  fin_fluxo: { tipo: "linha" }, fin_glosas: { tipo: "rosca" },
+  // Jurídico
+  jur_prazos: { tipo: "colunas", unidade: "dias" }, jur_sem_resposta: { tipo: "colunas" }, jur_audiencias: { tipo: "linha", unidade: "dias" },
+  jur_contratos_analise: { tipo: "colunas" }, jur_risco: { tipo: "rosca" }, jur_reincidentes: { tipo: "colunas" },
+  // Controladoria
+  ctl_margem: { tipo: "agrupado", series: ["Margem atual", "Meta mínima"], metaSerie: true }, ctl_desvio: { tipo: "colunas" }, ctl_vermelhos: { tipo: "rosca" },
+  ctl_planos: { tipo: "colunas" }, ctl_nao_atualizados: { tipo: "colunas" }, ctl_reincidentes: { tipo: "colunas" },
+  // Presidência
+  pre_lucratividade: { tipo: "combo" }, pre_vermelhos: { tipo: "rosca" }, pre_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] },
+  pre_glosas: { tipo: "colunas" }, pre_salarios: { tipo: "colunas" }, pre_caixa: { tipo: "colunas" }, pre_clientes: { tipo: "colunas" }, pre_planos: { tipo: "colunas" },
+  // Fora do protótipo (Frota, TI, Treinamento) e espelhos do dashboard (mig 20261014000028)
+  fro_manutencoes: { tipo: "colunas", unidade: "dias" }, ti_integracoes: { tipo: "rosca" }, fro_sem_responsavel: { tipo: "rosca" },
   sup_solicitacoes: { tipo: "agrupado", series: ["Solicitações", "Despachadas"] }, sup_pendentes: { tipo: "rosca" },
   sup_cotacoes: { tipo: "rosca" }, sup_saving: { tipo: "colunas", unidade: "brl" }, sup_saving_pct: { tipo: "colunas", unidade: "pct" }, sup_tempo_atendimento: { tipo: "colunas", unidade: "dias" }, sup_despachados: { tipo: "colunas", unidade: "qtd" },
-  op_lucratividade: { tipo: "combo" }, pre_lucratividade: { tipo: "combo" }, op_reclamacoes: { tipo: "combo" }, ctl_margem: { tipo: "combo" },
-  op_faltas: { tipo: "linha" }, op_turnover: { tipo: "linha" }, rh_turnover: { tipo: "linha" }, sst_afastamentos: { tipo: "linha" },
-  sup_contratos_sem_entrega: { tipo: "linha" }, fin_fluxo: { tipo: "linha" },
-  lic_risco: { tipo: "rosca" }, lic_perdidas: { tipo: "rosca" }, rec_desistencias: { tipo: "rosca" }, sst_aso: { tipo: "rosca" },
-  sst_epi: { tipo: "rosca" }, fin_glosas: { tipo: "rosca" }, jur_risco: { tipo: "rosca" }, ctl_vermelhos: { tipo: "rosca" },
-  pre_vermelhos: { tipo: "rosca" }, ti_integracoes: { tipo: "rosca" }, fro_sem_responsavel: { tipo: "rosca" },
 };
-export function graficoDo(i: Pick<IndicadorGerencial, "codigo" | "resultado">): { tipo: TipoGrafico; series?: [string, string]; unidade?: Unidade } {
+/** O tipo pedido pelo protótipo, antes de olhar o dado (para a conferência e o teste). */
+export const graficoDoPrototipo = (codigo: string): TipoGrafico | null => GRAFICO[codigo]?.tipo ?? null;
+type ComMeta = Pick<IndicadorGerencial, "codigo" | "resultado"> & Partial<Pick<IndicadorGerencial, "meta">>;
+const metaNum = (i: ComMeta) => (i.meta == null || i.meta === "" || !Number.isFinite(Number(i.meta)) ? null : Number(i.meta));
+export function graficoDo(i: ComMeta): { tipo: TipoGrafico; series?: [string, string]; unidade?: Unidade } {
   // Espelho de relatório: o tipo do gráfico vem da tela de origem.
-  const g = i.resultado?.grafico ? { tipo: i.resultado.grafico, series: i.resultado.grafico_series ?? undefined } : GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
-  // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas.
-  if (g.tipo === "agrupado" && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas" };
+  const g: DefGrafico = i.resultado?.grafico ? { tipo: i.resultado.grafico, series: i.resultado.grafico_series ?? undefined } : GRAFICO[i.codigo] ?? { tipo: "colunas" };
+  // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas — a meta como série conta como a segunda.
+  if (g.tipo === "agrupado" && !(g.metaSerie && metaNum(i) != null) && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas", unidade: g.unidade };
   // Lista sem os campos (banco antes da mig 20261014000027) cai para colunas.
   if (g.tipo === "lista" && !(i.resultado?.detalhe ?? []).some((l) => l.titulo)) return { tipo: "colunas", unidade: g.unidade };
-  return g;
+  return { tipo: g.tipo, series: g.series, unidade: g.unidade };
 }
 
 /** Os pontos do gráfico: o detalhamento real (os N maiores; rosca só fatias > 0). */
-export function dadosDoGrafico(i: Pick<IndicadorGerencial, "codigo" | "resultado">, max = 6): LinhaDetalhe[] {
+export function dadosDoGrafico(i: ComMeta, max = 6): LinhaDetalhe[] {
   const g = graficoDo(i);
-  const linhas = (i.resultado?.detalhe ?? []).filter((l) => l && l.nome && (l.valor != null || (l.a != null && l.b != null)));
+  let linhas = (i.resultado?.detalhe ?? []).filter((l) => l && l.nome && (l.valor != null || (l.a != null && l.b != null)));
+  const m = metaNum(i);
+  if (g.tipo === "agrupado" && GRAFICO[i.codigo]?.metaSerie && m != null) linhas = linhas.map((l) => ({ ...l, a: l.a ?? Number(l.valor), b: l.b ?? m }));
   if (g.tipo === "rosca") {
     const pos = linhas.filter((l) => Number(l.valor) > 0);
     if (pos.length <= max) return pos;
@@ -423,3 +463,41 @@ export function tendenciaValida(t: TendenciaPainel | null | undefined): t is Ten
 export const PREFIXO_INDICADOR = "ind:";
 export const ehIndicadorAvulso = (slug: string | null | undefined) => !!slug && slug.startsWith(PREFIXO_INDICADOR);
 export const codigoDoIndicador = (slug: string | null | undefined) => (ehIndicadorAvulso(slug) ? slug!.slice(PREFIXO_INDICADOR.length) : null);
+
+/**
+ * Troca o número de alguns cards pelo da TV que de fato toca na sala
+ * (14/11/2026: a Gerência Operacional toca a 'ope-contratos', não o tvg). Nome,
+ * dono, ordem e medida continuam os do cadastro; valor, meta e semáforo passam
+ * a ser os da TV — "as informações têm que bater".
+ */
+export function aplicarNumerosDaTv(
+  p: PainelGerencial,
+  cards: Record<string, { unidade: Unidade; sentido: Sentido; meta: number; alerta: number | null; meta_texto: string; valor: number | null; afetado: string | null; causa: string | null; base: string; detalhe: LinhaDetalhe[] }>,
+  origem: string,
+): PainelGerencial {
+  return {
+    ...p,
+    indicadores: p.indicadores.map((i) => {
+      const c = cards[i.codigo];
+      if (!c) return i;
+      return {
+        ...i, unidade: c.unidade, sentido: c.sentido, meta: c.meta, alerta: c.alerta, meta_texto: c.meta_texto,
+        resultado: { ...i.resultado, valor: c.valor, afetado: c.afetado, causa: c.causa, base: c.base, detalhe: c.detalhe, grafico: null, casas: null, erro: null, origem },
+      };
+    }),
+  };
+}
+
+/**
+ * Os relatórios de playlist que mostram a área deste painel (14/11/2026): o
+ * próprio ger-*, os indicadores avulsos dele ("ind:", resolvidos no banco) e
+ * a TV própria que a área ganhou em 11/11 (a sala da Gerência Operacional
+ * toca 'ope-contratos', a de Compras 'sup-painel'…). É a quem o "Atualizar"
+ * de TV's › Indicadores gerenciais manda recarregar.
+ */
+const TV_PROPRIA: Record<string, string[]> = {
+  "ger-operacional": ["ope-contratos"], "ger-supply": ["sup-painel"], "ger-recrutamento": ["rec-painel"],
+  "ger-rh": ["rh-salarios"], "ger-financeiro": ["fin-painel"], "ger-controladoria": ["ctl-painel"], "ger-presidencia": ["pre-painel"],
+  "ger-licitacoes": ["licitacoes"], "ger-treinamento": ["treinamentos"],
+};
+export const relatoriosDaTv = (slug: string): string[] => [slug, ...(TV_PROPRIA[slug] ?? [])];

@@ -48,6 +48,50 @@ export function useRatearLinhaImportada() {
   });
 }
 
+// SIS-2026-0877: ratear Débito Automático pelo Fluxo (RPC fluxo_caixa_debito_ratear; cotas com contrato, classificação e valor).
+export interface CotaDebitoRateio { contrato_id: string | null; classificacao_id: string | null; valor: number }
+
+// Cliente com só o que estes dois hooks usam (as tabelas/RPCs novas ainda não estão nos tipos gerados), sem espalhar `any`.
+type RespostaSolta<T> = PromiseLike<{ data: T | null; error: { message: string } | null }>;
+interface LinhaCotaDebito { contrato_id: string | null; classificacao_id: string | null; valor: string | number }
+interface ClienteDebitoRateio {
+  rpc(fn: string, args: object): RespostaSolta<unknown>;
+  from(tabela: string): { select(colunas: string): { eq(coluna: string, valor: string): { order(coluna: string): RespostaSolta<LinhaCotaDebito[]> } } };
+}
+const clienteDebito = supabase as unknown as ClienteDebitoRateio;
+
+export function useRatearDebitoAutomatico() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (i: { debitoId: string; cotas: { contrato_id: string | null; classificacao_id?: string | null; valor: number }[] }) => {
+      const { error } = await clienteDebito.rpc("fluxo_caixa_debito_ratear", { _debito_id: i.debitoId, _cotas: i.cotas });
+      if (error) throw error;
+    },
+    onSuccess: (_d, vars) => {
+      invalidarFluxo(qc);
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_ajuste"] });
+      qc.invalidateQueries({ queryKey: ["debito_automatico_rateio", vars.debitoId] });
+    },
+  });
+}
+
+/** Cotas gravadas do rateio de um Débito Automático (para refazer). */
+export function useCotasRateioDebito(debitoId: string | null | undefined, ativo: boolean) {
+  return useQuery({
+    queryKey: ["debito_automatico_rateio", debitoId],
+    enabled: !!debitoId && ativo,
+    queryFn: async () => {
+      const { data, error } = await clienteDebito
+        .from("DEBITO_AUTOMATICO_RATEIO")
+        .select("contrato_id, classificacao_id, valor")
+        .eq("debito_id", String(debitoId))
+        .order("ordem");
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((r): CotaDebitoRateio => ({ contrato_id: r.contrato_id, classificacao_id: r.classificacao_id, valor: Number(r.valor) }));
+    },
+  });
+}
+
 export interface ImportadaNaLixeira {
   /** despesa_id da tela: id da linha, ou id do grupo de rateio. */
   despesaId: string;

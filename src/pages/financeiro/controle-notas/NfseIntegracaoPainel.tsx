@@ -19,6 +19,7 @@ const ESTADOS: Record<EstadoNfse, string> = {
 };
 function parametrosIniciais(nf: NfEmissaoRow): ParametrosNfse {
   return {
+    data_competencia: nf.competencia,
     serie: "", municipio_emissor: "3542404", inscricao_municipal: "", opcao_simples: "", regime_especial: "", regime_apuracao: "",
     local_prestacao: "", codigo_tributacao: nf.codigo_servico ?? "", codigo_municipal: "", codigo_integracao_municipal: "", codigo_nbs: nf.nbs ?? "", descricao: nf.descricao ?? "",
     iss_retido: "", aliquota_iss: nf.vlr_bruto_total > 0 ? (Number(nf.issqn_total) / Number(nf.vlr_bruto_total) * 100).toFixed(2) : "",
@@ -81,6 +82,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   }
   function preparar(base = atual?.dados.parametros || parametrosIniciais(nf)) {
     setParametros({ ...base, serie: configuracao?.serie ? String(configuracao.serie) : base.serie,
+      data_competencia: base.data_competencia ?? nf.competencia,
       municipio_emissor: configuracao?.municipio_emissor || (producao ? "" : "3542404"),
       inscricao_municipal: configuracao?.inscricao_municipal || base.inscricao_municipal,
       confirmacao_fiscal: false, confirmacao_producao: false });
@@ -128,6 +130,8 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       <div className="rounded-md bg-muted p-3 text-sm">Valores salvos: serviços <strong>{fmtMoney(nf.vlr_bruto_total)}</strong> · líquido <strong>{fmtMoney(nf.vlr_liquido_total)}</strong>. A integração utiliza esses valores e as retenções salvas da preparação.</div>
       {alteracoesPendentes && <p role="alert" className="text-sm text-destructive">Há valores alterados nesta conferência. Salve a preparação na tela de Emissão de NF antes de solicitar a integração.</p>}
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Prestador e documento</legend>
+        <Campo titulo="Data de execução do serviço / competência da NFS-e" valor={parametros.data_competencia ?? ""} alterar={v => salvarCampo("data_competencia",v)} tipo="date" />
+        <p className="text-sm text-muted-foreground md:col-span-2">A data escolhida será enviada para o campo Competência da NFS-e no documento fiscal.</p>
         <Campo titulo="Série de DPS liberada para o ERP" valor={parametros.serie} alterar={v => salvarCampo("serie",v)} maximo={5} somenteLeitura={configuracao?.serie != null} />
         <Campo titulo="Inscrição municipal do prestador" valor={parametros.inscricao_municipal} alterar={v => salvarCampo("inscricao_municipal",v)} maximo={15} somenteLeitura={Boolean(configuracao?.inscricao_municipal)} />
         <Campo titulo={producao ? "Município emissor — código IBGE" : "Município emissor de testes — código IBGE"} valor={parametros.municipio_emissor} alterar={v => salvarCampo("municipio_emissor",v)} maximo={7} somenteLeitura={Boolean(configuracao?.municipio_emissor)} />

@@ -36,6 +36,13 @@ vi.mock("@/hooks/useNotificacoes", () => ({
   useNotificacoes: () => mockUseNotificacoes(),
 }));
 
+// O botão "Forçar todos a recarregar" (12/11/2026) fica num AcessoGate, que
+// consulta a permissão no banco. Aqui o teste é do painel de detalhes: o gate
+// vira transparente (esconde o botão), sem QueryClient nem rede.
+vi.mock("@/components/auth/AcessoGate", () => ({
+  AcessoGate: () => null,
+}));
+
 import QuadroAvisos from "@/pages/central-servicos/QuadroAvisos";
 
 beforeEach(() => {

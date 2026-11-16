@@ -3,8 +3,8 @@ name: NFS-e - fila automática
 on:
   schedule:
     # O cron do GitHub pode atrasar horas; o runner mantém ciclos de 60 s por 340 min.
-    # A próxima execução aguarda no grupo, como no espelho_mysql.yml.
-    - cron: '17 * * * *'
+    # Reposição a cada 15 min; somente uma execução fica ativa no grupo.
+    - cron: '7,22,37,52 * * * *'
   push:
     branches: [main]
     paths:

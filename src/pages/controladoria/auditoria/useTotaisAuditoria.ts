@@ -1,5 +1,7 @@
 import { useMemo } from "react";
-import { useItensNfEmissaoEmLote } from "@/hooks/useNfEmissao";
+import { useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
+import { foraDoRelatorio } from "@/pages/financeiro/nf-emissao/shared";
+import { conciliar } from "@/pages/financeiro/conciliacao-servicos/regras";
 import { ignoraNaConciliacao } from "@/hooks/useConciliacaoFluxoCaixa";
 import { faltaDeFaturamento } from "../faturamentoStatus";
 import { agruparFaturamento, ehContratoAdministrativo, rubricaDaLinha, totaisVazios } from "../faturamento/regras";
@@ -10,7 +12,7 @@ import { ehTributoSobreResultado, socioDoContrato } from "../fechamento/regras";
 import { useBaseFaturamento } from "../faturamento/useBaseFaturamento";
 import {
   centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, TipoCentro, TipoValidacao, TotaisCard,
-  totaisCentrosFluxo, totaisFluxoExtrato, totaisMaloteFinanceiro, totalMaloteDireto,
+  totaisCentrosFluxo, totaisConciliacaoFaturamento, totaisFluxoExtrato, totaisMaloteFinanceiro, totalMaloteDireto,
 } from "./regras";
 import { BasePeriodo, linhasMalote, useConciliadoMes, useMaloteCentrosMes, useFluxoMes, useMaloteDiretoMes, useOrcadoRealizado } from "./useAuditoriaDados";
 
@@ -62,6 +64,15 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
   const porContrato = useMemo(() => agruparFaturamento(nfsDoMes, (n) => n.contrato_id), [nfsDoMes]);
   const idsNfs = useMemo(() => nfsDoMes.map((n) => n.id), [nfsDoMes]);
   const itensQ = useItensNfEmissaoEmLote(idsNfs);
+
+  // SIS-2026-0874 (item 8): as NFs (Código N) da competência do mês, conciliadas Relatório de Serviços × Faturamento da Empresa com a mesma
+  // conta da aba Conciliação do Relatório de Serviços. Sempre por competência: NF é faturada na competência, não na data de pagamento.
+  const { data: nfsTodas = [] } = useNfsEmissao(null, { todasEmpresas: true });
+  const idsConciliacao = useMemo(
+    () => nfsTodas.filter((n) => n.competencia.startsWith(f.mes) && n.tipo_nota === "N" && !foraDoRelatorio(n)).map((n) => n.id),
+    [nfsTodas, f.mes],
+  );
+  const itensConciliacaoQ = useItensNfEmissaoEmLote(idsConciliacao);
 
   const avisoFiltro = (usaContrato: boolean) => (!usaContrato && f.contratoId ? "Este total não tem contrato: o filtro de contrato não se aplica." : undefined);
 
@@ -157,6 +168,21 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
       };
     }
 
+    // 8. Faturamento de Notas: Relatório de Serviços × Faturamento da Empresa
+    let t8: TotaisCard | null = null;
+    if (!base.carregando && (idsConciliacao.length === 0 || itensConciliacaoQ.data)) {
+      const r = conciliar({
+        nfs: nfsTodas,
+        itensPorNf: itensConciliacaoQ.data,
+        contratoPorId: base.contratoPorId,
+        filtros: { ano: Number(f.mes.slice(0, 4)), competencia: f.mes, empresaId: f.empresaId ?? "", contratoId: f.contratoId ?? "", cliente: "", codigo: "N", situacao: "" },
+      });
+      t8 = {
+        ...totaisConciliacaoFaturamento(r),
+        aviso: "As NFs são lidas pela competência do mês (código N), igual ao Relatório de Serviços e ao Faturamento da Empresa — mesmo quando o período da Auditoria está em Data de pagamento.",
+      };
+    }
+
     const estado = (totais: TotaisCard | null, ...fontes: { isLoading?: boolean; error?: unknown }[]): EstadoCard => ({
       totais,
       carregando: !totais && fontes.some((x) => x.isLoading),
@@ -171,6 +197,7 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
       faturado: estado(t5, faturamentoFonte),
       recebido: estado(t6, faturamentoFonte),
       descontos: estado(t7, faturamentoFonte, itensQ),
+      conciliacao_faturamento: estado(t8, faturamentoFonte, itensConciliacaoQ),
     };
-  }, [maloteQ.data, maloteQ.error, centrosQ.data, centrosQ.error, fluxoQ.data, fluxoQ.error, conciliadoQ.data, conciliadoQ.error, orcado.data, orcado.isLoading, base.carregando, base.contratos, base.executavelDoContrato, porContrato, itensQ.data, itensQ.error, idsNfs.length, f.mes, f.empresaId, f.contratoId, contratoPassa, base_]);
+  }, [maloteQ.data, maloteQ.error, centrosQ.data, centrosQ.error, fluxoQ.data, fluxoQ.error, conciliadoQ.data, conciliadoQ.error, orcado.data, orcado.isLoading, base.carregando, base.contratos, base.contratoPorId, base.executavelDoContrato, porContrato, itensQ.data, itensQ.error, nfsTodas, idsConciliacao, itensConciliacaoQ.data, itensConciliacaoQ.error, idsNfs.length, f.mes, f.empresaId, f.contratoId, contratoPassa, base_]);
 }

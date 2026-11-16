@@ -9,6 +9,8 @@ export interface CotaRateio {
   contratoId: string;
   /** texto digitado (aceita vírgula). */
   valor: string;
+  /** só no rateio de Débito Automático (SIS-2026-0877): classificação da cota; "" = a do lançamento. Ausente = a origem não rateia classificação. */
+  classificacaoId?: string;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -63,8 +65,12 @@ export function erroCotas(total: number, cotas: CotaRateio[], refazendo: boolean
 }
 
 /** Corpo da RPC. */
-export function cotasParaRpc(cotas: CotaRateio[]): { contrato_id: string | null; valor: number }[] {
-  return cotas.map((c) => ({ contrato_id: c.contratoId === SEM_CONTRATO ? null : c.contratoId, valor: lerValor(c.valor) }));
+export function cotasParaRpc(cotas: CotaRateio[]): { contrato_id: string | null; classificacao_id?: string | null; valor: number }[] {
+  return cotas.map((c) => ({
+    contrato_id: c.contratoId === SEM_CONTRATO ? null : c.contratoId,
+    ...(c.classificacaoId !== undefined ? { classificacao_id: c.classificacaoId || null } : {}),
+    valor: lerValor(c.valor),
+  }));
 }
 
 export interface LinhaParaRateio {
@@ -78,7 +84,8 @@ export interface LinhaParaRateio {
  * (outras origens, ou rateio que veio da planilha — esse não se altera aqui).
  */
 export function acaoDeRateio(l: LinhaParaRateio): "ratear" | "refazer" | null {
-  if (l.origem !== "importacao_historica") return null;
+  // SIS-2026-0877: Débito Automático também se rateia no Fluxo (cotas em DEBITO_AUTOMATICO_RATEIO); tudo que é rateio de lá foi criado no ERP.
+  if (l.origem !== "importacao_historica" && l.origem !== "debito_automatico") return null;
   if (l.rateio_erp) return "refazer";
   if (l.contrato_nome === "Rateio") return null;
   return "ratear";

@@ -150,6 +150,12 @@ export interface MaloteDespesaRow {
   status: StatusDespesa;
   nome: string;
   valor_total: number;
+  // SIS-2026-0818: referência preservada para o saving. `valor_total` vira o
+  // valor real quando a solicitação é convertida em despesa.
+  valor_previsto_compra: number | null;
+  valor_previsto_editado_em: string | null;
+  valor_previsto_editado_por: string | null;
+  valor_previsto_editado_por_nome: string | null;
   motivo: string | null;
   descricao: string | null;
   links: string | null;

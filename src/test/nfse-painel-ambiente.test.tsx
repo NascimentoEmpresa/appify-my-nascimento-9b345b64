@@ -19,7 +19,7 @@ vi.mock("@/hooks/useNfseIntegracao", () => ({
   useReprocessarNfse: () => ({ mutateAsync: estado.reprocessar, isPending: false }),
   abrirDocumentoNfse: vi.fn(),
 }));
-const nota = { id: "nota-piloto", empresa_id: "empresa", status: "enviada", vlr_bruto_total: 100, vlr_liquido_total: 82.2, issqn_total: 2, csll_total: 0 } as unknown as NfEmissaoRow;
+const nota = { id: "nota-piloto", empresa_id: "empresa", status: "enviada", competencia: "2026-10-01", vlr_bruto_total: 100, vlr_liquido_total: 82.2, issqn_total: 2, csll_total: 0 } as unknown as NfEmissaoRow;
 beforeAll(() => vi.stubGlobal("ResizeObserver", class {
   observe() { return undefined; }
   unobserve() { return undefined; }
@@ -30,6 +30,26 @@ afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; es
   estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("permite escolher a competência fiscal e exige nova revisão antes de enviar a data selecionada", async () => {
+    estado.habilitado = true;
+    const parametros = { ...parametrosNfse(), codigo_integracao_municipal: "8111700" };
+    estado.solicitacoes = [{ id: "anterior", ambiente: "producao", estado: "rejeitada", serie: 1041, numero_dps: 2,
+      atualizado_em: "2026-11-13T10:00:00Z", dados: { parametros } } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button", { name: "Preparar emissão em produção" }));
+    const data = screen.getByLabelText("Data de execução do serviço / competência da NFS-e");
+    expect(data).toHaveAttribute("type", "date"); expect(data).toHaveValue("2026-10-01");
+    const revisar = () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: "Revisei os dados fiscais, as retenções e a série liberada." }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Autorizo a emissão de uma nota fiscal real em produção para esta preparação." }));
+    };
+    revisar(); fireEvent.change(data, { target: { value: "2026-10-31" } });
+    const botao = screen.getByRole("button", { name: "Solicitar emissão em produção" });
+    expect(botao).toBeDisabled(); revisar(); fireEvent.submit(botao.closest("form")!);
+    await waitFor(() => expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({ data_competencia: "2026-10-31", confirmacao_fiscal: true, confirmacao_producao: true });
+    expect(nota.competencia).toBe("2026-10-01");
+  });
   it("pede a IM correta após P4016 e exige nova revisão sem retransmitir a DPS rejeitada", async () => {
     estado.habilitado = true;
     const parametros = parametrosNfse(); parametros.codigo_integracao_municipal = "8111700";

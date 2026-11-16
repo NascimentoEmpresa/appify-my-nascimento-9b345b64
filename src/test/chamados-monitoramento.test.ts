@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  analiseQualidade, avaliarChamado, calcularKpis, classificarTema, leituraControladoria,
+  analiseQualidade, avaliarChamado, calcularKpis, classificarTema, entraNoMonitoramento, leituraControladoria,
   rankingSolicitantes, resumoTemas, termosPresentes, type ChamadoMonitor, type LinhaMonitor,
 } from "@/lib/chamados/monitoramento";
 
@@ -55,11 +55,13 @@ describe("Monitoramento de Chamados — tema", () => {
     expect(termosPresentes(" deu erros na tela ", ["erro"])).toEqual(["erro"]);
   });
 
-  it("ajuste manual de tema vence o automático", () => {
-    const a = avaliarChamado(chamado({ assunto: "Relatório", ajustes: { tema: "visao_estrategica" } }), AGORA);
-    expect(a.tema).toBe("visao_estrategica");
-    expect(a.temaAuto.tema).toBe("relatorios");
-    expect(a.ajustado).toContain("tema");
+  // SIS-2026-0904: o ajuste manual saiu. A RPC ainda manda `ajustes` (tabela
+  // antiga), mas a avaliação fica só no automático.
+  it("ajuste manual antigo vindo da RPC é ignorado", () => {
+    const comAjuste = { ...chamado({ assunto: "Relatório", descricao: BOM }), ajustes: { tema: "visao_estrategica", indice: "9,5", efetividade: "10" } } as ChamadoMonitor;
+    const a = avaliarChamado(comAjuste, AGORA);
+    expect(a.tema).toBe(a.temaAuto.tema);
+    expect(a).toEqual(avaliarChamado(chamado({ assunto: "Relatório", descricao: BOM }), AGORA));
   });
 });
 
@@ -94,18 +96,6 @@ describe("Monitoramento de Chamados — índice 0–10", () => {
     const sem = avaliarChamado(chamado({ descricao: "ver tela" }), AGORA);
     const com = avaliarChamado(chamado({ descricao: "ver tela", aval_dev_clareza: 5 }), AGORA);
     expect(com.criterios.clareza_problema.nota!).toBeGreaterThan(sem.criterios.clareza_problema.nota!);
-  });
-
-  it("ajuste manual do índice substitui, mas guarda o automático", () => {
-    const a = avaliarChamado(chamado({ descricao: BOM, ajustes: { indice: "9,5" } }), AGORA);
-    expect(a.indice).toBe(9.5);
-    expect(a.indiceAuto).not.toBe(9.5);
-    expect(a.ajustado).toContain("indice");
-  });
-
-  it("ajuste fora da faixa é ignorado", () => {
-    const a = avaliarChamado(chamado({ ajustes: { indice: "15", efetividade: "-3" } }), AGORA);
-    expect(a.ajustado).toEqual([]);
   });
 });
 
@@ -144,9 +134,17 @@ describe("Monitoramento de Chamados — consolidação", () => {
     linha({ id: "d", solicitante_id: "u3", solicitante_nome: "Caio", setor: "RH", status: "cancelado", assunto: "Relatório" }),
   ];
 
-  it("cancelado fica só no contador próprio", () => {
+  // SIS-2026-0904: cancelado não entra no monitoramento — a tela tira na
+  // entrada (entraNoMonitoramento) e as contas ignoram mesmo se chegar.
+  it("cancelado fica fora do monitoramento", () => {
+    expect(linhas.filter((l) => entraNoMonitoramento(l.c)).map((l) => l.c.id)).toEqual(["a", "b", "c"]);
+    expect(entraNoMonitoramento({ status: "reprovado" })).toBe(true);
+  });
+
+  it("cancelado não pesa em total, solicitantes nem médias", () => {
     const k = calcularKpis(linhas);
-    expect(k).toMatchObject({ total: 3, solicitantes: 2, concluidas: 1, emAndamento: 1, pendentes: 1, canceladas: 1 });
+    expect(k).toMatchObject({ total: 3, solicitantes: 2, concluidas: 1, emAndamento: 1, pendentes: 1 });
+    expect(k).toEqual(calcularKpis(linhas.slice(0, 3)));
     expect(k.efetividadeMedia).toBe(100);
   });
 
@@ -167,5 +165,51 @@ describe("Monitoramento de Chamados — consolidação", () => {
     expect(q.objetivoClaro).toBe(67);
     expect(leituraControladoria(linhas)).toMatch(/Financeiro/);
     expect(leituraControladoria([])).toMatch(/Sem solicitações/);
+  });
+});
+
+describe("Monitoramento de Chamados — nota da I.A e ranking por volume (13/11/2026)", () => {
+  const ia = (nota: number) => ({
+    criterios: Object.fromEntries(["clareza_problema", "clareza_resultado", "descricao", "evidencias", "importancia",
+      "aderencia", "reaproveitamento", "reducao_manual", "confiabilidade"].map((k) => [k, { nota, motivo: "ok" }])),
+    resumo: "Pedido completo.", avaliado_em: "2026-11-13T10:00:00-03:00",
+  });
+
+  it("com a avaliação da I.A, os critérios de texto vêm dela e o índice chega a 9+", () => {
+    const l = linha({ descricao: "ver", ia: ia(9.5) });
+    expect(l.a.fonte).toBe("ia");
+    expect(l.a.criterios.clareza_problema.nota).toBe(9.5);
+    expect(l.a.indice).toBeGreaterThanOrEqual(9);
+    expect(l.a.resumoIa).toBe("Pedido completo.");
+  });
+
+  it("I.A incompleta (faltou critério) cai na regra antiga", () => {
+    const parcial = ia(9);
+    delete (parcial.criterios as Record<string, unknown>).confiabilidade;
+    expect(linha({ ia: parcial }).a.fonte).toBe("regra");
+    expect(linha({ ia: null }).a.fonte).toBe("regra");
+  });
+
+  it("quem tem 2 chamados ótimos não passa à frente de quem tem 25 muito bons", () => {
+    const ls: LinhaMonitor[] = [
+      ...Array.from({ length: 2 }, (_, i) => linha({ id: `s${i}`, solicitante_id: "sen", solicitante_nome: "Poucos", ia: ia(9.6) })),
+      ...Array.from({ length: 25 }, (_, i) => linha({ id: `f${i}`, solicitante_id: "fer", solicitante_nome: "Muitos", ia: ia(9) })),
+      ...Array.from({ length: 30 }, (_, i) => linha({ id: `o${i}`, solicitante_id: `o${i % 6}`, solicitante_nome: `Outro ${i % 6}`, ia: ia(6) })),
+    ];
+    const r = rankingSolicitantes(ls);
+    expect(r[0].nome).toBe("Muitos");
+    expect(r[1].nome).toBe("Poucos");
+    // a média simples continua aparecendo como é
+    expect(r[1].indiceMedio).toBeGreaterThan(r[0].indiceMedio);
+    expect(r[0].notaRanking).toBeGreaterThan(r[1].notaRanking);
+    expect(r[0]).toMatchObject({ total: 25, pctBons: 100, avaliadosIa: 25 });
+  });
+
+  it("com volume parecido, a melhor média vence", () => {
+    const ls = [
+      ...Array.from({ length: 10 }, (_, i) => linha({ id: `a${i}`, solicitante_id: "a", solicitante_nome: "A", ia: ia(7) })),
+      ...Array.from({ length: 10 }, (_, i) => linha({ id: `b${i}`, solicitante_id: "b", solicitante_nome: "B", ia: ia(8.5) })),
+    ];
+    expect(rankingSolicitantes(ls).map((x) => x.nome)).toEqual(["B", "A"]);
   });
 });

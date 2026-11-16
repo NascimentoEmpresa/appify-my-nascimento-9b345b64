@@ -110,8 +110,16 @@ export const useParearTv = () => useMut(async (p: { codigo: string; nome: string
 export const useAtualizarTv = () => useMut(async (p: { id: string; patch: Partial<Pick<TvDispositivo, "nome" | "local" | "playlist_id" | "ativo">> }) =>
   ok(await sb.from("TV_DISPOSITIVO").update(p.patch).eq("id", p.id)));
 
-export const useRecarregarTv = () => useMut(async (ids: string[]) =>
-  ok(await sb.from("TV_DISPOSITIVO").update({ comando: "recarregar", comando_em: new Date().toISOString() }).in("id", ids)));
+// 14/11/2026: comando_em com o relógio do BANCO (tv_recarregar, mig
+// 20261114140000). Gravado com o relógio de quem clicava, máquina fora de hora
+// fazia a tv_estado descartar o comando como "velho" — e a TV não recarregava.
+// Banco ainda sem a função: o caminho antigo.
+export const useRecarregarTv = () => useMut(async (ids: string[]) => {
+  const r = await sb.rpc("tv_recarregar", { p_ids: ids });
+  if (!r.error) return;
+  if (!/tv_recarregar|function|PGRST202/i.test(r.error.message)) throw r.error;
+  ok(await sb.from("TV_DISPOSITIVO").update({ comando: "recarregar", comando_em: new Date().toISOString() }).in("id", ids));
+});
 
 /** Link fixo (mig 20261007000014): gera a chave curta da TV; a anterior para de valer. */
 export const useGerarLinkTv = () => useMutation({

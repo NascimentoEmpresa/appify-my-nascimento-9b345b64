@@ -5,12 +5,14 @@
 //
 // QUANDO (12/11/2026, pedido do Pablo): "quando o desenvolvedor abrir um PR
 // conclua o chamado automaticamente". Antes era só no merge. Agora:
-//   · origem "pr_aberta" — PR aberta (ou saída de rascunho): conclui e põe no
-//     chat do chamado o RESUMO do que foi feito, para o solicitante, com as
-//     URLs das telas (calculadas no workflow pelas rotas do App.tsx);
-//   · origem "merge" — continua como reserva para PR aberta antes desta
-//     mudança. Se ESTA PR já concluiu o chamado uma vez, o merge não conclui
-//     de novo: o solicitante pode ter reaberto, e a reabertura vale.
+//   · origem "pr_aberta" — PR aberta (ou saída de rascunho): conclui;
+//   · origem "merge" — conclui como reserva e, desde 13/11/2026, põe no chat
+//     do chamado o RESUMO do que foi feito, para o solicitante, com as URLs
+//     das telas. Pablo: "a i.a tem que ler os commits e a PR inteira depois
+//     do merge" — na abertura a PR ainda pode ganhar commits (no
+//     SIS-2026-0854 o commit do chamado subiu depois da abertura e o resumo
+//     saiu do pedido, não da entrega). Se ESTA PR já concluiu o chamado e ele
+//     foi reaberto, o merge não conclui de novo nem manda "pronto".
 //
 // Replica o que o botão "Concluir chamado" faz no ERP
 // (src/pages/chamados/ExecutarChamado.tsx, mudarStatus("concluido", ...)):
@@ -32,8 +34,9 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  limparResumoIa, listaDeTextos, MAX_ARQUIVOS, MAX_COMMITS, montarMensagemResumo, montarPromptResumo,
+  limparResumoIa, listaDeTextos, MAX_ALTERACOES_CHARS, MAX_ARQUIVOS, MAX_COMMIT_CHARS, MAX_COMMITS, montarMensagemResumo, montarPromptResumo,
   resumoSemIa, urlsValidas, type EntradaResumo,
+  commitsPorPalavras, detalhesValidos, separarRespostaIa, urlsDosEscolhidos,
 } from "../_shared/chamado-resumo-pr.ts";
 import { perfilDoLoginGithub } from "../_shared/dev-github-login.ts";
 
@@ -67,10 +70,17 @@ interface Body {
   /** "pr_aberta" (padrão desde 12/11/2026) ou "merge". */
   origem?: string;
   pr_corpo?: string | null;
-  /** Mensagens de commit, nomes de arquivo e URLs das telas — só na PR aberta. */
+  /**
+   * Resumo no chat (13/11/2026): só no merge, com `resumo: true`. Commits do
+   * chamado (mensagem inteira), arquivos, código alterado e URLs das telas.
+   */
+  resumo?: boolean;
   commits?: unknown;
   arquivos?: unknown;
   urls?: unknown;
+  alteracoes?: unknown;
+  /** [{ mensagem, urls }] por commit, na ordem de `commits` (13/11/2026). */
+  commits_detalhe?: unknown;
 }
 
 // Métricas da PR são contagens inteiras. null mantém compatibilidade com
@@ -149,89 +159,135 @@ Deno.serve(async (req) => {
   if (chErr) return json({ error: chErr.message }, 500);
   if (!chamado) return json({ ok: true, concluido: false, motivo: "chamado não encontrado" });
 
+  const autorId = await perfilDoLoginGithub(admin, prAutorGithub);
+
+  // ── 1) Conclusão — na abertura da PR; o merge é reserva ─────────────
   // Idempotência: o GitHub pode reentregar o mesmo evento, e um chamado
   // reaberto e concluído à mão não deve ganhar evento duplicado.
-  if (chamado.status === "concluido") {
-    return json({ ok: true, concluido: true, motivo: "já estava concluído" });
+  let concluido = chamado.status === "concluido";
+  let concluidoAgora = false;
+  let motivo: string | null = concluido ? "já estava concluído" : null;
+  if (!concluido) {
+    // Esta PR já concluiu o chamado antes (na abertura) e ele foi reaberto:
+    // o merge (ou a PR reaberta) não passa por cima da reabertura.
+    const { data: jaConcluiu } = await admin
+      .from("CHAMADO_SISTEMA_EVENTO")
+      .select("chamado_id")
+      .eq("chamado_id", chamado.id)
+      .eq("meta->>pr_url", prUrl)
+      .in("meta->>origem", ["pr_aberta", "merge"])
+      .limit(1);
+    if (jaConcluiu && jaConcluiu.length > 0) {
+      motivo = "esta PR já concluiu o chamado antes; ele foi reaberto depois";
+    } else if (!autorId) {
+      motivo = "autor do GitHub não mapeado";
+    } else {
+      const { error: upErr } = await admin
+        .from("CHAMADO_SISTEMA")
+        .update({ status: "concluido" })
+        .eq("id", chamado.id);
+      if (upErr) return json({ error: upErr.message }, 500);
+
+      const metricas = [
+        prCommits !== null && `${prCommits} ${prCommits === 1 ? "commit" : "commits"}`,
+        prLinhasAdicionadas !== null && `${prLinhasAdicionadas} linhas adicionadas`,
+        prArquivosAlterados !== null && `${prArquivosAlterados} ${prArquivosAlterados === 1 ? "arquivo alterado" : "arquivos alterados"}`,
+      ].filter(Boolean).join(" · ");
+
+      const { error: insErr } = await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
+        chamado_id: chamado.id,
+        autor_id: autorId,
+        tipo: "evento",
+        texto: `Chamado concluído automaticamente — PR${prNumero !== null ? ` #${prNumero}` : ""} ${origem === "pr_aberta" ? "aberta" : "mergeada"}: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}`,
+        meta: {
+          canal: "github", origem, pr_numero: prNumero, pr_url: prUrl,
+          pr_titulo: prTitulo, pr_autor_github: prAutorGithub, pr_commits: prCommits,
+          pr_linhas_adicionadas: prLinhasAdicionadas, pr_arquivos_alterados: prArquivosAlterados,
+        },
+      });
+      // Status já mudou; um erro no histórico não justifica desfazer a conclusão.
+      if (insErr) console.error("Falha ao registrar evento de conclusão:", insErr.message);
+      concluido = true;
+      concluidoAgora = true;
+      motivo = null;
+    }
   }
-  // Esta PR já concluiu o chamado antes (na abertura) e ele foi reaberto:
-  // o merge (ou a PR reaberta) não passa por cima da reabertura.
-  const { data: jaConcluiu } = await admin
-    .from("CHAMADO_SISTEMA_EVENTO")
-    .select("chamado_id")
-    .eq("chamado_id", chamado.id)
-    .eq("meta->>pr_url", prUrl)
-    .in("meta->>origem", ["pr_aberta", "merge"])
-    .limit(1);
-  if (jaConcluiu && jaConcluiu.length > 0) {
-    return json({ ok: true, concluido: false, motivo: "esta PR já concluiu o chamado antes; ele foi reaberto depois" });
-  }
 
-  const autorId = await perfilDoLoginGithub(admin, prAutorGithub);
-  if (!autorId) return json({ ok: true, concluido: false, motivo: "autor do GitHub não mapeado" });
-
-  const { error: upErr } = await admin
-    .from("CHAMADO_SISTEMA")
-    .update({ status: "concluido" })
-    .eq("id", chamado.id);
-  if (upErr) return json({ error: upErr.message }, 500);
-
-  const metricas = [
-    prCommits !== null && `${prCommits} ${prCommits === 1 ? "commit" : "commits"}`,
-    prLinhasAdicionadas !== null && `${prLinhasAdicionadas} linhas adicionadas`,
-    prArquivosAlterados !== null && `${prArquivosAlterados} ${prArquivosAlterados === 1 ? "arquivo alterado" : "arquivos alterados"}`,
-  ].filter(Boolean).join(" · ");
-
-  const { error: insErr } = await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
-    chamado_id: chamado.id,
-    autor_id: autorId,
-    tipo: "evento",
-    texto: `Chamado concluído automaticamente — PR${prNumero !== null ? ` #${prNumero}` : ""} ${origem === "pr_aberta" ? "aberta" : "mergeada"}: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}`,
-    meta: {
-      canal: "github", origem, pr_numero: prNumero, pr_url: prUrl,
-      pr_titulo: prTitulo, pr_autor_github: prAutorGithub, pr_commits: prCommits,
-      pr_linhas_adicionadas: prLinhasAdicionadas, pr_arquivos_alterados: prArquivosAlterados,
-    },
-  });
-  // Status já mudou; um erro no histórico não justifica desfazer a conclusão.
-  if (insErr) console.error("Falha ao registrar evento de conclusão:", insErr.message);
-
-  // Resumo para o solicitante, no chat (comentário do dev). Só na PR aberta:
-  // é quando o workflow manda commits, arquivos e URLs. Best-effort.
+  // ── 2) Resumo para o solicitante, no chat — SÓ NO MERGE (13/11/2026) ──
+  // Pablo: "a i.a tem que ler os commits e a PR inteira depois do merge".
+  // O workflow manda `resumo: true` com os commits DESTE chamado (mensagem
+  // inteira), os arquivos, o código alterado e as URLs da PR já mergeada.
+  // Vale também para o chamado que a abertura já concluiu — é o caso comum.
+  // Uma vez por PR; chamado reaberto (não concluído) não recebe "pronto".
   let resumoGravado = false;
-  if (origem === "pr_aberta") {
-    const entrada: EntradaResumo = {
-      numero, assunto: chamado.assunto ?? "", descricao: chamado.descricao ?? null,
-      prTitulo, prCorpo: body.pr_corpo ?? null,
-      commits: listaDeTextos(body.commits, MAX_COMMITS),
-      arquivos: listaDeTextos(body.arquivos, MAX_ARQUIVOS),
-      urls: urlsValidas(body.urls),
-    };
-    const ia = await resumirComIa(montarPromptResumo(entrada));
-    const resumo = (ia && limparResumoIa(ia)) || resumoSemIa(entrada);
-    const { error: resErr } = await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
-      chamado_id: chamado.id,
-      autor_id: autorId,
-      tipo: "comentario",
-      texto: montarMensagemResumo(resumo, entrada.urls),
-      meta: { canal: "github", origem: "resumo_pr", pr_url: prUrl, pr_numero: prNumero, ia: !!ia, urls: entrada.urls },
-    });
-    if (resErr) console.error("Falha ao gravar o resumo no chat:", resErr.message);
-    else resumoGravado = true;
+  let motivoResumo: string | null = null;
+  if (origem === "merge" && body.resumo === true) {
+    if (!concluido) motivoResumo = "chamado não está concluído (reaberto?) — resumo não enviado";
+    else if (!autorId) motivoResumo = "autor do GitHub não mapeado";
+    else {
+      const { data: jaTem } = await admin
+        .from("CHAMADO_SISTEMA_EVENTO")
+        .select("chamado_id")
+        .eq("chamado_id", chamado.id)
+        .eq("meta->>origem", "resumo_pr")
+        .eq("meta->>pr_url", prUrl)
+        .limit(1);
+      if (jaTem && jaTem.length > 0) {
+        motivoResumo = "o resumo desta PR já foi enviado";
+      } else {
+        const entrada: EntradaResumo = {
+          numero, assunto: chamado.assunto ?? "", descricao: chamado.descricao ?? null,
+          prTitulo, prCorpo: body.pr_corpo ?? null,
+          commits: listaDeTextos(body.commits, MAX_COMMITS, MAX_COMMIT_CHARS),
+          arquivos: listaDeTextos(body.arquivos, MAX_ARQUIVOS),
+          urls: urlsValidas(body.urls),
+          alteracoes: typeof body.alteracoes === "string" ? body.alteracoes.slice(0, MAX_ALTERACOES_CHARS) : null,
+        };
+        // Detalhe por commit só vale se casar 1:1 com `commits` (mesma ordem).
+        const detalhes = detalhesValidos(body.commits_detalhe);
+        if (detalhes.length === entrada.commits.length) entrada.detalhes = detalhes;
+        // 13/11/2026: a I.A diz na 1ª linha quais commits são deste chamado
+        // (SIS-2026-0895 levou as URLs das TVs); sem a linha, vale o plano B
+        // pelas palavras do pedido. URLs só dos commits escolhidos.
+        const ia = await resumirComIa(montarPromptResumo(entrada));
+        const separado = ia ? separarRespostaIa(ia, entrada.commits.length) : null;
+        const escolhidos = separado?.escolhidos ?? commitsPorPalavras(entrada);
+        const urls = urlsDosEscolhidos(entrada, escolhidos);
+        const resumo = (separado && limparResumoIa(separado.texto)) || resumoSemIa(entrada, escolhidos);
+        const { error: resErr } = await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
+          chamado_id: chamado.id,
+          autor_id: autorId,
+          tipo: "comentario",
+          texto: montarMensagemResumo(resumo, urls),
+          meta: {
+            canal: "github", origem: "resumo_pr", pr_url: prUrl, pr_numero: prNumero, ia: !!ia, urls,
+            commits_escolhidos: escolhidos.map((i) => i + 1), escolha: separado?.escolhidos ? "ia" : "palavras",
+          },
+        });
+        if (resErr) console.error("Falha ao gravar o resumo no chat:", resErr.message);
+        else resumoGravado = true;
+      }
+    }
   }
 
-  // Mesmo push que o clique manual dispara. Best-effort: o chamado já está
-  // concluído, e falha de push não pode virar erro pro CI.
-  try {
-    const pushRes = await fetch(`${SUPABASE_URL}/functions/v1/enviar-notificacao-push`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${CI_SECRET}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ chamado_id: chamado.id, evento: "concluido" }),
-    });
-    if (!pushRes.ok) console.error("enviar-notificacao-push respondeu", pushRes.status);
-  } catch (e) {
-    console.error("Falha ao chamar enviar-notificacao-push:", (e as Error).message);
+  // Mesmo push que o clique manual dispara — só quando ESTA chamada concluiu.
+  // Best-effort: o chamado já está concluído, e falha de push não pode virar
+  // erro pro CI.
+  if (concluidoAgora) {
+    try {
+      const pushRes = await fetch(`${SUPABASE_URL}/functions/v1/enviar-notificacao-push`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${CI_SECRET}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ chamado_id: chamado.id, evento: "concluido" }),
+      });
+      if (!pushRes.ok) console.error("enviar-notificacao-push respondeu", pushRes.status);
+    } catch (e) {
+      console.error("Falha ao chamar enviar-notificacao-push:", (e as Error).message);
+    }
   }
 
-  return json({ ok: true, concluido: true, origem, resumo: resumoGravado });
+  return json({
+    ok: true, concluido, origem, resumo: resumoGravado,
+    ...(motivo ? { motivo } : {}), ...(motivoResumo ? { motivo_resumo: motivoResumo } : {}),
+  });
 });

@@ -140,7 +140,8 @@ function GraficoTv({ i, tom }: { i: IndicadorGerencial; tom: string }) {
     corpo = <Vazio texto={i.resultado?.valor == null ? "Sem dado no momento" : s === "verde" ? "Nada fora da meta" : "Sem abertura por contrato"} icone={<IconeInfo style={{ width: 42, height: 42, opacity: 0.7 }} />} />;
   } else if (w > 0 && h > 0) {
     corpo = g.tipo === "rosca" ? <Rosca dados={dados} w={w} h={h} unidade={unidade} />
-      : ehSerieNoTempo(dados) ? <Linha dados={dados} w={w} h={h} unidade={unidade} />
+      // 14/11/2026: linha quando o protótipo pede linha (faltas, turnover, afastamentos…), mesmo por contrato.
+      : (g.tipo === "linha" && dados.length >= 2) || ehSerieNoTempo(dados) ? <Linha dados={dados} w={w} h={h} unidade={unidade} />
       : dados.some((d) => d.a != null && d.b != null) ? <BarrasDuplas dados={dados} w={w} h={h} series={g.series ?? ["Previsto", "Realizado"]} />
       : <Barras dados={dados} w={w} h={h} unidade={unidade} tom={tom} destaca={s === "vermelho" || s === "amarelo"} meta={g.tipo === "combo" && i.meta != null ? Number(i.meta) : null} />;
   }
@@ -231,7 +232,7 @@ function Linha({ dados, w, h, unidade }: { dados: LinhaDetalhe[]; w: number; h: 
         <g key={k}>
           <circle cx={x(k)} cy={y(v)} r={k === ultimo ? 8 : 5} fill={COR.barra} stroke={COR.fundoCard} strokeWidth={2} />
           {(k === 0 || k === ultimo) && <text x={x(k)} y={y(v) - 15} textAnchor="middle" fill={COR.texto} fontSize={fonte + 1} fontWeight={800}>{formatarValor(v, unidade)}</text>}
-          {(k === 0 || k === ultimo || dados.length <= 5) && <text x={x(k)} y={h - 8} textAnchor="middle" fill={COR.suave} fontSize={fonte - 1} fontWeight={600}>{dados[k].nome}</text>}
+          {(k === 0 || k === ultimo || dados.length <= 5) && <text x={x(k)} y={h - 8} textAnchor="middle" fill={COR.suave} fontSize={fonte - 1} fontWeight={600}>{nomeCurto(dados[k].nome, Math.max(6, Math.floor((w - l - r) / Math.max(1, dados.length - 1) / ((fonte - 1) * 0.56))))}</text>}
         </g>
       ))}
     </svg>

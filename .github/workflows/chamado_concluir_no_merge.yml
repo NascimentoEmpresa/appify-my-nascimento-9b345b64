@@ -8,11 +8,19 @@ name: Concluir Chamado pela PR
 # conclua o chamado automaticamente e também coloque um resumo bom do que foi
 # feito no chat pro solicitante ver ... e as URLS pra ele acessar"):
 #   · job concluir-na-abertura — PR aberta (ou reaberta, ou saída de rascunho)
-#     conclui e manda para a Edge os commits, os arquivos e as URLs das telas
-#     alteradas; a Edge escreve o resumo no chat do chamado;
-#   · job concluir-chamado — o merge continua concluindo, como reserva (PR
-#     aberta antes desta mudança, título corrigido depois). A Edge não conclui
-#     de novo um chamado que ESTA PR já concluiu e o solicitante reabriu.
+#     conclui o chamado;
+#   · job concluir-chamado — no MERGE: conclui como reserva (PR aberta antes
+#     desta mudança, título corrigido depois) e manda o RESUMO para o chat.
+#
+# RESUMO SÓ NO MERGE (13/11/2026). Pablo: "a i.a tem que ler os commits e a PR
+# inteira depois do merge, pq enquanto a PR tá no github ela ainda pode ter
+# mais commits". No SIS-2026-0854 a PR #1250 abriu às 23:49 só com commits do
+# Mural; o do chamado subiu às 23:52 e a I.A — que via só a 1ª linha dos
+# commits e o nome dos arquivos — reescreveu o PEDIDO como se fosse a entrega.
+# Agora o merge manda, da PR já fechada: só os commits DESTE chamado (a PR da
+# branch pessoal junta vários), a mensagem inteira de cada um, o código
+# alterado neles e as URLs das telas (.github/scripts/contexto-resumo-pr.cjs).
+# A Edge manda o resumo uma vez por PR e não manda para chamado reaberto.
 #
 # "Concluído" aqui é o mesmo do botão: o chamado fica aguardando o SOLICITANTE
 # confirmar a conclusão (mig 20261028001300) e, até ele confirmar, conta na
@@ -23,10 +31,9 @@ name: Concluir Chamado pela PR
 # evento "closed" aos gatilhos daquele arquivo mexeria com o merge de toda PR.
 #
 # pull_request_target (não pull_request): precisa dos secrets do repositório
-# base. Como nos outros workflows, NÃO executamos nada do código da branch da
-# PR. O único checkout é o da BASE (main), para o script de rotas
-# (.github/scripts/rotas-da-pr.cjs); o App.tsx da PR chega como TEXTO pela API
-# e só é lido com expressões regulares.
+# base. NÃO executamos nada do código da branch da PR. No merge, o checkout é
+# do commit de merge (o que já está na main), só da pasta .github/scripts; o
+# App.tsx e os trechos alterados chegam como TEXTO pela API e só são lidos.
 on:
   pull_request_target:
     types: [opened, reopened, ready_for_review, closed]
@@ -41,17 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     steps:
-      - name: Checkout da base (só o script de rotas — nada da PR)
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          sparse-checkout: |
-            .github/scripts
-          persist-credentials: false
-
-      - name: Concluir o chamado e mandar o resumo para o solicitante
+      - name: Concluir o chamado (o resumo vai no merge)
         uses: actions/github-script@v7
         env:
           SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
@@ -64,29 +62,8 @@ jobs:
             const titulo = pr.title || "";
             const m = titulo.match(/^SIS-\d{4}-\d+/);
             if (!m) { core.info("Título sem número de chamado — nada a concluir."); return; }
-            const { owner, repo } = context.repo;
-
-            let arquivos = [], commits = [], urls = [];
             try {
-              arquivos = (await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 }))
-                .map((f) => f.filename).slice(0, 300);
-              commits = (await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pr.number, per_page: 100 }))
-                .map((c) => (c.commit?.message || "").split("\n")[0].trim()).filter(Boolean).slice(0, 100);
-            } catch (e) { core.warning(`Não deu para ler arquivos/commits da PR: ${e.message}`); }
-            try {
-              const { urlsDaPr } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/rotas-da-pr.cjs`);
-              const head = pr.head.repo;
-              if (head) {
-                const r = await github.rest.repos.getContent({ owner: head.owner.login, repo: head.name, path: "src/App.tsx", ref: pr.head.sha });
-                const app = Buffer.from(r.data.content || "", "base64").toString("utf8");
-                urls = urlsDaPr(app, arquivos).map((u) => u.url);
-              }
-            } catch (e) { core.warning(`Não deu para montar as URLs das telas: ${e.message}`); }
-            core.info(`URLs das telas: ${urls.join(", ") || "nenhuma"}`);
-
-            const FUNCS = process.env.SUPABASE_FUNCTIONS_URL;
-            try {
-              const res = await fetch(`${FUNCS}/chamado-concluir-pr`, {
+              const res = await fetch(`${process.env.SUPABASE_FUNCTIONS_URL}/chamado-concluir-pr`, {
                 method: "POST",
                 headers: { Authorization: `Bearer ${process.env.CHAMADOS_CI_SECRET}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -99,17 +76,14 @@ jobs:
                   pr_commits: pr.commits ?? null,
                   pr_linhas_adicionadas: pr.additions ?? null,
                   pr_arquivos_alterados: pr.changed_files ?? null,
-                  pr_corpo: (pr.body || "").slice(0, 8000),
-                  commits, arquivos, urls,
                 }),
-                // A Edge espera a I.A escrever o resumo.
-                signal: AbortSignal.timeout(120000),
+                signal: AbortSignal.timeout(30000),
               });
               const corpo = await res.text();
               if (!res.ok) { core.warning(`chamado-concluir-pr respondeu HTTP ${res.status}: ${corpo}`); return; }
               core.info(`Resposta: ${corpo}`);
               const j = JSON.parse(corpo);
-              if (j.concluido) core.info(`Chamado ${m[0]} concluído${j.resumo ? " e resumo enviado ao solicitante" : ""}.`);
+              if (j.concluido) core.info(`Chamado ${m[0]} concluído. O resumo para o solicitante sai no merge.`);
               else core.warning(`Chamado ${m[0]} não foi concluído: ${j.motivo || "motivo não informado"}`);
             } catch (e) {
               core.warning(`Não foi possível contatar o serviço de chamados — ${m[0]} segue aberto para conclusão manual (${e.message}).`);
@@ -117,91 +91,107 @@ jobs:
 
   concluir-chamado:
     # PR fechada sem merge não conclui nada — só o merge significa entrega.
-    # Reserva da conclusão na abertura (ver o topo).
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     steps:
-      - name: Concluir chamado vinculado à PR
+      - name: Checkout do merge (só os scripts — nada é executado da PR)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          sparse-checkout: |
+            .github/scripts
+          persist-credentials: false
+
+      - name: Concluir (reserva) e mandar o resumo da PR mergeada
+        uses: actions/github-script@v7
         env:
-          # Título vem via env, nunca interpolado direto no script — é texto de
-          # terceiros e interpolação direta em bash permitiria injeção.
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_AUTOR: ${{ github.event.pull_request.user.login }}
-          # Contagens da PR mergeada, registradas no histórico do chamado.
-          PR_NUMERO: ${{ github.event.pull_request.number }}
-          PR_COMMITS: ${{ github.event.pull_request.commits }}
-          PR_ADICOES: ${{ github.event.pull_request.additions }}
-          PR_ARQUIVOS: ${{ github.event.pull_request.changed_files }}
-          # Um lugar so para a virada: criar a variavel de repositorio
-          # SUPABASE_FUNCTIONS_URL (Settings > Variables) apontando para
-          # https://api.grpnascimento.com.br/functions/v1 troca o CI de
-          # backend sem mexer em workflow. Sem ela, continua na Supabase.
+          # Um lugar só para a virada: a variável de repositório
+          # SUPABASE_FUNCTIONS_URL (Settings > Variables) troca o backend sem
+          # mexer em workflow. Sem ela, continua na Supabase.
           SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
           CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
-        run: |
-          set -uo pipefail
+        with:
+          script: |
+            // Best-effort: o merge já aconteceu, então falhar aqui só acende
+            // alarme vermelho sem nada para corrigir na PR.
+            const pr = context.payload.pull_request;
+            const titulo = pr.title || "";
+            const m = titulo.match(/^SIS-\d{4}-\d+/);
+            if (!m) { core.info("PR sem chamado vinculado — nada a concluir."); return; }
+            const { owner, repo } = context.repo;
+            const scripts = `${process.env.GITHUB_WORKSPACE}/.github/scripts`;
 
-          # Best-effort do começo ao fim: o merge já aconteceu, então falhar
-          # aqui só acende alarme vermelho sem nada pra corrigir na PR.
-          if [[ "$PR_TITLE" == "[SEM-CHAMADO]"* ]]; then
-            echo "PR sem chamado vinculado — nada a concluir."
-            exit 0
-          fi
+            // Contexto da PR JÁ MERGEADA: só os commits deste chamado, inteiros,
+            // e o código alterado neles.
+            // commits_detalhe (13/11/2026): cada commit com as telas que ELE
+            // alterou. A PR da branch pessoal junta assuntos diferentes; no
+            // SIS-2026-0895 o chamado da Implantação recebeu as URLs das TVs.
+            // A Edge pede à I.A quais commits atendem o chamado e só as URLs
+            // desses vão para o solicitante (_shared/chamado-resumo-pr.ts).
+            let commits = [], arquivos = [], alteracoes = "", urls = [], detalhes = [];
+            let app = "", urlsDaPr = null;
+            try {
+              ({ urlsDaPr } = require(`${scripts}/rotas-da-pr.cjs`));
+              const r = await github.rest.repos.getContent({ owner, repo, path: "src/App.tsx", ref: pr.merge_commit_sha });
+              app = Buffer.from(r.data.content || "", "base64").toString("utf8");
+            } catch (e) { core.warning(`Não deu para ler as rotas do App.tsx: ${e.message}`); }
+            const urlsDe = (nomes) => { try { return app && urlsDaPr ? urlsDaPr(app, nomes).map((u) => u.url) : []; } catch { return []; } };
+            try {
+              const ctx = require(`${scripts}/contexto-resumo-pr.cjs`);
+              const todos = (await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pr.number, per_page: 100 }))
+                .map((c) => ({ sha: c.sha, mensagem: c.commit?.message || "", pais: (c.parents || []).length }));
+              const doChamado = ctx.commitsDoChamado(todos, m[0]);
+              commits = doChamado.map((c) => ctx.mensagemLimpa(c.mensagem)).filter(Boolean);
+              const blocos = [];
+              for (const c of doChamado) {
+                const r = await github.rest.repos.getCommit({ owner, repo, ref: c.sha });
+                const nomes = (r.data.files || []).map((f) => f.filename);
+                for (const f of r.data.files || []) blocos.push({ nome: f.filename, patch: f.patch || "" });
+                const msg = ctx.mensagemLimpa(c.mensagem);
+                if (msg) detalhes.push({ mensagem: msg, urls: urlsDe(nomes) });
+              }
+              arquivos = [...new Set(blocos.map((b) => b.nome))].slice(0, 300);
+              alteracoes = ctx.montarAlteracoes(blocos);
+              core.info(`Commits do chamado: ${doChamado.length} de ${todos.length}; arquivos: ${arquivos.length}; código: ${alteracoes.length} caracteres.`);
+            } catch (e) { core.warning(`Não deu para montar o contexto da PR: ${e.message}`); }
+            urls = urlsDe(arquivos);
+            core.info(`URLs das telas (antes da escolha da I.A): ${urls.join(", ") || "nenhuma"}`);
 
-          NUMERO=$(echo "$PR_TITLE" | grep -oE '^SIS-[0-9]{4}-[0-9]+' || true)
-          if [ -z "$NUMERO" ]; then
-            echo "Título sem número de chamado — nada a concluir."
-            exit 0
-          fi
-
-          # Só permite inteiros naturais no JSON. Campo ausente/inválido não
-          # bloqueia a conclusão: segue como null para a Edge Function.
-          numero_json() {
-            [[ "$1" =~ ^[0-9]+$ ]] && printf '%s' "$1" || printf 'null'
-          }
-          PR_NUMERO_JSON=$(numero_json "$PR_NUMERO")
-          PR_COMMITS_JSON=$(numero_json "$PR_COMMITS")
-          PR_ADICOES_JSON=$(numero_json "$PR_ADICOES")
-          PR_ARQUIVOS_JSON=$(numero_json "$PR_ARQUIVOS")
-
-          RESP=$(curl -sS --max-time 15 -w '\n%{http_code}' \
-            -X POST "$SUPABASE_FUNCTIONS_URL/chamado-concluir-pr" \
-            -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n \
-                  --arg numero "$NUMERO" \
-                  --arg pr_url "$PR_URL" \
-                  --arg pr_titulo "$PR_TITLE" \
-                  --arg pr_autor_github "$PR_AUTOR" \
-                  --argjson pr_numero "$PR_NUMERO_JSON" \
-                  --argjson pr_commits "$PR_COMMITS_JSON" \
-                  --argjson pr_linhas_adicionadas "$PR_ADICOES_JSON" \
-                  --argjson pr_arquivos_alterados "$PR_ARQUIVOS_JSON" \
-                  '{numero: $numero, pr_url: $pr_url, pr_titulo: $pr_titulo, pr_autor_github: $pr_autor_github,
-                    pr_numero: $pr_numero, pr_commits: $pr_commits,
-                    pr_linhas_adicionadas: $pr_linhas_adicionadas, pr_arquivos_alterados: $pr_arquivos_alterados}')") \
-            || RESP=$'\n000'
-
-          HTTP_CODE=$(echo "$RESP" | tail -n1)
-          BODY=$(echo "$RESP" | sed '$d')
-
-          if [ "$HTTP_CODE" = "000" ]; then
-            echo "::warning::Não foi possível contatar o serviço de chamados — $NUMERO segue aberto para conclusão manual."
-            exit 0
-          fi
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::warning::chamado-concluir-pr respondeu HTTP $HTTP_CODE: $BODY"
-            echo "::warning::Verifique se 'Verify JWT' está DESLIGADO na function chamado-concluir-pr e se CHAMADOS_CI_SECRET é idêntico no GitHub e no Supabase."
-            exit 0
-          fi
-
-          echo "Resposta: $BODY"
-          if [ "$(echo "$BODY" | jq -r '.concluido // false')" = "true" ]; then
-            echo "Chamado $NUMERO concluído automaticamente."
-          else
-            echo "::warning::Chamado $NUMERO não foi concluído: $(echo "$BODY" | jq -r '.motivo // "motivo não informado"')"
-          fi
+            try {
+              const res = await fetch(`${process.env.SUPABASE_FUNCTIONS_URL}/chamado-concluir-pr`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${process.env.CHAMADOS_CI_SECRET}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  origem: "merge",
+                  resumo: true,
+                  numero: m[0],
+                  pr_url: pr.html_url,
+                  pr_titulo: titulo,
+                  pr_autor_github: pr.user.login,
+                  pr_numero: pr.number,
+                  pr_commits: pr.commits ?? null,
+                  pr_linhas_adicionadas: pr.additions ?? null,
+                  pr_arquivos_alterados: pr.changed_files ?? null,
+                  pr_corpo: (pr.body || "").slice(0, 8000),
+                  commits, arquivos, urls, alteracoes, commits_detalhe: detalhes,
+                }),
+                // A Edge espera a I.A escrever o resumo.
+                signal: AbortSignal.timeout(120000),
+              });
+              const corpo = await res.text();
+              if (!res.ok) {
+                core.warning(`chamado-concluir-pr respondeu HTTP ${res.status}: ${corpo}`);
+                core.warning("Verifique se 'Verify JWT' está DESLIGADO na function chamado-concluir-pr e se CHAMADOS_CI_SECRET é idêntico no GitHub e no servidor.");
+                return;
+              }
+              core.info(`Resposta: ${corpo}`);
+              const j = JSON.parse(corpo);
+              if (!j.concluido) core.warning(`Chamado ${m[0]} não está concluído: ${j.motivo || "motivo não informado"}`);
+              if (j.resumo) core.info(`Resumo da entrega enviado ao solicitante de ${m[0]}.`);
+              else core.warning(`Resumo não enviado: ${j.motivo_resumo || "motivo não informado"}`);
+            } catch (e) {
+              core.warning(`Não foi possível contatar o serviço de chamados — ${m[0]} (${e.message}).`);
+            }

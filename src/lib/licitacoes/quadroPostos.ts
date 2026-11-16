@@ -19,14 +19,14 @@
 // tabela.
 
 // O prazo da vaga NÃO é recalculado aqui de propósito: é a mesma regra da
-// solicitação de vaga (7 dias úteis, seg–sex menos feriado nacional), e ela
+// solicitação de vaga (3 dias corridos desde 13/11/2026; eram 7 úteis), e ela
 // já mora em vagaRegras.ts, que é onde o trigger `sistema_recrutamento_guard`
-// é espelhado. Reimplementar a contagem de dias úteis neste arquivo criaria
+// é espelhado. Reimplementar a contagem de dias neste arquivo criaria
 // duas contas que podem divergir — e a que a vaga usa na hora de gravar
 // continuaria sendo a de lá, então a daqui só enganaria quem preenche.
-import { avaliarPrazo, dataMinimaVaga, hojeIso, MIN_DIAS_UTEIS, fmtBr } from "@/lib/recrutamento/vagaRegras";
+import { avaliarPrazo, dataMinimaVaga, hojeIso, MIN_DIAS_ANTECEDENCIA, fmtBr } from "@/lib/recrutamento/vagaRegras";
 
-export { dataMinimaVaga, MIN_DIAS_UTEIS };
+export { dataMinimaVaga, MIN_DIAS_ANTECEDENCIA };
 
 /** Uma linha do quadro, do jeito que o formulário a edita (tudo string). */
 export interface LinhaQuadroForm {
@@ -94,7 +94,7 @@ export const brl = (v: number): string =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 // ── Prazo da vaga ───────────────────────────────────────────────────────
-// A vaga precisa de 7 dias úteis de antecedência — regra do
+// A vaga precisa de 3 dias corridos de antecedência — regra do
 // `sistema_recrutamento_guard` (migration 20260903000001), que recusa o
 // INSERT. A geração das vagas do quadro passa pelo MESMO guard, então a data
 // de cada posto tem que respeitá-la antes de alguém clicar em salvar: sem
@@ -461,4 +461,21 @@ export function conferirQuadroComContrato(
     ? `O quadro soma ${total} colaboradores, ${diferenca} a MAIS que os ${estipulado} estipulados no contrato.`
     : `O quadro soma ${total} colaboradores, ${Math.abs(diferenca)} a MENOS que os ${estipulado} estipulados no contrato.`;
   return { total, estipulado, diferenca, aviso };
+}
+
+// ── Convenção do contrato (13/11/2026, mig 20261113100500) ──────────────
+// Com convenção vinculada no contrato, benefícios e percentuais de TODOS os
+// postos saem dela (ver herancaDaConvencao em convencoes.ts), por cima do
+// que estiver na linha — inclusive do "Puxar da Planilha". É o que a tela
+// mostra e o que vai para contrato_quadro_salvar (e dali para as vagas).
+export function aplicarHerancaNoQuadro(
+  linhas: LinhaQuadroForm[],
+  h: { beneficios: string; insalubridade_pct: string; periculosidade_pct: string } | null | undefined,
+): LinhaQuadroForm[] {
+  if (!h) return linhas;
+  return linhas.map(l => (
+    l.beneficios === h.beneficios && l.insalubridade_pct === h.insalubridade_pct && l.periculosidade_pct === h.periculosidade_pct
+      ? l
+      : { ...l, beneficios: h.beneficios, insalubridade_pct: h.insalubridade_pct, periculosidade_pct: h.periculosidade_pct }
+  ));
 }

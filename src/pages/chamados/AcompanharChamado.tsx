@@ -26,8 +26,10 @@ import {
   labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado, conversaChamadoFechada,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
+import { listaImpactados, rotuloModuloImpactado } from "./impactados";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { useChamadoPerms } from "./useChamadoPerms";
+import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
 
 interface ConsultaEventosChamado {
   select(colunas: string): {
@@ -185,6 +187,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Ambiente">{labelDe(AMBIENTES, chamado.ambiente)}</Campo>
               <Campo label="Módulo / Sistema">{moduloLabel(chamado)}</Campo>
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
+              {/* Alcance informado na abertura (mig 20261115001000). */}
+              <Campo label="Setores impactados">{listaImpactados(chamado.setores_impactados)}</Campo>
+              <Campo label="Módulos impactados">{listaImpactados(chamado.modulos_impactados, rotuloModuloImpactado)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
               <Campo label="Responsável">{nomeDe(chamado.responsavel_id)}</Campo>
               {/* Prazo informado pelo dev ao iniciar o desenvolvimento (mig 20261028001400). */}
@@ -298,7 +303,13 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               {aguardandoRetorno ? (
                 <p className="flex items-start gap-1.5 rounded bg-primary/10 px-2.5 py-2 text-xs text-primary">
                   <RotateCcw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  O time pediu mais informações. Responda na <b>conversa do chamado</b> e ele volta para atendimento.
+                  <span>
+                    O time pediu mais informações. Responda na <b>conversa do chamado</b> e ele volta para atendimento.
+                    {/* Prazo de 3 dias úteis (mig 20261114130000). */}
+                    {prazoRetornoTexto(chamado.aguardando_retorno_ate) && (
+                      <> <b>Responda até {prazoRetornoTexto(chamado.aguardando_retorno_ate)}</b>: sem resposta, o chamado é concluído automaticamente por falta de retorno.</>
+                    )}
+                  </span>
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">

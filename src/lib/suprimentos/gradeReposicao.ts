@@ -1,12 +1,16 @@
 import type { ItemEstoqueSaudavel } from "./estoqueSaudavel";
 
+// SIS-2026-0855: "Aguardando entrega" e "Aguardando compra (Malote)" viraram
+// "Já em compra" (os dois somados, que é o que a conta desconta), e entraram
+// os pedidos parados por falta e o que de fato saiu para pedidos.
 export const LINHAS_REPOSICAO = [
   { campo: "demanda_mensal", nome: "Giro médio / mês", cor: "text-slate-600" },
+  { campo: "giro_3m", nome: "Saiu p/ pedidos (3 meses)", cor: "text-slate-600" },
   { campo: "disponivel", nome: "Disponível", cor: "text-blue-800" },
-  { campo: "em_transito", nome: "Aguardando entrega", cor: "text-amber-800" },
+  { campo: "pendente_falta", nome: "Pedidos pendentes (falta)", cor: "text-rose-800" },
+  { campo: "ja_em_compra", nome: "Já em compra", cor: "text-violet-800" },
   { campo: "alvo", nome: "Alvo saudável", cor: "text-emerald-800" },
   { campo: "comprar", nome: "Comprar para repor", cor: "bg-blue-50 font-bold text-blue-900" },
-  { campo: "aguardando_compra", nome: "Aguardando compra (Malote)", cor: "text-violet-800" },
 ] as const;
 
 /** Reorganiza linhas já calculadas pela RPC; não recalcula alvo nem compra no navegador. */
@@ -25,7 +29,7 @@ export function montarGradeReposicao(itens: ItemEstoqueSaudavel[], busca: string
   // Filtra a família, preservando os tamanhos já cobertos: eles devem mostrar
   // compra zero, em vez de parecerem uma combinação ausente do planejamento.
   const selecionadas = [...familias.values()].filter((familia) => [...familia.itens.values()].some((item) =>
-    item.comprar > 0 || item.em_transito > 0 || item.aguardando_compra > 0 ||
+    item.comprar > 0 || item.em_transito > 0 || item.aguardando_compra > 0 || (item.pendente_falta ?? 0) > 0 ||
     (!soPendencias && (item.demanda_janela > 0 || item.disponivel > 0)),
   ));
   const tamanhos = new Map<string | null, number>();

@@ -81,6 +81,12 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   // Controle de Faturamento (09/11/2026): 'visao_completa' libera as abas Visão Geral e Visão Anual. Quem só tem a tela vê apenas
   // "NFs Não Emitidas" (caso dos supervisores); a visão completa é ligada de propósito. Desligar a tela revoga junto.
   "controle-faturamento": ["visao_completa"],
+  // Fechamento dos Sócios (14/11/2026, SIS-2026-0872): ligar a tela dá só "visualizar". "alterar" (sócios e percentuais) e "aprovar" (fechar competência) mexem
+  // na divisão do lucro entre os sócios e se ligam de propósito, uma a uma.
+  "fechamento-socios": ["alterar", "aprovar"],
+  // Implantação de Contratos (15/11/2026, mig 20261115000300): ver o checklist não dá o poder de editá-lo.
+  // 'alterar' = "Pode editar o checklist" (Confirmar, Preencher, Editar, Salvar); liga-se de propósito.
+  "licitacoes.implantacao": ["alterar"],
 };
 
 /**
@@ -99,6 +105,10 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
  * que ela nem enxerga mais.
  */
 export function acoesGravadasPeloToggle(codigo: string, allow: boolean): AppAcao[] {
+  // SIS-2026-0837: a permissão da cópia controla somente a visibilidade
+  // daquela posição no menu. As ações de negócio continuam pertencendo ao
+  // menu original da tela; gravá-las na cópia criaria grants sem consumidor.
+  if (codigo.startsWith("menu_lateral_copia_")) return ["visualizar"];
   const fora = ACOES_FORA_DO_TOGGLE[codigo] ?? [];
   if (allow) return ACOES_DO_TOGGLE_PADRAO.filter((a) => !fora.includes(a));
   return [...ACOES_DO_TOGGLE_PADRAO, ...fora.filter((a) => !ACOES_DO_TOGGLE_PADRAO.includes(a))];

@@ -89,11 +89,9 @@ VERSION:102
     expect(txns.find((t) => t.memo.includes("GASTOS CARTAO"))?.tipo).toBe("SAÍDA");
   });
 
-  // SIS-2026-0491 (Iury, correção): só o rótulo "BB Rende Fácil" em si deve
-  // ser ignorado no extrato — "Aplicação BB CDB DI" e "Resgate BB CDB DI" são
-  // movimentações normais e devem continuar contabilizadas na conciliação
-  // (a usuária corrigiu o pedido inicial, que confundia as duas coisas).
-  it("ignora só o rótulo BB Rende Fácil, mas conta Aplicação/Resgate BB CDB DI normalmente", () => {
+  // SIS-2026-0491 ignorava o rótulo "BB Rende Fácil" no extrato; por pedido do Financeiro ele PASSA A CONTAR (rótulo e rendimento),
+  // como "Aplicação BB CDB DI" e "Resgate BB CDB DI", que sempre contaram.
+  it("conta o BB Rende Fácil (rendimento) e Aplicação/Resgate BB CDB DI", () => {
     const OFX_BB = `
 <OFX>
 <BANKMSGSRSV1>
@@ -135,10 +133,10 @@ VERSION:102
 </OFX>
 `;
     const txns = parseOFX(OFX_BB, "bb-hagg");
-    expect(txns).toHaveLength(3);
+    expect(txns).toHaveLength(4);
     expect(txns.find((t) => t.memo.includes("Aplicação"))).toBeTruthy();
     expect(txns.find((t) => t.memo.includes("Resgate"))).toBeTruthy();
     expect(txns.find((t) => t.memo.includes("PIX RECEBIDO"))).toBeTruthy();
-    expect(txns.find((t) => t.memo.includes("RENDE FACIL"))).toBeUndefined();
+    expect(txns.find((t) => t.memo.includes("RENDE FACIL"))).toMatchObject({ valor: 0.15, tipo: "ENTRADA" });
   });
 });

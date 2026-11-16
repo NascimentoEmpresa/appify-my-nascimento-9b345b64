@@ -37,11 +37,11 @@ export function GradeReposicao({ itens, premissas, almoxarifadoSelecionado }: {
     <PainelGrafico titulo="Previsão de abastecimento por item e tamanho"
       subtitulo={`Giro dos últimos ${premissas.janela_meses} meses (${data(premissas.janela_inicio)} a ${data(premissas.janela_fim)}), incluindo o mês atual até hoje. Prazo padrão de ${premissas.lead_time_dias} dias + ${premissas.ciclo_revisao_dias} dias entre compras, com segurança para a oscilação da demanda.`}>
       <p className="mb-3 rounded-lg bg-blue-50 p-3 text-xs text-blue-950">
-        <b>Comprar para repor = alvo saudável − disponível − aguardando entrega</b>, com mínimo de zero e arredondamento para cima.
-        {" "}O que já foi comprado não é pedido novamente. Solicitações do Malote aguardando compra ainda precisam ser concluídas e não são entrega confirmada; compare-as com a necessidade de reposição antes de abrir outra solicitação.
-        {" "}Prazos por item e alvos aprovados manualmente continuam valendo. O giro usa a demanda dos pedidos de contratos ativos, inclusive o que faltou atender.
+        <b>Comprar para repor = alvo saudável + pedidos pendentes − disponível − já em compra</b>, com mínimo de zero e arredondamento para cima.
+        {" "}Pedidos pendentes são as peças que pedidos já separados esperam por falta de estoque: o que chegar atende primeiro esses pedidos. Já em compra soma o pedido enviado ao fornecedor ainda não recebido e as solicitações do Malote em cotação, que não são pedidas de novo.
+        {" "}Prazos por item e alvos aprovados manualmente continuam valendo. O giro médio usa a demanda dos pedidos de contratos ativos, inclusive o que faltou atender; "Saiu p/ pedidos" é o que o estoque de fato entregou nos últimos 3 meses.
       </p>
-      {almoxarifadoSelecionado && <p className="mb-3 text-xs text-amber-800">Disponível apenas do almoxarifado selecionado. Aguardando entrega e aguardando compra abrangem a empresa, pois esses pedidos não têm almoxarifado de destino definido.</p>}
+      {almoxarifadoSelecionado && <p className="mb-3 text-xs text-amber-800">Disponível e saídas apenas do almoxarifado selecionado. Pedidos pendentes e já em compra abrangem a empresa, pois esses pedidos não têm almoxarifado de destino definido.</p>}
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div>
           <Label htmlFor="busca-grade-reposicao" className="text-xs">Buscar item na previsão</Label>
@@ -49,7 +49,7 @@ export function GradeReposicao({ itens, premissas, almoxarifadoSelecionado }: {
         </div>
         <label className="flex items-center gap-2 py-2 text-xs text-slate-700">
           <input type="checkbox" checked={soPendencias} onChange={(e) => { setSoPendencias(e.target.checked); setPagina(0); }} />
-          Só com reposição, entrega ou compra pendente
+          Só com reposição, pedido pendente ou compra em andamento
         </label>
         <AcessoGate menu="sup_estoque_saudavel" acao="exportar">
           <Button variant="outline" size="sm" className="ml-auto gap-1" disabled={!grade.familias.length} onClick={exportar}><Download className="h-4 w-4" /> Exportar grade</Button>

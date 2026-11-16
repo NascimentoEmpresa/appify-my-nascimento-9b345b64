@@ -41,6 +41,7 @@ import {
   Home,
   ShoppingCart,
   BarChart3,
+  HandCoins,
   Settings,
   FileArchive,
   BookOpen,
@@ -83,6 +84,8 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { usePrazosRecursosNotif } from "@/hooks/usePrazosRecursosNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
+import { useImplantacaoConfirmacaoNotif } from "@/hooks/useImplantacaoConfirmacaoNotif";
+import { itemComBolinha } from "@/lib/implantacao/notifConfirmacao";
 import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { FileX2 } from "lucide-react";
@@ -114,6 +117,8 @@ interface NavItem {
   label: string;
   to: string;
   icon: LucideIcon;
+  /** Preenchido nas cópias organizadas: controla somente esta posição. */
+  menuCodigo?: string;
   badge?: string;
   // Selo "Novo" que expira sozinho: data (AAAA-MM-DD) em que a tela foi liberada. O selo
   // aparece por NOVO_DIAS (15) dias a partir dela e some depois, sem precisar de PR para remover.
@@ -182,6 +187,30 @@ const licitacoesModule: ModuleDef = {
         // B2: "Triagem & IA" removida do menu (rota /app/triagem segue existindo,
         // mas controlada pelo RouteGuard + matriz de permissões do ERP).
         { label: "Composição & BDI", to: "/app/composicao", icon: PieChart },
+      ],
+    },
+    {
+      // Resumo dos Contratos (13/11/2026): o painel da Implantação ganha
+      // submódulo próprio, uma tela por setor, como nos protótipos HTML do
+      // Pablo. Desde 15/11/2026 (mig 20261115000400) cada item tem menu
+      // PRÓPRIO em Licitação, com rota — o Pablo gerencia por pessoa quem
+      // abre cada painel (Acesso por Usuário). O prefixo mais longo decide
+      // (rotaVisivelNoMenu); a lista de slugs é a de SLUGS_PAINEL_SETOR
+      // (lib/implantacao/permissaoChecklist.ts). Os slugs são os de
+      // slugSetor() (painelSetores.ts); setor que não existir no checklist
+      // abre "Setor não encontrado".
+      label: "Resumo dos Contratos",
+      defaultOpen: true,
+      items: [
+        { label: "Resumo geral", to: "/app/licitacoes/implantacao/painel", icon: LayoutDashboard },
+        { label: "Compras", to: "/app/licitacoes/implantacao/painel/compras", icon: ShoppingCart },
+        { label: "Financeiro", to: "/app/licitacoes/implantacao/painel/financeiro", icon: Wallet },
+        { label: "Licitação", to: "/app/licitacoes/implantacao/painel/licitacao", icon: Gavel },
+        { label: "Operacional", to: "/app/licitacoes/implantacao/painel/operacional", icon: ClipboardList },
+        { label: "Recrutamento", to: "/app/licitacoes/implantacao/painel/recrutamento", icon: UserPlus },
+        { label: "RH", to: "/app/licitacoes/implantacao/painel/rh", icon: UserCog },
+        { label: "SST", to: "/app/licitacoes/implantacao/painel/sst", icon: HardHat },
+        { label: "Treinamentos", to: "/app/licitacoes/implantacao/painel/treinamentos", icon: GraduationCap },
       ],
     },
     {
@@ -294,6 +323,8 @@ const controladoriaOrcModule: ModuleDef = {
         // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
         { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
         { label: "Fechamento da Empresa", to: "/app/controladoria/fechamento-empresa", icon: TrendingUp, badge: "Novo" },
+        // SIS-2026-0872: precisa existir AQUI e em app_menu (mig 20261114220000). Nasce sem ninguém liberado.
+        { label: "Fechamento dos Sócios", to: "/app/controladoria/fechamento-socios", icon: HandCoins, badge: "Novo" },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
@@ -469,6 +500,8 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0658: Sistema × Excel antigo, só leitura
         { label: "Conciliação da Origem (Fluxo)", to: "/app/financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa", icon: GitMerge },
         { label: "Conciliação Bancária (Planilha Manual)", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
+        // SIS-2026-0825: extrato da plataforma Ticket (CSV) × o que o ERP pagou com TICKET. Menu conciliacao-ticket.
+        { label: "Conciliação da Ticket", to: "/app/financeiro/conciliacao-ticket", icon: GitMerge },
         // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
         // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
         // do usuário, são módulos migrados de sistema externo, não fazem
@@ -1392,7 +1425,14 @@ const operacionalModule: ModuleDef = {
   ],
 };
 
-// SST — ASO / Admissão (fila do Recrutamento)
+// SST — os cinco ASOs, EPIs e saúde ocupacional.
+//
+// 15/11/2026 (SIS-2026-0852): padrão único de nome para os ASOs — "ASO <tipo>"
+// — e os cinco juntos, nesta ordem, que é a mesma de app_menu.ordem (mig
+// 20261115210000). Antes estavam espalhados em "Recrutamento" (ASO / Admissão
+// e Mudança de Função — ASO), "Desligamento" e "Saúde ocupacional" (Periódico).
+// Só o rótulo mudou: rota e código de menu são os mesmos, então ninguém perdeu
+// acesso nem link salvo.
 const sstModule: ModuleDef = {
   id: "sst",
   label: "SST",
@@ -1402,19 +1442,15 @@ const sstModule: ModuleDef = {
   status: "active",
   groups: [
     {
-      label: "Recrutamento",
+      label: "ASO",
       defaultOpen: true,
       items: [
-        { label: "ASO / Admissão", to: "/app/sst/aso", icon: HardHat },
-        { label: "Mudança de Função — ASO", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-      ],
-    },
-    {
-      // A outra ponta: o desligamento também passa pelo SST, depois do RH.
-      label: "Desligamento",
-      defaultOpen: true,
-      items: [
+        { label: "ASO Admissional", to: "/app/sst/aso", icon: HardHat },
         { label: "ASO Demissional", to: "/app/sst/aso-demissional", icon: UserMinus },
+        { label: "ASO Mudança de Função", to: "/app/sst/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        { label: "ASO Periódico", to: "/app/sst/aso-periodico", icon: CalendarClock },
+        // A fila do exame sobre os casos do Controle de Afastamentos — não é cadastro novo.
+        { label: "ASO de Retorno ao Trabalho", to: "/app/sst/aso-retorno", icon: UserCheck },
       ],
     },
     {
@@ -1653,11 +1689,14 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // rota, então acende qualquer item cujo link tenha pendência, sem precisar
   // marcar `notif` item a item.
   const aprovacoesNotif = useAprovacoesNotif();
+  // 13/11/2026 (mig 20261115000800): Resumo dos Contratos — setor com contrato
+  // pronto esperando "Confirmar recebimento". Também vem por rota.
+  const confirmacaoNotif = useImplantacaoConfirmacaoNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
-  // Organização salva (ou o padrão). Só decide ONDE cada tela aparece; quem
-  // vê cada uma continua sendo o canSee abaixo, pela rota.
+  // Organização salva (ou o padrão). Entradas originais seguem a permissão
+  // da rota; cópias carregam um menuCodigo independente (SIS-2026-0837).
   const allModules = useMenuLateral<NavItem, ModuleDef>(NAV_MODULOS);
 
   // Sidebar filtra itens com base nos menus acessíveis do usuário (perfil de
@@ -1665,7 +1704,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Ações passou a usar o mesmo filtro que todo o resto (antes tinha exceção
   // própria via usePlanoAcaoPermissao — removida a pedido do usuário, pra
   // "Acesso por Usuário" ser a única autoridade em qualquer módulo).
-  const canSee = useCallback((to: string) => {
+  const canSee = useCallback((alvo: string | NavItem) => {
+    const to = typeof alvo === "string" ? alvo : alvo.to;
+    const menuCodigo = typeof alvo === "string" ? undefined : alvo.menuCodigo;
     // Encarregado externo: só a allowlist dele. Precisa vir ANTES de tudo —
     // ele não tem perfil de acesso, então cairia no ramo "menu ainda não
     // configurado → visível" e enxergaria o ERP inteiro no menu. Este ramo
@@ -1674,7 +1715,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // Mesma regra do RouteGuard: NEGA POR PADRÃO. A sidebar não pode listar o
     // que a rota vai barrar — item visível que dá "Acesso negado" ao clicar é
     // pior do que item ausente.
-    return rotaVisivelNoMenu(to, access);
+    return rotaVisivelNoMenu(to, access, menuCodigo);
   }, [access, externo]);
 
   const visibleModules = useMemo(() => {
@@ -1687,7 +1728,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       .map((mod) => {
         if (!mod.groups) return mod;
         const groups = mod.groups
-          .map((g) => ({ ...g, items: g.items.filter((item) => canSee(item.to)) }))
+          .map((g) => ({ ...g, items: g.items.filter((item) => canSee(item)) }))
           .filter((g) => g.items.length > 0);
         return { ...mod, groups };
       })
@@ -1700,6 +1741,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // `notif`, e cada um acende pelo status da própria etapa.
     const resolvedDot = (item: NavItem) =>
       (aprovacoesNotif.porRota[item.to] ?? 0) > 0 ? true
+      : itemComBolinha(confirmacaoNotif.porRota, item.to) ? true
       : item.notif === "meus" ? chamadosNotif.meus
       : item.notif === "dev" ? chamadosNotif.dev
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
@@ -1723,7 +1765,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
         })),
       })),
     }));
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, prazosRecursosNotif, reembolsoNotif.temPendente, aprovacoesNotif, confirmacaoNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"

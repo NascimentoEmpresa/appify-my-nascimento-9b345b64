@@ -618,8 +618,8 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
         {/* SIS-2026-0736: totais do período para conferir com os cards "Entradas/Saídas (filtro atual)" do Fluxo de Caixa — Realizado. */}
         <div className="grid gap-3 sm:grid-cols-2">
           {[
-            { rotulo: "Saldo de movimentação de entradas", valor: totaisMov.entradas, saldoAnterior: ponte.entradas.saldoAnterior, tipoSaldo: "entrada", Icone: ArrowUp, cor: "text-emerald-700", fundo: "bg-emerald-50 dark:bg-emerald-950/30", borda: "border-emerald-200", card: "Entradas (filtro atual)" },
-            { rotulo: "Saldo de movimentação de saídas", valor: totaisMov.saidas, saldoAnterior: ponte.saidas.saldoAnterior, tipoSaldo: "saída", Icone: ArrowDown, cor: "text-rose-700", fundo: "bg-rose-50 dark:bg-rose-950/30", borda: "border-rose-200", card: "Saídas (filtro atual)" },
+            { rotulo: "Saldo de movimentação de entradas", valor: totaisMov.entradas, saldoAnterior: totaisMov.saldoAnterior.entradas, totalFluxo: totaisMov.totalEntradas, tipoSaldo: "entrada", Icone: ArrowUp, cor: "text-emerald-700", fundo: "bg-emerald-50 dark:bg-emerald-950/30", borda: "border-emerald-200", card: "Entradas (filtro atual)" },
+            { rotulo: "Saldo de movimentação de saídas", valor: totaisMov.saidas, saldoAnterior: totaisMov.saldoAnterior.saidas, totalFluxo: totaisMov.totalSaidas, tipoSaldo: "saída", Icone: ArrowDown, cor: "text-rose-700", fundo: "bg-rose-50 dark:bg-rose-950/30", borda: "border-rose-200", card: "Saídas (filtro atual)" },
           ].map((k) => (
             <div key={k.rotulo} className={cn("flex items-center gap-4 rounded-xl border p-4", k.fundo, k.borda)}>
               <k.Icone className={cn("h-8 w-8 shrink-0", k.cor)} />
@@ -629,11 +629,16 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                 <p className="text-[11px] text-muted-foreground">
                   {empresaId === TODAS ? "Todas as empresas" : empresaNome(empresaId)} · {bancoValido === TODAS ? "todos os bancos" : bancoNome(bancoValido)} · {dataDe ? isoParaBR(dataDe) : "início"} a {dataAte ? isoParaBR(dataAte) : "hoje"}
                 </p>
-                <p className="text-[11px] text-muted-foreground">Compare com “{k.card}” do Fluxo de Caixa — Realizado ({totaisMov.lancamentos.toLocaleString("pt-BR")} lançamentos).</p>
+                <p className="text-[11px] text-muted-foreground">Movimentação do período, sem o saldo anterior. O Fluxo de Caixa — Realizado ({totaisMov.lancamentos.toLocaleString("pt-BR")} lançamentos) mostra “{k.card}” com ele.</p>
                 {k.saldoAnterior !== 0 && (
-                  <p className="text-[11px] font-medium text-blue-700 dark:text-blue-300">
-                    Inclui {fmtBRL(k.saldoAnterior)} de saldo anterior (abertura das contas, lançado como {k.tipoSaldo}): não é movimento e não aparece em extrato.
-                  </p>
+                  <>
+                    <p className="text-[11px] font-medium text-blue-700 dark:text-blue-300">
+                      Não inclui {fmtBRL(k.saldoAnterior)} de saldo anterior (abertura das contas, lançado como {k.tipoSaldo}): é o que já estava nas contas antes do período, não é movimento e não aparece no extrato.
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Total do Fluxo com saldo anterior: <strong>{fmtBRL(k.totalFluxo)}</strong> = {fmtBRL(k.valor)} de movimentação + {fmtBRL(k.saldoAnterior)} de saldo anterior.
+                    </p>
+                  </>
                 )}
               </div>
             </div>
@@ -672,8 +677,8 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
           bancos, mês a mês, sem saldo anterior e sem o que a conciliação ignora. É a mesma comparação do item 2 da Auditoria.
         </p>
         <p className="text-[11px] text-muted-foreground">
-          Mesma conta do Fluxo de Caixa: soma tudo o que o Fluxo mostra no período (inclusive saldo anterior e conta vinculada, que a conferência de saldos abaixo
-          desconsidera) e o rateio entre empresas conta pelo total, na empresa do primeiro lançamento, como no Fluxo. Na tabela mensal abaixo, o mês entra inteiro.
+          Mesma conta do Fluxo de Caixa, exceto o saldo anterior (abertura das contas), que fica fora da movimentação e é mostrado à parte: soma o que o Fluxo mostra no período (inclusive conta vinculada,
+          que a conferência de saldos abaixo desconsidera) e o rateio entre empresas conta pelo total, na empresa do primeiro lançamento, como no Fluxo. Na tabela mensal abaixo, o mês entra inteiro.
         </p>
         {/* SIS-2026-0833: a diferença entre o Fluxo e o extrato, aberta em partes e por banco/conta. */}
         {totaisExt.conciliacoes > 0 && (
