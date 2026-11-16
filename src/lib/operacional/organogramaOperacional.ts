@@ -26,6 +26,8 @@ export interface ContratoOrg {
   id: string;
   nome: string;
   status: string;
+  /** Código da empresa do grupo (distingue o mesmo cliente em duas empresas). */
+  empresa?: string | null;
   encarregado_id: number | null;
   supervisor_id: number | null;
   colaboradores: number;

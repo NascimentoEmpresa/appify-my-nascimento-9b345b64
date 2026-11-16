@@ -234,7 +234,7 @@ function LinhaContrato({ c, nivel, i, ctx }: { c: ContratoOrg; nivel: number; i:
           <HardHat className="h-4 w-4" />
         </span>
         <button type="button" onClick={() => ctx.alternar(k)} className="min-w-0 flex-1 text-left">
-          <span className="block truncate text-[12.5px] font-semibold leading-tight">{c.nome}</span>
+          <span className="block truncate text-[12.5px] font-semibold leading-tight">{c.nome}{c.empresa && <span className="ml-1 rounded bg-muted px-1 py-px text-[9.5px] font-bold text-muted-foreground">{c.empresa}</span>}</span>
           <span className="block truncate text-[10.5px] text-muted-foreground">
             {plural(c.colaboradores, "pessoa", "pessoas")} em campo
             {c.status !== "ativo" && ` · ${c.status}`}
