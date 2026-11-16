@@ -326,6 +326,8 @@ const controladoriaOrcModule: ModuleDef = {
         // SIS-2026-0872: precisa existir AQUI e em app_menu (mig 20261114220000). Nasce sem ninguém liberado.
         { label: "Fechamento dos Sócios", to: "/app/controladoria/fechamento-socios", icon: HandCoins, badge: "Novo" },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
+        // SIS-2026-0908: precisa existir AQUI e em app_menu (mig 20261117160000). Nasce sem ninguém liberado.
+        { label: "Conciliação de Estoque", to: "/app/controladoria/conciliacao-estoque", icon: TrendingUp, badge: "Novo" },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
         // SIS-2026-0807: precisa existir AQUI e em app_menu (mig 20261105001000).

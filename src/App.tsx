@@ -94,6 +94,7 @@ import ControleFaturamento from "./pages/controladoria/ControleFaturamento";
 import FaturamentoEmpresa from "./pages/controladoria/FaturamentoEmpresa";
 import FechamentoEmpresa from "./pages/controladoria/FechamentoEmpresa";
 import LucratividadeContratos from "./pages/controladoria/LucratividadeContratos";
+import ConciliacaoEstoque from "./pages/controladoria/ConciliacaoEstoque";
 import JustificativasValor from "./pages/controladoria/JustificativasValor";
 import AuditoriaControladoria from "./pages/controladoria/AuditoriaControladoria";
 import CentrosCusto from "./pages/controladoria/CentrosCusto";
@@ -851,6 +852,8 @@ const App = () => (
             <Route path="controladoria/fechamento-empresa" element={<FechamentoEmpresa />} />
             <Route path="controladoria/fechamento-socios" element={<FechamentoSocios />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
+            {/* SIS-2026-0908: precisa existir aqui E em app_menu (mig 20261117160000). */}
+            <Route path="controladoria/conciliacao-estoque" element={<ConciliacaoEstoque />} />
             <Route path="controladoria/auditoria" element={<AuditoriaControladoria />} />
             {/* SIS-2026-0807: Justificativas de Valor — gestão (Controladoria) e caixa do responsável. */}
             <Route path="controladoria/justificativas" element={<JustificativasValor modo="gestao" />} />
