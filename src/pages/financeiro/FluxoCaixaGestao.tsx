@@ -681,7 +681,7 @@ export default function FluxoCaixaGestao() {
     const bBanco = base("banco");
     const bConta = base("conta");
 
-    const tiposComLinha = new Set(bTipo.map((l) => l.tipo));
+    const tiposComLinha = new Set<string>(bTipo.map((l) => l.tipo));
     const tipo = [{ value: "entrada", label: "Entrada" }, { value: "saida", label: "Saída" }].filter((o) => tiposComLinha.has(o.value) || tiposFiltro.includes(o.value));
 
     const empresa = opcoesFacetadas(paresDasLinhas(bEmpresa, (l) => [l.empresa_id, l.empresa_nome]), empresaIds, empresasDisponiveis);

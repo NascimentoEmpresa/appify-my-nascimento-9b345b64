@@ -79,8 +79,8 @@ describe("separarPorFacetas / baseDaFaceta", () => {
 describe("contratosDasLinhas", () => {
   it("inclui o centro que só aparece em cota de rateio, mas não as cotas da fatura do cartão", () => {
     const pares = contratosDasLinhas([
-      { contrato_id: null, contrato_nome: "Rateio", rateioDetalhe: [{ id: "c1", nome: "ALFA", valor: 1 }, { id: "nome:ADM", nome: "ADM", valor: 1 }] },
-      { contrato_id: "c2", contrato_nome: "BETA", fatura_cartao_id: "f1", rateioDetalhe: [{ id: "DM-1", nome: "DM-1 · Almoço", valor: 1 }] },
+      { contrato_id: null, contrato_nome: "Rateio", rateioDetalhe: [{ id: "c1", nome: "ALFA" }, { id: "nome:ADM", nome: "ADM" }] },
+      { contrato_id: "c2", contrato_nome: "BETA", fatura_cartao_id: "f1", rateioDetalhe: [{ id: "DM-1", nome: "DM-1 · Almoço" }] },
     ]);
     expect(pares).toEqual([["nome:ADM", "ADM"], ["c1", "ALFA"], ["c2", "BETA"]]);
   });
