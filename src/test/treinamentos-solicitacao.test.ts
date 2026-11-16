@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FORM_VAZIO, acoesEncarregado, acoesPermitidas, comData, datasPrevistas, errosEtapa, formDaSolicitacao, ordenarFila, paraEnvio,
+  FORM_VAZIO, acoesEncarregado, chaveContrato, acoesPermitidas, comData, datasPrevistas, errosEtapa, formDaSolicitacao, ordenarFila, paraEnvio,
   primeiraEtapaComErro, progressoChecklist, rotuloStatus, secoesFicha, textoOficio, ETAPAS, ULTIMA_ETAPA,
   type FormTreinamento, type SolicitacaoTreinamento,
 } from "@/lib/treinamentos/solicitacaoTreinamento";
@@ -59,6 +59,28 @@ describe("etapas do formulário (mesmas regras do banco)", () => {
   });
 });
 
+const CID = "3f2c9a10-1b2c-4d5e-8f90-a1b2c3d4e5f6";
+
+describe("contrato da Licitação (mig 20261116200000)", () => {
+  it("a chave junta empresa, filial e o id do contrato da Licitação", () => {
+    expect(chaveContrato({ empresa: 1, filial: 1050, contrato_id: CID })).toBe(`1__1050__${CID}`);
+  });
+  it("contrato novo, ainda sem filial na Senior (ex.: Secretaria da Justiça), vai só com o id", () => {
+    const f = { ...completo, contrato: chaveContrato({ empresa: null, filial: null, contrato_id: CID }), contrato_nome: "SECRETARIA DA JUSTIÇA RS" };
+    expect(errosEtapa(f, 1)).toEqual([]);
+    expect(paraEnvio(f)).toMatchObject({ contrato_empresa: null, contrato_filial: null, contrato_id: CID, contrato_nome: "SECRETARIA DA JUSTIÇA RS" });
+  });
+  it("com filial na Senior manda as duas coisas; formato antigo (sem id) manda id nulo", () => {
+    expect(paraEnvio({ ...completo, contrato: `1__1050__${CID}` })).toMatchObject({ contrato_empresa: 1, contrato_filial: 1050, contrato_id: CID });
+    expect(paraEnvio(completo)).toMatchObject({ contrato_empresa: 1, contrato_filial: 1050, contrato_id: null });
+  });
+  it("devolvida com contrato da Licitação volta com a mesma chave da lista", () => {
+    const s = { ...paraEnvio({ ...completo, contrato: chaveContrato({ empresa: null, filial: null, contrato_id: CID }) }),
+      id: 2, protocolo: "TRN-2026-0002", status: "pendente", objetivo: null, equipe: null, turnos: null, observacoes: null } as unknown as SolicitacaoTreinamento;
+    expect(formDaSolicitacao(s).contrato).toBe(`____${CID}`);
+  });
+});
+
 describe("envio e volta para o formulário", () => {
   it("manda o contrato separado, as datas e zera o checklist no online", () => {
     const p = paraEnvio(completo);
@@ -72,7 +94,7 @@ describe("envio e volta para o formulário", () => {
     const s = { ...paraEnvio(completo), id: 1, protocolo: "TRN-2026-0001", status: "pendente", contrato_nome: "UFRGS - LIMPEZA GERAL",
       objetivo: null, equipe: null, turnos: null, observacoes: null } as unknown as SolicitacaoTreinamento;
     const f = formDaSolicitacao(s);
-    expect(f.contrato).toBe("1__1050");
+    expect(f.contrato).toBe("1__1050__");
     expect(f.datas_previstas).toEqual(["2026-11-10", "2026-11-12"]);
     expect(f.confirmado).toBe(false);
     expect(f.objetivo).toBe("");
