@@ -158,3 +158,51 @@ export function filtrarPessoas<T extends Pick<PessoaOrcamento, "nome" | "setores
   const t = busca.trim().toLocaleLowerCase("pt-BR");
   return t ? pessoas.filter((p) => `${p.nome} ${p.setores.join(" ")}`.toLocaleLowerCase("pt-BR").includes(t)) : pessoas;
 }
+
+/** SIS-2026-0828: uma linha do resumo "como o orçamento foi formado": um contrato que alimenta a classificação no mês. */
+export interface LinhaComposicao {
+  contratoId: string;
+  contrato: string;
+  /** o que a Planilha de Custo prevê para a classificação neste contrato (executável) */
+  executavel: number;
+  /** o mesmo valor proporcional ao faturado do mês (executado): é o orçado da classificação */
+  executado: number;
+  /** quanto do contrato foi faturado no mês (todas as rubricas) */
+  faturado: number;
+  utilizado: number;
+  saldo: number;
+  fonte: "faturado" | "previsto" | "sem_nota" | null;
+}
+
+/**
+ * Resumo do saldo da classificação, contrato a contrato (mesma conta de saldoDaClassificacao; a soma de `saldo` é o saldo mostrado na lista).
+ * Só entram contratos que têm orçado ou utilizado na classificação; ordenados pelo maior orçado.
+ */
+export function composicaoDaClassificacao(
+  grupos: OrcamentoContratoGrupo[], utilizado: UtilizadoOrcamentoLinha[], classificacaoId: string | null, anoMes: string, contratoIds?: string[],
+): LinhaComposicao[] {
+  if (!classificacaoId) return [];
+  if (contratoIds && contratoIds.length === 0) return [];
+  const escolhidos = contratoIds ? new Set(contratoIds) : null;
+  const gasto = new Map<string, number>();
+  for (const l of utilizado) {
+    if (!l.contrato_id || l.classificacao_id !== classificacaoId) continue;
+    if (!l.competencia || l.competencia.slice(0, 7) !== anoMes) continue;
+    gasto.set(l.contrato_id, (gasto.get(l.contrato_id) ?? 0) + (Number(l.valor) || 0));
+  }
+  const linhas: LinhaComposicao[] = [];
+  for (const g of grupos) {
+    if (ehContratoAdministrativo(g.contrato.nome)) continue;
+    if (escolhidos && !escolhidos.has(g.contrato.id)) continue;
+    const rubricas = g.rubricas.filter((r) => r.classificacaoMaloteId === classificacaoId);
+    const executado = rubricas.reduce((s, r) => s + r.valor, 0);
+    const executavel = rubricas.reduce((s, r) => s + (r.valorExecutavel ?? r.valor), 0);
+    const usado = gasto.get(g.contrato.id) ?? 0;
+    if (executado === 0 && executavel === 0 && usado === 0) continue;
+    linhas.push({
+      contratoId: g.contrato.id, contrato: g.contrato.nome, executavel, executado, faturado: g.executado ?? g.valorTotal, utilizado: usado,
+      saldo: Math.max(0, executado - usado), fonte: g.fonte ?? null,
+    });
+  }
+  return linhas.sort((a, b) => b.executado - a.executado || a.contrato.localeCompare(b.contrato, "pt-BR"));
+}
