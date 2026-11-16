@@ -134,7 +134,12 @@ export default function DetalheOrcamento() {
   // dropdown "Contrato" abaixo escondia contrato de outra empresa, e o
   // orçado da Classificação drilled-down vinha zerado. FiltroEmpresaOrcamento
   // é quem deixa filtrar de volta pra uma empresa só quando quiser.
-  const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
+  const { data: contratosERP = [] } = useContratosERP({ todasEmpresas: true });
+  // SIS-2026-0917: o dropdown "Contrato" vinha na ordem do banco (misturado); agora em ordem alfabética.
+  const contratos = useMemo(
+    () => [...contratosERP].sort((a, b) => (a.nome ?? "").localeCompare(b.nome ?? "", "pt-BR", { sensitivity: "base", numeric: true })),
+    [contratosERP]
+  );
   const { data: orcamentosAdmTodasEmpresas = [] } = usePlanejamentosOrcamento(null, { todasEmpresas: true });
   const orcamentosAdm = useMemo(
     () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? orcamentosAdmTodasEmpresas : orcamentosAdmTodasEmpresas.filter((o) => o.empresa_id === filtroEmpresaId)),
