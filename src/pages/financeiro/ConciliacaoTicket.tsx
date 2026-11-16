@@ -15,6 +15,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { rotuloMes } from "@/pages/controladoria/faturamento/useBaseFaturamento";
+import { TituloComFormula } from "@/pages/controladoria/faturamento/Rentabilidade";
 import { useErpTicket, useExcluirImportacaoTicket, useImportacoesTicket, useImportarExtratoTicket, useLinhasExtratoTicket, type ImportacaoTicket } from "@/hooks/useConciliacaoTicket";
 import {
   categoriaDoExtrato, compararPorMes, extratoDaAba, filtrarErp, FILTRO_ERP_VAZIO, lerCsvTicket, resumirComparativo, resumoOutros, ROTULO_SITUACAO,
@@ -46,6 +47,41 @@ const TEXTO_ABA: Record<Aba, { titulo: string; extrato: string; descricao: strin
     titulo: "Créditos adicionados", extrato: "Extrato: Tickets adicionados",
     descricao: "Os créditos \"Tickets\" adicionados por colaborador no extrato contra o que o ERP pagou com TICKET na descrição, no mesmo mês. Afine pela classificação (ex.: ADD ASSIDUIDADE) para comparar o mesmo tipo de crédito.",
   },
+};
+
+// Infoboxes (i): o que é cada indicador e cada coluna, em linguagem do Financeiro.
+const INFO_EXTRATO: Record<Aba, React.ReactNode> = {
+  boletos: <span>Soma, em módulo, dos lançamentos <strong>"Pagamento de Boleto"</strong> (debitado) do extrato da Ticket importado, em todos os meses que o extrato cobre. É o que a plataforma registra como boleto pago.</span>,
+  creditos: <span>Soma dos créditos <strong>"Tickets"</strong> (adicionado) do extrato importado: um crédito por colaborador, em todos os meses que o extrato cobre. O "CREDIT" avulso do extrato não entra aqui.</span>,
+};
+const INFO_ERP = (
+  <>
+    <span className="block">Soma do que o ERP <strong>pagou</strong> (saídas) com <strong>TICKET</strong> na descrição, nos meses que o extrato cobre, pela <strong>data de pagamento</strong>.</span>
+    <span className="block">Vem do Malote, das linhas importadas da planilha e do Débito Automático. Despesa rateada entre contratos conta uma vez só (as cotas são somadas). Respeita os filtros abaixo.</span>
+  </>
+);
+const INFO_DIFERENCA = (
+  <>
+    <span className="block"><strong>ERP − extrato</strong>, somando todos os meses.</span>
+    <span className="block">Positivo: o ERP pagou mais do que o extrato mostra. Negativo: o extrato tem mais. Menos de 1 centavo = confere.</span>
+  </>
+);
+const INFO_MESES = <span>Meses que têm extrato <strong>e</strong> ERP e fecham ao centavo. "Sem par" é o mês que só existe de um lado (só no extrato ou só no ERP).</span>;
+
+const INFO_COLUNAS = {
+  mes: <span>Mês da data: no extrato, a data da linha; no ERP, a data de pagamento do lançamento.</span>,
+  extratoQtd: <span>Quantos lançamentos o extrato da Ticket tem no mês, nesta aba. Os créditos por colaborador contam um a um.</span>,
+  extratoValor: <span>Soma, em módulo, dos lançamentos do extrato no mês (boletos debitados ou créditos adicionados, conforme a aba).</span>,
+  erpQtd: <span>Quantos lançamentos do ERP com TICKET na descrição foram pagos no mês (uma despesa ou parcela, mesmo rateada, conta uma vez), já com os filtros.</span>,
+  erpValor: <span>Soma do valor pago desses lançamentos no mês, já com os filtros de empresa, classificação e texto.</span>,
+  diferenca: <span><strong>ERP − extrato</strong> no mês. Positivo: o ERP pagou mais. Negativo: o extrato tem mais. Em verde quando confere.</span>,
+  situacao: (
+    <>
+      <span className="block"><strong>Confere:</strong> os dois lados existem e a diferença é menor que 1 centavo.</span>
+      <span className="block"><strong>Diferença:</strong> os dois lados existem, mas os valores não fecham.</span>
+      <span className="block"><strong>Só no extrato / Só no ERP:</strong> o mês só tem lançamento de um lado.</span>
+    </>
+  ),
 };
 
 export default function ConciliacaoTicket() {
@@ -122,27 +158,27 @@ function Conteudo() {
           <p className="text-xs text-muted-foreground">{TEXTO_ABA[aba].descricao}</p>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <KpiTile label={TEXTO_ABA[aba].extrato} valor={fmtMoney(resumo.extratoTotal)} icon={<FileUp />} cor="sky" />
-            <KpiTile label="Pago no ERP (TICKET)" valor={carregandoErp ? "Calculando..." : fmtMoney(resumo.erpTotal)} sub={semFiltroErp ? "Todas as empresas e classificações" : "Com os filtros abaixo"} icon={<Wallet />} cor="emerald" />
+            <KpiTile label={TEXTO_ABA[aba].extrato} valor={fmtMoney(resumo.extratoTotal)} icon={<FileUp />} cor="sky" info={INFO_EXTRATO[aba]} />
+            <KpiTile label="Pago no ERP (TICKET)" valor={carregandoErp ? "Calculando..." : fmtMoney(resumo.erpTotal)} sub={semFiltroErp ? "Todas as empresas e classificações" : "Com os filtros abaixo"} icon={<Wallet />} cor="emerald" info={INFO_ERP} />
             <KpiTile
-              label="Diferença (ERP − extrato)" valor={carregandoErp ? "—" : fmtMoney(resumo.diferenca)} icon={<Scale />} cor={Math.abs(resumo.diferenca) < 0.01 ? "emerald" : "red"}
+              label="Diferença (ERP − extrato)" info={INFO_DIFERENCA} valor={carregandoErp ? "—" : fmtMoney(resumo.diferenca)} icon={<Scale />} cor={Math.abs(resumo.diferenca) < 0.01 ? "emerald" : "red"}
               sub={Math.abs(resumo.diferenca) < 0.01 ? "Confere" : resumo.diferenca > 0 ? "O ERP pagou mais" : "O extrato tem mais"}
             />
-            <KpiTile label="Meses" valor={`${resumo.mesesQueConferem} confere(m)`} sub={`${resumo.mesesComDiferenca} com diferença ou sem par`} icon={<CheckCircle2 />} cor="slate" />
+            <KpiTile label="Meses" valor={`${resumo.mesesQueConferem} confere(m)`} sub={`${resumo.mesesComDiferenca} com diferença ou sem par`} icon={<CheckCircle2 />} cor="slate" info={INFO_MESES} />
           </div>
 
           <Card>
             <CardContent className="grid grid-cols-1 gap-3 p-3 md:grid-cols-3">
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Empresa (ERP)</p>
+                <p className="text-xs text-muted-foreground"><TituloComFormula alinhar="left" titulo="Empresa (ERP)" formula={<span>Empresa do lançamento no ERP. O extrato da Ticket não diz de que empresa é cada linha: use este filtro para comparar só o que pertence à conta importada. Vazio = todas.</span>} /></p>
                 <SearchableMultiSelect value={filtroErp.empresas} onChange={(empresas) => setFiltroErp((f) => ({ ...f, empresas }))} options={opcoesEmpresa} placeholder="Todas" searchPlaceholder="Buscar empresa..." maxBadges={3} />
               </div>
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Classificação (ERP)</p>
+                <p className="text-xs text-muted-foreground"><TituloComFormula alinhar="left" titulo="Classificação (ERP)" formula={<span>Classificação do lançamento no ERP (VA, ADD ASSIDUIDADE, CESTA BÁSICA...). Escolha as que correspondem ao tipo de crédito do extrato. Vazio = todas.</span>} /></p>
                 <SearchableMultiSelect value={filtroErp.classificacoes} onChange={(classificacoes) => setFiltroErp((f) => ({ ...f, classificacoes }))} options={opcoesClassificacao} placeholder="Todas" searchPlaceholder="Buscar classificação..." maxBadges={3} />
               </div>
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">A descrição do ERP contém</p>
+                <p className="text-xs text-muted-foreground"><TituloComFormula alinhar="left" titulo="A descrição do ERP contém" formula={<span>Filtra pelo texto da descrição do lançamento (sem diferenciar maiúsculas nem acentos). Todos os lançamentos já têm TICKET na descrição; use para afinar, ex.: ASSIDUIDADE ou COMPL.</span>} /></p>
                 <div className="flex gap-2">
                   <Input value={filtroErp.texto} onChange={(e) => setFiltroErp((f) => ({ ...f, texto: e.target.value }))} placeholder="Ex.: ASSIDUIDADE, COMPL..." className="h-9" />
                   <Button variant="ghost" size="sm" className="h-9" disabled={semFiltroErp} onClick={() => setFiltroErp(FILTRO_ERP_VAZIO)}>Limpar</Button>
@@ -159,13 +195,13 @@ function Conteudo() {
                 <thead className="bg-muted/50 text-left text-xs">
                   <tr>
                     <th className="w-8 px-2 py-2" />
-                    <th className="px-2 py-2 font-medium">Mês</th>
-                    <th className="px-2 py-2 text-right font-medium">Extrato (qtd)</th>
-                    <th className="px-2 py-2 text-right font-medium">Extrato (R$)</th>
-                    <th className="px-2 py-2 text-right font-medium">ERP (qtd)</th>
-                    <th className="px-2 py-2 text-right font-medium">ERP (R$)</th>
-                    <th className="px-2 py-2 text-right font-medium">Diferença</th>
-                    <th className="px-2 py-2 font-medium">Situação</th>
+                    <th className="px-2 py-2 font-medium"><TituloComFormula alinhar="left" titulo="Mês" formula={INFO_COLUNAS.mes} /></th>
+                    <th className="px-2 py-2 text-right font-medium"><TituloComFormula titulo="Extrato (qtd)" formula={INFO_COLUNAS.extratoQtd} /></th>
+                    <th className="px-2 py-2 text-right font-medium"><TituloComFormula titulo="Extrato (R$)" formula={INFO_COLUNAS.extratoValor} /></th>
+                    <th className="px-2 py-2 text-right font-medium"><TituloComFormula titulo="ERP (qtd)" formula={INFO_COLUNAS.erpQtd} /></th>
+                    <th className="px-2 py-2 text-right font-medium"><TituloComFormula titulo="ERP (R$)" formula={INFO_COLUNAS.erpValor} /></th>
+                    <th className="px-2 py-2 text-right font-medium"><TituloComFormula titulo="Diferença" formula={INFO_COLUNAS.diferenca} /></th>
+                    <th className="px-2 py-2 font-medium"><TituloComFormula alinhar="left" titulo="Situação" formula={INFO_COLUNAS.situacao} /></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -219,7 +255,9 @@ function DetalheMes({ mes, extrato, erp }: { mes: MesComparado; extrato: { data:
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="rounded-md border bg-background">
-        <p className="border-b px-3 py-2 text-xs font-semibold">Extrato da Ticket — {rotuloMes(mes.mes)} ({mes.extratoQtd} lançamento(s))</p>
+        <p className="flex items-center gap-1 border-b px-3 py-2 text-xs font-semibold">
+          <TituloComFormula alinhar="left" titulo={<>Extrato da Ticket — {rotuloMes(mes.mes)} ({mes.extratoQtd} lançamento(s))</>} formula={<span>Lançamentos do extrato importado neste mês, nesta aba. Como há dezenas de créditos iguais no mesmo dia, eles são agrupados por dia (data, tipo, quantidade e total).</span>} />
+        </p>
         <div className="max-h-72 overflow-auto">
           <table className="w-full text-xs">
             <tbody>
@@ -236,7 +274,9 @@ function DetalheMes({ mes, extrato, erp }: { mes: MesComparado; extrato: { data:
         </div>
       </div>
       <div className="rounded-md border bg-background">
-        <p className="border-b px-3 py-2 text-xs font-semibold">ERP — pagamentos com TICKET ({mes.erpQtd})</p>
+        <p className="flex items-center gap-1 border-b px-3 py-2 text-xs font-semibold">
+          <TituloComFormula alinhar="left" titulo={<>ERP — pagamentos com TICKET ({mes.erpQtd})</>} formula={<span>Lançamentos do ERP pagos neste mês com TICKET na descrição, já com os filtros. Colunas: data de pagamento, ID (DM do Malote, DA do Débito Automático ou código da planilha), descrição, empresa · classificação e valor pago.</span>} />
+        </p>
         <div className="max-h-72 overflow-auto">
           <table className="w-full text-xs">
             <tbody>
@@ -263,7 +303,7 @@ function Importacoes({ importacoes, podeExcluir }: { importacoes: ImportacaoTick
   if (importacoes.length === 0) return null;
   return (
     <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Extratos importados</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold"><TituloComFormula alinhar="left" titulo="Extratos importados" formula={<span>Os arquivos CSV da Ticket já gravados no ERP: período que cada um cobre, quantas linhas tem e quem importou. Importar um arquivo que cubra o mesmo período substitui as linhas daquelas datas (nada duplica).</span>} /></CardTitle></CardHeader>
       <CardContent className="pt-0">
         <ul className="divide-y text-xs">
           {importacoes.map((i) => (

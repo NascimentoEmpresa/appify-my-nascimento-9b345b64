@@ -19,7 +19,7 @@ import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { cn } from "@/lib/utils";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { ResumoRateioPorClassificacao } from "./ResumoRateioPorClassificacao";
-import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
+import { erroFornecedorNoRateio, erroEmpresaNoRateio, erroContratoNoRateio } from "./rateioValidacao";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { useCartaoEspecialDaForma } from "./cartaoEspecial";
@@ -196,6 +196,9 @@ export default function RatearClassificacao() {
       // mostrarColunaEmpresa) — toda linha exige, sem exceção.
       const erroEmpresa = erroEmpresaNoRateio(linhasRateio.map((l) => ({ empresa_id: l.empresa_id, exigeEmpresa: true })));
       if (erroEmpresa) return erroEmpresa;
+      // SIS-2026-0905: classificação do tipo contrato exige o Contrato na linha (é dele que vem o Centro de Custo no Fluxo de Caixa).
+      const erroContrato = erroContratoNoRateio(linhasRateio, (i) => classificacoesRateaveis.find((c) => c.id === linhasRateio[i]?.classificacao_id)?.tipo);
+      if (erroContrato) return erroContrato;
       if (parcelado) {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
         const n = Number(quantidadeParcelas);
