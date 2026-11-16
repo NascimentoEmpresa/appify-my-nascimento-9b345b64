@@ -40,6 +40,7 @@ import { useAnexoChamado } from "./useAnexoChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
 import { ChamadosVinculados } from "./ChamadosVinculados";
 import { CardReaberturaChamado, CardTransferenciaChamado } from "./ReaberturaTransferenciaChamado";
+import { CardAcoesGestaoChamado } from "./AcoesGestaoChamado";
 import { podeDecidir } from "@/lib/chamados/reabertura";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
@@ -669,6 +670,9 @@ export default function CoordenarChamado() {
               a decisão do Gestor de Sistemas, no meio da página, antes de tudo. */}
           <CardReaberturaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
           <CardTransferenciaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
+          {/* Pedido da Presidência/Controladoria (SIS-2026-0923, mig 20261116230000):
+              prioridade, fila, cancelamento, revisão ou informações — Sistemas responde. */}
+          <CardAcoesGestaoChamado chamado={chamado} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
 
           {/* Parte 1, Parte 2… (mig 20261112002000): a triagem vê a série inteira. */}
           <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `/app/sistemas/chamados/${cid}/coordenar`} />

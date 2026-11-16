@@ -31,6 +31,7 @@ import MinhasTarefas from "./pages/MinhasTarefas";
 import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
 import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
+import AcompanhamentoChamadosPresidencia from "./pages/presidencia/AcompanhamentoChamados";
 import TvPlayer from "./pages/tv/TvPlayer";
 import TvPrevia from "./pages/tv/TvPrevia";
 import TvsSistemas from "./pages/sistemas/Tvs";
@@ -770,6 +771,9 @@ const App = () => (
             {/* Presidência › Desenvolvimento Chamados (mig 266): validação do
                 desenvolvimento dos chamados enviados à Presidência. */}
             <Route path="presidencia/chamados-desenvolvimento" element={<ChamadosDesenvolvimentoPresidencia />} />
+            {/* Presidência › Acompanhamento de Chamados (SIS-2026-0923, mig 20261116230000):
+                painel gerencial de todos os chamados + pedidos de ação a Sistemas. */}
+            <Route path="presidencia/acompanhamento-chamados" element={<AcompanhamentoChamadosPresidencia />} />
             <Route path="licitacoes/grade" element={<Pipeline />} />
             <Route path="editais" element={<CadastroEdital />} />
             <Route path="documentos" element={<Documentos />} />
