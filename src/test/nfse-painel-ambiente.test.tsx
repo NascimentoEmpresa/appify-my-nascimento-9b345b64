@@ -30,6 +30,25 @@ afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; es
   estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("impede entrar na fila com CST de um dígito quando a nota tem PIS/COFINS", async () => {
+    estado.habilitado = true;
+    const parametros = { ...parametrosNfse(), codigo_integracao_municipal:"8111700", cst_pis_cofins:"0" };
+    estado.solicitacoes = [{ id:"anterior", ambiente:"producao", estado:"rejeitada", serie:1041, numero_dps:2,
+      atualizado_em:"2026-11-16T10:00:00Z", dados:{parametros} } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={{...nota,pis_total:0.65,cofins_total:3,vlr_liquido_total:78.55}} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const revisar = () => {
+      fireEvent.click(screen.getByRole("checkbox",{name:"Revisei os dados fiscais, as retenções e a série liberada."}));
+      fireEvent.click(screen.getByRole("checkbox",{name:"Autorizo a emissão de uma nota fiscal real em produção para esta preparação."}));
+    };
+    const botao = screen.getByRole("button",{name:"Solicitar emissão em produção"});
+    revisar(); fireEvent.submit(botao.closest("form")!);
+    expect(estado.enviar).not.toHaveBeenCalled(); expect(estado.erro).toHaveBeenCalledWith(expect.stringMatching(/CST de PIS\/COFINS.*dois dígitos/));
+    fireEvent.change(screen.getByLabelText("CST de PIS/COFINS"),{target:{value:"01"}});
+    expect(botao).toBeDisabled(); revisar(); fireEvent.submit(botao.closest("form")!);
+    await waitFor(()=>expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({cst_pis_cofins:"01"});
+  });
   it("permite escolher a competência fiscal e exige nova revisão antes de enviar a data selecionada", async () => {
     estado.habilitado = true;
     const parametros = { ...parametrosNfse(), codigo_integracao_municipal: "8111700" };

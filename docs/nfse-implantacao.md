@@ -119,6 +119,21 @@ fila quando ele terminar. Conferir os jobs ativos/pendentes em Actions e usar
 
 ### Recuperação após a indisponibilidade de 13/11/2026
 
+Na ocorrência de 16/11, o runner concluiu normalmente às 13h30 e a DPS 9,
+registrada às 14h38, permaneceu sem tentativa porque o cron não havia reposto
+o processo. O workflow agora solicita sua próxima execução ao fim do período
+contínuo, em job isolado sem certificado e com permissão restrita de Actions.
+O cron permanece como contingência; a concorrência continua permitindo uma
+única execução ativa. Diagnósticos, cancelamentos e execuções com menos de
+cinco horas não geram outra execução, evitando laço de falhas de configuração.
+O GitHub ainda pode impor filas e indisponibilidades: a hospedagem definitiva
+em serviço supervisionado no servidor continua indicada para maior disponibilidade.
+
+Após a retomada, a DPS 9 foi bloqueada antes do envio por `cst_pis_cofins: "0"`.
+Quando há valores de PIS/COFINS, a tela passa a exigir dois dígitos antes de
+registrar a solicitação. O enquadramento é confirmado pelo responsável fiscal;
+não preencher, completar com zero ou substituir automaticamente esse código.
+
 O job de produção encerrou às 04h42 (Brasília), após três falhas consecutivas de
 infraestrutura; a solicitação posterior ficou pendente, com zero tentativas e sem
 protocolo. O operador informou reinícios de Docker/containerd durante atualização

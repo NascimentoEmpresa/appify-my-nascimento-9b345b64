@@ -6,10 +6,13 @@ function codigo(valor: string, nome: string, tamanho: number) {
   return codigo;
 }
 
-export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: AmbienteNfse = "homologacao", exigirInscricaoTomador = false): ParametrosNfse {
+export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: AmbienteNfse = "homologacao", exigirInscricaoTomador = false, temPisCofins = false): ParametrosNfse {
   const dataCompetencia = parametros.data_competencia?.trim();
   if (dataCompetencia !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(dataCompetencia) || Number.isNaN(Date.parse(dataCompetencia)) || new Date(dataCompetencia).toISOString().slice(0, 10) !== dataCompetencia)) {
     throw new Error("Data de execução do serviço / competência da NFS-e: informe uma data válida.");
+  }
+  if (temPisCofins && !/^\d{2}$/.test(parametros.cst_pis_cofins ?? "")) {
+    throw new Error("CST de PIS/COFINS: informe o código de dois dígitos confirmado pelo responsável fiscal, preservando o zero inicial.");
   }
   const inscricaoTomador = String(parametros.tomador.inscricao_municipal ?? "").trim();
   if (exigirInscricaoTomador && !inscricaoTomador) throw new Error("Informe a inscrição municipal do tomador confirmada no cadastro da prefeitura para corrigir a rejeição P4016.");

@@ -5,7 +5,53 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { prepararArquivos, executarNoGithub } = require('../src/nfse/github-actions.js');
 const { processarFilaNfse } = require('../src/nfse/index.js');
+const { renovarExecucao } = require('../src/nfse/renovar-actions.js');
 const pastas = [];
+
+describe('Renovação da fila no GitHub', () => {
+  const agora = Date.parse('2026-11-16T16:30:00Z');
+  const env = () => ({ GITHUB_ACTIONS:'true', GITHUB_REF:'refs/heads/main', GITHUB_REPOSITORY:'NascimentoEmpresa/appify-my-nascimento-9b345b64', GITHUB_RUN_ID:'123', NFSE_ACTIONS_CONTINUO:'1', NFSE_RENOVACAO_TOKEN:'token-sintetico' });
+  const origem = () => ({ id:123, repository:{full_name:env().GITHUB_REPOSITORY}, head_branch:'main', path:'.github/workflows/nfse_homologacao.yml', run_started_at:'2026-11-16T10:50:00Z', conclusion:null });
+  const resposta = json => ({ ok:true, json:async()=>json });
+  it('solicita uma única execução contínua na main após o período longo', async () => {
+    const chamadas=[];
+    const r=await renovarExecucao(env(),{agora:()=>agora,fetch:async(url,opcoes)=>{chamadas.push({url,opcoes});return resposta(origem());}});
+    assert.deepEqual(r,{renovada:true}); assert.equal(chamadas.length,2);
+    assert.match(chamadas[1].url,/\/workflows\/nfse_homologacao.yml\/dispatches$/);
+    assert.equal(chamadas[1].opcoes.method,'POST');
+    assert.deepEqual(JSON.parse(chamadas[1].opcoes.body),{ref:'main',inputs:{continuo:'true'}});
+    assert.equal(JSON.stringify(r).includes('token-sintetico'),false);
+  });
+  it('não renova diagnóstico, execução curta ou cancelada e não cria laço em falha imediata', async () => {
+    for(const troca of [{run_started_at:'2026-11-16T16:29:00Z'}, {conclusion:'cancelled'}]) {
+      let chamadas=0;
+      const r=await renovarExecucao(env(),{agora:()=>agora,fetch:async()=>{chamadas++;return resposta({...origem(),...troca});}});
+      assert.equal(r.renovada,false); assert.equal(chamadas,1);
+    }
+    let chamadas=0;
+    const r=await renovarExecucao({...env(),NFSE_ACTIONS_CONTINUO:'0'},{fetch:async()=>{chamadas++;}});
+    assert.equal(r.motivo,'diagnostico'); assert.equal(chamadas,0);
+  });
+  it('recusa branch, fork, token ausente e origem incorreta antes do dispatch', async () => {
+    for(const troca of [{GITHUB_REF:'refs/heads/eduardo'},{GITHUB_REPOSITORY:'outro/repo'},{NFSE_RENOVACAO_TOKEN:''}]) {
+      let chamadas=0;
+      await assert.rejects(renovarExecucao({...env(),...troca},{fetch:async()=>{chamadas++;}}),/Contexto inválido/);
+      assert.equal(chamadas,0);
+    }
+    for(const troca of [{head_branch:'eduardo'},{path:'.github/workflows/outro.yml'},{run_started_at:'data-invalida'}]) {
+      let chamadas=0;
+      await assert.rejects(renovarExecucao(env(),{agora:()=>agora,fetch:async()=>{chamadas++;return resposta({...origem(),...troca});}}));
+      assert.equal(chamadas,1);
+    }
+  });
+  it('preserva falhas HTTP sem expor resposta bruta ou token', async () => {
+    for(const falharNa of [1,2]) {
+      let chamadas=0;
+      await assert.rejects(renovarExecucao(env(),{agora:()=>agora,fetch:async()=>++chamadas===falharNa?{ok:false,status:403,json:async()=>({token:'nao-expor'})}:resposta(origem())}),e=>/HTTP 403/.test(e.message)&&!/nao-expor|token-sintetico/.test(e.message));
+      assert.equal(chamadas,falharNa);
+    }
+  });
+});
 afterEach(() => { for (const pasta of pastas.splice(0)) rmSync(pasta, { recursive: true, force: true }); });
 function ambiente() {
   const pasta = mkdtempSync(join(tmpdir(), 'nfse-actions-teste-')); pastas.push(pasta);

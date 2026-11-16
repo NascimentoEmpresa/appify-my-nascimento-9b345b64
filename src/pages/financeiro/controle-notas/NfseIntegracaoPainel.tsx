@@ -68,7 +68,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes) return;
-    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente, exigeInscricaoTomador)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
+    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente, exigeInscricaoTomador, Number(nf.pis_total) + Number(nf.cofins_total) > 0)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível registrar a solicitação."); }
   }
   async function documento(caminho: string) {
@@ -163,6 +163,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Escolha titulo="Retenção do ISS" valor={parametros.iss_retido} alterar={v => salvarCampo("iss_retido",v)} opcoes={[["1","Não retido"],["2","Retido pelo tomador"]]} />
         {(Number(nf.pis_total) + Number(nf.cofins_total)) > 0 && <>
           <Campo titulo="CST de PIS/COFINS" valor={parametros.cst_pis_cofins} alterar={v => salvarCampo("cst_pis_cofins",v)} maximo={2} />
+          <p className="text-sm text-muted-foreground md:col-span-2">Informe os dois dígitos do código confirmado pelo responsável fiscal, incluindo o zero inicial.</p>
           <Escolha titulo="Contribuições retidas" valor={parametros.retencao_pis_cofins} alterar={v => salvarCampo("retencao_pis_cofins",v)} opcoes={[["1","PIS/COFINS retidos"],["3","PIS/COFINS/CSLL retidos"],["4","PIS/COFINS retidos, CSLL não retido"]]} />
         </>}
         <Label className="grid gap-2 md:col-span-3">Descrição do serviço<Textarea required maxLength={2000} rows={4} value={parametros.descricao} onChange={e => salvarCampo("descricao",e.target.value)} /></Label>
