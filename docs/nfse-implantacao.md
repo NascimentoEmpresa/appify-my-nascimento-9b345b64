@@ -119,6 +119,30 @@ fila quando ele terminar. Conferir os jobs ativos/pendentes em Actions e usar
 
 ### Recuperação após a indisponibilidade de 13/11/2026
 
+Na ocorrência de 16/11, o runner concluiu normalmente às 13h30 e a DPS 9,
+registrada às 14h38, permaneceu sem tentativa porque o cron não havia reposto
+o processo. O workflow agora solicita sua próxima execução ao fim do período
+contínuo, em job isolado sem certificado e com permissão restrita de Actions.
+O cron permanece como contingência; a concorrência continua permitindo uma
+única execução ativa. Diagnósticos, cancelamentos e execuções com menos de
+cinco horas não geram outra execução, evitando laço de falhas de configuração.
+O GitHub ainda pode impor filas e indisponibilidades: a hospedagem definitiva
+em serviço supervisionado no servidor continua indicada para maior disponibilidade.
+
+Após a retomada, a DPS 9 foi bloqueada antes do envio por `cst_pis_cofins: "0"`.
+Quando há valores de PIS/COFINS, a tela passa a exigir dois dígitos antes de
+registrar a solicitação. O enquadramento é confirmado pelo responsável fiscal;
+não preencher, completar com zero ou substituir automaticamente esse código.
+Na conferência completa desse pedido, `tipo_operacao: "0"` e
+`tipo_ente_governamental: "0"` também eram incompatíveis com o XSD. A tela
+valida os domínios de 1 a 5 e de 1 a 4, respectivamente, aceitando vazio nos
+campos opcionais quando não aplicáveis. O enquadramento continua sob revisão
+fiscal, sem preencher valores automaticamente a partir de outra nota.
+Os tipos são exibidos com seus nomes oficiais em seletores opcionais. No tipo
+de ente, 1 é União e 3 é Distrito Federal: um código histórico aceito no XML
+não comprova que o enquadramento estava correto. Valores legados inválidos
+continuam visíveis para revisão, sem troca silenciosa por outro código.
+
 O job de produção encerrou às 04h42 (Brasília), após três falhas consecutivas de
 infraestrutura; a solicitação posterior ficou pendente, com zero tentativas e sem
 protocolo. O operador informou reinícios de Docker/containerd durante atualização
@@ -479,6 +503,36 @@ numeração e documentos para auditoria. A produção exige configuração expl�
 por empresa e no processador; mudar apenas a URL não habilita emissão real.
 
 ## Verificação
+
+### Cidade e percentuais antes da emissão (PR 1286)
+
+Em **Financeiro → Controle de Notas → Validação de Notas**, abra a preparação
+enviada ao Financeiro e expanda **Preparar emissão**. Em **Local da prestação**
+e no município do tomador, digite o nome da cidade, confira a UF e selecione
+o resultado: o código IBGE é preenchido automaticamente. A consulta usa o
+catálogo oficial do IBGE, compartilhado entre os campos e armazenado em cache
+por sete dias. Se estiver indisponível, é possível informar o código manualmente.
+
+Use **Ajustar percentuais de PIS/COFINS** para informar, por exemplo, PIS `0,65`
+e COFINS `3`. A prévia calcula sobre o bruto salvo de cada item, com
+arredondamento em centavos por item. **Salvar percentuais e recalcular** grava
+percentuais, valores dos itens, totais e líquido em uma transação e registra
+o histórico. Esses percentuais substituem os de PIS/COFINS de todos os itens
+da preparação. As demais retenções e o bruto são preservados. O CST continua
+sendo uma classificação fiscal a confirmar com o responsável, não um percentual.
+
+O ajuste exige `financeiro-nfse/alterar`, `nf_emissao_controle/visualizar` e
+`nf-emissao/incluir`, conforme a trava já existente de edição de preparações.
+Não é permitido em NF numerada, concluída, excluída ou com solicitação fiscal
+ativa em qualquer ambiente. Corrija/descarte o pedido anterior antes de editar.
+Mudanças concorrentes no cabeçalho/valores dos itens exigem reabrir a nota.
+Salvar percentuais não transmite documento. Após salvar, confira os valores,
+informe o CST adequado, revise novamente as confirmações e solicite a emissão.
+
+`worker/test/nfse-pis-cofins.sql` verifica no PostgreSQL 18 descartável o
+recálculo, permissões, proteção de dados emitidos/ativos, versão dos dados,
+snapshot da emissão e rollback se a auditoria falhar. Os testes de interface
+e cálculo estão em `src/test/nfse-*.test.*`.
 
 `npm run test -- --run src/test/nfse-integracao.test.ts` verifica documento,
 assinaturas, XSD, certificado, bloqueio de produção e recuperação de falhas.
