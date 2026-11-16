@@ -543,7 +543,7 @@ export function aplicarHerancaNoQuadro(
 // benefícios vêm sozinhos — o contrato de 750 postos não pode depender de
 // clicar "Puxar da Planilha" 750 vezes. A remuneração de TODOS os postos do
 // contrato chega numa chamada (`lic_quadro_remuneracao_do_contrato`, mig
-// 20261116210000), crua como a Planilha de Custo guarda (R$). As regras que
+// 20261117120000), crua como a Planilha de Custo guarda (R$). As regras que
 // transformam o R$ da planilha no que a vaga pede ficam aqui.
 //
 // DECISÕES (a confirmar com o solicitante — o padrão é o mais seguro):

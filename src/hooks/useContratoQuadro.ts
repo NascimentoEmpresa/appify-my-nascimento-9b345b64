@@ -48,7 +48,7 @@ export interface LinhaQuadro {
 
 /**
  * Remuneração de TODOS os postos vigentes da Planilha de Custo do contrato,
- * numa chamada só (SIS-2026-0884, mig 20261116210000) — com 750 postos, uma
+ * numa chamada só (SIS-2026-0884, mig 20261117120000) — com 750 postos, uma
  * RPC por linha seria inviável. Erro (banco sem a migration, sem permissão)
  * vira lista vazia: o quadro continua funcionando, só sem o automático.
  */
