@@ -9,6 +9,7 @@ import { empresaDe, parseSalario, parseData, fmtData, nomeCargoDe } from "@/lib/
 import { PosicaoCampos } from "@/components/organograma/PosicaoCampos";
 import { carregarPosicao, posicaoFaltando, salvarPosicao, type PosicaoForm } from "@/lib/organograma/pessoas";
 import { buscarCustoDoPosto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
+import { nascimentoMudou, nascimentoParaIso, validarNascimento } from "@/lib/rh/dataNascimento";
 
 // =========================================================================
 // RH — Colaboradores (fonte: tabela EMPREGADOS, read-only + edição de campos RH)
@@ -581,6 +582,9 @@ export default function Colaboradores() {
     const f: Record<string, string> = {};
     for (const [col] of MAIN_FIELDS) f[col] = e[col] ?? "";
     f["Título do Cargo"] = String(e["Título do Cargo"] ?? "").trim();
+    // Chave fora da EMPREGADOS de propósito: o laço do salvar não a grava;
+    // "Nascimento" só vai no patch quando a data muda de verdade (ver salvarEdit).
+    f["__nascimento"] = nascimentoParaIso(e["Nascimento"]) ?? "";
     f["Situação"] = e["Situação"] ?? "";
     f["Setor_ERP"] = String(e["Setor_ERP"] ?? "").trim() || "PADRAO";
     f["LIDER"] = String(e["Título do Cargo"] ?? "").trim() || String(e["LIDER"] ?? "").trim(); // Nível puxa do cargo
@@ -610,19 +614,38 @@ export default function Colaboradores() {
     const desligando = /demitid|rescis|desligad/i.test(form["Situação"] ?? "");
     const faltaSuperior = posOrg && !desligando ? posicaoFaltando(posOrg) : null;
     if (faltaSuperior) { aviso(faltaSuperior, "err"); return; }
+    const erroNasc = validarNascimento(form["__nascimento"] ?? "");
+    if (erroNasc) { aviso(erroNasc, "err"); return; }
     const patch: any = {};
     for (const k of Object.keys(form)) {
       if (!(k in editing)) continue;
       patch[k] = form[k] === "" ? null : form[k];
     }
-    const { error } = await (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]);
+    // Nascimento: grava em ISO (o formato que domina na coluna) e marca o
+    // ajuste, senão o sync da Senior desfaz em 15 min (mig 20261116120000).
+    // Sem mudança de data, nada vai — o formato gravado não muda à toa.
+    const mudouNasc = nascimentoMudou(editing["Nascimento"], form["__nascimento"]);
+    if (mudouNasc) {
+      patch["Nascimento"] = form["__nascimento"] || null;
+      patch["nascimento_ajustado_em"] = new Date().toISOString();
+    }
+    let { error } = await (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]);
+    let semMarca = false;
+    if (error && mudouNasc && /nascimento_ajustado_em/.test(error.message ?? "")) {
+      // Banco ainda sem a coluna (migration não entrou): salva a data assim
+      // mesmo e avisa que a Senior pode trazer a antiga de volta.
+      delete patch["nascimento_ajustado_em"];
+      ({ error } = await (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]));
+      semMarca = !error;
+    }
     if (error) { aviso("Erro ao salvar: " + error.message, "err"); return; }
     if (posOrg && !desligando && JSON.stringify(posOrg) !== posOrgBase) {
       try { await salvarPosicao(posOrg); }
       catch (e) { aviso("Ficha salva, mas o organograma recusou: " + (e as Error).message, "err"); return; }
     }
     setRows(rs => rs.map(r => r["ID"] === editing["ID"] ? { ...r, ...patch } : r));
-    setEditing(null); aviso("Colaborador atualizado.");
+    setEditing(null);
+    aviso(semMarca ? "Colaborador atualizado, mas a data de nascimento pode voltar à da Senior até a atualização do banco." : "Colaborador atualizado.", semMarca ? "err" : undefined);
     if (modo === "rpc") buscarRpc();   // os números vêm do banco: refaz a consulta
   };
   const setCampo = (col: string, v: string) => setForm(f => ({ ...f, [col]: v }));
@@ -871,6 +894,14 @@ export default function Colaboradores() {
                   <Campo key={col} label={label} value={form[col] ?? ""} onChange={v => setCampo(col, v)} />
                 ))}
                 <Campo label="Cargo" value={form["Título do Cargo"] ?? ""} onChange={v => setCampo("Título do Cargo", v)} />
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Data de nascimento</label>
+                  <input type="date" className="col-fi" style={{ width: "100%" }} max={new Date().toISOString().slice(0, 10)}
+                    value={form["__nascimento"] ?? ""} onChange={e => setCampo("__nascimento", e.target.value)} />
+                  {(editing["nascimento_ajustado_em"] || nascimentoMudou(editing["Nascimento"], form["__nascimento"])) && (
+                    <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 3 }}>Corrigida no ERP: a Senior não sobrescreve. Corrija também na Senior.</div>
+                  )}
+                </div>
                 {MAIN_FIELDS.slice(2).map(([col, label]) => (
                   <Campo key={col} label={label} value={form[col] ?? ""} onChange={v => setCampo(col, v)} />
                 ))}
