@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Activity, Award, BookOpen, CheckCircle2, ClipboardCheck, LogIn, MessageSquare, Star, UserMinus,
+  Activity, Award, BookOpen, CheckCircle2, ClipboardCheck, LogIn, MessageSquare, PlayCircle, Star, UserMinus,
   UserPlus, UserX, Users, Bell,
 } from "lucide-react";
 import {
@@ -195,6 +195,8 @@ export default function TreinamentosDashboard() {
             `${d.cursos_publicados} curso(s) publicado(s)`,
           ] : undefined}
           acoes={<>
+            {/* SIS-2026-0914: relatório de comprovação por pessoa × vídeo, com situação até uma data. */}
+            <Link to="/app/treinamentos/participacao"><PlayCircle className="h-4 w-4" /> Participação nos vídeos</Link>
             <Link to="/app/treinamentos/alunos/novo"><UserPlus className="h-4 w-4" /> Gerenciar alunos</Link>
             <Link to="/app/treinamentos/comunicacao/notificacoes" className="sec"><Bell className="h-4 w-4" /> Notificar</Link>
           </>}

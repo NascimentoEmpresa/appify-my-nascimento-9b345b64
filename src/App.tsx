@@ -243,6 +243,8 @@ import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistema
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
 // 20260930000190_treinamentos_plataforma.sql.
 import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
+// Participação nos vídeos (SIS-2026-0914, mig 20261117091400): pessoas × vídeos, situação até uma data.
+import TrnParticipacaoVideos from "./pages/treinamentos/plataforma/ParticipacaoVideos";
 // Solicitação de Treinamento (mig 20261026000910): o encarregado pede, Treinamentos decide.
 import SolicitarTreinamento from "./pages/encarregados/SolicitarTreinamento";
 import SolicitacoesTreinamento from "./pages/treinamentos/SolicitacoesTreinamento";
@@ -1135,6 +1137,7 @@ const App = () => (
                 (matchMenuCode); "novo"/"importar"/"tags"/"comentarios"/
                 "categorias"/"certificados" têm menu próprio, como no membox. */}
             <Route path="treinamentos" element={<TreinamentosDashboard />} />
+            <Route path="treinamentos/participacao" element={<TrnParticipacaoVideos />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
             <Route path="treinamentos/solicitacoes" element={<SolicitacoesTreinamento />} />
             <Route path="treinamentos/contratos" element={<TreinamentosContratos />} />
