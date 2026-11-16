@@ -4,7 +4,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { BUCKET_CHAMADOS, abreNaAbaAnexo, ehImagemAnexo, motivoFalhaAnexo, nomeSalvarAnexo, type Anexo } from "./types";
+import {
+  BUCKET_CHAMADOS, abreNaAbaAnexo, ehImagemAnexo, motivoFalhaAnexo, nomeSalvarAnexo,
+  proximaEsperaImagemAnexo, servidorAnexoSobrecarregado, type Anexo,
+} from "./types";
 
 // =====================================================================
 // Abrir anexo de chamado (23/10/2026, pedido do Pablo: "ao abrir uma imagem
@@ -27,15 +30,36 @@ type AnexoAbrir = Pick<Anexo, "storage_path" | "nome_arquivo" | "mime_type">;
 // isso quebrando, sem nova tentativa.
 //
 // O download vai com apikey + JWT do usuário e vira blob: URL local: se ele
-// veio, os bytes estão aqui — dá para tentar de novo até chegarem. Se nem o
-// download vier, devolve a assinada; se a imagem ainda assim não decodificar,
-// quem desenha mostra o nome do arquivo em vez do ícone quebrado.
+// veio, os bytes estão aqui — dá para tentar de novo até chegarem. Se não
+// vier, quem desenha mostra o nome do arquivo em vez do ícone quebrado.
+//
+// 16/11/2026: SEM a URL assinada de reserva. Ela era pedida a cada tentativa
+// que falhava e é mais uma consulta ao banco pelo Storage. Com o Storage
+// devolvendo 544 (sem conexão livre com o banco, ver
+// servidorAnexoSobrecarregado), dobrava a fila que causava o erro, e o <img>
+// com ela quebrava do mesmo jeito.
 // =====================================================================
-export async function urlImagemAnexo(path: string): Promise<{ url: string; local: boolean } | null> {
-  const { data: blob } = await supabase.storage.from(BUCKET_CHAMADOS).download(path);
-  if (blob && blob.size > 0) return { url: URL.createObjectURL(blob), local: true };
-  const { data } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
-  return data?.signedUrl ? { url: data.signedUrl, local: false } : null;
+export async function baixarAnexoStorage(path: string): Promise<{ blob: Blob | null; error: unknown }> {
+  const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).download(path)
+    .catch((e: unknown) => ({ data: null, error: e }));
+  return { blob: data && data.size > 0 ? data : null, error: data && data.size === 0 ? null : error };
+}
+
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * No CLIQUE: se o Storage respondeu 544 ou 503, tenta mais duas vezes, com
+ * 1,5 s e 4 s de espera, antes do toast. A falta passa em segundos, e quem
+ * clicou está esperando. 404/403 não se repetem.
+ */
+async function baixarAnexoNoClique(path: string) {
+  let r = await baixarAnexoStorage(path);
+  for (const ms of [1_500, 4_000]) {
+    if (r.blob || !servidorAnexoSobrecarregado(r.error)) break;
+    await esperar(ms);
+    r = await baixarAnexoStorage(path);
+  }
+  return r;
 }
 
 // O print recém-enviado pode ainda não estar no nó que respondeu: o
@@ -44,9 +68,10 @@ export async function urlImagemAnexo(path: string): Promise<{ url: string; local
 // não"). Conferido em 28/10/2026 no chamado SIS-2026-0745: os dois prints
 // das 12:48 quebrados na hora, e a MESMA URL entregando o PNG (219.938 bytes)
 // minutos depois. Antes a tela guardava o link 50 min sem tentar de novo.
-// Por isso: novas tentativas cobrindo mais de um ciclo do espelho.
-const TENTATIVAS_IMAGEM = 5;
-const ESPERA_IMAGEM_MS = 15_000;
+// Por isso: novas tentativas cobrindo mais de um ciclo do espelho. Desde
+// 16/11/2026 com espera crescente e só download, sem URL assinada
+// (proximaEsperaImagemAnexo). As 5 fixas de 15 s, cada uma com dois pedidos,
+// eram as dezenas de "544" no console.
 
 /**
  * blob: URLs das imagens do chat, por caminho (null = não veio depois de
@@ -63,18 +88,20 @@ export function useImagensAnexo(caminhos: string[]) {
   const buscar = useCallback(async (p: string, tentativa = 1) => {
     // Só o download (blob) prova que os bytes chegaram; a assinada sai mesmo
     // com o arquivo ausente no nó, e aí o <img> quebraria de novo.
-    const r = await urlImagemAnexo(p).catch(() => null);
-    if (!vivo.current) { if (r?.local) URL.revokeObjectURL(r.url); return; }
-    if (r?.local) {
-      locais.current.push(r.url);
-      setUrls((cur) => ({ ...cur, [p]: r.url }));
+    const r = await baixarAnexoStorage(p);
+    if (!vivo.current) return;
+    if (r.blob) {
+      const url = URL.createObjectURL(r.blob);
+      locais.current.push(url);
+      setUrls((cur) => ({ ...cur, [p]: url }));
       return;
     }
-    if (tentativa < TENTATIVAS_IMAGEM) {
-      setTimeout(() => { if (vivo.current) buscar(p, tentativa + 1); }, ESPERA_IMAGEM_MS);
+    const espera = proximaEsperaImagemAnexo(tentativa, r.error);
+    if (espera != null) {
+      setTimeout(() => { if (vivo.current) buscar(p, tentativa + 1); }, espera);
       return;
     }
-    setUrls((cur) => ({ ...cur, [p]: r?.url ?? null }));
+    setUrls((cur) => ({ ...cur, [p]: null }));
   }, []);
 
   useEffect(() => {
@@ -99,11 +126,15 @@ export function useAnexoChamado() {
 
   const abrirAnexo = useCallback(async (a: AnexoAbrir) => {
     if (ehImagemAnexo(a)) {
-      // Card no centro pelo download autenticado — ver urlImagemAnexo.
-      const r = await urlImagemAnexo(a.storage_path).catch(() => null);
-      if (!r) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
+      // Card no centro pelo download autenticado — ver baixarAnexoStorage.
+      const r = await baixarAnexoNoClique(a.storage_path);
+      if (!r.blob) {
+        toast({ title: `Não foi possível abrir "${nomeSalvarAnexo(a)}"`, description: motivoFalhaAnexo(r.error), variant: "destructive" });
+        return;
+      }
+      const url = URL.createObjectURL(r.blob);
       setCarregou(false);
-      setImg((cur) => { if (cur?.url.startsWith("blob:")) URL.revokeObjectURL(cur.url); return { anexo: a, url: r.url }; });
+      setImg((cur) => { if (cur?.url.startsWith("blob:")) URL.revokeObjectURL(cur.url); return { anexo: a, url }; });
       return;
     }
     // Resto pelo DOWNLOAD AUTENTICADO, não pela URL assinada (03/11/2026): o
@@ -115,13 +146,12 @@ export function useAnexoChamado() {
     // planilha, HTML etc. baixam com o nome original; e, se o Storage não
     // entregar, o toast diz por quê (motivoFalhaAnexo).
     const aba = abreNaAbaAnexo(a) ? window.open("", "_blank") : null;
-    const { data: blob, error } = await supabase.storage.from(BUCKET_CHAMADOS).download(a.storage_path)
-      .catch((e: unknown) => ({ data: null, error: e }));
-    if (error || !blob || blob.size === 0) {
+    const { blob, error } = await baixarAnexoNoClique(a.storage_path);
+    if (!blob) {
       aba?.close();
       toast({
         title: `Não foi possível abrir "${nomeSalvarAnexo(a)}"`,
-        description: blob && blob.size === 0 ? "O arquivo está vazio no servidor." : motivoFalhaAnexo(error),
+        description: error ? motivoFalhaAnexo(error) : "O arquivo está vazio no servidor.",
         variant: "destructive",
       });
       return;
