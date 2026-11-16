@@ -29,7 +29,8 @@ import {
 // GERENTE OPERACIONAL › SUPERVISORES › ENCARREGADOS › CONTRATO › colaboradores.
 // É daqui que Ponto do encarregado, Documentos do RH e Solicitar Treinamento
 // tiram "quem é o encarregado do contrato" (rh_hier_responsaveis); contrato
-// sem encarregado definido aqui segue a Hierarquia de Postos.
+// sem encarregado definido aqui fica sem ninguém (a Hierarquia de Postos, que
+// era a reserva, foi removida em 17/11/2026 — mig 20261117000300).
 // Botão direito (ou o ⋮) em pessoa ou contrato abre as ações.
 // =====================================================================
 
@@ -224,7 +225,6 @@ function LinhaContrato({ c, nivel, i, ctx }: { c: ContratoOrg; nivel: number; i:
   const k = `c:${c.id}`;
   const aberto = ctx.abertos.has(k);
   const ef = encarregadoEfetivo(c, ctx.pessoas);
-  const reserva = ef.origem === "postos" ? ef.ids.map((id) => curto(ctx.pessoas.get(id)?.nome ?? `#${id}`)).join(", ") : "";
   return (
     <li className="oo-item" style={{ "--i": i } as CSSProperties}>
       <ComMenu alvo={{ tipo: "contrato", contrato: c }} podeAlterar={ctx.podeAlterar} onAcao={ctx.onAcao}
@@ -238,8 +238,7 @@ function LinhaContrato({ c, nivel, i, ctx }: { c: ContratoOrg; nivel: number; i:
           <span className="block truncate text-[10.5px] text-muted-foreground">
             {plural(c.colaboradores, "pessoa", "pessoas")} em campo
             {c.status !== "ativo" && ` · ${c.status}`}
-            {ef.origem === "postos" && <> · <b className="font-semibold text-amber-700 dark:text-amber-300">pela Hierarquia: {reserva}</b></>}
-            {ef.origem === "nenhum" && c.encarregado_id == null && <> · <b className="font-semibold text-amber-700 dark:text-amber-300">sem encarregado</b></>}
+            {ef.origem === "nenhum" && <> · <b className="font-semibold text-amber-700 dark:text-amber-300">{c.encarregado_id == null ? "sem encarregado" : "encarregado demitido"}</b></>}
           </span>
         </button>
       </ComMenu>
@@ -268,7 +267,7 @@ function LinhaEncarregado({ r, sup, nivel, i, ctx }: { r: RamoEncarregado; sup: 
           <span className="block truncate text-[13px] font-semibold leading-tight">{tituloNome(r.pessoa.nome)}</span>
           <span className="block truncate text-[11px] text-muted-foreground">
             <b className="font-semibold text-sky-700 dark:text-sky-300">Encarregado</b> · {r.pessoa.cargo || "—"}
-            {demitido && <b className="ml-1 font-semibold text-destructive">· demitido (vale a Hierarquia)</b>}
+            {demitido && <b className="ml-1 font-semibold text-destructive">· demitido — defina outro</b>}
           </span>
         </button>
         <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-sky-800 dark:bg-sky-900/40 dark:text-sky-200" title="Contratos">
@@ -578,7 +577,7 @@ function Conteudo() {
         const c = alvo.contrato;
         return setConfirma({
           titulo: `Tirar ${nomeDe(c.encarregado_id!)} de ${c.nome}?`,
-          texto: "O contrato volta a seguir a Hierarquia de Postos para o ponto, os documentos do RH e o treinamento.",
+          texto: "O contrato fica sem encarregado: ninguém confere o ponto nem recebe os documentos do RH dele até alguém ser definido.",
           confirmar: () => definir([c], "encarregado", null, "", `${c.nome}: encarregado removido.`),
         });
       }
@@ -605,7 +604,7 @@ function Conteudo() {
         const cs = contratosDoEncarregado(contratos, alvo.pessoa.id);
         return setConfirma({
           titulo: `Remover ${curto(alvo.pessoa.nome)} como encarregado?`,
-          texto: `Sai de ${plural(cs.length, "contrato", "contratos")} (${cs.map((c) => c.nome).join(", ")}). Eles voltam a seguir a Hierarquia de Postos até alguém ser definido.`,
+          texto: `Sai de ${plural(cs.length, "contrato", "contratos")} (${cs.map((c) => c.nome).join(", ")}). Eles ficam sem encarregado (sem conferência de ponto nem documentos do RH) até alguém ser definido.`,
           confirmar: () => definir(cs, "encarregado", null, "", "Encarregado removido."),
         });
       }
@@ -702,7 +701,7 @@ function Conteudo() {
 
       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Users className="h-3.5 w-3.5" />
-        Botão direito (ou ⋮) em pessoa ou contrato abre as ações. O encarregado definido aqui é quem confere o ponto, recebe os documentos do RH e vê o contrato no Solicitar Treinamento; sem ele, vale a Hierarquia de Postos.
+        Botão direito (ou ⋮) em pessoa ou contrato abre as ações. O encarregado definido aqui é quem confere o ponto, recebe os documentos do RH e vê o contrato no Solicitar Treinamento.
       </p>
 
       {escolha && <DialogEscolherPessoa e={escolha} onFechar={() => setEscolha(null)} />}
