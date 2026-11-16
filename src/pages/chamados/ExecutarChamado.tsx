@@ -26,6 +26,7 @@ import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChamadosVinculados } from "./ChamadosVinculados";
 import { CardReaberturaChamado, CardTransferenciaChamado, PedirTransferenciaDialog } from "./ReaberturaTransferenciaChamado";
+import { CardAcoesGestaoChamado } from "./AcoesGestaoChamado";
 import { podeDecidir } from "@/lib/chamados/reabertura";
 import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
 import {
@@ -308,6 +309,9 @@ export default function ExecutarChamado() {
               o dev atual acompanha o mesmo card que o Gestor decide. */}
           <CardReaberturaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
           <CardTransferenciaChamado chamado={chamado} nomeDe={nomeDe} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
+          {/* Pedido da Presidência/Controladoria (SIS-2026-0923, mig 20261116230000):
+              prioridade, fila, cancelamento, revisão ou informações — Sistemas responde. */}
+          <CardAcoesGestaoChamado chamado={chamado} podeDecidir={podeDecidir({ canGestorSistemas, canCoordenar })} />
 
           {/* Parte 1, Parte 2… (mig 20261112002000). */}
           <ChamadosVinculados chamadoId={chamado.id} hrefDe={(cid) => `/app/sistemas/chamados/${cid}`} />
