@@ -6,11 +6,18 @@ function codigo(valor: string, nome: string, tamanho: number) {
   return codigo;
 }
 
-export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: AmbienteNfse = "homologacao", exigirInscricaoTomador = false): ParametrosNfse {
+export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: AmbienteNfse = "homologacao", exigirInscricaoTomador = false, temPisCofins = false): ParametrosNfse {
   const dataCompetencia = parametros.data_competencia?.trim();
   if (dataCompetencia !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(dataCompetencia) || Number.isNaN(Date.parse(dataCompetencia)) || new Date(dataCompetencia).toISOString().slice(0, 10) !== dataCompetencia)) {
     throw new Error("Data de execução do serviço / competência da NFS-e: informe uma data válida.");
   }
+  if (temPisCofins && !/^\d{2}$/.test(parametros.cst_pis_cofins ?? "")) {
+    throw new Error("CST de PIS/COFINS: informe o código de dois dígitos confirmado pelo responsável fiscal, preservando o zero inicial.");
+  }
+  const tipoOperacao = String(parametros.tipo_operacao ?? "").trim();
+  const tipoEnte = String(parametros.tipo_ente_governamental ?? "").trim();
+  if (tipoOperacao && !/^[1-5]$/.test(tipoOperacao)) throw new Error("Tipo de operação: informe um código de 1 a 5, ou deixe em branco quando não aplicável. O código 0 não é aceito.");
+  if (tipoEnte && !/^[1-4]$/.test(tipoEnte)) throw new Error("Tipo de ente governamental: informe um código de 1 a 4, ou deixe em branco quando não aplicável. O código 0 não é aceito.");
   const inscricaoTomador = String(parametros.tomador.inscricao_municipal ?? "").trim();
   if (exigirInscricaoTomador && !inscricaoTomador) throw new Error("Informe a inscrição municipal do tomador confirmada no cadastro da prefeitura para corrigir a rejeição P4016.");
   if (inscricaoTomador.length > 15 || [...inscricaoTomador].some(caractere => caractere.charCodeAt(0) < 32)) throw new Error("Inscrição municipal do tomador: informe até 15 caracteres válidos, conforme o cadastro da prefeitura.");
@@ -21,6 +28,8 @@ export function validarParametrosNfse(parametros: ParametrosNfse, ambiente: Ambi
   }
   return { ...parametros,
     data_competencia: dataCompetencia,
+    tipo_operacao: tipoOperacao,
+    tipo_ente_governamental: tipoEnte,
     codigo_integracao_municipal: integracaoMunicipal,
     municipio_emissor: codigo(parametros.municipio_emissor, "Município emissor — código IBGE", 7),
     local_prestacao: codigo(parametros.local_prestacao, "Local da prestação — código IBGE", 7),

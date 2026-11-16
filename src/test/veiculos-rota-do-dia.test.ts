@@ -31,6 +31,15 @@ describe("prestação da viagem", () => {
     expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false, houve_abastecimento: true }, completa, false)).toEqual(["Foto da nota do combustível"]);
     expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: false, houve_abastecimento: null }, completa, true)).toEqual([]);
   });
+  it("sem checklist de chegada, vale a avaria respondida no modal da viagem (17/11/2026)", () => {
+    const base = { km_inicial: 1, km_final: 2, sem_abastecimento: true };
+    expect(faltandoPrestacao({ ...base }, null, false)).toEqual(["Informar se há avaria"]);
+    expect(faltandoPrestacao({ ...base, avaria: false }, null, false)).toEqual([]);
+    expect(faltandoPrestacao({ ...base, avaria: true, avaria_descricao: "" }, null, false)).toEqual(["Descrição da avaria"]);
+    expect(faltandoPrestacao({ ...base, avaria: true, avaria_descricao: "risco na porta" }, null, false)).toEqual([]);
+    // O checklist de chegada respondido vale sobre a resposta do modal.
+    expect(faltandoPrestacao({ ...base, avaria: false }, { avaria: true, avaria_descricao: "" }, false)).toEqual(["Descrição da avaria"]);
+  });
   it("avaria 'sim' exige descrição", () => {
     expect(faltandoPrestacao({ km_inicial: 1, km_final: 2, sem_abastecimento: true }, { avaria: true, avaria_descricao: " " }, false)).toEqual(["Descrição da avaria"]);
   });
