@@ -20,16 +20,16 @@ describe("parecer da I.A do chamado", () => {
     const v = validarParecer(resposta());
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    // nível 3: fator 1, teto 16 h. 10 × 80, 15 × 120, 8 × 30
+    // nível 3: fator 1, teto 8 h — 10 h e 15 h viram 8 h. 8 × 150, 8 × 225, 8 × 30
     expect(v.parecer.precos.map((p) => p.fator_complexidade)).toEqual([1, 1, 1]);
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([800, 1800, 240]);
-    expect(v.parecer.valor_medio).toBe(1300); // (800 + 1800) / 2 — o interno não entra
-    expect(v.parecer.horas_estimadas).toBe(12.5);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([1200, 1800, 240]);
+    expect(v.parecer.valor_medio).toBe(1500); // (1200 + 1800) / 2 — o interno não entra
+    expect(v.parecer.horas_estimadas).toBe(8);
     expect(v.parecer.complexidade_rotulo).toBe("Média");
     expect(v.parecer.precos.map((p) => p.perfil)).toEqual(PERFIS.map((p) => p.perfil));
   });
 
-  it("SIS-2026-0756 (formulário 3/5, Pablo 16/11/2026: 'deixa realista'): 36 h e 52 h viram 16 h → R$ 1.280 e R$ 1.920", () => {
+  it("SIS-2026-0756 (formulário 3/5, Pablo 16/11/2026: 'deixa realista'): 36 h e 52 h viram 8 h → R$ 1.200 e R$ 1.800", () => {
     const r = resposta({ precos: [
       { perfil: "freelancer", horas: 36, explicacao: "x" },
       { perfil: "software_house", horas: 52, explicacao: "x" },
@@ -38,10 +38,10 @@ describe("parecer da I.A do chamado", () => {
     const v = validarParecer(r, null);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(TETO_HORAS_POR_COMPLEXIDADE[3]).toBe(16);
-    expect(v.parecer.precos.map((p) => p.horas)).toEqual([16, 16, 16]);
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([1280, 1920, 480]);
-    expect(v.parecer.valor_medio).toBe(1600);
+    expect(TETO_HORAS_POR_COMPLEXIDADE[3]).toBe(8); // "quem leva 16h pra fazer um formulário? no máximo 8h"
+    expect(v.parecer.precos.map((p) => p.horas)).toEqual([8, 8, 8]);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([1200, 1800, 240]);
+    expect(v.parecer.valor_medio).toBe(1500);
     // Antes: R$ 16.200 e R$ 35.100. Um formulário médio fica na faixa de R$ 1.000 a R$ 2.000.
     expect(v.parecer.valor_medio).toBeGreaterThanOrEqual(1000);
     expect(v.parecer.valor_medio).toBeLessThanOrEqual(2000);
@@ -55,7 +55,7 @@ describe("parecer da I.A do chamado", () => {
     expect(v.ok).toBe(true);
     if (!v.ok) return;
     expect(v.parecer.precos.map((p) => p.valor_hora)).toEqual([VALOR_HORA_SENIOR.freelancer, VALOR_HORA_SENIOR.software_house, VALOR_HORA_SENIOR.interno]);
-    expect(VALOR_HORA_SENIOR).toEqual({ freelancer: 80, software_house: 120, interno: 30 });
+    expect(VALOR_HORA_SENIOR).toEqual({ freelancer: 150, software_house: 225, interno: 30 });
     // Sem valor_hora nenhum também serve: a I.A só manda horas.
     const soHoras = resposta({ precos: resposta().precos.map(({ valor_hora, embasamento, ...x }) => x) });
     expect(validarParecer(soHoras).ok).toBe(true);
@@ -80,7 +80,7 @@ describe("parecer da I.A do chamado", () => {
       precos: resposta().precos.map((p) => ({ ...p, horas: 500 })),
     }), null);
     const tetos = [1, 2, 3, 4, 5].map((n) => { const v = muitas(n); return v.ok ? v.parecer.precos[0].horas : null; });
-    expect(tetos).toEqual([3, 8, 16, 32, 80]);
+    expect(tetos).toEqual([2, 4, 8, 16, 40]);
   });
 
   it("com horas informadas, o interno usa as horas e o mercado nunca fica abaixo delas (até o teto)", () => {
@@ -90,9 +90,9 @@ describe("parecer da I.A do chamado", () => {
     const v = validarParecer(r, "8");
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.parecer.precos.map((p) => p.horas)).toEqual([32, 20, 8]); // 40 h passa do teto do nível 4
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([2560, 2400, 240]);
-    expect(v.parecer.valor_medio).toBe(2480);
+    expect(v.parecer.precos.map((p) => p.horas)).toEqual([16, 16, 8]); // 40 h e 20 h passam do teto do nível 4
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([2400, 3600, 240]);
+    expect(v.parecer.valor_medio).toBe(3000);
   });
 
   it("as horas informadas são o piso do mercado", () => {
@@ -108,8 +108,8 @@ describe("parecer da I.A do chamado", () => {
     expect(montarPrompt(c, null, ["homologar remessa no banco"])).toContain("homologar remessa no banco");
   });
 
-  it("sem horas gastas, vale a estimativa da I.A por perfil", () => {
-    const v = validarParecer(resposta(), null);
+  it("sem horas gastas, vale a estimativa da I.A por perfil (dentro do teto)", () => {
+    const v = validarParecer(resposta({ complexidade_nivel: 4 }), null);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
     expect(v.parecer.precos.map((p) => p.horas)).toEqual([10, 15, 8]);
@@ -155,8 +155,8 @@ describe("chat sobre o parecer", () => {
     });
     expect(s).toContain("Férias no ERP");
     expect(s).toContain("5467");
-    expect(s).toContain("R$ 120/h fixo");
-    expect(s).toContain("nível 3 = até 16 h");
+    expect(s).toContain("R$ 225/h fixo");
+    expect(s).toContain("nível 3 = até 8 h");
     expect(s).toContain("FIXOS");
   });
 

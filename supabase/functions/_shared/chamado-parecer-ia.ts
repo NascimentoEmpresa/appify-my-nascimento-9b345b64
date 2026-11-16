@@ -152,19 +152,23 @@ export function resumirEntrega(eventos: EventoGithub[], c: Pick<ChamadoParaParec
 //   2. horas da I.A "do zero, sem conhecer o ERP" (36 h e 52 h num formulário);
 //   3. a complexidade contada DUAS vezes: já empurra as horas para cima e
 //      ainda multiplicava o total (×1,5 no nível 3, ×2,5 no 5).
-// Agora: valor/hora de mercado comum (R$ 80 e R$ 120/h), complexidade SEM
+// Agora: o erro era de HORAS, não de valor/hora (Pablo, mesmo dia: "nenhum
+// freelancer ia cobrar só 1280 por 16h, o problema real é: quem leva 16h pra
+// fazer um formulário? no máximo 8h seria"). Valor/hora de freelancer de
+// verdade (R$ 150/h; software house 1,5× = R$ 225/h), complexidade SEM
 // multiplicar (fator 1 em todos os níveis) e um TETO DE HORAS por nível
-// (TETO_HORAS_POR_COMPLEXIDADE) — a complexidade entra só por aí. Um
-// formulário médio (3/5) fica entre R$ 1.280 e R$ 1.920, média R$ 1.600.
+// (TETO_HORAS_POR_COMPLEXIDADE): formulário médio (3/5) = até 8 h. Fica
+// R$ 1.200 freelancer e R$ 1.800 software house, média R$ 1.500.
 // A mig 20261116150000 refaz os pareceres já gravados com a mesma conta.
 
 /** VALOR/HORA FIXO — o ÚNICO lugar a mudar no código. Mudou aqui? O recálculo
  *  dos pareceres já gravados é SQL (ver a mig 20261116150000, que repete estes
  *  números — o banco não lê este arquivo). Histórico: 200/320/165 (29/10),
- *  300/450/165 (05/11), 80/120/30 (16/11, "deixa realista"). */
+ *  300/450/165 (05/11), 150/225/30 (16/11, "deixa realista" — o que caiu
+ *  foram as horas, ver TETO_HORAS_POR_COMPLEXIDADE). */
 export const VALOR_HORA_SENIOR = {
-  freelancer: 80,
-  software_house: 120,
+  freelancer: 150,
+  software_house: 225,
   interno: 30,
 } as const;
 
@@ -183,19 +187,19 @@ export const FATOR_COMPLEXIDADE: Record<number, number> = {
 
 /** Máximo de horas que um perfil pode cobrar em cada nível de complexidade
  *  (16/11/2026). A I.A estima as horas; passou do teto, vale o teto. É o freio
- *  contra "36 h para um formulário". A mig 20261116150000 repete estes números. */
+ *  contra "36 h para um formulário" (formulário médio = até 8 h). A mig 20261116150000 repete estes números. */
 export const TETO_HORAS_POR_COMPLEXIDADE: Record<number, number> = {
-  1: 3,
-  2: 8,
-  3: 16,
-  4: 32,
-  5: 80,
+  1: 2,
+  2: 4,
+  3: 8,
+  4: 16,
+  5: 40,
 };
 
 /** Os três perfis de fornecedor, sempre nesta ordem. */
 export const PERFIS = [
   { perfil: "freelancer", rotulo: "Freelancer (PJ)", valor_hora: VALOR_HORA_SENIOR.freelancer,
-    embasamento: `Desenvolvedor PJ: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.freelancer} (valor comum de freelancer no Brasil para tela e regra de sistema).` },
+    embasamento: `Desenvolvedor PJ: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.freelancer} (valor comum de freelancer experiente no Brasil).` },
   { perfil: "software_house", rotulo: "Software house / consultoria", valor_hora: VALOR_HORA_SENIOR.software_house,
     embasamento: `Software house: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.software_house} (1,5× o freelancer, por gestão, impostos e margem).` },
   { perfil: "interno", rotulo: "Equipe interna (CLT, custo empresa)", valor_hora: VALOR_HORA_SENIOR.interno,
@@ -244,7 +248,7 @@ O QUE VOCÊ PRECIFICA: o valor de MERCADO para contratar esse trabalho no Brasil
 COMO ESTIMAR (seja REALISTA e enxuto — o erro mais comum é inflar):
 1. Estime SÓ pelo pedido (assunto, tipo, módulo e descrição do solicitante), incluindo entendimento, implementação, testes e publicação. Você não recebe horas gastas, PRs nem comentários de quem desenvolveu: o mesmo pedido tem de dar o mesmo preço, seja quem for o desenvolvedor.
 2. Estime as horas de um desenvolvedor competente que trabalha com ferramentas modernas (inclusive I.A) sobre um sistema já pronto, com banco, login, permissões e componentes de tela prontos para reaproveitar. Não some reuniões, gestão de projeto, "curva de aprendizado" nem margem de segurança: isso já está no valor/hora.
-3. Referência de horas: texto/rótulo/ajuste trivial 1 a 2 h; ajuste numa tela ou filtro 2 a 6 h; tela, formulário ou regra nova com banco 6 a 14 h; vários módulos, regras de acesso ou integração 14 a 30 h; só projeto grande de verdade (infraestrutura, migração de dados, sistema inteiro) passa disso.
+3. Referência de horas: texto/rótulo/ajuste trivial até 1 h; ajuste numa tela ou filtro 1 a 3 h; tela, formulário ou regra nova com banco 4 a 8 h; vários módulos, regras de acesso ou integração 8 a 16 h; só projeto grande de verdade (infraestrutura, migração de dados, sistema inteiro) passa disso, até 40 h.
 4. Freelancer e software house fazem o MESMO escopo: as horas dos dois devem ser próximas (a software house no máximo uns 20% a mais). O interno, que já conhece o ERP, leva um pouco menos.
 
 Perfis (use EXATAMENTE estes códigos). O valor/hora de cada um é FIXO, definido pela empresa — você NÃO escolhe valor/hora, só estima as HORAS que cada perfil levaria:
@@ -253,7 +257,7 @@ Perfis (use EXATAMENTE estes códigos). O valor/hora de cada um é FIXO, definid
 - "interno": desenvolvedor interno CLT, que já conhece o ERP.
 Na "explicacao", cite as etapas concretas que sustentam as horas daquele perfil. Um ajuste simples continua sendo poucas horas; não infle o que o escopo não sustenta.
 
-Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa. NÃO multiplica o preço: o preço é só horas × valor/hora, e cada nível tem um teto de horas (1 = 3 h, 2 = 8 h, 3 = 16 h, 4 = 32 h, 5 = 80 h).
+Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa. NÃO multiplica o preço: o preço é só horas × valor/hora, e cada nível tem um teto de horas (1 = 2 h, 2 = 4 h, 3 = 8 h, 4 = 16 h, 5 = 40 h).
 1 = muito baixa (texto, rótulo, ajuste trivial, sem risco), 2 = baixa (ajuste numa tela, filtro simples), 3 = média (tela, formulário ou regra nova, mexe no banco), 4 = alta (vários módulos, regras de acesso, integração, risco real de quebrar algo em uso), 5 = muito alta (infraestrutura, segurança, migração de dados, alta disponibilidade, integração externa complexa, módulo ou sistema inteiro).
 
 Se o chamado for dúvida/orientação ou vago, estime mesmo assim o esforço provável e diga nas premissas o que faltou.
