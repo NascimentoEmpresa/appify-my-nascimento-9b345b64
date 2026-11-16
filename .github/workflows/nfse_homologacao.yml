@@ -53,6 +53,31 @@ jobs:
           NFSE_CONFIG_JSON: ${{ secrets.NFSE_CONFIG_JSON }}
           NFSE_CERTIFICADO_PFX_B64: ${{ secrets.NFSE_CERTIFICADO_PFX_B64 }}
           NFSE_CERTIFICADO_SENHA: ${{ secrets.NFSE_CERTIFICADO_SENHA }}
+
+  renovar:
+    name: Renovar execução da fila
+    needs: [processar, producao]
+    if: >-
+      ${{ !cancelled() && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' && github.ref == 'refs/heads/main' &&
+          (github.event_name != 'workflow_dispatch' || inputs.continuo) &&
+          (needs.processar.result == 'success' || needs.processar.result == 'failure' || needs.producao.result == 'success' || needs.producao.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Solicitar a próxima execução sem depender do cron
+        run: node worker/src/nfse/renovar-actions.js
+        env:
+          NFSE_ACTIONS_CONTINUO: '1'
+          NFSE_RENOVACAO_TOKEN: ${{ github.token }}
   producao:
     name: Processar produção
     if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64' && github.ref == 'refs/heads/main' && vars.NFSE_ACTIONS_PRODUCAO_HABILITADO == '1'
