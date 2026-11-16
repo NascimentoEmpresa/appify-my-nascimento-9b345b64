@@ -41,8 +41,9 @@ describe("regra do contrato encerrado no banco", () => {
     const corpo = fns[nome];
     expect(corpo, `${nome} sumiu da migration`).toBeDefined();
     expect(corpo).toContain("ct_enc AS MATERIALIZED (SELECT * FROM public.turnover_contrato_encerrado_locais())");
-    // Os dois motivos juntos: solicitação marcada (SIS-2026-0854) OU contrato encerrado.
-    expect(corpo).toMatch(/'Demitido' AND \(public\.turnover_desconsidera\(\w\."ID"\) OR COALESCE\(\(btrim\(\w\."Nome Filial"\)[^\n]*IN \(SELECT f\.filial, f\.local FROM ct_enc f\), false\)\)\)/);
+    // Os três motivos juntos: solicitação marcada (SIS-2026-0854), contrato
+    // encerrado ou "Fim do Contrato de Trabalho".
+    expect(corpo).toMatch(/'Demitido' AND \(public\.turnover_desconsidera\(\w\."ID"\) OR COALESCE\(\(btrim\(\w\."Nome Filial"\)[^\n]*IN \(SELECT f\.filial, f\.local FROM ct_enc f\), false\) OR upper\(btrim\(COALESCE\(\w\."Descrição \(Causa\)", ''\)\)\) = 'FIM DO CONTRATO DE TRABALHO'\)\)/);
     // A regra antiga, sozinha, não pode ter sobrado em nenhuma conta.
     expect(corpo).not.toMatch(/'Demitido' AND public\.turnover_desconsidera\(\w\."ID"\)\)/);
   });
@@ -58,10 +59,12 @@ describe("regra do contrato encerrado no banco", () => {
     expect(fns.dir_rel_turnover_dados).toMatch(/WHERE NOT e\.contrato_encerrado AND e\.adm < g::date[^\n]*\) base/);
   });
 
-  it("'Fim do Contrato de Trabalho' (experiência do empregado) não foi tirado por engano", () => {
-    // É outra coisa: fica a cargo do Pablo; a tela já deixa desmarcar o tipo.
+  it("'Fim do Contrato de Trabalho' sai só das demissões; 'Fim Antecipado', aprendiz e estágio continuam", () => {
+    // Pablo, 16/11/2026: "tirar também". O efetivo não muda (a pessoa trabalhou até sair).
     const semComentarios = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
-    expect(semComentarios).not.toMatch(/Fim do Contrato/i);
+    expect(semComentarios.match(/'FIM DO CONTRATO DE TRABALHO'/g)).toHaveLength(5);
+    expect(semComentarios).not.toMatch(/FIM ANTECIPADO|APRENDI|ESTAGIO|ESTÁGIO/i);
+    expect(fns.dir_turnover_painel_dados).not.toMatch(/contrato_encerrado[^\n]*FIM DO CONTRATO/);
   });
 });
 

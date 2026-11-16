@@ -55,9 +55,12 @@
 -- dir_turnover_rescisoes_dados (Turnover em Valores), tvg_tendencia e o
 -- relatório de Desligamentos por motivo.
 --
--- "Fim do Contrato de Trabalho" (experiência/prazo determinado do empregado)
--- NÃO é encerramento do contrato com o cliente: continua contando, até o
--- Pablo decidir. A tela já deixa desmarcar esse tipo nos chips.
+-- "FIM DO CONTRATO DE TRABALHO" TAMBÉM SAI (Pablo, 16/11/2026: "tirar
+-- também"). É o fim do contrato de experiência/prazo determinado do
+-- empregado — causa da Senior em EMPREGADOS."Descrição (Causa)". Sai só das
+-- DEMISSÕES (vira fora_turnover); o efetivo fica, a pessoa trabalhou até
+-- sair. "Fim Antecipado C.T." (quem saiu ANTES do fim) continua contando:
+-- é saída de verdade. Aprendiz e estágio também continuam, até pedido.
 --
 -- Idempotente; só leitura. ROLLBACK no fim.
 -- =========================================================================
@@ -148,8 +151,9 @@ BEGIN
            CASE x."Empresa" WHEN 1 THEN 'HAGG' WHEN 2 THEN 'SN' WHEN 3 THEN 'CANAÃ' WHEN 4 THEN 'LF' WHEN 5 THEN 'NH' ELSE '(sem empresa)' END empresa,
            COALESCE(NULLIF(btrim(x."Descrição (Causa)"), ''), '(não informado)') causa,
            -- SIS-2026-0854 + mig 20261116130000: fora do turnover o desligamento marcado como encerramento
-           -- de contrato na solicitação OU de contrato que a Licitação › Contratos marcou como encerrado.
-           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false))) fora_turnover,
+           -- de contrato na solicitação, de contrato que a Licitação › Contratos marcou como encerrado
+           -- ou por "Fim do Contrato de Trabalho" (experiência/prazo do empregado).
+           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) OR upper(btrim(COALESCE(x."Descrição (Causa)", ''))) = 'FIM DO CONTRATO DE TRABALHO')) fora_turnover,
            COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) contrato_encerrado
       FROM public."EMPREGADOS" x
      WHERE COALESCE(btrim(x."Nome"), '') <> ''
@@ -252,8 +256,9 @@ BEGIN
            CASE WHEN e."Situação" = 'Demitido' THEN public.data_universal(e."Data Afastamento") END dem,
            public.esp_col_esta_ativo(e."Situação") ativo,
            -- SIS-2026-0854 + mig 20261116130000: fora do turnover o desligamento marcado como encerramento
-           -- de contrato na solicitação OU de contrato que a Licitação › Contratos marcou como encerrado.
-           (e."Situação" = 'Demitido' AND (public.turnover_desconsidera(e."ID") OR COALESCE((btrim(e."Nome Filial"), COALESCE(btrim(e."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false))) fora_turnover,
+           -- de contrato na solicitação, de contrato que a Licitação › Contratos marcou como encerrado
+           -- ou por "Fim do Contrato de Trabalho" (experiência/prazo do empregado).
+           (e."Situação" = 'Demitido' AND (public.turnover_desconsidera(e."ID") OR COALESCE((btrim(e."Nome Filial"), COALESCE(btrim(e."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) OR upper(btrim(COALESCE(e."Descrição (Causa)", ''))) = 'FIM DO CONTRATO DE TRABALHO')) fora_turnover,
            COALESCE((btrim(e."Nome Filial"), COALESCE(btrim(e."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) contrato_encerrado
       FROM public."EMPREGADOS" e
      WHERE COALESCE(btrim(e."Nome"), '') <> ''
@@ -374,8 +379,9 @@ BEGIN
            public.rh_norm_contrato(x."Nome Filial") nn_filial,
            public.rh_norm_contrato(x."Descrição do Local") nn_local,
            -- SIS-2026-0854 + mig 20261116130000: fora do turnover o desligamento marcado como encerramento
-           -- de contrato na solicitação OU de contrato que a Licitação › Contratos marcou como encerrado.
-           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false))) fora_turnover
+           -- de contrato na solicitação, de contrato que a Licitação › Contratos marcou como encerrado
+           -- ou por "Fim do Contrato de Trabalho" (experiência/prazo do empregado).
+           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) OR upper(btrim(COALESCE(x."Descrição (Causa)", ''))) = 'FIM DO CONTRATO DE TRABALHO')) fora_turnover
       FROM public."EMPREGADOS" x
      WHERE COALESCE(btrim(x."Nome"), '') <> ''
   ),
@@ -575,8 +581,9 @@ BEGIN
            public.rh_norm_contrato(x."Nome Filial") AS nn_filial,
            public.rh_norm_contrato(x."Descrição do Local") AS nn_local,
            -- SIS-2026-0854 + mig 20261116130000: fora do turnover o desligamento marcado como encerramento
-           -- de contrato na solicitação OU de contrato que a Licitação › Contratos marcou como encerrado.
-           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false))) AS fora_turnover
+           -- de contrato na solicitação, de contrato que a Licitação › Contratos marcou como encerrado
+           -- ou por "Fim do Contrato de Trabalho" (experiência/prazo do empregado).
+           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) OR upper(btrim(COALESCE(x."Descrição (Causa)", ''))) = 'FIM DO CONTRATO DE TRABALHO')) AS fora_turnover
       FROM public."EMPREGADOS" x
      WHERE COALESCE(btrim(x."Nome"), '') <> ''
   ),
@@ -770,8 +777,9 @@ BEGIN
            NULLIF(btrim(x."Nome do Posto"), '') AS posto_senior,
            COALESCE(NULLIF(upper(btrim(regexp_replace(COALESCE(x."Título do Cargo", ''), '\s+', ' ', 'g'))), ''), '(SEM FUNÇÃO)') AS funcao,
            -- SIS-2026-0854 + mig 20261116130000: fora do turnover o desligamento marcado como encerramento
-           -- de contrato na solicitação OU de contrato que a Licitação › Contratos marcou como encerrado.
-           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false))) AS fora_turnover
+           -- de contrato na solicitação, de contrato que a Licitação › Contratos marcou como encerrado
+           -- ou por "Fim do Contrato de Trabalho" (experiência/prazo do empregado).
+           (x."Situação" = 'Demitido' AND (public.turnover_desconsidera(x."ID") OR COALESCE((btrim(x."Nome Filial"), COALESCE(btrim(x."Descrição do Local"), '')) IN (SELECT f.filial, f.local FROM ct_enc f), false) OR upper(btrim(COALESCE(x."Descrição (Causa)", ''))) = 'FIM DO CONTRATO DE TRABALHO')) AS fora_turnover
       FROM public."EMPREGADOS" x
       LEFT JOIN public."RH_POSTO_OCUPANTE_ERP" a ON a.empregado_id = x."ID"
      WHERE COALESCE(btrim(x."Nome"), '') <> '' AND x."Empresa" IS NOT NULL AND x."Filial" IS NOT NULL
