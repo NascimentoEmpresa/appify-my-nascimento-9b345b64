@@ -680,8 +680,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         // Ativos/Contratos foi para o Operacional em 03/11/2026 (mig 20261103005100).
-        // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
-        { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
+        // Hierarquia de Postos removida em 17/11/2026 (mig 20261117000300): o
+        // encarregado de cada contrato vem do Organograma Operacional.
         // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
         { label: "Rateio de Despesas", to: "/app/rh/rateio-despesas", icon: PieChart },
       ],
@@ -1174,6 +1174,11 @@ const presidenciaModule: ModuleDef = {
         // e acompanha o treinamento. Liberação própria
         // (presidencia_chamados_dev; aprovar/devolver: _validar).
         { label: "Desenvolvimento Chamados", to: "/app/presidencia/chamados-desenvolvimento", icon: CheckCircle2 },
+        // Acompanhamento de Chamados (SIS-2026-0923, mig 20261116230000): painel
+        // gerencial de todos os chamados, rendimento por responsável e pedidos de
+        // ação a Sistemas. Liberação própria (presidencia_chamados_gerencial;
+        // pedir ação: _acao).
+        { label: "Acompanhamento de Chamados", to: "/app/presidencia/acompanhamento-chamados", icon: BarChart3 },
       ],
     },
     {
@@ -1363,6 +1368,16 @@ const operacionalModule: ModuleDef = {
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
         // telas ficam em abas dentro dela; menu ope_efetividade.
         { label: "Efetividade e Coberturas", to: "/app/operacional/efetividade", icon: UserCheck },
+      ],
+    },
+    {
+      // Organograma › Operacional (17/11/2026, mig 20261117000100, menu
+      // ope_organograma): gerente › supervisores › encarregados › contratos.
+      // É a fonte do encarregado de cada contrato (Ponto, Documentos do RH, Treinamento).
+      label: "Organograma",
+      defaultOpen: true,
+      items: [
+        { label: "Operacional", to: "/app/operacional/organograma", icon: Network },
       ],
     },
     {

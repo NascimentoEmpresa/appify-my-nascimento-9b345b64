@@ -24,6 +24,8 @@ import { Search, Pencil, ShieldCheck, Building2, UserPlus, Eye, EyeOff, KeyRound
 import { CargoCampo, useCargoCatalogo } from "@/components/admin/CargoCampo";
 import { AplicarModeloNovoUsuario } from "@/pages/admin/tabs/AcessoPorSetorCargoPanel";
 import { limparNomeCargo } from "@/lib/acessoPorSetorCargo";
+import { ContratosEncarregadoCampo } from "@/components/admin/ContratosEncarregadoCampo";
+import { ehLoginEncarregado, validarLoginEncarregado } from "@/lib/operacional/organogramaOperacional";
 
 // Cargo saiu de texto livre para a lista de Configurações do ERP › Cargos
 // (SIS-2026-0851, 10/11/2026). Com a lista no ar, só passa cargo que está
@@ -836,6 +838,13 @@ export function NovoUsuarioDialog({
   const [colaborador, setColaborador] = useState<PessoaBusca | null>(null);
   const [oQueFaz, setOQueFaz] = useState("");
   const [posicao, setPosicao] = useState<PosicaoForm>(posicaoVazia());
+  // 17/11/2026 (mig 20261117000100): login de ENCARREGADO diz de qual(is)
+  // contrato(s) ele é responsável — grava no Organograma Operacional, a fonte
+  // do encarregado para Ponto, Documentos do RH e Solicitar Treinamento.
+  const [contratosEnc, setContratosEnc] = useState<string[]>([]);
+  const setoresFinais = soEncarregados ? [SETOR_ENCARREGADOS] : selectedSetores;
+  const ehEncarregado = ehLoginEncarregado(cargo, setoresFinais);
+  const empregadoEnc = colaborador?.empregado_id ?? posicao.empregadoId ?? null;
   const catalogoCargos = useCargoCatalogo();
   const catalogoExibido = useMemo(() => {
     const set = new Set([...setoresCatalogo, ...selectedSetores]);
@@ -868,7 +877,7 @@ export function NovoUsuarioDialog({
   const reset = () => {
     setDisplayName(""); setCargo(""); setEmail(""); setPassword(""); setTelefone("");
     setEmpresaId("_none"); setSelectedSetores(soEncarregados ? [SETOR_ENCARREGADOS] : []); setShowPwd(false);
-    setColaborador(null); setOQueFaz(""); setPosicao(posicaoVazia());
+    setColaborador(null); setOQueFaz(""); setPosicao(posicaoVazia()); setContratosEnc([]);
   };
 
   const toggleSetor = (s: string) => {
@@ -903,6 +912,11 @@ export function NovoUsuarioDialog({
     }
     if (cargoForaDaLista(cargo, catalogoCargos)) {
       toast({ title: "Cargo fora da lista", description: "Escolha um cargo da lista ou cadastre o novo ali mesmo.", variant: "destructive" });
+      return;
+    }
+    const faltaEnc = validarLoginEncarregado({ cargo, setores: setoresFinais, empregadoId: empregadoEnc, contratos: contratosEnc });
+    if (faltaEnc) {
+      toast({ title: "Falta o contrato do encarregado", description: faltaEnc, variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -952,6 +966,18 @@ export function NovoUsuarioDialog({
           .insert(selectedSetores.map((s) => ({ user_id: newUserId, setor: s })));
         if (setorErr) {
           toast({ title: "Usuário criado, mas houve erro ao gravar o setor", description: setorErr.message, variant: "destructive" });
+        }
+      }
+
+      // Encarregado: os contratos dele no Organograma Operacional.
+      if (ehEncarregado && empregadoEnc != null && contratosEnc.length) {
+        const { error: encErr } = await sbSemTipos.rpc("ope_org_encarregado_login", { p_empregado: empregadoEnc, p_contratos: contratosEnc });
+        if (encErr) {
+          toast({
+            title: "Usuário criado, mas os contratos do encarregado não foram gravados",
+            description: `${encErr.message} — defina em Operacional › Organograma › Operacional.`,
+            variant: "destructive",
+          });
         }
       }
 
@@ -1027,6 +1053,16 @@ export function NovoUsuarioDialog({
               <Textarea rows={2} maxLength={500} value={oQueFaz} onChange={(e) => setOQueFaz(e.target.value)} placeholder="Ex.: Cuida da folha de pagamento e atende os encarregados." />
             </div>
             <PosicaoCampos valor={{ ...posicao, cargo: posicao.cargo ?? (cargo.trim() || null) }} onValor={setPosicao} />
+            {ehEncarregado && (
+              <>
+                {empregadoEnc == null && (
+                  <p className="rounded-md border border-amber-400 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                    Encarregado precisa estar no cadastro de colaboradores: escolha o colaborador no topo.
+                  </p>
+                )}
+                <ContratosEncarregadoCampo valor={contratosEnc} onValor={setContratosEnc} empregadoId={empregadoEnc} />
+              </>
+            )}
             <div>
               <Label>E-mail corporativo *</Label>
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nome@empresa.com.br" />

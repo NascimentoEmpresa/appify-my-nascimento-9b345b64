@@ -31,6 +31,7 @@ import MinhasTarefas from "./pages/MinhasTarefas";
 import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
 import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
+import AcompanhamentoChamadosPresidencia from "./pages/presidencia/AcompanhamentoChamados";
 import TvPlayer from "./pages/tv/TvPlayer";
 import TvPrevia from "./pages/tv/TvPrevia";
 import TvsSistemas from "./pages/sistemas/Tvs";
@@ -225,7 +226,6 @@ import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
-import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
 import RateioDespesas from "./pages/rh/RateioDespesas";
 import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
@@ -298,6 +298,7 @@ import IndicadoresLucratividade from "./pages/operacional/indicadores/Lucrativid
 import IndicadoresPessoas from "./pages/operacional/indicadores/PessoasCapacidade";
 import IndicadoresKaizen from "./pages/operacional/indicadores/KaizenEfetividade";
 import IndicadoresContratos from "./pages/operacional/indicadores/IndicadoresContratos";
+import OrganogramaOperacional from "./pages/operacional/OrganogramaOperacional";
 import EfetividadeControlePostos from "./pages/operacional/efetividade/ControlePostos";
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
@@ -770,6 +771,9 @@ const App = () => (
             {/* Presidência › Desenvolvimento Chamados (mig 266): validação do
                 desenvolvimento dos chamados enviados à Presidência. */}
             <Route path="presidencia/chamados-desenvolvimento" element={<ChamadosDesenvolvimentoPresidencia />} />
+            {/* Presidência › Acompanhamento de Chamados (SIS-2026-0923, mig 20261116230000):
+                painel gerencial de todos os chamados + pedidos de ação a Sistemas. */}
+            <Route path="presidencia/acompanhamento-chamados" element={<AcompanhamentoChamadosPresidencia />} />
             <Route path="licitacoes/grade" element={<Pipeline />} />
             <Route path="editais" element={<CadastroEdital />} />
             <Route path="documentos" element={<Documentos />} />
@@ -1036,8 +1040,9 @@ const App = () => (
                 elas o caminho cai no 404 de fora do AppShell e o guard nem roda. */}
             <Route path="rh/colaboradores" element={<Navigate to="/app/operacional/colaboradores" replace />} />
             <Route path="rh/ativos-contratos" element={<Navigate to="/app/operacional/ativos-contratos" replace />} />
-            {/* Hierarquia de postos da Senior (mig 20261007000024). */}
-            <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            {/* Hierarquia de Postos removida em 17/11/2026 (mig 20261117000300, "ninguém usou"):
+                o encarregado de cada contrato agora vem do Organograma Operacional. */}
+            <Route path="rh/hierarquia-postos" element={<Navigate to="/app/operacional/organograma" replace />} />
             {/* A Pesquisa de Permanência saiu do RH: agora é um formulário (mig 20261030001000). */}
             <Route path="rh/pesquisa-permanencia" element={<Navigate to="/app/central-servicos/formularios" replace />} />
             <Route path="rh/documentos" element={<DocumentosRh />} />
@@ -1084,6 +1089,8 @@ const App = () => (
             <Route path="operacional/indicadores/kaizen-efetividade" element={<IndicadoresKaizen />} />
             {/* Indicadores por Contrato (11/11/2026, mig 20261111100000): os 7 da Gerência Operacional. */}
             <Route path="operacional/indicadores/contratos" element={<IndicadoresContratos />} />
+            {/* Organograma › Operacional (17/11/2026, mig 20261117000100): fonte do encarregado de cada contrato. */}
+            <Route path="operacional/organograma" element={<OrganogramaOperacional />} />
             <Route path="operacional/efetividade" element={<EfetividadePainelDia />} />
             <Route path="operacional/efetividade/postos" element={<EfetividadeControlePostos />} />
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />

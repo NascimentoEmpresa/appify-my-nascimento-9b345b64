@@ -410,8 +410,16 @@ export function PedirTransferenciaDialog({
   );
 }
 
+// Pedido da gestão (SIS-2026-0923, mig 20261116230000): a Presidência/Controladoria
+// pediu prioridade, fila, cancelamento, revisão ou informações.
+const ROTULO_PENDENCIA: Record<Pendencia["tipo"], { label: string; cls: string }> = {
+  reabertura: { label: "Chamado reaberto", cls: "bg-warning/15 text-warning" },
+  transferencia: { label: "Transferência", cls: "bg-info/15 text-info" },
+  acao_gestao: { label: "Pedido da gestão", cls: "bg-primary/15 text-primary" },
+};
+
 type Pendencia = {
-  tipo: "reabertura" | "transferencia"; pedido_id: number; chamado_id: string; numero: string; assunto: string;
+  tipo: "reabertura" | "transferencia" | "acao_gestao"; pedido_id: number; chamado_id: string; numero: string; assunto: string;
   solicitado_por: string | null; motivo: string; para_responsavel: string | null; created_at: string;
 };
 
@@ -440,8 +448,8 @@ export function AvisoPendenciasGestao({ onAbrir, nomeDe }: { onAbrir: (chamadoId
         {pendencias.map((p) => (
           <button key={`${p.tipo}-${p.pedido_id}`} type="button" onClick={() => onAbrir(p.chamado_id)}
             className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-xs transition-colors hover:border-primary/40">
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${p.tipo === "reabertura" ? "bg-warning/15 text-warning" : "bg-info/15 text-info"}`}>
-              {p.tipo === "reabertura" ? "Chamado reaberto" : "Transferência"}
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ROTULO_PENDENCIA[p.tipo].cls}`}>
+              {ROTULO_PENDENCIA[p.tipo].label}
             </span>
             <b>#{p.numero}</b>
             <span className="min-w-0 flex-1 truncate">{p.assunto}</span>
