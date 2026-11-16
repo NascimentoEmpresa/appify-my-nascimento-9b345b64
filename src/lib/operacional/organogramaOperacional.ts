@@ -5,9 +5,10 @@
 // O banco guarda, por contrato da Licitação, o encarregado e o supervisor
 // (OPE_ORG_CONTRATO). Aqui mora a montagem da árvore e as regras que a tela
 // e o cadastro de login repetem do banco:
-//   - encarregadoEfetivo: o definido no organograma vale; sem ele (ou com ele
-//     demitido) vale o que a Hierarquia de Postos diz — a mesma reserva que
-//     rh_hier_responsaveis() aplica para Ponto, Documentos do RH e Treinamento;
+//   - encarregadoEfetivo: o definido no organograma é o encarregado do contrato
+//     para Ponto, Documentos do RH e Treinamento (rh_hier_responsaveis); demitido
+//     não conta. A Hierarquia de Postos, que era a reserva, foi removida em
+//     17/11/2026 (mig 20261117000300) — o que ela apontava foi copiado para cá;
 //   - validarLoginEncarregado: login novo de ENCARREGADO precisa do colaborador
 //     do cadastro e de ao menos um contrato.
 // =====================================================================
@@ -28,8 +29,6 @@ export interface ContratoOrg {
   encarregado_id: number | null;
   supervisor_id: number | null;
   colaboradores: number;
-  /** Quem a Hierarquia de Postos aponta (a reserva). */
-  encarregados_postos: number[];
 }
 
 export interface HistoricoOrg {
@@ -52,7 +51,7 @@ export interface PainelOrg {
   pode_alterar: boolean;
 }
 
-export type OrigemEncarregado = "organograma" | "postos" | "nenhum";
+export type OrigemEncarregado = "organograma" | "nenhum";
 
 const demitido = (p?: PessoaOrg | null) => (p?.situacao ?? "").trim() === "Demitido";
 
@@ -62,8 +61,7 @@ export function encarregadoEfetivo(c: ContratoOrg, pessoas: Map<number, PessoaOr
     const p = pessoas.get(c.encarregado_id);
     if (!demitido(p)) return { ids: [c.encarregado_id], origem: "organograma" };
   }
-  const reserva = [...new Set(c.encarregados_postos ?? [])];
-  return reserva.length ? { ids: reserva, origem: "postos" } : { ids: [], origem: "nenhum" };
+  return { ids: [], origem: "nenhum" };
 }
 
 export interface RamoEncarregado { pessoa: PessoaOrg; contratos: ContratoOrg[] }

@@ -226,7 +226,6 @@ import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
-import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
 import RateioDespesas from "./pages/rh/RateioDespesas";
 import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
@@ -1041,8 +1040,9 @@ const App = () => (
                 elas o caminho cai no 404 de fora do AppShell e o guard nem roda. */}
             <Route path="rh/colaboradores" element={<Navigate to="/app/operacional/colaboradores" replace />} />
             <Route path="rh/ativos-contratos" element={<Navigate to="/app/operacional/ativos-contratos" replace />} />
-            {/* Hierarquia de postos da Senior (mig 20261007000024). */}
-            <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            {/* Hierarquia de Postos removida em 17/11/2026 (mig 20261117000300, "ninguém usou"):
+                o encarregado de cada contrato agora vem do Organograma Operacional. */}
+            <Route path="rh/hierarquia-postos" element={<Navigate to="/app/operacional/organograma" replace />} />
             {/* A Pesquisa de Permanência saiu do RH: agora é um formulário (mig 20261030001000). */}
             <Route path="rh/pesquisa-permanencia" element={<Navigate to="/app/central-servicos/formularios" replace />} />
             <Route path="rh/documentos" element={<DocumentosRh />} />
