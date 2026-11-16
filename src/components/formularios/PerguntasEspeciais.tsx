@@ -133,7 +133,10 @@ export function EscolhaComplemento({ id, titulo, numero, config, value, onChange
                 className={cn("flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition",
                   ativo ? "border-emerald-500 bg-emerald-50" : "border-slate-200 hover:bg-slate-50", cheio && "opacity-50")}>
                 <Marca multipla={multipla} ativo={ativo} />
-                <span className="text-slate-700">{o.rotulo}</span>
+                <span className="text-slate-700">
+                  {o.rotulo}
+                  {o.descricao && <span className="mt-0.5 block text-xs text-slate-500">{o.descricao}</span>}
+                </span>
               </button>
               {ativo && o.complemento && (
                 <div className="ml-4 mt-2 border-l-2 border-emerald-200 pl-4">
