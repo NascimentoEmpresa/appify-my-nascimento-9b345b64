@@ -35,7 +35,7 @@ import { cn } from "@/lib/utils";
 import { usePostos, useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import { MOTIVOS_VAGA, dataMinimaVaga, fmtBr, TEXTO_ANTECEDENCIA } from "@/lib/recrutamento/vagaRegras";
-import { buscarCustoDoPosto, beneficiosDoCusto, insalubridadeDoCusto } from "@/lib/recrutamento/custoPosto";
+import { buscarCustoDoPosto } from "@/lib/recrutamento/custoPosto";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -43,10 +43,12 @@ import {
   totalDeColaboradores, totalDePostos, totalDeFuncoes, totalDeVagas, totalSalarialMensal,
   brl, paraInteiro, paraNumero, chavePosto, chaveLinha, linhaEmUso,
   paresDoCatalogo, mesclarComCatalogo, aplicarHerancaNoQuadro,
+  type RemuneracaoPosto, type ProventoForm, preenchimentoDoPosto, aplicarPreenchimento,
+  preencherQuadro, remuneracaoPorPosto, incluirEmOutros,
 } from "@/lib/licitacoes/quadroPostos";
 import type { HerancaConvencao } from "@/lib/licitacoes/convencoes";
 import { AvisoConvencaoDoContrato } from "@/components/licitacoes/convencoes/ConvencaoDoContrato";
-import type { LinhaQuadro } from "@/hooks/useContratoQuadro";
+import { useRemuneracaoDoContrato, type LinhaQuadro } from "@/hooks/useContratoQuadro";
 
 const db = supabase as any;
 
@@ -79,6 +81,10 @@ export function paraFormulario(l: LinhaQuadro): LinhaQuadroForm {
     exp_minima_qual: l.exp_minima_qual ?? "",
     observacao: l.observacao ?? "",
     gerar_vagas: l.gerar_vagas ?? true,
+    outros_proventos: (l.outros_proventos ?? []).map(p => ({
+      descricao: p.descricao ?? "",
+      valor: p.valor ? String(p.valor).replace(".", ",") : "",
+    })),
   };
 }
 
@@ -123,6 +129,21 @@ export function QuadroPostosContrato({
     [linhas, pares, heranca?.valores],
   );
   const visiveis = soEmUso ? exibidas.filter(linhaEmUso) : exibidas;
+
+  // SIS-2026-0884: a remuneração de todos os postos da Planilha de Custo do
+  // contrato, numa chamada. Com ela, toda linha EM USO cujo posto está na
+  // planilha se preenche sozinha — sem clicar em nada, sem trocar de aba.
+  // `preencherQuadro` só mexe em campo vazio ou no que ele mesmo pôs, e
+  // devolve null quando não há o que mudar (é o que encerra o efeito).
+  const { data: remuneracoes } = useRemuneracaoDoContrato(contratoId);
+  const porPosto = useMemo(() => remuneracaoPorPosto(remuneracoes), [remuneracoes]);
+  useEffect(() => {
+    if (somenteLeitura || porPosto.size === 0) return;
+    const novas = preencherQuadro(exibidas, porPosto, !!heranca);
+    if (novas) onChange(novas);
+    // onChange vem do pai e muda a cada render; o que decide é o conteúdo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exibidas, porPosto, somenteLeitura, !!heranca]);
 
   const total = totalDeColaboradores(exibidas);
   const postos = totalDePostos(exibidas);
@@ -239,6 +260,7 @@ export function QuadroPostosContrato({
             geradas={l.id ? geradasPorId[l.id] : undefined}
             somenteLeitura={somenteLeitura}
             convencaoId={heranca?.convencaoId ?? null}
+            remuneracao={porPosto.get(chavePosto(l.posto_nome)) ?? null}
           />
         ) : null
       ))}
@@ -275,6 +297,8 @@ interface LinhaProps {
   somenteLeitura: boolean;
   /** Convenção do contrato: benefícios/percentuais só leitura, vindos dela. */
   convencaoId: string | null;
+  /** O posto na Planilha de Custo do contrato (nome exato), ou null. */
+  remuneracao: RemuneracaoPosto | null;
 }
 
 /**
@@ -317,9 +341,25 @@ function CampoAoSair({
 
 function LinhaDoQuadro({
   linha: l, indice: i, aberta, onAbrir, onMexer, onRemover, onOutraFuncao,
-  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura, convencaoId,
+  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura, convencaoId, remuneracao,
 }: LinhaProps) {
   const daConvencao = !!convencaoId;
+  // O que o posto diz para esta linha — origem de cada campo, avisos e os
+  // adicionais da planilha que podem ir para "Outros" (SIS-2026-0884).
+  const preench = useMemo(
+    () => preenchimentoDoPosto(remuneracao, { convencaoNoContrato: daConvencao }),
+    [remuneracao, daConvencao],
+  );
+  const dica = (campo: keyof typeof preench.origem) =>
+    preench.origem[campo] && l[campo] === preench.valores[campo] ? preench.origem[campo] : null;
+  const outros: ProventoForm[] = l.outros_proventos ?? [];
+  const mexerOutros = (lista: ProventoForm[]) => onMexer({ outros_proventos: lista });
+  // Só os campos que o preenchimento toca — mandar a linha inteira faria
+  // `mexer` achar que o posto mudou e reposicionar a linha aberta.
+  const soOPreenchido = (n: LinhaQuadroForm): Partial<LinhaQuadroForm> => ({
+    salario: n.salario, insalubridade_pct: n.insalubridade_pct,
+    periculosidade_pct: n.periculosidade_pct, beneficios: n.beneficios, auto: n.auto,
+  });
   // O posto do catálogo é achado pelo NOME a cada render, em vez de guardado
   // no estado do formulário. Guardar exigiria manter nome e id em dia a cada
   // tecla, e um id desencontrado do nome é pior que id nenhum: as funções
@@ -357,6 +397,24 @@ function LinhaDoQuadro({
       toast({ title: "Escolha o posto primeiro.", description: "O salário e os benefícios saem do posto na Planilha de Custo.", variant: "destructive" });
       return;
     }
+    // SIS-2026-0884: o posto de nome exato já veio com a remuneração do
+    // contrato inteiro — o botão só FORÇA (troca até o que foi digitado).
+    // A consulta antiga, que aproxima por cidade/escala, fica para o posto
+    // que não casa pelo nome.
+    if (remuneracao) {
+      const n = aplicarPreenchimento(l, preench, true);
+      if (n) onMexer(soOPreenchido(n));
+      toast({
+        title: `Da Planilha de Custo — posto "${remuneracao.posto}"`,
+        description: [
+          daConvencao
+            ? "Salário atualizado. Benefícios e percentuais continuam os da Convenção Coletiva do contrato."
+            : "Salário, percentuais e benefícios atualizados com o que a planilha e a convenção do posto têm.",
+          ...preench.avisos,
+        ].join(" "),
+      });
+      return;
+    }
     const custo = await buscarCustoDoPosto(db, {
       contrato: contratoNome, posto: l.posto_nome, cargo: l.cargo || l.funcao_nome,
       salario: l.salario, cidade: l.cidade, escala: l.escala,
@@ -369,21 +427,27 @@ function LinhaDoQuadro({
       });
       return;
     }
-    const insal = insalubridadeDoCusto(custo, undefined, custo.salario);
-    onMexer({
-      salario: custo.salario ? String(custo.salario).replace(".", ",") : l.salario,
-      beneficios: beneficiosDoCusto(custo) || l.beneficios,
-      insalubridade_pct: insal.recebe === "Sim" && custo.salario && custo.insalubridade
-        ? String(Math.round((Number(custo.insalubridade) / Number(custo.salario)) * 100))
-        : l.insalubridade_pct,
-    });
+    // Mesmas regras do automático (preenchimentoDoPosto): insalubridade só
+    // vira % quando dá um grau legal sobre o salário base — antes era
+    // arredondada sobre o salário e saía 31% de um adicional de 40% do mínimo.
+    const p = preenchimentoDoPosto({
+      posto: custo.posto, vigencia: custo.vigencia, salario: custo.salario,
+      insalubridade: custo.insalubridade, periculosidade: custo.periculosidade,
+      vt: custo.vt, va: custo.va, vr: custo.vr, lanche: custo.lanche ?? null,
+      cesta_basica: custo.cesta_basica, assistencia_medica: custo.assistencia_medica,
+    }, { convencaoNoContrato: daConvencao });
+    const n = aplicarPreenchimento(l, p, true);
+    if (n) onMexer(soOPreenchido(n));
     toast({
       title: `Da Planilha de Custo — posto "${custo.posto}"`,
-      description: custo.por_posto === false
-        ? "O nome não casou exato; foi usado o posto de mesma cidade e jornada. Confira os valores."
-        : daConvencao
-          ? "Salário preenchido. Benefícios e insalubridade continuam os da Convenção Coletiva do contrato."
-          : "Salário, insalubridade e benefícios preenchidos.",
+      description: [
+        custo.por_posto === false
+          ? "O nome não casou exato; foi usado o posto de mesma cidade e jornada. Confira os valores."
+          : daConvencao
+            ? "Salário preenchido. Benefícios e percentuais continuam os da Convenção Coletiva do contrato."
+            : "Salário, percentuais e benefícios preenchidos.",
+        ...p.avisos,
+      ].join(" "),
     });
   }
 
@@ -557,6 +621,13 @@ function LinhaDoQuadro({
                 disabled={somenteLeitura}
                 onChange={e => onMexer({ salario: e.target.value })}
               />
+              {dica("salario") ? (
+                <span className="text-[11px] text-muted-foreground">{dica("salario")}</span>
+              ) : remuneracao && preench.valores.salario && l.salario !== preench.valores.salario ? (
+                <span className="text-[11px] text-amber-700">
+                  Na planilha: R$ {preench.valores.salario} — "Atualizar da Planilha" troca.
+                </span>
+              ) : null}
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Insalubridade (%)</Label>
@@ -567,6 +638,9 @@ function LinhaDoQuadro({
                 title={daConvencao ? "Vem da Convenção Coletiva do contrato" : undefined}
                 onChange={e => onMexer({ insalubridade_pct: e.target.value })}
               />
+              {dica("insalubridade_pct") && (
+                <span className="text-[11px] text-muted-foreground">{dica("insalubridade_pct")}</span>
+              )}
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Periculosidade (%)</Label>
@@ -577,16 +651,34 @@ function LinhaDoQuadro({
                 title={daConvencao ? "Vem da Convenção Coletiva do contrato" : undefined}
                 onChange={e => onMexer({ periculosidade_pct: e.target.value })}
               />
+              {dica("periculosidade_pct") && (
+                <span className="text-[11px] text-muted-foreground">{dica("periculosidade_pct")}</span>
+              )}
             </div>
-            <div className="flex flex-col justify-end gap-1">
+            <div className="flex flex-col justify-start gap-1 pt-5">
               {!somenteLeitura && (
-                <Button type="button" variant="outline" size="sm" className="h-9" onClick={puxarDaPlanilha}>
+                <Button
+                  type="button" variant="outline" size="sm" className="h-9" onClick={puxarDaPlanilha}
+                  title="Troca salário, percentuais e benefícios pelo que a Planilha de Custo e a convenção do posto têm — inclusive o que foi digitado."
+                >
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                  Puxar da Planilha
+                  Atualizar da Planilha
                 </Button>
               )}
             </div>
           </div>
+
+          {/* O que a planilha tem e não virou campo sozinho (SIS-2026-0884). */}
+          {!somenteLeitura && preench.avisos.length > 0 && (
+            <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">
+              {preench.avisos.map(a => <p key={a}>{a}</p>)}
+            </div>
+          )}
+          {emUso && !remuneracao && l.posto_nome.trim() && (
+            <p className="text-[11px] text-muted-foreground">
+              Posto sem linha na Planilha de Custo vigente do contrato — preencha salário e benefícios à mão.
+            </p>
+          )}
 
           <div className="flex flex-col gap-1">
             <Label className="text-xs">Benefícios{daConvencao && <span className="font-normal text-muted-foreground"> — da Convenção Coletiva do contrato</span>}</Label>
@@ -597,16 +689,69 @@ function LinhaDoQuadro({
               </>
             ) : (
               <>
-                <Input
-                  className="h-9" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
+                <Textarea
+                  rows={2} className="text-sm" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
                   value={l.beneficios}
                   disabled={somenteLeitura}
                   onChange={e => onMexer({ beneficios: e.target.value })}
                 />
                 <span className="text-[11px] text-muted-foreground">
-                  Vai para a vaga exatamente como está escrito aqui. "Puxar da Planilha" preenche no formato do Recrutamento.
+                  {dica("beneficios") ? `${dica("beneficios")}. ` : ""}
+                  Vai para a vaga exatamente como está escrito aqui. Vem sozinho da convenção vinculada ao posto ou, sem ela, da Planilha de Custo.
                 </span>
               </>
+            )}
+          </div>
+
+          {/* Outros proventos (SIS-2026-0884): fora do convencional, à mão,
+              quantos forem. Vão para a solicitação de vaga junto com o resto. */}
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs">Outros <span className="font-normal text-muted-foreground">— proventos fora do convencional (R$/mês)</span></Label>
+            {outros.map((p, k) => (
+              <div key={k} className="flex items-center gap-2">
+                <Input
+                  className="h-9 flex-1" placeholder="Descrição — ex: Ajuda de custo"
+                  value={p.descricao}
+                  disabled={somenteLeitura}
+                  onChange={e => mexerOutros(outros.map((x, j) => (j === k ? { ...x, descricao: e.target.value } : x)))}
+                />
+                <Input
+                  className="h-9 w-36" placeholder="Valor — ex: 150,00"
+                  value={p.valor}
+                  disabled={somenteLeitura}
+                  onChange={e => mexerOutros(outros.map((x, j) => (j === k ? { ...x, valor: e.target.value } : x)))}
+                />
+                {!somenteLeitura && (
+                  <Button type="button" variant="ghost" size="sm" className="h-9 px-2"
+                    aria-label="Tirar este provento"
+                    onClick={() => mexerOutros(outros.filter((_, j) => j !== k))}>
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                )}
+              </div>
+            ))}
+            {!somenteLeitura && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button type="button" variant="outline" size="sm" className="h-8"
+                  onClick={() => mexerOutros([...outros, { descricao: "", valor: "" }])}>
+                  <Plus className="mr-1 h-3.5 w-3.5" aria-hidden /> Adicionar provento
+                </Button>
+                {/* Adicionais da planilha: não entram sozinhos (são custo
+                    estimado do posto, não provento garantido) — um clique os
+                    inclui. Ver a decisão 6 em quadroPostos.ts. */}
+                {preench.adicionais
+                  .filter(a => !outros.some(p => chavePosto(p.descricao) === chavePosto(a.descricao)))
+                  .map(a => (
+                    <button
+                      key={a.descricao} type="button"
+                      className="rounded border border-dashed px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+                      title="Na Planilha de Custo do posto. Clique para incluir em Outros."
+                      onClick={() => mexerOutros(incluirEmOutros(outros, a))}
+                    >
+                      + {a.descricao} {brl(a.valor)}
+                    </button>
+                  ))}
+              </div>
             )}
           </div>
 
