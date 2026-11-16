@@ -15,11 +15,11 @@ const c = (id: string, nome: string, enc: number | null, sup: number | null, col
 const pessoas = [
   p(1, "GERENTE OPER", "GERENTE OPERACIONAL"), p(2, "ANA SUPERVISORA", "SUPERVISOR"), p(3, "BRUNO SUPERVISOR", "SUPERVISOR"),
   p(10, "IDALECIO", "ENCARREGADO"), p(11, "JOAO ENC", "ENCARREGADO"), p(12, "DEMITIDO ENC", "ENCARREGADO", "Demitido"),
-  p(4, "CARLA SUPERVISORA", "SUPERVISOR"),
+  p(4, "CARLA SUPERVISORA", "SUPERVISOR"), p(30, "DIRETOR OPER", "DIRETOR OPERACIONAL"),
 ];
 const painel = (contratos: ContratoOrg[]): PainelOrg => ({
   contratos, pessoas,
-  papeis: [{ empregado_id: 1, papel: "gerente" }, { empregado_id: 4, papel: "supervisor" }],
+  papeis: [{ empregado_id: 1, papel: "gerente" }, { empregado_id: 4, papel: "supervisor" }, { empregado_id: 30, papel: "diretor" }],
   historico: [], pode_alterar: true,
 });
 
@@ -28,7 +28,21 @@ describe("hierarquia: gerente › supervisores › encarregados › contratos", 
     c("a", "UFFS", 10, 2), c("b", "PREF", 10, 3), c("c", "HOSPITAL", 11, 2), c("d", "NOVO", null, 2), c("e", "SOLTO", 11, null), c("f", "ORFAO", null, null),
   ]));
 
-  it("o gerente vem do papel", () => expect(arv.gerente?.nome).toBe("GERENTE OPER"));
+  it("topo: diretor › gerente vêm dos papéis", () => {
+    expect(arv.diretor?.nome).toBe("DIRETOR OPER");
+    expect(arv.gerente?.nome).toBe("GERENTE OPER");
+  });
+
+  it("clicar no supervisor abre os CONTRATOS dele (com e sem encarregado)", () => {
+    expect(arv.supervisores[0].contratos.map((x) => x.nome)).toEqual(["HOSPITAL", "NOVO", "UFFS"]);
+    expect(arv.semSupervisor.contratos.map((x) => x.nome)).toEqual(["ORFAO", "SOLTO"]);
+  });
+
+  it("diretor e gerente não viram caixa de supervisor, salvo se tiverem contrato direto", () => {
+    expect(arv.supervisores.some((s) => s.pessoa?.id === 1 || s.pessoa?.id === 30)).toBe(false);
+    const comGerente = montarArvore(painel([c("x", "DIRETO", 10, 1)]));
+    expect(comGerente.supervisores.find((s) => s.pessoa?.id === 1)?.contratos.map((x) => x.nome)).toEqual(["DIRETO"]);
+  });
 
   it("supervisor aparece pelo contrato ou pelo cadastro (mesmo sem contrato)", () => {
     expect(arv.supervisores.map((s) => s.pessoa!.nome)).toEqual(["ANA SUPERVISORA", "BRUNO SUPERVISOR", "CARLA SUPERVISORA"]);
@@ -89,6 +103,12 @@ describe("menu de contexto", () => {
   it("pessoa: encarregado troca supervisor ou sai; colaborador vira encarregado", () => {
     expect(acoesDoMenu({ tipo: "encarregado", pessoa: pessoas[3], supervisorId: 2 }, true)).toEqual(["trocar_supervisor_encarregado", "tirar_encarregado_de_todos"]);
     expect(acoesDoMenu({ tipo: "colaborador", pessoa: pessoas[3], contrato: c("a", "UFFS", null, 2) }, true)).toEqual(["tornar_encarregado"]);
+  });
+
+  it("encarregado no topo do contrato: trocar, remover ou trocar o supervisor", () => {
+    expect(acoesDoMenu({ tipo: "encarregado_contrato", pessoa: pessoas[3], contrato: c("a", "UFFS", 10, 2) }, true))
+      .toEqual(["definir_encarregado", "remover_encarregado", "trocar_supervisor_encarregado"]);
+    expect(acoesDoMenu({ tipo: "diretor", pessoa: null }, true)).toEqual(["definir_diretor"]);
   });
 
   it("sem permissão de alterar: só o histórico do contrato", () => {

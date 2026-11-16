@@ -18,7 +18,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { cn } from "@/lib/utils";
 import {
   acoesDoMenu, contratosDoEncarregado, contratosDoSupervisor, encarregadoEfetivo, montarArvore,
-  type AcaoMenu, type AlvoMenu, type ContratoOrg, type HistoricoOrg, type PainelOrg, type PessoaOrg, type RamoEncarregado, type RamoSupervisor,
+  type AcaoMenu, type AlvoMenu, type ContratoOrg, type HistoricoOrg, type PainelOrg, type PessoaOrg, type RamoSupervisor,
 } from "@/lib/operacional/organogramaOperacional";
 
 // =====================================================================
@@ -99,6 +99,7 @@ function Foto({ p, tamanho = 30 }: { p: PessoaOrg; tamanho?: number }) {
 }
 
 const ROTULO: Record<AcaoMenu, { texto: string; icone: LucideIcon; perigo?: boolean }> = {
+  definir_diretor: { texto: "Definir diretor operacional…", icone: Crown },
   definir_gerente: { texto: "Definir gerente operacional…", icone: Crown },
   incluir_supervisor: { texto: "Incluir supervisor…", icone: UserPlus },
   remover_supervisor: { texto: "Remover supervisor", icone: UserMinus, perigo: true },
@@ -195,22 +196,25 @@ function Colaboradores({ c, nivel, ctx }: { c: ContratoOrg; nivel: number; ctx: 
       return data ?? [];
     },
   });
-  const pad = { paddingLeft: 4 + nivel * 16 + 30 };
+  const pad = { paddingLeft: 4 + nivel * 16 + 10 };
   if (q.isLoading) return <li className="flex items-center gap-2 py-1.5 text-xs text-muted-foreground" style={pad}><Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando colaboradores…</li>;
   if (q.isError) return <li className="py-1.5 text-xs text-destructive" style={pad}>{(q.error as Error).message}</li>;
-  const lista = (q.data ?? []).filter((p) => casa(ctx.termo, p.nome, p.cargo));
-  if (!lista.length) return <li className="py-1.5 text-xs text-muted-foreground" style={pad}>{ctx.termo ? "Ninguém com esse nome aqui." : "Nenhum colaborador ativo ligado a este contrato."}</li>;
+  // O encarregado já está no topo do contrato: não repete na lista.
+  const lista = (q.data ?? []).filter((p) => p.id !== c.encarregado_id && casa(ctx.termo, p.nome, p.cargo));
   return (
     <>
+      <li className="px-1 pb-0.5 pt-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground" style={pad}>
+        Colaboradores do contrato · {lista.length.toLocaleString("pt-BR")}
+      </li>
+      {!lista.length && <li className="py-1.5 text-xs text-muted-foreground" style={pad}>{ctx.termo ? "Ninguém com esse nome aqui." : "Nenhum colaborador ativo ligado a este contrato."}</li>}
       {lista.map((p, i) => (
         <li key={p.id} className="oo-item" style={{ "--i": i } as CSSProperties}>
-          <ComMenu alvo={{ tipo: "colaborador", pessoa: p, contrato: c }} podeAlterar={ctx.podeAlterar && p.id !== c.encarregado_id} onAcao={ctx.onAcao}
+          <ComMenu alvo={{ tipo: "colaborador", pessoa: p, contrato: c }} podeAlterar={ctx.podeAlterar} onAcao={ctx.onAcao}
             className="flex items-center gap-2 rounded-lg py-1 pr-8 hover:bg-muted/70" style={pad}>
             <Foto p={p} tamanho={24} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12.5px] leading-tight">{tituloNome(p.nome)}</span>
               <span className="block truncate text-[10.5px] text-muted-foreground">
-                {p.id === c.encarregado_id && <b className="font-semibold text-sky-700 dark:text-sky-300">Encarregado · </b>}
                 {p.cargo || "—"}{p.situacao && p.situacao !== "Trabalhando" ? ` · ${p.situacao}` : ""}
               </span>
             </span>
@@ -221,10 +225,46 @@ function Colaboradores({ c, nivel, ctx }: { c: ContratoOrg; nivel: number; ctx: 
   );
 }
 
+/** Topo do contrato aberto: ENCARREGADO DESTE CONTRATO. */
+function EncarregadoDoContrato({ c, nivel, ctx }: { c: ContratoOrg; nivel: number; ctx: Ctx }) {
+  const p = c.encarregado_id != null ? ctx.pessoas.get(c.encarregado_id) ?? null : null;
+  const demitido = p?.situacao === "Demitido";
+  const recuo = 4 + nivel * 16 + 10;
+  if (!p) {
+    return (
+      <li className="my-1 rounded-xl border border-dashed border-amber-400/70 bg-amber-50/70 px-3 py-2 text-[11.5px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-100" style={{ marginLeft: recuo }}>
+        <b className="block text-[10px] uppercase tracking-wider">Encarregado deste contrato</b>
+        Nenhum definido.{" "}
+        {ctx.podeAlterar && (
+          <button type="button" className="font-semibold text-primary hover:underline" onClick={() => ctx.onAcao("definir_encarregado", { tipo: "contrato", contrato: c })}>Definir encarregado</button>
+        )}
+      </li>
+    );
+  }
+  return (
+    <li className="oo-item my-1" style={{ marginLeft: recuo }}>
+      <ComMenu alvo={{ tipo: "encarregado_contrato", pessoa: p, contrato: c }} podeAlterar={ctx.podeAlterar} onAcao={ctx.onAcao}
+        className="flex items-center gap-2.5 rounded-xl border border-sky-300/70 bg-sky-50 px-2.5 py-2 pr-9 dark:border-sky-800 dark:bg-sky-950/30">
+        <Foto p={p} tamanho={34} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-sky-700 dark:text-sky-300">Encarregado deste contrato</span>
+          <span className="block truncate text-[13px] font-semibold leading-tight">{tituloNome(p.nome)}</span>
+          <span className="block truncate text-[10.5px] text-muted-foreground">
+            {p.cargo || "—"}
+            {demitido && <b className="ml-1 font-semibold text-destructive">· demitido — defina outro</b>}
+            {p.tem_login === false && " · sem login no ERP"}
+          </span>
+        </span>
+      </ComMenu>
+    </li>
+  );
+}
+
 function LinhaContrato({ c, nivel, i, ctx }: { c: ContratoOrg; nivel: number; i: number; ctx: Ctx }) {
   const k = `c:${c.id}`;
   const aberto = ctx.abertos.has(k);
   const ef = encarregadoEfetivo(c, ctx.pessoas);
+  const enc = c.encarregado_id != null ? ctx.pessoas.get(c.encarregado_id) : null;
   return (
     <li className="oo-item" style={{ "--i": i } as CSSProperties}>
       <ComMenu alvo={{ tipo: "contrato", contrato: c }} podeAlterar={ctx.podeAlterar} onAcao={ctx.onAcao}
@@ -236,14 +276,16 @@ function LinhaContrato({ c, nivel, i, ctx }: { c: ContratoOrg; nivel: number; i:
         <button type="button" onClick={() => ctx.alternar(k)} className="min-w-0 flex-1 text-left">
           <span className="block truncate text-[12.5px] font-semibold leading-tight">{c.nome}{c.empresa && <span className="ml-1 rounded bg-muted px-1 py-px text-[9.5px] font-bold text-muted-foreground">{c.empresa}</span>}</span>
           <span className="block truncate text-[10.5px] text-muted-foreground">
-            {plural(c.colaboradores, "pessoa", "pessoas")} em campo
-            {c.status !== "ativo" && ` · ${c.status}`}
-            {ef.origem === "nenhum" && <> · <b className="font-semibold text-amber-700 dark:text-amber-300">{c.encarregado_id == null ? "sem encarregado" : "encarregado demitido"}</b></>}
+            {ef.origem === "organograma" && enc
+              ? <>Enc.: <b className="font-semibold text-sky-700 dark:text-sky-300">{curto(enc.nome)}</b></>
+              : <b className="font-semibold text-amber-700 dark:text-amber-300">{c.encarregado_id == null ? "sem encarregado" : "encarregado demitido"}</b>}
+            {" · "}{plural(c.colaboradores, "pessoa", "pessoas")}
           </span>
         </button>
       </ComMenu>
       {aberto && (
         <ul className="oo-abre ml-4 border-l-2 border-amber-300/60 pl-1 dark:border-amber-700/50">
+          <EncarregadoDoContrato c={c} nivel={nivel} ctx={ctx} />
           <Colaboradores c={c} nivel={nivel} ctx={ctx} />
         </ul>
       )}
@@ -251,55 +293,14 @@ function LinhaContrato({ c, nivel, i, ctx }: { c: ContratoOrg; nivel: number; i:
   );
 }
 
-function LinhaEncarregado({ r, sup, nivel, i, ctx }: { r: RamoEncarregado; sup: number | null; nivel: number; i: number; ctx: Ctx }) {
-  const k = `e:${sup ?? "sem"}:${r.pessoa.id}`;
-  const visiveis = r.contratos.filter((c) => casa(ctx.termo, c.nome, r.pessoa.nome));
-  const aberto = ctx.abertos.has(k) || (!!ctx.termo && visiveis.length > 0);
-  if (ctx.termo && !visiveis.length) return null;
-  const demitido = r.pessoa.situacao === "Demitido";
-  return (
-    <li className="oo-item" style={{ "--i": i } as CSSProperties}>
-      <ComMenu alvo={{ tipo: "encarregado", pessoa: r.pessoa, supervisorId: sup }} podeAlterar={ctx.podeAlterar} onAcao={ctx.onAcao}
-        className="flex items-center gap-2 rounded-lg py-1.5 pr-8 hover:bg-muted/70" style={{ paddingLeft: 4 + nivel * 16 }}>
-        <Seta aberto={aberto} onClick={() => ctx.alternar(k)} rotulo={aberto ? "Recolher" : "Abrir contratos"} />
-        <Foto p={r.pessoa} />
-        <button type="button" onClick={() => ctx.alternar(k)} className="min-w-0 flex-1 text-left">
-          <span className="block truncate text-[13px] font-semibold leading-tight">{tituloNome(r.pessoa.nome)}</span>
-          <span className="block truncate text-[11px] text-muted-foreground">
-            <b className="font-semibold text-sky-700 dark:text-sky-300">Encarregado</b> · {r.pessoa.cargo || "—"}
-            {demitido && <b className="ml-1 font-semibold text-destructive">· demitido — defina outro</b>}
-          </span>
-        </button>
-        <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-sky-800 dark:bg-sky-900/40 dark:text-sky-200" title="Contratos">
-          {r.contratos.length}
-        </span>
-      </ComMenu>
-      {aberto && (
-        <ul className="oo-abre">
-          {visiveis.map((c, j) => <LinhaContrato key={c.id} c={c} nivel={nivel + 1} i={j} ctx={ctx} />)}
-        </ul>
-      )}
-    </li>
-  );
-}
-
 function CorpoSupervisor({ r, ctx }: { r: RamoSupervisor; ctx: Ctx }) {
-  const sup = r.pessoa?.id ?? null;
-  const semEnc = r.semEncarregado.filter((c) => casa(ctx.termo, c.nome));
-  if (!r.encarregados.length && !r.semEncarregado.length) {
+  const lista = r.contratos.filter((c) => casa(ctx.termo, c.nome, c.encarregado_id != null ? ctx.pessoas.get(c.encarregado_id)?.nome : null));
+  if (!r.contratos.length) {
     return <p className="px-2 py-2 text-xs text-muted-foreground">Nenhum contrato ainda.{ctx.podeAlterar && " Botão direito num contrato → Trocar supervisor."}</p>;
   }
   return (
-    <div className="max-h-[460px] overflow-y-auto overscroll-contain">
-      <ul>{r.encarregados.map((e, j) => <LinhaEncarregado key={e.pessoa.id} r={e} sup={sup} nivel={0} i={j} ctx={ctx} />)}</ul>
-      {semEnc.length > 0 && (
-        <div className="mt-2 rounded-xl border border-dashed border-amber-400/70 bg-amber-50/60 p-1.5 dark:bg-amber-950/20">
-          <p className="px-1.5 pb-1 pt-0.5 text-[10.5px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-            Contratos sem encarregado definido · {semEnc.length}
-          </p>
-          <ul>{semEnc.map((c, j) => <LinhaContrato key={c.id} c={c} nivel={0} i={j} ctx={ctx} />)}</ul>
-        </div>
-      )}
+    <div className="max-h-[520px] overflow-y-auto overscroll-contain">
+      <ul>{lista.map((c, j) => <LinhaContrato key={c.id} c={c} nivel={0} i={j} ctx={ctx} />)}</ul>
     </div>
   );
 }
@@ -307,9 +308,8 @@ function CorpoSupervisor({ r, ctx }: { r: RamoSupervisor; ctx: Ctx }) {
 function CardSupervisor({ r, ctx, d }: { r: RamoSupervisor; ctx: Ctx; d: number }) {
   const sup = r.pessoa;
   const k = `s:${sup?.id ?? "sem"}`;
-  const nContratos = r.encarregados.reduce((a, e) => a + e.contratos.length, 0) + r.semEncarregado.length;
-  const nPessoas = [...r.encarregados.flatMap((e) => e.contratos), ...r.semEncarregado].reduce((a, c) => a + c.colaboradores, 0);
-  const temAchado = !!ctx.termo && (casa(ctx.termo, sup?.nome) || r.encarregados.some((e) => casa(ctx.termo, e.pessoa.nome) || e.contratos.some((c) => casa(ctx.termo, c.nome))) || r.semEncarregado.some((c) => casa(ctx.termo, c.nome)));
+  const nPessoas = r.contratos.reduce((a, c) => a + c.colaboradores, 0);
+  const temAchado = !!ctx.termo && (casa(ctx.termo, sup?.nome) || r.encarregados.some((e) => casa(ctx.termo, e.pessoa.nome)) || r.contratos.some((c) => casa(ctx.termo, c.nome)));
   if (ctx.termo && !temAchado) return null;
   const aberto = ctx.abertos.has(k) || temAchado;
   const cor = sup ? "#047857" : "#b45309";
@@ -319,9 +319,9 @@ function CardSupervisor({ r, ctx, d }: { r: RamoSupervisor; ctx: Ctx; d: number 
         <div className="flex items-center gap-2.5 px-3.5 py-2.5 text-white" style={{ background: `linear-gradient(120deg, ${cor}, ${cor}d0)` }}>
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/20">{sup ? <ShieldCheck className="h-[18px] w-[18px]" /> : <HardHat className="h-[18px] w-[18px]" />}</span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[14px] font-bold leading-tight">{sup ? "Supervisão" : "Sem supervisor"}</span>
+            <span className="block truncate text-[14px] font-bold leading-tight">{sup ? "Supervisor" : "Sem supervisor"}</span>
             <span className="block text-[11px] text-white/80">
-              {plural(r.encarregados.length, "encarregado", "encarregados")} · {plural(nContratos, "contrato", "contratos")} · {plural(nPessoas, "pessoa", "pessoas")}
+              {plural(r.contratos.length, "contrato", "contratos")} · {plural(r.encarregados.length, "encarregado", "encarregados")} · {plural(nPessoas, "pessoa", "pessoas")}
             </span>
           </span>
           <ChevronDown className={cn("h-5 w-5 shrink-0 opacity-80 transition-transform duration-300", aberto && "rotate-180")} />
@@ -340,10 +340,46 @@ function CardSupervisor({ r, ctx, d }: { r: RamoSupervisor; ctx: Ctx; d: number 
       )}
       {aberto && (
         <div className="oo-abre border-t bg-muted/30 px-1.5 pb-1.5 pt-1">
-          <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Encarregados e contratos</p>
+          <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Contratos</p>
           <CorpoSupervisor r={r} ctx={ctx} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Cartão do topo (diretor e gerente): título colorido + a pessoa, com o menu de botão direito. */
+function CartaoTopo({ alvo, titulo, cor, icone: Icone, pessoa, podeAlterar, onAcao, acaoDefinir, resumo }: {
+  alvo: AlvoMenu; titulo: string; cor: string; icone: LucideIcon; pessoa: PessoaOrg | null; podeAlterar: boolean;
+  onAcao: (a: AcaoMenu, alvo: AlvoMenu) => void; acaoDefinir: AcaoMenu; resumo?: string;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-sm">
+      <ComMenu alvo={alvo} podeAlterar={podeAlterar} onAcao={onAcao}
+        className="overflow-hidden rounded-2xl bg-card shadow-[0_10px_28px_-12px_rgba(15,23,42,.4)] ring-1 ring-black/5 dark:ring-white/10">
+        <div className={cn("flex items-center gap-2.5 bg-gradient-to-r px-3.5 py-2.5 text-white", cor)}>
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-white/20"><Icone className="h-[18px] w-[18px]" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-bold leading-tight">{titulo}</span>
+            {resumo && <span className="block text-[11px] text-white/80">{resumo}</span>}
+          </span>
+        </div>
+        <div className="flex items-center gap-2.5 px-3.5 py-3 pr-9">
+          {pessoa ? (
+            <>
+              <Foto p={pessoa} tamanho={42} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-semibold leading-tight">{tituloNome(pessoa.nome)}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">{pessoa.cargo || "—"}</span>
+              </span>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              Não definido.{podeAlterar && <> <button type="button" className="font-semibold text-primary hover:underline" onClick={() => onAcao(acaoDefinir, alvo)}>Definir</button></>}
+            </span>
+          )}
+        </div>
+      </ComMenu>
     </div>
   );
 }
@@ -444,7 +480,7 @@ function DialogConfirmar({ c, onFechar }: { c: Confirmacao; onFechar: () => void
 }
 
 const ACAO_HIST: Record<string, string> = {
-  encarregado: "Encarregado", supervisor: "Supervisor", gerente: "Gerente operacional",
+  encarregado: "Encarregado", supervisor: "Supervisor", gerente: "Gerente operacional", diretor: "Diretor operacional",
   supervisor_incluido: "Supervisor incluído", supervisor_removido: "Supervisor removido",
 };
 
@@ -509,11 +545,15 @@ function Conteudo() {
     },
     onSuccess: (_d, v) => { toast.success(v.ok); },
     onError: (e: Error) => toast.error(e.message || "Não deu para salvar."),
-    onSettled: () => qc.invalidateQueries({ queryKey: CHAVE }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: CHAVE });
+      // O organograma geral (Presidência) muda junto: as telas dele recarregam.
+      qc.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("organograma") });
+    },
   });
   const definir = (contratos: ContratoOrg[], campo: "encarregado" | "supervisor", id: number | null, motivo: string, ok: string) =>
     gravar.mutateAsync({ rpc: "ope_org_definir", args: { p_contratos: contratos.map((c) => c.id), p_campo: campo, p_empregado: id, p_motivo: motivo || null }, ok });
-  const papel = (id: number, p: "gerente" | "supervisor", ativo: boolean, ok: string) =>
+  const papel = (id: number, p: "diretor" | "gerente" | "supervisor", ativo: boolean, ok: string) =>
     gravar.mutateAsync({ rpc: "ope_org_papel", args: { p_empregado: id, p_papel: p, p_ativo: ativo }, ok });
 
   const nomeDe = (id: number) => curto(pessoas.get(id)?.nome ?? `#${id}`);
@@ -521,9 +561,15 @@ function Conteudo() {
   const onAcao = (a: AcaoMenu, alvo: AlvoMenu) => {
     const contratos = dados?.contratos ?? [];
     switch (a) {
+      case "definir_diretor":
+        return setEscolha({
+          titulo: "Diretor operacional", descricao: "Quem fica no topo do Organograma Operacional, acima do gerente (um só; troca o atual). Vale também no organograma geral.",
+          sugestoes: [], rotuloSugestoes: "",
+          confirmar: (id) => papel(id, "diretor", true, "Diretor operacional definido."),
+        });
       case "definir_gerente":
         return setEscolha({
-          titulo: "Gerente operacional", descricao: "Quem fica no topo do Organograma Operacional (um só; troca o atual).",
+          titulo: "Gerente operacional", descricao: "Responde ao diretor operacional; os supervisores respondem a ele (um só; troca o atual). Vale também no organograma geral.",
           sugestoes: [], rotuloSugestoes: "",
           confirmar: (id) => papel(id, "gerente", true, "Gerente operacional definido."),
         });
@@ -545,7 +591,7 @@ function Conteudo() {
       case "mover_contrato_encarregado":
       case "definir_encarregado":
       case "tornar_encarregado": {
-        if (alvo.tipo !== "contrato" && alvo.tipo !== "colaborador") return;
+        if (alvo.tipo !== "contrato" && alvo.tipo !== "colaborador" && alvo.tipo !== "encarregado_contrato") return;
         const c = alvo.contrato;
         if (alvo.tipo === "colaborador") {
           return setConfirma({
@@ -573,7 +619,7 @@ function Conteudo() {
         });
       }
       case "remover_encarregado": {
-        if (alvo.tipo !== "contrato" || alvo.contrato.encarregado_id == null) return;
+        if ((alvo.tipo !== "contrato" && alvo.tipo !== "encarregado_contrato") || alvo.contrato.encarregado_id == null) return;
         const c = alvo.contrato;
         return setConfirma({
           titulo: `Tirar ${nomeDe(c.encarregado_id!)} de ${c.nome}?`,
@@ -590,12 +636,13 @@ function Conteudo() {
         });
       }
       case "trocar_supervisor_encarregado": {
-        if (alvo.tipo !== "encarregado") return;
-        const cs = contratosDoEncarregado(contratos, alvo.pessoa.id).filter((c) => c.supervisor_id === alvo.supervisorId);
+        if (alvo.tipo !== "encarregado" && alvo.tipo !== "encarregado_contrato") return;
+        const supAtual = alvo.tipo === "encarregado" ? alvo.supervisorId : alvo.contrato.supervisor_id;
+        const cs = contratosDoEncarregado(contratos, alvo.pessoa.id).filter((c) => c.supervisor_id === supAtual);
         return setEscolha({
           titulo: `Supervisor de ${curto(alvo.pessoa.nome)}`,
           descricao: `Muda o supervisor dos ${plural(cs.length, "contrato", "contratos")} dele(a) que estão aqui: ${cs.map((c) => c.nome).join(", ")}.`,
-          sugestoes: supervisores.filter((p) => p.id !== alvo.supervisorId), rotuloSugestoes: "Supervisores",
+          sugestoes: supervisores.filter((p) => p.id !== supAtual), rotuloSugestoes: "Supervisores",
           confirmar: (id, motivo) => definir(cs, "supervisor", id, motivo, `${curto(alvo.pessoa.nome)} agora responde a ${nomeDe(id)}.`),
         });
       }
@@ -628,7 +675,8 @@ function Conteudo() {
 
   const ctx: Ctx = { pessoas, podeAlterar: dados.pode_alterar, abertos, alternar, termo, onAcao };
   const g = arvore.gerente;
-  const blocos: RamoSupervisor[] = [...arvore.supervisores, ...(arvore.semSupervisor.encarregados.length || arvore.semSupervisor.semEncarregado.length ? [arvore.semSupervisor] : [])];
+  const dir = arvore.diretor;
+  const blocos: RamoSupervisor[] = [...arvore.supervisores, ...(arvore.semSupervisor.contratos.length ? [arvore.semSupervisor] : [])];
   const nPessoas = dados.contratos.reduce((a, c) => a + c.colaboradores, 0);
 
   return (
@@ -656,35 +704,13 @@ function Conteudo() {
       {!dados.pode_alterar && <p className="text-xs text-muted-foreground">Você vê o organograma; mudar encarregado e supervisor pede a permissão de alterar nesta tela.</p>}
 
       <div className="rounded-3xl border bg-[radial-gradient(circle,_hsl(var(--muted))_1px,_transparent_1px)] p-4 [background-size:20px_20px] sm:p-6">
-        {/* Topo: o gerente operacional */}
-        <div className="mx-auto w-full max-w-sm">
-          <ComMenu alvo={{ tipo: "gerente", pessoa: g }} podeAlterar={dados.pode_alterar} onAcao={onAcao}
-            className="overflow-hidden rounded-2xl bg-card shadow-[0_10px_28px_-12px_rgba(15,23,42,.4)] ring-1 ring-black/5 dark:ring-white/10">
-            <div className="flex items-center gap-2.5 bg-gradient-to-r from-emerald-700 to-emerald-600 px-3.5 py-2.5 text-white">
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-white/20"><HardHat className="h-[18px] w-[18px]" /></span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[14px] font-bold leading-tight">Operacional</span>
-                <span className="block text-[11px] text-white/80">{plural(arvore.supervisores.length, "supervisor", "supervisores")} · {plural(arvore.totalContratos, "contrato", "contratos")}</span>
-              </span>
-              <Network className="h-5 w-5 opacity-80" />
-            </div>
-            <div className="flex items-center gap-2.5 px-3.5 py-3 pr-9">
-              {g ? (
-                <>
-                  <Foto p={g} tamanho={42} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13.5px] font-semibold leading-tight">{tituloNome(g.nome)}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">Gerente operacional · {g.cargo || "—"}</span>
-                  </span>
-                </>
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  Gerente operacional não definido.{dados.pode_alterar && <> <button type="button" className="font-semibold text-primary hover:underline" onClick={() => onAcao("definir_gerente", { tipo: "gerente", pessoa: null })}>Definir</button></>}
-                </span>
-              )}
-            </div>
-          </ComMenu>
-        </div>
+        {/* Topo: DIRETOR OPERACIONAL › GERENTE OPERACIONAL (17/11/2026). */}
+        <CartaoTopo alvo={{ tipo: "diretor", pessoa: dir }} titulo="Diretor Operacional" cor="from-indigo-800 to-indigo-600" icone={Crown}
+          pessoa={dir} podeAlterar={dados.pode_alterar} onAcao={onAcao} acaoDefinir="definir_diretor" />
+        <div className="mx-auto h-6 w-0.5 bg-slate-300 dark:bg-slate-600" />
+        <CartaoTopo alvo={{ tipo: "gerente", pessoa: g }} titulo="Gerente Operacional" cor="from-emerald-700 to-emerald-600" icone={Network}
+          pessoa={g} podeAlterar={dados.pode_alterar} onAcao={onAcao} acaoDefinir="definir_gerente"
+          resumo={`${plural(arvore.supervisores.length, "supervisor", "supervisores")} · ${plural(arvore.totalContratos, "contrato", "contratos")}`} />
         <div className="mx-auto h-6 w-0.5 bg-slate-300 dark:bg-slate-600" />
 
         {blocos.length ? (
@@ -694,14 +720,14 @@ function Conteudo() {
         ) : (
           <p className="py-8 text-center text-sm text-muted-foreground">Nenhum contrato da Licitação em andamento.</p>
         )}
-        {termo && blocos.every((r) => r.pessoa && !casa(termo, r.pessoa.nome) && !r.encarregados.some((e) => casa(termo, e.pessoa.nome) || e.contratos.some((c) => casa(termo, c.nome))) && !r.semEncarregado.some((c) => casa(termo, c.nome))) && (
+        {termo && blocos.every((r) => !casa(termo, r.pessoa?.nome) && !r.encarregados.some((e) => casa(termo, e.pessoa.nome)) && !r.contratos.some((c) => casa(termo, c.nome))) && (
           <p className="pt-6 text-center text-sm text-muted-foreground">Nada com “{busca.trim()}”.</p>
         )}
       </div>
 
       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Users className="h-3.5 w-3.5" />
-        Botão direito (ou ⋮) em pessoa ou contrato abre as ações. O encarregado definido aqui é quem confere o ponto, recebe os documentos do RH e vê o contrato no Solicitar Treinamento.
+        Botão direito (ou ⋮) em pessoa ou contrato abre as ações. O encarregado definido aqui é quem confere o ponto, recebe os documentos do RH e vê o contrato no Solicitar Treinamento. Tudo o que muda aqui muda também no organograma geral (quem responde a quem e o supervisor de cada contrato).
       </p>
 
       {escolha && <DialogEscolherPessoa e={escolha} onFechar={() => setEscolha(null)} />}
@@ -715,7 +741,7 @@ export default function OrganogramaOperacional() {
   return (
     <div className="space-y-2">
       <PageHeader module="Operacional" breadcrumb={["Organograma", "Operacional"]} title="Organograma Operacional"
-        subtitle="Gerente › supervisores › encarregados › contratos › colaboradores. Fonte do encarregado de cada contrato." />
+        subtitle="Diretor › gerente › supervisores › contratos › encarregado e colaboradores. Fonte do encarregado de cada contrato; vale também no organograma geral." />
       <AcessoGate menu={MENU} acao="visualizar" fallback={<p className="py-10 text-center text-sm text-muted-foreground">Você não tem acesso a esta tela. Peça em Administração › Acesso por Usuário.</p>}>
         <Conteudo />
       </AcessoGate>
