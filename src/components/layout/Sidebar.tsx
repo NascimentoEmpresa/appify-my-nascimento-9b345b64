@@ -1483,6 +1483,7 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
         { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
+        { label: "Exames Toxicológicos", to: "/app/sst/exames-toxicologicos", icon: FlaskConical },
       ],
     },
   ],
