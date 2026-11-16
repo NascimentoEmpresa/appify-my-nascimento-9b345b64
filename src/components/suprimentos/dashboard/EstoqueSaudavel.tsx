@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   Banknote,
@@ -434,6 +435,30 @@ function FiltrosLocais({
   onAbrirPremissas: () => void;
 }) {
   const fecharMes = useFecharMesEstoque(empresaId);
+  const navegar = useNavigate();
+
+  const prepararPedido = () => {
+    if (!empresaId) return;
+    const itens = dados.itens
+      .filter((item) => item.comprar > 0)
+      .map((item) => ({
+        baseId: item.base_id,
+        tamanho: item.tamanho,
+        nome: item.item,
+        quantidade: item.comprar,
+        valorUnitario: item.valor_unitario,
+      }));
+    if (!itens.length) {
+      toast.info("Não há quantidade sugerida para comprar com estes filtros.");
+      return;
+    }
+    sessionStorage.setItem("sup:pedido-compra-preparacao", JSON.stringify({
+      empresaId,
+      origem: "estoque_saudavel",
+      itens,
+    }));
+    navegar("/app/suprimentos/pedidos-compra?novo=estoque");
+  };
 
   const baixarCsv = () => {
     const csv = csvDaCompra(dados.itens);
@@ -520,6 +545,11 @@ function FiltrosLocais({
         <AcessoGate menu="sup_estoque_saudavel" acao="exportar">
           <Button size="sm" variant="outline" className="gap-1.5" onClick={baixarCsv}>
             <Download className="h-4 w-4" /> Compra em CSV
+          </Button>
+        </AcessoGate>
+        <AcessoGate menu="sup_compra_pedido" acao="incluir">
+          <Button size="sm" className="gap-1.5" onClick={prepararPedido}>
+            <ShoppingCart className="h-4 w-4" /> Gerar pedido
           </Button>
         </AcessoGate>
         <AcessoGate menu="sup_estoque_saudavel" acao="alterar">
