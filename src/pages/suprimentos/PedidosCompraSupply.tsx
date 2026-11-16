@@ -10,15 +10,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { AcessoGate } from "@/components/auth/AcessoGate";
 import { PainelOrcamentoCompras } from "./PainelOrcamentoCompras";
 import {
   useAtualizarPedidoCompra, useAtualizarValorItemPedido, useCancelarPedidoCompra, useEnviarPedidoCompra,
   usePedidoCompra, usePedidosCompra,
 } from "@/hooks/useCompraPedido";
-import { baixarPdfPedidoCompra } from "@/lib/suprimentos/pedidoCompraPdf";
+import { baixarPdfPedidoCompra, imprimirPdfPedidoCompra } from "@/lib/suprimentos/pedidoCompraPdf";
 import { EnviarPedidoFornecedor } from "@/components/suprimentos/EnviarPedidoFornecedor";
+import { NovoPedidoCompraDialog } from "@/components/suprimentos/NovoPedidoCompraDialog";
+import type { PreparacaoPedidoCompra } from "@/lib/suprimentos/pedidoCompraDireto";
 import { obterValorSugeridoUltimoPreco, converterQuantidadeDigitada } from "@/lib/suprimentos/compra";
-import { Ban, Download, Eye, Loader2, Search, Send, ShieldAlert } from "lucide-react";
+import { Ban, Download, Eye, Loader2, Plus, Printer, Search, Send, ShieldAlert } from "lucide-react";
 
 const ROTULOS: Record<string, string> = {
   rascunho: "Rascunho", enviado: "Enviado", aguardando_entrega: "Aguardando entrega",
@@ -38,6 +41,9 @@ export default function PedidosCompraSupply() {
   const { data: pedidos = [], isLoading } = usePedidosCompra();
   const [busca, setBusca] = useState("");
   const [status, setStatus] = useState("todos");
+  const [novoAberto, setNovoAberto] = useState(parametros.get("novo") === "estoque");
+  const [preparacao, setPreparacao] = useState<PreparacaoPedidoCompra | null>(null);
+  const preparacaoLida = useRef(false);
   const [pedidoId, setPedidoId] = useState<string | null>(parametros.get("pedido"));
   const { data: pedido, isLoading: carregandoPedido, error: erroPedido } = usePedidoCompra(pedidoId);
   const atualizar = useAtualizarPedidoCompra();
@@ -50,6 +56,19 @@ export default function PedidosCompraSupply() {
     local_entrega: "", forma_pagamento: "", condicoes_negociadas: "",
     frete_incluso: false, observacoes: "",
   });
+
+  useEffect(() => {
+    if (parametros.get("novo") !== "estoque" || preparacaoLida.current) return;
+    preparacaoLida.current = true;
+    try {
+      const salvo = sessionStorage.getItem("sup:pedido-compra-preparacao");
+      if (salvo) setPreparacao(JSON.parse(salvo) as PreparacaoPedidoCompra);
+      sessionStorage.removeItem("sup:pedido-compra-preparacao");
+    } catch {
+      setPreparacao(null);
+    }
+    setNovoAberto(true);
+  }, [parametros]);
 
   useEffect(() => {
     if (!pedido) return;
@@ -122,7 +141,14 @@ export default function PedidosCompraSupply() {
     <div className="space-y-6">
       <PageHeader
         title="Pedidos de Compra"
-        subtitle="Pedidos gerados a partir das cotações aprovadas do Malote."
+        subtitle="Formalize compras negociadas diretamente ou geradas pelas cotações aprovadas do Malote."
+        actions={
+          <AcessoGate menu="sup_compra_pedido" acao="incluir">
+            <Button onClick={() => { setPreparacao(null); setNovoAberto(true); }}>
+              <Plus className="mr-2 h-4 w-4" />Novo pedido
+            </Button>
+          </AcessoGate>
+        }
       />
 
       {/* Fica antes da lista de propósito: a pergunta "posso emitir mais este
@@ -211,6 +237,12 @@ export default function PedidosCompraSupply() {
                 <span className="ml-auto text-lg font-bold">
                   {moeda(pedido.status === "rascunho" ? totalEmEdicao : pedido.valor_total)}
                 </span>
+              </div>
+
+              <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-sm sm:grid-cols-3">
+                <div><span className="text-xs text-muted-foreground">Empresa</span><p className="font-medium">{pedido.empresa?.nome_fantasia ?? pedido.empresa?.razao_social ?? "—"}</p></div>
+                <div><span className="text-xs text-muted-foreground">Comprador responsável</span><p className="font-medium">{pedido.comprador_nome ?? pedido.enviado_por_nome ?? "—"}</p></div>
+                <div><span className="text-xs text-muted-foreground">Cotação / negociação</span><p className="font-medium">{pedido.cotacao_em ? new Date(pedido.cotacao_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—"}</p></div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -324,10 +356,26 @@ export default function PedidosCompraSupply() {
               />
             )}
             {pedido && <Button variant="outline" onClick={() => baixarPdfPedidoCompra(pedido)}><Download className="mr-2 h-4 w-4" />Baixar PDF</Button>}
+            {pedido && <Button variant="outline" onClick={() => imprimirPdfPedidoCompra(pedido)}><Printer className="mr-2 h-4 w-4" />Imprimir</Button>}
             <Button variant="outline" onClick={fechar}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <NovoPedidoCompraDialog
+        aberto={novoAberto}
+        preparacao={preparacao}
+        fechar={() => {
+          setNovoAberto(false);
+          setPreparacao(null);
+          if (parametros.get("novo")) setParametros({});
+        }}
+        aoCriar={(id) => {
+          setNovoAberto(false);
+          setPreparacao(null);
+          abrir(id);
+        }}
+      />
     </div>
   );
 }

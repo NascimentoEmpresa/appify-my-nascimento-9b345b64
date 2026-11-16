@@ -9,7 +9,10 @@ const dinheiro = (valor: number | null | undefined) =>
 const data = (valor: string | null | undefined) =>
   valor ? new Date(`${valor.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR") : "Não informada";
 
-export function baixarPdfPedidoCompra(pedido: CompraPedido) {
+const dataHora = (valor: string | null | undefined) =>
+  valor ? new Date(valor).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Não informada";
+
+export function criarPdfPedidoCompra(pedido: CompraPedido) {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const largura = doc.internal.pageSize.getWidth();
   const itens = pedido.itens ?? [];
@@ -58,6 +61,12 @@ export function baixarPdfPedidoCompra(pedido: CompraPedido) {
         { content: pedido.condicoes_negociadas ?? "Não informada", colSpan: 3 },
       ],
       [
+        { content: "Comprador responsável", styles: { fontStyle: "bold", fillColor: [235, 240, 248] } },
+        pedido.comprador_nome ?? pedido.enviado_por_nome ?? "Não informado",
+        { content: "Cotação / negociação", styles: { fontStyle: "bold", fillColor: [235, 240, 248] } },
+        dataHora(pedido.cotacao_em ?? pedido.created_at),
+      ],
+      [
         { content: "Local de entrega", styles: { fontStyle: "bold", fillColor: [235, 240, 248] } },
         pedido.local_entrega ?? "Não informado",
         { content: "Frete", styles: { fontStyle: "bold", fillColor: [235, 240, 248] } },
@@ -66,8 +75,8 @@ export function baixarPdfPedidoCompra(pedido: CompraPedido) {
     ],
     styles: { fontSize: 8, cellPadding: 2 },
     columnStyles: {
-      0: { cellWidth: 34 }, 1: { cellWidth: 94 },
-      2: { cellWidth: 34 }, 3: { cellWidth: 94 },
+      0: { cellWidth: 32 }, 1: { cellWidth: 102 },
+      2: { cellWidth: 32 }, 3: { cellWidth: 102.7778 },
     },
   });
 
@@ -90,9 +99,9 @@ export function baixarPdfPedidoCompra(pedido: CompraPedido) {
     styles: { fontSize: 7.5, cellPadding: 2.2, valign: "middle" },
     headStyles: { fillColor: [10, 30, 60], fontStyle: "bold" },
     columnStyles: {
-      0: { cellWidth: 20 }, 1: { cellWidth: 28 }, 2: { cellWidth: 100 },
+      0: { cellWidth: 20 }, 1: { cellWidth: 26 }, 2: { cellWidth: 119.7778 },
       3: { cellWidth: 14, halign: "center" }, 4: { cellWidth: 25, halign: "right" },
-      5: { cellWidth: 34, halign: "right" }, 6: { cellWidth: 34, halign: "right" },
+      5: { cellWidth: 32, halign: "right" }, 6: { cellWidth: 32, halign: "right" },
     },
     foot: [["", "", "", "", "", "TOTAL GERAL", dinheiro(totalLinhas)]],
     footStyles: { fillColor: [235, 240, 248], textColor: [10, 30, 60], fontStyle: "bold" },
@@ -107,5 +116,24 @@ export function baixarPdfPedidoCompra(pedido: CompraPedido) {
     doc.text(pedido.observacoes, 14, finalTabela + 13, { maxWidth: largura - 28 });
   }
 
-  doc.save(`${pedido.numero}.pdf`);
+  doc.setFontSize(7);
+  doc.setTextColor(90, 100, 115);
+  doc.text(
+    `Emitido pelo ERP em ${new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`,
+    largura - 14,
+    doc.internal.pageSize.getHeight() - 7,
+    { align: "right" },
+  );
+
+  return doc;
+}
+
+export function baixarPdfPedidoCompra(pedido: CompraPedido) {
+  criarPdfPedidoCompra(pedido).save(`${pedido.numero}.pdf`);
+}
+
+export function imprimirPdfPedidoCompra(pedido: CompraPedido) {
+  const doc = criarPdfPedidoCompra(pedido);
+  doc.autoPrint();
+  window.open(doc.output("bloburl"), "_blank", "noopener,noreferrer");
 }
