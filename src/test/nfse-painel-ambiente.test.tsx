@@ -30,6 +30,21 @@ afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; es
   estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("explica os tipos opcionais e mantém valor legado inválido visível para revisão", () => {
+    estado.habilitado = true;
+    const parametros = {...parametrosNfse(),codigo_integracao_municipal:"8111700",tipo_operacao:"0",tipo_ente_governamental:"0"};
+    estado.solicitacoes = [{id:"anterior",ambiente:"producao",estado:"rejeitada",serie:1041,numero_dps:2,atualizado_em:"2026-11-16T10:00:00Z",dados:{parametros}} as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const ente=screen.getByLabelText("Tipo de ente governamental, se aplicável");
+    const operacao=screen.getByLabelText("Tipo de operação, se aplicável");
+    expect(ente).not.toBeRequired(); expect(operacao).not.toBeRequired();
+    expect(ente).toHaveValue("0"); expect(screen.getAllByRole("option",{name:"Valor inválido: 0 — revise"})).toHaveLength(2);
+    expect(screen.getByRole("option",{name:"1 — União"})).toBeInTheDocument();
+    expect(screen.getByRole("option",{name:"3 — Distrito Federal"})).toBeInTheDocument();
+    fireEvent.change(ente,{target:{value:"1"}}); expect(ente).toHaveValue("1");
+    expect(estado.enviar).not.toHaveBeenCalled();
+  });
   it("impede entrar na fila com CST de um dígito quando a nota tem PIS/COFINS", async () => {
     estado.habilitado = true;
     const parametros = { ...parametrosNfse(), codigo_integracao_municipal:"8111700", cst_pis_cofins:"0" };

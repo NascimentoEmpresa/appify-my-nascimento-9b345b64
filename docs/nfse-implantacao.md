@@ -138,6 +138,10 @@ Na conferência completa desse pedido, `tipo_operacao: "0"` e
 valida os domínios de 1 a 5 e de 1 a 4, respectivamente, aceitando vazio nos
 campos opcionais quando não aplicáveis. O enquadramento continua sob revisão
 fiscal, sem preencher valores automaticamente a partir de outra nota.
+Os tipos são exibidos com seus nomes oficiais em seletores opcionais. No tipo
+de ente, 1 é União e 3 é Distrito Federal: um código histórico aceito no XML
+não comprova que o enquadramento estava correto. Valores legados inválidos
+continuam visíveis para revisão, sem troca silenciosa por outro código.
 
 O job de produção encerrou às 04h42 (Brasília), após três falhas consecutivas de
 infraestrutura; a solicitação posterior ficou pendente, com zero tentativas e sem

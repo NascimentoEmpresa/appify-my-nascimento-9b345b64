@@ -37,10 +37,10 @@ function Campo({ titulo, valor, alterar, obrigatorio = true, tipo = "text", maxi
     <Input value={valor} onChange={e => alterar(e.target.value)} readOnly={somenteLeitura} required={obrigatorio} type={tipo} maxLength={maximo} step={tipo === "number" ? "0.01" : undefined} min={tipo === "number" ? "0" : undefined} />
   </Label>;
 }
-function Escolha({ titulo, valor, alterar, opcoes }: { titulo: string; valor: string; alterar: (valor: string) => void; opcoes: [string,string][] }) {
+function Escolha({ titulo, valor, alterar, opcoes, obrigatorio = true }: { titulo: string; valor: string; alterar: (valor: string) => void; opcoes: [string,string][]; obrigatorio?: boolean }) {
   return <Label className="grid gap-2 text-sm font-normal">{titulo}
-    <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={valor} onChange={e => alterar(e.target.value)} required>
-      <option value="">Selecione</option>{opcoes.map(([codigo,nome]) => <option key={codigo} value={codigo}>{nome}</option>)}
+    <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={valor} onChange={e => alterar(e.target.value)} required={obrigatorio}>
+      <option value="">Selecione</option>{valor && !opcoes.some(([codigo]) => codigo === valor) && <option value={valor} disabled>Valor inválido: {valor} — revise</option>}{opcoes.map(([codigo,nome]) => <option key={codigo} value={codigo}>{nome}</option>)}
     </select>
   </Label>;
 }
@@ -163,7 +163,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Escolha titulo="Retenção do ISS" valor={parametros.iss_retido} alterar={v => salvarCampo("iss_retido",v)} opcoes={[["1","Não retido"],["2","Retido pelo tomador"]]} />
         {(Number(nf.pis_total) + Number(nf.cofins_total)) > 0 && <>
           <Campo titulo="CST de PIS/COFINS" valor={parametros.cst_pis_cofins} alterar={v => salvarCampo("cst_pis_cofins",v)} maximo={2} />
-          <p className="text-sm text-muted-foreground md:col-span-2">Informe os dois dígitos do código confirmado pelo responsável fiscal, incluindo o zero inicial.</p>
+          <p className="text-sm text-muted-foreground md:col-span-2">Informe os dois dígitos confirmados pelo responsável fiscal, incluindo o zero inicial. O código consta no grupo PIS/COFINS do XML de uma nota anterior.</p>
           <Escolha titulo="Contribuições retidas" valor={parametros.retencao_pis_cofins} alterar={v => salvarCampo("retencao_pis_cofins",v)} opcoes={[["1","PIS/COFINS retidos"],["3","PIS/COFINS/CSLL retidos"],["4","PIS/COFINS retidos, CSLL não retido"]]} />
         </>}
         <Label className="grid gap-2 md:col-span-3">Descrição do serviço<Textarea required maxLength={2000} rows={4} value={parametros.descricao} onChange={e => salvarCampo("descricao",e.target.value)} /></Label>
@@ -173,8 +173,8 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Campo titulo="Classificação tributária de IBS/CBS" valor={parametros.ibs_classificacao} alterar={v => salvarCampo("ibs_classificacao",v)} maximo={6} />
         <Campo titulo="Indicador da operação" valor={parametros.ibs_indicador_operacao} alterar={v => salvarCampo("ibs_indicador_operacao",v)} maximo={6} />
         <Escolha titulo="Consumidor final" valor={parametros.consumidor_final} alterar={v => salvarCampo("consumidor_final",v)} opcoes={[["0","Não"],["1","Sim"]]} />
-        <Campo titulo="Tipo de operação, se aplicável" valor={parametros.tipo_operacao} alterar={v => salvarCampo("tipo_operacao",v)} obrigatorio={false} maximo={1} />
-        <Campo titulo="Tipo de ente governamental, se aplicável" valor={parametros.tipo_ente_governamental} alterar={v => salvarCampo("tipo_ente_governamental",v)} obrigatorio={false} maximo={1} />
+        <Escolha titulo="Tipo de operação, se aplicável" valor={parametros.tipo_operacao} alterar={v => salvarCampo("tipo_operacao",v)} obrigatorio={false} opcoes={[["1","1 — Fornecimento com pagamento posterior"],["2","2 — Recebimento com fornecimento já realizado"],["3","3 — Fornecimento com pagamento já realizado"],["4","4 — Recebimento com fornecimento posterior"],["5","5 — Fornecimento e recebimento concomitantes"]]} />
+        <Escolha titulo="Tipo de ente governamental, se aplicável" valor={parametros.tipo_ente_governamental} alterar={v => salvarCampo("tipo_ente_governamental",v)} obrigatorio={false} opcoes={[["1","1 — União"],["2","2 — Estado"],["3","3 — Distrito Federal"],["4","4 — Município"]]} />
         <Campo titulo="Tributos aproximados federais (R$)" valor={parametros.tributos_aproximados_federais} alterar={v => salvarCampo("tributos_aproximados_federais",v)} tipo="number" />
         <Campo titulo="Tributos aproximados estaduais (R$)" valor={parametros.tributos_aproximados_estaduais} alterar={v => salvarCampo("tributos_aproximados_estaduais",v)} tipo="number" />
         <Campo titulo="Tributos aproximados municipais (R$)" valor={parametros.tributos_aproximados_municipais} alterar={v => salvarCampo("tributos_aproximados_municipais",v)} tipo="number" />
