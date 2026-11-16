@@ -680,8 +680,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         // Ativos/Contratos foi para o Operacional em 03/11/2026 (mig 20261103005100).
-        // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
-        { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
+        // Hierarquia de Postos removida em 17/11/2026 (mig 20261117000300): o
+        // encarregado de cada contrato vem do Organograma Operacional.
         // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
         { label: "Rateio de Despesas", to: "/app/rh/rateio-despesas", icon: PieChart },
       ],

@@ -8,8 +8,8 @@ import {
 // provadas no banco (PostgreSQL 18 descartável) — aqui, o espelho da tela.
 
 const p = (id: number, nome: string, cargo = "", situacao = "Trabalhando"): PessoaOrg => ({ id, nome, cargo, situacao });
-const c = (id: string, nome: string, enc: number | null, sup: number | null, postos: number[] = [], colab = 5): ContratoOrg => ({
-  id, nome, status: "ativo", encarregado_id: enc, supervisor_id: sup, colaboradores: colab, encarregados_postos: postos,
+const c = (id: string, nome: string, enc: number | null, sup: number | null, colab = 5): ContratoOrg => ({
+  id, nome, status: "ativo", encarregado_id: enc, supervisor_id: sup, colaboradores: colab,
 });
 
 const pessoas = [
@@ -58,23 +58,19 @@ describe("hierarquia: gerente › supervisores › encarregados › contratos", 
   });
 });
 
-describe("fonte do encarregado: organograma primeiro, Hierarquia de Postos de reserva", () => {
+describe("fonte do encarregado: só o organograma (Hierarquia de Postos removida)", () => {
   const mapa = new Map(pessoas.map((x) => [x.id, x]));
 
-  it("definido no organograma vale, mesmo com a Hierarquia apontando outro", () => {
-    expect(encarregadoEfetivo(c("a", "UFFS", 11, 2, [10]), mapa)).toEqual({ ids: [11], origem: "organograma" });
+  it("definido no organograma é o encarregado", () => {
+    expect(encarregadoEfetivo(c("a", "UFFS", 11, 2), mapa)).toEqual({ ids: [11], origem: "organograma" });
   });
 
-  it("sem definição, vale a Hierarquia de Postos", () => {
-    expect(encarregadoEfetivo(c("a", "UFFS", null, 2, [10, 10]), mapa)).toEqual({ ids: [10], origem: "postos" });
+  it("sem definição: ninguém (não há mais reserva)", () => {
+    expect(encarregadoEfetivo(c("a", "UFFS", null, 2), mapa)).toEqual({ ids: [], origem: "nenhum" });
   });
 
-  it("encarregado demitido devolve o contrato à reserva", () => {
-    expect(encarregadoEfetivo(c("a", "UFFS", 12, 2, [10]), mapa)).toEqual({ ids: [10], origem: "postos" });
-  });
-
-  it("sem nada: ninguém", () => {
-    expect(encarregadoEfetivo(c("a", "UFFS", null, 2, []), mapa)).toEqual({ ids: [], origem: "nenhum" });
+  it("encarregado demitido não conta", () => {
+    expect(encarregadoEfetivo(c("a", "UFFS", 12, 2), mapa)).toEqual({ ids: [], origem: "nenhum" });
   });
 });
 
