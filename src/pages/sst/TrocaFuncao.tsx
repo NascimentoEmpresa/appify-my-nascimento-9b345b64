@@ -6,10 +6,10 @@ export default function TrocaFuncao() {
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
-        title="Mudança de Função — ASO"
+        title="ASO Mudança de Função"
         subtitle="Marque o ASO da mudança de função — ou dispense, quando a função nova não exige exame. Nos dois casos segue para o RH alterar na Senior."
         module="SST"
-        breadcrumb={["Mudança de Função — ASO"]}
+        breadcrumb={["ASO Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
       />
       <PainelTrocaFuncao etapa="sst" />

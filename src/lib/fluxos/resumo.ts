@@ -113,7 +113,7 @@ const trocaFuncao: Fluxo = {
     },
     {
       quem: "SST", faz: "Marca o ASO — ou dispensa, quando a função nova não exige exame novo.",
-      onde: "SST › Mudança de Função — ASO",
+      onde: "SST › ASO Mudança de Função",
       status: "Pendente SST",
     },
     {

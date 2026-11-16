@@ -46,7 +46,7 @@ import { conferirExcecaoComDespesa, PARAM_EXCECAO, type ExcecaoValidada } from "
 import { validarSenhaExcecao } from "@/hooks/useMaloteExcecao";
 import { supabase } from "@/integrations/supabase/client";
 import { DimensoesRateio, RateioGrid } from "./RateioGrid";
-import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
+import { erroFornecedorNoRateio, erroEmpresaNoRateio, erroContratoNoRateio } from "./rateioValidacao";
 import { PadraoLinhaRateio, acharFornecedorPorNome, rateioInicialComPadrao } from "./rateioPadrao";
 
 // SIS-2026-0263 (Iury): "colocar a possibilidade de escolher de 1 a 30 para
@@ -465,6 +465,10 @@ export function PainelDespesaMalote({
         linhasRateio.map((l) => ({ empresa_id: l.empresa_id, exigeEmpresa: true })),
       );
       if (erroEmpresa) return erroEmpresa;
+      // SIS-2026-0905: classificação do tipo contrato exige o Contrato na linha (é dele que vem o Centro de Custo no Fluxo de Caixa).
+      const erroContrato = erroContratoNoRateio(linhasRateio, (i) =>
+        classificacoesPorLinha?.length ? classificacoesPorLinha.find((c) => c.id === linhasRateio[i]?.classificacao_id)?.tipo : classificacaoTipo);
+      if (erroContrato) return erroContrato;
       if (parcelado === "sim") {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
         const n = Number(quantidadeParcelas);
