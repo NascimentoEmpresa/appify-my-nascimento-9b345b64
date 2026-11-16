@@ -96,7 +96,8 @@ Você recebe um JSON só com AGREGADOS:
 - resumo gerencial separando problemas da EMPRESA (liderança/encarregado, salário, sobrecarga, colegas, concorrência), dos FISCAIS do órgão e da ESTRUTURA do órgão público;
 - pontos de atenção (grupos acima do geral);
 - por contrato / função / posto: respostas, satisfação, insatisfação, motivo de saída mais importante, prioridade mais pedida e o TURNOVER do mesmo recorte (turnover mensal médio %, demissões no período, efetivo médio);
-- contratos com rotatividade e pouca ou nenhuma resposta.
+- contratos com rotatividade e pouca ou nenhuma resposta;
+- "cruzamentos" (desde 16/11/2026 a pesquisa pergunta Região de Atuação, área de trabalho, gênero e faixa etária, e NÃO pergunta mais o contrato — por contrato/posto/função só existem as respostas antigas): por região, por área, por gênero × faixa etária e o impacto da liderança (quem desaprova a gestão: onde está e se pretende sair). "regra_cruzamentos" explica de quais perguntas saem intenção, aprovação e motivo.
 "satisfacao_pct"/"insatisfacao_pct" = % das avaliações das perguntas 3 a 7 que foram positivas/negativas. "recomendacao_pts" = % "Sim, com certeza" − % "Não indicaria".
 Grupo com menos de "minimo_por_grupo" respostas não aparece detalhado (anonimato) — se perguntarem dele, diga isso.
 Se "periodo_turnover" vier vazio, a pessoa não tem acesso à rotatividade: responda só com a pesquisa e diga isso quando perguntarem de turnover.
@@ -115,6 +116,10 @@ const PEDIDO_ANALISE_PERMANENCIA = `Faça o resumo gerencial da pesquisa com est
 (respostas, satisfação, recomendação, turnover do período)
 ## Onde a rotatividade se concentra
 (contratos/postos/funções com maior turnover e o que as pessoas de lá disseram)
+## Regiões, áreas e perfil
+(onde o risco de sair é maior por região, área, gênero e faixa etária, com o motivo principal)
+## Impacto da liderança
+(quem desaprova a gestão: onde está e se pretende sair — problema da empresa ou do supervisor local?)
 ## Problemas da empresa
 ## Problemas com os fiscais
 ## Estrutura do órgão público
@@ -196,7 +201,13 @@ Deno.serve(async (req) => {
       .slice(-10).map((m: any) => ({ role: m.role, content: String(m.content).slice(0, 4000) }));
     const f = corpo?.filtro ?? {};
     const txt = (v: unknown, max = 120) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
-    const filtro: Filtro = { contrato: txt(f.contrato), posto: txt(f.posto), funcao: txt(f.funcao), de: txt(f.de, 7), ate: txt(f.ate, 7) };
+    const umDe = <T extends string>(v: unknown, ok: readonly T[]) => (ok as readonly string[]).includes(String(v)) ? v as T : null;
+    const filtro: Filtro = {
+      contrato: txt(f.contrato), posto: txt(f.posto), funcao: txt(f.funcao), de: txt(f.de, 7), ate: txt(f.ate, 7),
+      // Identificação e eixos dos cruzamentos (SIS-2026-0756).
+      regiao: txt(f.regiao, 40), area: txt(f.area, 40), genero: txt(f.genero, 40), faixa: txt(f.faixa, 40),
+      intencao: umDe(f.intencao, ["fica", "duvida", "sai"] as const), aprovacao: umDe(f.aprovacao, ["aprova", "neutro", "desaprova"] as const),
+    };
 
     const provs = provedores();
     if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
