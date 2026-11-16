@@ -25,8 +25,19 @@
 // duas contas que podem divergir — e a que a vaga usa na hora de gravar
 // continuaria sendo a de lá, então a daqui só enganaria quem preenche.
 import { avaliarPrazo, dataMinimaVaga, hojeIso, MIN_DIAS_ANTECEDENCIA, fmtBr } from "@/lib/recrutamento/vagaRegras";
+import { beneficiosDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
+import { herancaDaConvencao, percentualTexto, type RespostaReferencia } from "@/lib/licitacoes/convencoes";
 
 export { dataMinimaVaga, MIN_DIAS_ANTECEDENCIA };
+
+/** Um provento de "Outros" (SIS-2026-0884) — digitado à mão, valor em R$/mês. */
+export interface ProventoForm {
+  descricao: string;
+  valor: string;
+}
+
+/** Campos que o posto preenche sozinho (SIS-2026-0884). */
+export type CampoAuto = "salario" | "insalubridade_pct" | "periculosidade_pct" | "beneficios";
 
 /** Uma linha do quadro, do jeito que o formulário a edita (tudo string). */
 export interface LinhaQuadroForm {
@@ -57,6 +68,15 @@ export interface LinhaQuadroForm {
   exp_minima_qual: string;
   observacao: string;
   gerar_vagas: boolean;
+  /** Proventos fora do convencional — vão para a vaga (SIS-2026-0884). */
+  outros_proventos: ProventoForm[];
+  /**
+   * O último valor que o PREENCHIMENTO AUTOMÁTICO pôs em cada campo. Não vai
+   * para o banco: serve só para saber se o que está no campo ainda é o que o
+   * posto trouxe (pode ser atualizado) ou se alguém digitou por cima (nunca
+   * mais é tocado sem o botão). Ver `aplicarPreenchimento`.
+   */
+  auto?: Partial<Record<CampoAuto, string>>;
 }
 
 export const LINHA_VAZIA: LinhaQuadroForm = {
@@ -66,6 +86,7 @@ export const LINHA_VAZIA: LinhaQuadroForm = {
   estado: "", cidade: "", local_exato: "", data_inicio_prevista: "",
   motivo_vaga: "Admissão", req_obrigatorios: "", req_desejaveis: "",
   exp_minima: "Não", exp_minima_qual: "", observacao: "", gerar_vagas: true,
+  outros_proventos: [],
 };
 
 // ── Números em pt-BR ────────────────────────────────────────────────────
@@ -157,8 +178,43 @@ export function erroDaLinha(l: LinhaQuadroForm, hoje = hojeIso()): string | null
   if (pct < 0 || pct > 100) return `${rotuloDaLinha(l, 0)}: a insalubridade vai de 0 a 100%.`;
   const per = paraNumero(l.periculosidade_pct);
   if (per < 0 || per > 100) return `${rotuloDaLinha(l, 0)}: a periculosidade vai de 0 a 100%.`;
+  const outro = erroDosOutros(l.outros_proventos);
+  if (outro) return `${rotuloDaLinha(l, 0)}: ${outro}`;
   return null;
 }
+
+// ── "Outros" (SIS-2026-0884) ────────────────────────────────────────────
+// Item em branco (sem descrição e sem valor) é ignorado — é a linha que a
+// pessoa abriu e não usou. Meio preenchido é erro: a mesma regra que
+// `contrato_quadro_outros_limpos` aplica no banco.
+const proventoEmBranco = (p: ProventoForm) => !p.descricao.trim() && paraNumero(p.valor) === 0;
+
+export function erroDosOutros(outros: ProventoForm[] | undefined): string | null {
+  for (const p of outros ?? []) {
+    if (proventoEmBranco(p)) continue;
+    if (!p.descricao.trim()) return `item de "Outros" sem descrição.`;
+    if (paraNumero(p.valor) <= 0) return `o item "${p.descricao.trim()}" de "Outros" precisa de valor maior que zero.`;
+  }
+  return null;
+}
+
+/**
+ * "Outros" como a vaga mostra: "Ajuda de custo R$ 150,00/mês · Bônus R$ 80,00/mês".
+ * Aceita o jsonb da vaga (`SISTEMA_RECRUTAMENTO.outros_proventos`) como vier.
+ */
+export function outrosEmTexto(outros: unknown): string {
+  if (!Array.isArray(outros)) return "";
+  return outros
+    .map(p => ({ d: String((p as { descricao?: unknown })?.descricao ?? "").trim(), v: paraNumero((p as { valor?: unknown })?.valor) }))
+    .filter(p => p.d && p.v > 0)
+    .map(p => `${p.d} ${brl(p.v)}/mês`)
+    .join(" · ");
+}
+
+/** "Outros" pronto para o banco: só os itens preenchidos, valor numérico. */
+export const outrosParaPayload = (outros: ProventoForm[] | undefined) =>
+  (outros ?? []).filter(p => !proventoEmBranco(p))
+    .map(p => ({ descricao: p.descricao.trim(), valor: paraNumero(p.valor) }));
 
 /** Nome normalizado do posto — mesma régua do `sup_norm_nome` do banco. */
 export const chavePosto = (s: string): string =>
@@ -281,6 +337,7 @@ export function paraPayload(linhas: LinhaQuadroForm[]) {
     exp_minima_qual: l.exp_minima_qual.trim() || null,
     observacao: l.observacao.trim() || null,
     gerar_vagas: !!l.gerar_vagas,
+    outros_proventos: outrosParaPayload(l.outros_proventos),
     ordem: i + 1,
   }));
 }
@@ -478,4 +535,234 @@ export function aplicarHerancaNoQuadro(
       ? l
       : { ...l, beneficios: h.beneficios, insalubridade_pct: h.insalubridade_pct, periculosidade_pct: h.periculosidade_pct }
   ));
+}
+
+// ── O posto preenche a linha (SIS-2026-0884, 16/11/2026) ────────────────
+//
+// Pedido: escolhido o posto, salário, insalubridade, periculosidade e
+// benefícios vêm sozinhos — o contrato de 750 postos não pode depender de
+// clicar "Puxar da Planilha" 750 vezes. A remuneração de TODOS os postos do
+// contrato chega numa chamada (`lic_quadro_remuneracao_do_contrato`, mig
+// 20261116210000), crua como a Planilha de Custo guarda (R$). As regras que
+// transformam o R$ da planilha no que a vaga pede ficam aqui.
+//
+// DECISÕES (a confirmar com o solicitante — o padrão é o mais seguro):
+//   1. Nada que alguém digitou é sobrescrito automaticamente. O automático só
+//      preenche campo VAZIO ou campo que ainda tem o valor que ele mesmo pôs
+//      (`auto`). Por isso um quadro já salvo não muda o salário sozinho ao ser
+//      reaberto; "Atualizar da Planilha" (o botão) é quem força.
+//   2. Valor que a planilha ou a convenção não têm fica VAZIO — nunca
+//      inventado nem calculado sobre uma base suposta.
+//   3. Periculosidade (%) = R$ periculosidade ÷ salário base × 100: a lei põe a
+//      periculosidade sobre o salário base, então a conta é a própria regra.
+//   4. Insalubridade (%): a planilha guarda R$, e a base costuma ser o salário
+//      mínimo (nacional, regional ou o da CCT) — o banco não tem essa tabela.
+//      Ordem: % da convenção vinculada ao posto; senão, R$ ÷ salário base SÓ
+//      quando dá exatamente um grau legal (10, 20 ou 40%); senão fica vazio e
+//      a tela mostra o R$ da planilha para quem preenche informar o %.
+//   5. Benefícios: convenção do CONTRATO (já tratada por
+//      `aplicarHerancaNoQuadro`) > convenção vinculada ao POSTO na Planilha de
+//      Custo > benefícios da própria planilha (VT/VA/... em R$/mês).
+//   6. Add. Líder, Add. Not. Reduzida, Add. Noturno, Horas Extras e DSR da
+//      planilha NÃO entram sozinhos em "Outros": na planilha eles são custo
+//      estimado do posto, não provento garantido de quem é contratado. A tela
+//      os mostra, e um clique os inclui em "Outros".
+//   7. O automático só usa o posto de nome EXATO na planilha. A aproximação
+//      por cidade/escala (rec_custo_do_posto) fica só no botão, com aviso.
+
+/** Uma linha de `lic_quadro_remuneracao_do_contrato`. */
+export interface RemuneracaoPosto {
+  posto: string;
+  planilha_custo_id?: string | null;
+  vigencia?: string | null;
+  salario: number | null;
+  insalubridade: number | null;
+  periculosidade: number | null;
+  lideranca?: number | null;
+  adicional_noturno_reduzido?: number | null;
+  adicional_noturno?: number | null;
+  adicional_extra?: number | null;
+  dsr?: number | null;
+  vt?: number | null;
+  va?: number | null;
+  vr?: number | null;
+  lanche?: number | null;
+  cesta_basica?: number | null;
+  assistencia_medica?: number | null;
+  /** Saída de lic_referencia_do_posto_interno para o posto. */
+  referencia?: RespostaReferencia | null;
+}
+
+/** Graus legais de insalubridade (NR-15). */
+export const GRAUS_INSALUBRIDADE = [10, 20, 40] as const;
+
+/** Número → como o formulário mostra ("1964,63"). */
+const textoValor = (n: number): string => n.toFixed(2).replace(".", ",");
+const positivoOuZero = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+/** O que o posto diz para a linha, campo a campo, e por quê. */
+export interface PreenchimentoPosto {
+  valores: Partial<Record<CampoAuto, string>>;
+  /** De onde veio cada campo — vira a dica embaixo dele. */
+  origem: Partial<Record<CampoAuto, string>>;
+  /** O que a planilha tem e não virou campo (insalubridade sem base, etc.). */
+  avisos: string[];
+  /** Adicionais da planilha que podem ir para "Outros" com um clique. */
+  adicionais: { descricao: string; valor: number }[];
+}
+
+export const ROTULO_ADICIONAL: { chave: keyof RemuneracaoPosto; descricao: string }[] = [
+  { chave: "lideranca", descricao: "Adicional de líder" },
+  { chave: "adicional_noturno_reduzido", descricao: "Adicional noturno reduzido" },
+  { chave: "adicional_noturno", descricao: "Adicional noturno" },
+  { chave: "adicional_extra", descricao: "Adicional de horas extras" },
+  { chave: "dsr", descricao: "DSR" },
+];
+
+/**
+ * A remuneração da planilha (e a convenção do posto) traduzida para os campos
+ * da linha. `convencaoNoContrato`: a convenção do contrato já manda em
+ * benefícios e percentuais (aplicarHerancaNoQuadro) — aqui eles ficam de fora,
+ * senão a planilha e a convenção brigariam pelo mesmo campo a cada render.
+ */
+export function preenchimentoDoPosto(
+  r: RemuneracaoPosto | null | undefined,
+  opts: { convencaoNoContrato?: boolean } = {},
+): PreenchimentoPosto {
+  const out: PreenchimentoPosto = { valores: {}, origem: {}, avisos: [], adicionais: [] };
+  if (!r) return out;
+  const daPlanilha = `Da Planilha de Custo${r.vigencia ? ` (vigência ${fmtBr(String(r.vigencia).slice(0, 10))})` : ""}`;
+
+  const salario = positivoOuZero(r.salario);
+  if (salario > 0) {
+    out.valores.salario = textoValor(salario);
+    out.origem.salario = daPlanilha;
+  }
+
+  for (const a of ROTULO_ADICIONAL) {
+    const v = positivoOuZero(r[a.chave]);
+    if (v > 0) out.adicionais.push({ descricao: a.descricao, valor: Math.round(v * 100) / 100 });
+  }
+
+  if (opts.convencaoNoContrato) return out;
+
+  // Convenção vinculada ao POSTO (Planilha de Custo). A do contrato não chega
+  // aqui (o resolvedor devolve origem 'contrato' e ela já foi tratada).
+  const heranca = r.referencia?.origem === "posto" ? herancaDaConvencao(r.referencia) : null;
+  const nomeCct = "Da Convenção Coletiva vinculada ao posto";
+
+  // Periculosidade
+  const perValor = positivoOuZero(r.periculosidade);
+  if (heranca?.periculosidade_pct) {
+    out.valores.periculosidade_pct = heranca.periculosidade_pct;
+    out.origem.periculosidade_pct = nomeCct;
+  } else if (perValor > 0 && salario > 0) {
+    const pct = Math.round((perValor / salario) * 10000) / 100;
+    if (pct > 0 && pct <= 100) {
+      out.valores.periculosidade_pct = percentualTexto(pct);
+      out.origem.periculosidade_pct = `${daPlanilha}: ${brl(perValor)} sobre o salário base`;
+    }
+  } else if (perValor > 0) {
+    out.avisos.push(`Periculosidade na planilha: ${brl(perValor)}/mês, sem salário base para calcular o %.`);
+  }
+
+  // Insalubridade
+  const insValor = positivoOuZero(r.insalubridade);
+  if (heranca?.insalubridade_pct) {
+    out.valores.insalubridade_pct = heranca.insalubridade_pct;
+    out.origem.insalubridade_pct = nomeCct;
+  } else if (insValor > 0) {
+    const pct = salario > 0 ? (insValor / salario) * 100 : 0;
+    const grau = GRAUS_INSALUBRIDADE.find(g => Math.abs(pct - g) < 0.5);
+    if (grau) {
+      out.valores.insalubridade_pct = String(grau);
+      out.origem.insalubridade_pct = `${daPlanilha}: ${brl(insValor)} = ${grau}% do salário base`;
+    } else {
+      out.avisos.push(`Insalubridade na planilha: ${brl(insValor)}/mês — a base de cálculo não é o salário base (costuma ser o salário mínimo). Informe o %.`);
+    }
+  }
+
+  // Benefícios
+  if (heranca?.beneficios) {
+    out.valores.beneficios = heranca.beneficios;
+    out.origem.beneficios = nomeCct;
+  } else {
+    const texto = beneficiosDoCusto({
+      vt: r.vt ?? null, va: r.va ?? null, vr: r.vr ?? null, lanche: r.lanche ?? null,
+      cesta_basica: r.cesta_basica ?? null, assistencia_medica: r.assistencia_medica ?? null,
+    } as CustoPosto);
+    if (texto) {
+      out.valores.beneficios = texto;
+      out.origem.beneficios = daPlanilha;
+    }
+  }
+  return out;
+}
+
+/**
+ * Aplica o preenchimento na linha. Devolve a linha nova, ou null quando nada
+ * muda (é o que impede o efeito da tela de entrar em laço).
+ *
+ * Sem `forcar`: só mexe no campo vazio ou que ainda tem o valor que o próprio
+ * automático pôs (`auto`) — quem digitou por cima não perde o que digitou.
+ * Com `forcar` (o botão "Atualizar da Planilha"): troca o que a fonte tem; o
+ * que a fonte NÃO tem continua como está (decisão 2: nada é apagado).
+ */
+export function aplicarPreenchimento(
+  l: LinhaQuadroForm, p: PreenchimentoPosto, forcar = false,
+): LinhaQuadroForm | null {
+  let mudou = false;
+  const auto: Partial<Record<CampoAuto, string>> = { ...(l.auto ?? {}) };
+  const nova: LinhaQuadroForm = { ...l, auto };
+  for (const campo of Object.keys(p.valores) as CampoAuto[]) {
+    const valor = p.valores[campo]!;
+    const atual = l[campo] ?? "";
+    const anterior = l.auto?.[campo];
+    const livre = forcar || !atual.trim() || (anterior !== undefined && atual === anterior);
+    if (!livre) continue;
+    if (atual !== valor) { nova[campo] = valor; mudou = true; }
+    if (anterior !== valor) { auto[campo] = valor; mudou = true; }
+  }
+  return mudou ? nova : null;
+}
+
+/** Mapa nome normalizado do posto → remuneração. */
+export function remuneracaoPorPosto(lista: RemuneracaoPosto[] | null | undefined): Map<string, RemuneracaoPosto> {
+  const m = new Map<string, RemuneracaoPosto>();
+  for (const r of lista ?? []) {
+    const k = chavePosto(r.posto);
+    if (k && !m.has(k)) m.set(k, r);
+  }
+  return m;
+}
+
+/**
+ * Preenche todas as linhas EM USO do quadro (quantidade >= 1) cujo posto está
+ * na planilha. Linha zerada é só o catálogo à mostra: não é tocada, para não
+ * mexer em 750 linhas que ninguém pediu. Devolve null quando nada muda.
+ */
+export function preencherQuadro(
+  linhas: LinhaQuadroForm[], porPosto: Map<string, RemuneracaoPosto>, convencaoNoContrato: boolean,
+): LinhaQuadroForm[] | null {
+  let mudou = false;
+  const novas = linhas.map(l => {
+    if (!linhaEmUso(l)) return l;
+    const r = porPosto.get(chavePosto(l.posto_nome));
+    if (!r) return l;
+    const n = aplicarPreenchimento(l, preenchimentoDoPosto(r, { convencaoNoContrato }));
+    if (!n) return l;
+    mudou = true;
+    return n;
+  });
+  return mudou ? novas : null;
+}
+
+/** Inclui um adicional da planilha em "Outros" (não duplica pela descrição). */
+export function incluirEmOutros(outros: ProventoForm[] | undefined, a: { descricao: string; valor: number }): ProventoForm[] {
+  const lista = outros ?? [];
+  if (lista.some(p => chavePosto(p.descricao) === chavePosto(a.descricao))) return lista;
+  return [...lista, { descricao: a.descricao, valor: textoValor(a.valor) }];
 }
