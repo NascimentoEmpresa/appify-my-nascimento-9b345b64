@@ -1174,6 +1174,11 @@ const presidenciaModule: ModuleDef = {
         // e acompanha o treinamento. Liberação própria
         // (presidencia_chamados_dev; aprovar/devolver: _validar).
         { label: "Desenvolvimento Chamados", to: "/app/presidencia/chamados-desenvolvimento", icon: CheckCircle2 },
+        // Acompanhamento de Chamados (SIS-2026-0923, mig 20261116230000): painel
+        // gerencial de todos os chamados, rendimento por responsável e pedidos de
+        // ação a Sistemas. Liberação própria (presidencia_chamados_gerencial;
+        // pedir ação: _acao).
+        { label: "Acompanhamento de Chamados", to: "/app/presidencia/acompanhamento-chamados", icon: BarChart3 },
       ],
     },
     {
