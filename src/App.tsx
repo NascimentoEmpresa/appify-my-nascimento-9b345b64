@@ -314,6 +314,7 @@ import ControleCa from "./pages/sst/ControleCa";
 import SstAfastamentos from "./pages/sst/Afastamentos";
 // Controle de Afastamentos (mig 20261105030000): acompanhamento até o retorno.
 import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
+import SstExamesToxicologicos from "./pages/sst/ExamesToxicologicos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -1192,6 +1193,7 @@ const App = () => (
             <Route path="sst/controle-ca" element={<ControleCa />} />
             <Route path="sst/afastamentos" element={<SstAfastamentos />} />
             <Route path="sst/controle-afastamentos" element={<SstControleAfastamentos />} />
+            <Route path="sst/exames-toxicologicos" element={<SstExamesToxicologicos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />
