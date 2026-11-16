@@ -500,6 +500,8 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0658: Sistema × Excel antigo, só leitura
         { label: "Conciliação da Origem (Fluxo)", to: "/app/financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa", icon: GitMerge },
         { label: "Conciliação Bancária (Planilha Manual)", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
+        // SIS-2026-0825: extrato da plataforma Ticket (CSV) × o que o ERP pagou com TICKET. Menu conciliacao-ticket.
+        { label: "Conciliação da Ticket", to: "/app/financeiro/conciliacao-ticket", icon: GitMerge },
         // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
         // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
         // do usuário, são módulos migrados de sistema externo, não fazem
