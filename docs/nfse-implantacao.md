@@ -133,6 +133,11 @@ Após a retomada, a DPS 9 foi bloqueada antes do envio por `cst_pis_cofins: "0"`
 Quando há valores de PIS/COFINS, a tela passa a exigir dois dígitos antes de
 registrar a solicitação. O enquadramento é confirmado pelo responsável fiscal;
 não preencher, completar com zero ou substituir automaticamente esse código.
+Na conferência completa desse pedido, `tipo_operacao: "0"` e
+`tipo_ente_governamental: "0"` também eram incompatíveis com o XSD. A tela
+valida os domínios de 1 a 5 e de 1 a 4, respectivamente, aceitando vazio nos
+campos opcionais quando não aplicáveis. O enquadramento continua sob revisão
+fiscal, sem preencher valores automaticamente a partir de outra nota.
 
 O job de produção encerrou às 04h42 (Brasília), após três falhas consecutivas de
 infraestrutura; a solicitação posterior ficou pendente, com zero tentativas e sem
