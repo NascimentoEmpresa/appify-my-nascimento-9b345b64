@@ -16,7 +16,8 @@ const sb = supabase as any;
 const K = "trn-solicitacoes";
 const erro = (e: { message?: string } | null) => { if (e) throw new Error(e.message ?? "Erro"); };
 
-export interface ContratoTreinamento { empresa: number; filial: number; nome: string; meu: boolean }
+/** Contrato da Licitação (mig 20261116200000); empresa/filial = filial da Senior de mesmo nome, se houver. */
+export interface ContratoTreinamento { contrato_id: string; empresa: number | null; filial: number | null; nome: string; meu: boolean }
 export interface OpcoesTreinamento { eu: { nome: string | null; email: string | null }; contratos: ContratoTreinamento[] }
 
 export const useOpcoesTreinamento = () => useQuery({

@@ -13,9 +13,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
-import { useEnviarTreinamento, useOpcoesTreinamento, useSolicitacoesTreinamento } from "@/hooks/useSolicitacoesTreinamento";
+import { useEnviarTreinamento, useOpcoesTreinamento, useSolicitacoesTreinamento, type ContratoTreinamento } from "@/hooks/useSolicitacoesTreinamento";
 import {
-  CHECKLIST, DECLARACAO, ETAPAS, FORM_VAZIO, MAX_DATAS, MODALIDADES, STATUS_SOL_TREINAMENTO, ULTIMA_ETAPA, VOLTAGENS, comData, errosEtapa,
+  CHECKLIST, DECLARACAO, ETAPAS, chaveContrato, FORM_VAZIO, MAX_DATAS, MODALIDADES, STATUS_SOL_TREINAMENTO, ULTIMA_ETAPA, VOLTAGENS, comData, errosEtapa,
   fmtDataIso, formDaSolicitacao, paraEnvio, precisaLocal, primeiraEtapaComErro, progressoChecklist, rotuloStatus, secoesFicha,
   type FormTreinamento, type SolicitacaoTreinamento,
 } from "@/lib/treinamentos/solicitacaoTreinamento";
@@ -66,7 +66,7 @@ export default function SolicitarTreinamento() {
   // Contrato: começa no do encarregado (Hierarquia de Postos), se for um só.
   useEffect(() => {
     const meus = (opcoes.data?.contratos ?? []).filter((c) => c.meu);
-    if (aberto && !f.contrato && !reenviarId && meus.length === 1) set({ contrato: `${meus[0].empresa}__${meus[0].filial}`, contrato_nome: meus[0].nome });
+    if (aberto && !f.contrato && !reenviarId && meus.length === 1) set({ contrato: chaveContrato(meus[0]), contrato_nome: meus[0].nome });
   }, [aberto, opcoes.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const erros = errosEtapa(f, etapa);
@@ -250,7 +250,7 @@ function Opcoes<T extends string | boolean>({ valor, opcoes, onChange, nome }: {
 }
 const SIM_NAO: { v: boolean; r: string }[] = [{ v: true, r: "Sim" }, { v: false, r: "Não" }];
 
-function Etapa1({ f, set, opcoes, carregando }: PropsEtapa & { opcoes?: { eu: { nome: string | null }; contratos: { empresa: number; filial: number; nome: string; meu: boolean }[] }; carregando: boolean }) {
+function Etapa1({ f, set, opcoes, carregando }: PropsEtapa & { opcoes?: { eu: { nome: string | null }; contratos: ContratoTreinamento[] }; carregando: boolean }) {
   return (
     <div className="space-y-4">
       <Campo rotulo="Nome do solicitante" obrig dica="Vem do seu cadastro — quem envia é o responsável pelas informações.">
@@ -259,8 +259,8 @@ function Etapa1({ f, set, opcoes, carregando }: PropsEtapa & { opcoes?: { eu: { 
       <Campo rotulo="Contrato / Unidade" obrig dica="Os contratos em que você é o responsável aparecem primeiro.">
         <SearchableSelect value={f.contrato} placeholder={carregando ? "Carregando contratos…" : "Selecione o contrato"} searchPlaceholder="Buscar contrato…"
           triggerClassName="rounded-full"
-          options={(opcoes?.contratos ?? []).map((c) => ({ value: `${c.empresa}__${c.filial}`, label: c.nome, hint: c.meu ? "seu contrato" : undefined }))}
-          onChange={(v) => set({ contrato: v, contrato_nome: opcoes?.contratos.find((c) => `${c.empresa}__${c.filial}` === v)?.nome ?? "" })} />
+          options={(opcoes?.contratos ?? []).map((c) => ({ value: chaveContrato(c), label: c.nome, hint: c.meu ? "seu contrato" : undefined }))}
+          onChange={(v) => set({ contrato: v, contrato_nome: opcoes?.contratos.find((c) => chaveContrato(c) === v)?.nome ?? "" })} />
       </Campo>
     </div>
   );

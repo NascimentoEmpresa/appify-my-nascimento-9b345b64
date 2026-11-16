@@ -15,7 +15,7 @@ export type Urgencia = "programavel" | "prioritario";
 export type Voltagem = "110" | "220" | "ambas";
 
 export interface FormTreinamento {
-  contrato: string;                 // "empresa__filial"
+  contrato: string;                 // "empresa__filial__contrato_id" (chaveContrato)
   contrato_nome: string;
   treinamento: string; motivo: string; objetivo: string; assuntos: string;
   qtd_participantes: string; equipe: string; turnos: string;
@@ -38,6 +38,8 @@ export interface SolicitacaoTreinamento {
   id: number; protocolo: string; status: StatusSolTreinamento;
   solicitante_id: string; solicitante_nome: string | null; solicitante_email: string | null;
   contrato_empresa: number | null; contrato_filial: number | null; contrato_nome: string;
+  /** Contrato da Licitação (mig 20261116200000); NULL nas anteriores. */
+  contrato_id?: string | null;
   treinamento: string; motivo: string; objetivo: string | null; assuntos: string;
   qtd_participantes: number; equipe: string | null; turnos: string | null;
   modalidade: Modalidade; local_treinamento: string | null; data_preferencial: string | null; datas_previstas: string[] | null;
@@ -140,12 +142,21 @@ export function progressoChecklist(f: FormTreinamento): { respondidas: number; t
   return { respondidas, total };
 }
 
+/**
+ * Valor do contrato no formulário. Desde 16/11/2026 a lista é dos contratos
+ * da LICITAÇÃO (trn_sol_opcoes, mig 20261116200000): o contrato novo ainda
+ * sem filial na Senior vem sem empresa/filial, só com o contrato_id.
+ */
+export const chaveContrato = (c: { empresa?: number | null; filial?: number | null; contrato_id?: string | null }) =>
+  `${c.empresa ?? ""}__${c.filial ?? ""}__${c.contrato_id ?? ""}`;
+
 /** O que vai para o banco (trn_sol_criar / trn_sol_reenviar). */
 export function paraEnvio(f: FormTreinamento): Record<string, unknown> {
-  const [emp, fil] = f.contrato.split("__");
+  const [emp, fil, cid] = f.contrato.split("__");
   const local = precisaLocal(f);
   return {
-    contrato_empresa: emp ? Number(emp) : null, contrato_filial: fil ? Number(fil) : null, contrato_nome: f.contrato_nome.trim(),
+    contrato_empresa: emp ? Number(emp) : null, contrato_filial: fil ? Number(fil) : null, contrato_id: cid || null,
+    contrato_nome: f.contrato_nome.trim(),
     treinamento: f.treinamento.trim(), motivo: f.motivo.trim(), objetivo: f.objetivo.trim(), assuntos: f.assuntos.trim(),
     qtd_participantes: Number(f.qtd_participantes), equipe: f.equipe.trim(), turnos: f.turnos.trim(),
     modalidade: f.modalidade, local_treinamento: local ? f.local_treinamento.trim() : "", datas_previstas: [...f.datas_previstas].sort(),
@@ -167,7 +178,8 @@ export function datasPrevistas(s: { datas_previstas?: string[] | null; data_pref
 /** Uma solicitação devolvida volta para o formulário (o encarregado corrige). */
 export function formDaSolicitacao(s: SolicitacaoTreinamento): FormTreinamento {
   return {
-    contrato: s.contrato_empresa != null && s.contrato_filial != null ? `${s.contrato_empresa}__${s.contrato_filial}` : "",
+    contrato: s.contrato_id || (s.contrato_empresa != null && s.contrato_filial != null)
+      ? chaveContrato({ empresa: s.contrato_empresa, filial: s.contrato_filial, contrato_id: s.contrato_id }) : "",
     contrato_nome: s.contrato_nome, treinamento: s.treinamento, motivo: s.motivo, objetivo: s.objetivo ?? "", assuntos: s.assuntos,
     qtd_participantes: String(s.qtd_participantes), equipe: s.equipe ?? "", turnos: s.turnos ?? "",
     // Híbrida (antes de 27/10) volta como presencial: tem local e checklist.
