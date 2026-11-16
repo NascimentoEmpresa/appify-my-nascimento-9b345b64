@@ -143,39 +143,67 @@ export function resumirEntrega(eventos: EventoGithub[], c: Pick<ChamadoParaParec
   };
 }
 
-/** VALOR/HORA FIXO DE DESENVOLVEDOR SÊNIOR (Brasil, 2026) — o ÚNICO lugar a
- *  mudar no código. Pesquisa de 05/11/2026: freelancer = meio da faixa de full
- *  stack sênior publicada (R$ 200–400/h, blog/agregador, não tabela oficial);
- *  software house = 1,5× o freelancer (sem tabela pública); equipe interna
- *  (custo empresa com encargos) R$ 150–180. Mudou aqui? O recálculo dos pareceres
- *  já gravados é SQL (ver a mig 20261105050000, que repete estes números — o
- *  banco não lê este arquivo). */
+// ── PREÇO REALISTA (16/11/2026, Pablo, sobre o SIS-2026-0756 — pesquisa de
+// permanência, 3/5 — cotado a R$ 16.200 freelancer e R$ 35.100 software
+// house: "no máximo uns mil e poucos/dois mil", "18 mil e 35 mil é
+// passamento", "tá puxando alto de mais assim pra vários chamados, DEIXA
+// REALISTA"). Três coisas inflavam a conta ao mesmo tempo:
+//   1. valor/hora de topo de faixa (R$ 300 e R$ 450/h);
+//   2. horas da I.A "do zero, sem conhecer o ERP" (36 h e 52 h num formulário);
+//   3. a complexidade contada DUAS vezes: já empurra as horas para cima e
+//      ainda multiplicava o total (×1,5 no nível 3, ×2,5 no 5).
+// Agora: o erro era de HORAS, não de valor/hora (Pablo, mesmo dia: "nenhum
+// freelancer ia cobrar só 1280 por 16h, o problema real é: quem leva 16h pra
+// fazer um formulário? no máximo 8h seria"). Valor/hora de freelancer de
+// verdade (R$ 150/h; software house 1,5× = R$ 225/h), complexidade SEM
+// multiplicar (fator 1 em todos os níveis) e um TETO DE HORAS por nível
+// (TETO_HORAS_POR_COMPLEXIDADE): formulário médio (3/5) = até 8 h. Fica
+// R$ 1.200 freelancer e R$ 1.800 software house, média R$ 1.500.
+// A mig 20261116150000 refaz os pareceres já gravados com a mesma conta.
+
+/** VALOR/HORA FIXO — o ÚNICO lugar a mudar no código. Mudou aqui? O recálculo
+ *  dos pareceres já gravados é SQL (ver a mig 20261116150000, que repete estes
+ *  números — o banco não lê este arquivo). Histórico: 200/320/165 (29/10),
+ *  300/450/165 (05/11), 150/225/30 (16/11, "deixa realista" — o que caiu
+ *  foram as horas, ver TETO_HORAS_POR_COMPLEXIDADE). */
 export const VALOR_HORA_SENIOR = {
-  freelancer: 300,
-  software_house: 450,
-  interno: 165,
+  freelancer: 150,
+  software_house: 225,
+  interno: 30,
 } as const;
 
-/** Multiplicador do preço pela complexidade (1 a 5) — o ÚNICO lugar a mudar
- *  no código (a mig 20261029002400 repete para recalcular os já gravados).
- *  Mede dificuldade, risco e importância, não a duração: 1 h de correção
- *  crítica em produção vale mais que 1 h de troca de rótulo. */
+/** Multiplicador do preço pela complexidade. Desde 16/11/2026 é 1 em todos os
+ *  níveis: a complexidade já pesa nas horas (e no teto delas, abaixo), e
+ *  multiplicar o total de novo contava a mesma coisa duas vezes. Fica
+ *  exportado e gravado em cada preço (fator_complexidade) para a tela e os
+ *  pareceres antigos continuarem lendo o mesmo formato. */
 export const FATOR_COMPLEXIDADE: Record<number, number> = {
   1: 1,
-  2: 1.2,
-  3: 1.5,
-  4: 2,
-  5: 2.5,
+  2: 1,
+  3: 1,
+  4: 1,
+  5: 1,
+};
+
+/** Máximo de horas que um perfil pode cobrar em cada nível de complexidade
+ *  (16/11/2026). A I.A estima as horas; passou do teto, vale o teto. É o freio
+ *  contra "36 h para um formulário" (formulário médio = até 8 h). A mig 20261116150000 repete estes números. */
+export const TETO_HORAS_POR_COMPLEXIDADE: Record<number, number> = {
+  1: 2,
+  2: 4,
+  3: 8,
+  4: 16,
+  5: 40,
 };
 
 /** Os três perfis de fornecedor, sempre nesta ordem. */
 export const PERFIS = [
   { perfil: "freelancer", rotulo: "Freelancer (PJ)", valor_hora: VALOR_HORA_SENIOR.freelancer,
-    embasamento: `Desenvolvedor sênior PJ: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.freelancer} (meio da faixa de full stack sênior publicada: R$ 200 a R$ 400/h).` },
+    embasamento: `Desenvolvedor PJ: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.freelancer} (valor comum de freelancer experiente no Brasil).` },
   { perfil: "software_house", rotulo: "Software house / consultoria", valor_hora: VALOR_HORA_SENIOR.software_house,
-    embasamento: `Software house com time sênior: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.software_house} (estimativa de 1,5× o freelancer, por gestão de projeto, impostos, margem e garantia; sem tabela pública).` },
+    embasamento: `Software house: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.software_house} (1,5× o freelancer, por gestão, impostos e margem).` },
   { perfil: "interno", rotulo: "Equipe interna (CLT, custo empresa)", valor_hora: VALOR_HORA_SENIOR.interno,
-    embasamento: `Desenvolvedor sênior CLT, custo empresa com encargos e benefícios: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.interno} (faixa: R$ 150 a R$ 180/h).` },
+    embasamento: `Desenvolvedor CLT, custo empresa com encargos: valor/hora fixo de R$ ${VALOR_HORA_SENIOR.interno}.` },
 ] as const;
 
 export type PerfilCodigo = typeof PERFIS[number]["perfil"];
@@ -217,29 +245,29 @@ Contexto técnico do ERP: React 18 + Vite + TypeScript + shadcn/ui no front; Pos
 
 O QUE VOCÊ PRECIFICA: o valor de MERCADO para contratar esse trabalho no Brasil — quanto um cliente pagaria a um fornecedor para entregar o mesmo resultado. Não é o tempo que a equipe interna levou.
 
-COMO ESTIMAR:
+COMO ESTIMAR (seja REALISTA e enxuto — o erro mais comum é inflar):
 1. Estime SÓ pelo pedido (assunto, tipo, módulo e descrição do solicitante), incluindo entendimento, implementação, testes e publicação. Você não recebe horas gastas, PRs nem comentários de quem desenvolveu: o mesmo pedido tem de dar o mesmo preço, seja quem for o desenvolvedor.
-2. Pense também no "produto equivalente": se o chamado entrega um módulo ou sistema inteiro (ex.: recrutamento e seleção completo, migração de infraestrutura com alta disponibilidade e failover), compare com quanto o mercado cobra por esse sistema/projeto e NÃO subestime — projetos assim custam dezenas a centenas de milhares de reais numa software house.
-3. Fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
-4. Integração com banco, governo ou sistema externo não é tela: conte o estudo do manual e do layout, a geração e validação do arquivo, a homologação com o terceiro, o tratamento de rejeição, os testes com dado real e o risco financeiro. Compare com o que o mercado cobra por uma integração dessas pronta.
+2. Estime as horas de um desenvolvedor competente que trabalha com ferramentas modernas (inclusive I.A) sobre um sistema já pronto, com banco, login, permissões e componentes de tela prontos para reaproveitar. Não some reuniões, gestão de projeto, "curva de aprendizado" nem margem de segurança: isso já está no valor/hora.
+3. Referência de horas: texto/rótulo/ajuste trivial até 1 h; ajuste numa tela ou filtro 1 a 3 h; tela, formulário ou regra nova com banco 4 a 8 h; vários módulos, regras de acesso ou integração 8 a 16 h; só projeto grande de verdade (infraestrutura, migração de dados, sistema inteiro) passa disso, até 40 h.
+4. Freelancer e software house fazem o MESMO escopo: as horas dos dois devem ser próximas (a software house no máximo uns 20% a mais). O interno, que já conhece o ERP, leva um pouco menos.
 
-Perfis (use EXATAMENTE estes códigos). Todos são de DESENVOLVEDOR SÊNIOR e o valor/hora de cada um é FIXO, definido pela empresa — você NÃO escolhe valor/hora, só estima as HORAS que cada perfil levaria:
-- "freelancer": freelancer PJ sênior;
-- "software_house": software house ou consultoria com time sênior;
-- "interno": desenvolvedor sênior interno CLT, que já conhece o ERP.
-Em "freelancer" e "software_house" estime as horas para entregar o MESMO ESCOPO do zero, sem conhecer o ERP; em "interno", as horas de um sênior que já conhece o sistema e trabalha com apoio de I.A. Na "explicacao", cite as etapas concretas que sustentam as horas daquele perfil. Seja realista: um ajuste simples continua sendo poucas horas, e não infle o que o escopo não sustenta.
+Perfis (use EXATAMENTE estes códigos). O valor/hora de cada um é FIXO, definido pela empresa — você NÃO escolhe valor/hora, só estima as HORAS que cada perfil levaria:
+- "freelancer": freelancer PJ;
+- "software_house": software house ou consultoria;
+- "interno": desenvolvedor interno CLT, que já conhece o ERP.
+Na "explicacao", cite as etapas concretas que sustentam as horas daquele perfil. Um ajuste simples continua sendo poucas horas; não infle o que o escopo não sustenta.
 
-Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa, NÃO a duração. Algo feito em 1 hora pode ser 5 (correção crítica em produção, regra de acesso/segurança, dado financeiro ou de folha, banco em produção, algo que parava a operação) e algo de 1 hora pode ser 1 (trocar um texto). A complexidade multiplica o preço, então avalie com cuidado:
-1 = muito baixa (texto, rótulo, ajuste trivial, sem risco), 2 = baixa (ajuste numa tela, filtro simples), 3 = média (tela ou regra nova, mexe no banco), 4 = alta (vários módulos, regras de acesso, integração, risco real de quebrar algo em uso), 5 = muito alta (infraestrutura, segurança, migração de dados, alta disponibilidade, correção crítica em produção, integração externa complexa, módulo ou sistema inteiro).
+Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa. NÃO multiplica o preço: o preço é só horas × valor/hora, e cada nível tem um teto de horas (1 = 2 h, 2 = 4 h, 3 = 8 h, 4 = 16 h, 5 = 40 h).
+1 = muito baixa (texto, rótulo, ajuste trivial, sem risco), 2 = baixa (ajuste numa tela, filtro simples), 3 = média (tela, formulário ou regra nova, mexe no banco), 4 = alta (vários módulos, regras de acesso, integração, risco real de quebrar algo em uso), 5 = muito alta (infraestrutura, segurança, migração de dados, alta disponibilidade, integração externa complexa, módulo ou sistema inteiro).
 
 Se o chamado for dúvida/orientação ou vago, estime mesmo assim o esforço provável e diga nas premissas o que faltou.
 
 Responda SÓ com JSON, sem texto fora dele, neste formato:
 {
   "precos": [
-    { "perfil": "freelancer", "horas": 12, "explicacao": "uma frase: de onde vêm essas horas (etapas) para um sênior PJ" },
-    { "perfil": "software_house", "horas": 16, "explicacao": "..." },
-    { "perfil": "interno", "horas": 10, "explicacao": "..." }
+    { "perfil": "freelancer", "horas": 10, "explicacao": "uma frase: de onde vêm essas horas (etapas) para um PJ" },
+    { "perfil": "software_house", "horas": 12, "explicacao": "..." },
+    { "perfil": "interno", "horas": 8, "explicacao": "..." }
   ],
   "complexidade_nivel": 3,
   "complexidade_justificativa": "2 a 4 frases: o que pesa (banco, telas, regras, integrações, risco)",
@@ -325,29 +353,29 @@ export interface ParecerParaChat {
 
 export function montarSistemaChat(c: ChamadoParaParecer, p: ParecerParaChat): string {
   const faixas = PERFIS.map((x) => `- ${x.rotulo} ("${x.perfil}"): R$ ${x.valor_hora}/h fixo — ${x.embasamento}`).join("\n")
-    + "\nFator de complexidade (multiplica o preço): " + Object.entries(FATOR_COMPLEXIDADE).map(([n, f]) => `nível ${n} = ×${String(f).replace(".", ",")}`).join(", ")
-    + ". Mede dificuldade, risco e importância, não a duração.";
+    + "\nA complexidade NÃO multiplica o preço (16/11/2026): ela limita as horas de cada perfil — " + Object.entries(TETO_HORAS_POR_COMPLEXIDADE).map(([n, h]) => `nível ${n} = até ${h} h`).join(", ")
+    + ". Pareceres antigos podem ter um fator de complexidade gravado; os de agora têm fator 1.";
   return `Você é o consultor sênior de orçamento de software que escreveu o parecer abaixo sobre um chamado do ERP interno do Grupo Nascimento. Agora conversa com a gestão de Sistemas, que questiona os números.
 
 Como responder:
 - Defenda o parecer com argumentos concretos e verificáveis: quebre as horas por etapa (entender o pedido, banco/migration e regras de acesso, tela, testes, revisão e publicação, reuniões/ajustes com o solicitante), mostre a conta horas × valor/hora e por que aquele valor/hora está naquele ponto da faixa de mercado.
 - Explique a diferença entre os perfis: fornecedor externo cobra a curva de aprendizado de um ERP grande com centenas de telas, reuniões, gestão de projeto, impostos, margem e garantia; a equipe interna já conhece o sistema e o custo-hora é o custo empresa (salário + encargos ~70-100% + benefícios).
 - Os valores gravados são FIXOS e definitivos: explique e justifique ESSES números. Não proponha preço, horas ou valor/hora diferentes, não refaça a conta com outros números e não diga que "daria outro valor". Se a pessoa discordar, explique o raciocínio por trás das horas gravadas.
-- O valor/hora de cada perfil é a tabela fixa da empresa para DESENVOLVEDOR SÊNIOR (abaixo), não uma escolha sua: diga isso e mostre por que é coerente com o mercado de sênior no Brasil.
-- O preço não mede só o tempo: o fator de complexidade multiplica a conta. Se perguntarem por que algo de poucas horas custa caro (ou barato), explique pela dificuldade, pelo risco e pela importância do que foi feito.
+- O valor/hora de cada perfil é a tabela fixa da empresa (abaixo), não uma escolha sua: diga isso e mostre por que é coerente com o mercado comum no Brasil.
+- A complexidade não multiplica a conta: ela limita as horas que cada perfil pode cobrar (teto por nível, abaixo). Se o parecer gravado tiver fator diferente de 1, é de antes de 16/11/2026.
 - O preço sai SÓ do pedido do solicitante: horas gastas, PRs e comentários de quem desenvolveu não entram, para o mesmo pedido valer o mesmo com qualquer desenvolvedor. Diga isso se perguntarem por que as horas informadas não mudam o valor (o valor/hora da software house já embute gestão, impostos e margem).
-- O preço é o de MERCADO para contratar o resultado com profissional sênior, não o tempo que a equipe interna levou.
-- Não invente fonte, pesquisa ou estatística com nome e número exato que você não tem. Pode citar as referências de mercado de forma geral (tabelas de freelancer, propostas de software house, custo CLT de dev pleno/sênior no Brasil em 2026).
+- O preço é o de MERCADO para contratar o resultado, realista e enxuto, não o tempo que a equipe interna levou.
+- Não invente fonte, pesquisa ou estatística com nome e número exato que você não tem. Pode citar as referências de mercado de forma geral (tabelas de freelancer, propostas de software house, custo CLT de dev no Brasil em 2026).
 - O parecer gravado não muda — diga isso se pedirem para alterar.
 - Português do Brasil, direto, frases curtas. Markdown simples (listas, **negrito**, tabela pequena quando ajudar). Valores em R$.
 
-Valor/hora fixo de desenvolvedor sênior usado no parecer (Brasil, 2026):
+Valor/hora fixo usado no parecer (Brasil, 2026):
 ${faixas}
 
 CHAMADO:
 ${montarPromptDoPreco(c)}
 
-PARECER GRAVADO (o preço de cada perfil = horas × valor/hora × fator de complexidade):
+PARECER GRAVADO (o preço de cada perfil = horas × valor/hora; pareceres antigos × fator de complexidade):
 ${JSON.stringify(p)}`;
 }
 
@@ -390,6 +418,7 @@ export function validarParecer(bruto: unknown, horasReais?: number | string | nu
   const nivel = Math.round(num(b.complexidade_nivel));
   if (!(nivel >= 1 && nivel <= 5)) return { ok: false, erro: "A I.A não deu um nível de complexidade de 1 a 5." };
   const fator = FATOR_COMPLEXIDADE[nivel];
+  const teto = TETO_HORAS_POR_COMPLEXIDADE[nivel];
 
   const precos: PrecoParecer[] = [];
   for (const ref of PERFIS) {
@@ -403,7 +432,8 @@ export function validarParecer(bruto: unknown, horasReais?: number | string | nu
     if (!(horasBrutas > 0)) {
       return { ok: false, erro: `Horas inválidas para "${ref.rotulo}".` };
     }
-    const horas = arred(limita(horasBrutas, 0.5, 6000), 1);
+    // Teto por complexidade (16/11/2026): passou, vale o teto.
+    const horas = arred(limita(horasBrutas, 0.5, teto), 1);
     // Valor/hora da tabela fixa: o que a I.A mandar em valor_hora é ignorado.
     const valor_hora = ref.valor_hora;
     precos.push({
@@ -421,8 +451,11 @@ export function validarParecer(bruto: unknown, horasReais?: number | string | nu
   const justificativa = corta(String(b.complexidade_justificativa ?? ""), 1200);
   if (!justificativa) return { ok: false, erro: "A I.A não justificou a complexidade." };
 
-  // Com horas informadas, o interno vira o card de custo real: a média é só de mercado.
-  const base = reais > 0 ? precos.filter((p) => p.perfil !== "interno") : precos;
+  // A média é SÓ de mercado (freelancer e software house): o card do interno
+  // virou o custo real (card verde) e, desde 12/11/2026, o preço nunca tem
+  // horas informadas — a média de 3 perfis punha custo nosso no "valor de
+  // mercado" (16/11/2026).
+  const base = precos.filter((p) => p.perfil !== "interno");
   const valor_medio = arred(base.reduce((s, p) => s + p.valor, 0) / base.length, 2);
   const horas_estimadas = arred(base.reduce((s, p) => s + p.horas, 0) / base.length, 1);
   const premissas = corta(String(b.premissas ?? ""), 800) || null;

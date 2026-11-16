@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useRef } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
+import { useAccessibleMenus, matchMenuCode, menuCodeComAcessoNaRota } from "@/hooks/useAccessibleMenus";
 import { supabase } from "@/integrations/supabase/client";
 import { SemAcesso } from "@/components/layout/SemAcesso";
 import { useFeatureFlag } from "@/lib/featureFlags";
@@ -39,7 +39,12 @@ export function RouteGuard({ children }: { children: ReactNode }) {
     ? (phaseFlagged.flag === "triagemIA" ? triagemIAEnabled : false)
     : true;
 
-  const menuCode = access ? matchMenuCode(pathname, access.routes) : null;
+  const menuCodeComAcesso = access
+    ? menuCodeComAcessoNaRota(pathname, access)
+    : null;
+  // Para auditoria/telemetria, registra a porta que efetivamente liberou a
+  // tela. Sem grant, conserva o código original mais representativo.
+  const menuCode = menuCodeComAcesso ?? (access ? matchMenuCode(pathname, access.routes) : null);
 
   // Encarregado externo: allowlist estrita, avaliada ANTES de qualquer outra
   // regra. Ele não tem perfil de acesso nenhum, então cairia no ramo "menu
@@ -69,9 +74,7 @@ export function RouteGuard({ children }: { children: ReactNode }) {
       (ACESSO_ABERTO_SEM_PERMISSOES ||
         rotaSempreLiberada(pathname) ||
         (!!access &&
-          !!menuCode &&
-          !access.inactiveCodes.has(menuCode) &&
-          access.codes.has(menuCode)));
+          !!menuCodeComAcesso));
 
   // Medição de uso (02/10/2026, mig 291 — Sistemas › Checklist de Módulos):
   // tela aberta com acesso conta um acesso para a pessoa. Só tela cadastrada

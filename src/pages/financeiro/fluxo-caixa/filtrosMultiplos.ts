@@ -111,3 +111,86 @@ export function contratosDasEmpresas(
   });
   return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
 }
+
+// SIS-2026-0913: filtros em cascata (facetas). Antes cada filtro acompanhava só alguns outros (Centro de Custo só a
+// Empresa, Classificação só Tipo + Centro), e com Tipo = Saída + Classificação = Transferência entre Contas o filtro
+// Centro de Custo ainda listava todos os centros (ADMINISTRATIVO - …), sem nenhum lançamento naquela combinação.
+// Regra agora: as opções de cada filtro saem das linhas que passam em TODOS os OUTROS filtros — o próprio fica de
+// fora, senão escolher um centro esconderia os demais centros e não daria para marcar mais de um.
+export type ChaveFiltroFacetado = "tipo" | "empresa" | "origem" | "contrato" | "integrante" | "classificacao" | "forma" | "banco" | "conta";
+
+export const CHAVES_FILTRO_FACETADO: ChaveFiltroFacetado[] = ["tipo", "empresa", "origem", "contrato", "integrante", "classificacao", "forma", "banco", "conta"];
+
+export interface SeparacaoFacetas<L> {
+  /** linhas que passam em todos os filtros (o resultado da tabela). */
+  passam: L[];
+  /** linhas reprovadas por UM filtro só — entram na base das opções daquele filtro. */
+  quase: Record<ChaveFiltroFacetado, L[]>;
+}
+
+/**
+ * Avalia cada linha uma vez. `reprova(l)` devolve os filtros facetados que a linha não passa, ou `null` quando ela já
+ * cai num filtro sem faceta (data, valor, busca, situação…) — essa não entra em base nenhuma.
+ */
+export function separarPorFacetas<L>(linhas: L[], reprova: (l: L) => ChaveFiltroFacetado[] | null): SeparacaoFacetas<L> {
+  const passam: L[] = [];
+  const quase = Object.fromEntries(CHAVES_FILTRO_FACETADO.map((k) => [k, [] as L[]])) as Record<ChaveFiltroFacetado, L[]>;
+  linhas.forEach((l) => {
+    const falhas = reprova(l);
+    if (falhas === null) return;
+    if (falhas.length === 0) passam.push(l);
+    else if (falhas.length === 1) quase[falhas[0]].push(l);
+  });
+  return { passam, quase };
+}
+
+/** Linhas que servem de base para as opções do filtro `chave`: as que passam em todos os outros filtros. */
+export function baseDaFaceta<L>(sep: SeparacaoFacetas<L>, chave: ChaveFiltroFacetado): L[] {
+  return sep.quase[chave].length === 0 ? sep.passam : [...sep.passam, ...sep.quase[chave]];
+}
+
+/** Pares id → nome tirados das linhas (sem repetir), em ordem alfabética. */
+export function paresDasLinhas<L>(linhas: L[], par: (l: L) => [string | null | undefined, string | null | undefined]): [string, string][] {
+  const map = new Map<string, string>();
+  linhas.forEach((l) => {
+    const [id, nome] = par(l);
+    if (id && nome) map.set(id, nome);
+  });
+  return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+}
+
+/**
+ * Centros de custo (contratos) das linhas, incluindo os das cotas de rateio — o filtro da tabela (linhaTemContrato)
+ * já acha a linha rateada pela cota, então o centro que só aparece em rateio também é opção válida.
+ * Fatura do cartão fica de fora pelas cotas: o rateioDetalhe dela é por despesa, não por contrato.
+ */
+export function contratosDasLinhas(
+  linhas: { contrato_id?: string | null; contrato_nome?: string | null; fatura_cartao_id?: string | null; rateioDetalhe?: { id: string; nome: string }[] }[],
+): [string, string][] {
+  const map = new Map<string, string>();
+  linhas.forEach((l) => {
+    if (l.contrato_id && l.contrato_nome) map.set(l.contrato_id, l.contrato_nome);
+    if (!l.fatura_cartao_id) l.rateioDetalhe?.forEach((c) => c.id && c.nome && map.set(c.id, c.nome));
+  });
+  return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+}
+
+/**
+ * Opções de um filtro facetado. Item já escolhido que ficou sem lançamento (outro filtro mudou) continua na lista:
+ * o SearchableMultiSelect só desenha o badge de quem está nas opções, e sem isso ficaria um filtro ativo invisível.
+ * "Sem …" só aparece se houver linha sem o campo na base (ou se já estiver marcado).
+ */
+export function opcoesFacetadas(
+  disponiveis: [string, string][],
+  selecionados: string[],
+  todos: [string, string][],
+  sem?: { rotulo: string; temLinhaSem: boolean },
+): SearchableOption[] {
+  const ids = new Set(disponiveis.map(([id]) => id));
+  const extras = selecionados
+    .filter((id) => id !== FILTRO_SEM_VALOR && !ids.has(id))
+    .map((id) => [id, todos.find(([i]) => i === id)?.[1] ?? id] as [string, string]);
+  const lista = extras.length === 0 ? disponiveis : [...disponiveis, ...extras].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+  const comSem = !!sem && (sem.temLinhaSem || selecionados.includes(FILTRO_SEM_VALOR));
+  return opcoesDe(lista, comSem ? sem!.rotulo : undefined);
+}

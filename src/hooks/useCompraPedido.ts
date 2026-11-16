@@ -33,7 +33,7 @@ export interface PedidoCompraResumido {
 export interface CompraPedido {
   id: string;
   numero: string;
-  despesa_id: string;
+  despesa_id: string | null;
   fornecedor_id: string | null;
   fornecedor_nome: string | null;
   contrato_id: string | null;
@@ -46,6 +46,9 @@ export interface CompraPedido {
   condicoes_negociadas: string | null;
   frete_incluso: boolean;
   observacoes: string | null;
+  origem?: "cotacao_malote" | "estoque_saudavel" | "manual";
+  comprador_nome?: string | null;
+  cotacao_em?: string | null;
   status: "rascunho" | "enviado" | "aguardando_entrega" | "entrega_parcial" | "recebido" | "cancelado";
   enviado_em: string | null;
   enviado_por_nome: string | null;
@@ -58,6 +61,29 @@ export interface CompraPedido {
     cidade: string | null; uf: string | null; cep: string | null;
     telefone: string | null; email: string | null;
   } | null;
+}
+
+export interface ItemCatalogoCompra {
+  id: string;
+  nome: string;
+  tipo: string;
+  tamanho: string | null;
+  item_pai_id: string | null;
+}
+
+export interface NovoPedidoCompra {
+  empresaId: string;
+  fornecedorId: string;
+  origem: "estoque_saudavel" | "manual";
+  itens: Array<{
+    sup_item_id: string;
+    quantidade: number;
+    unidade: string;
+    valor_unitario: number;
+    observacao?: string | null;
+    ordem: number;
+  }>;
+  dados: Record<string, unknown>;
 }
 
 export function usePedidosCompra() {
@@ -107,6 +133,25 @@ export function usePedidoAtivoDaDespesa(despesaId?: string | null) {
   });
 }
 
+/** Catálogo da empresa para montar um pedido formal sem depender do Malote. */
+export function useCatalogoPedidoCompra(empresaId?: string | null) {
+  return useQuery<ItemCatalogoCompra[]>({
+    queryKey: [CHAVE, "catalogo", empresaId],
+    enabled: !!empresaId,
+    queryFn: async () => {
+      const { data, error } = await sb.from("sup_item")
+        .select("id,nome,tipo,tamanho,item_pai_id")
+        .eq("empresa_id", empresaId)
+        .eq("ativo", true)
+        .eq("aprovado", true)
+        .order("nome")
+        .limit(5000);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
 function useInvalidarPedidos() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: [CHAVE] });
@@ -121,6 +166,24 @@ export function useGerarPedidoCompra() {
       return data;
     },
     onSuccess: () => { invalidar(); toast.success("Pedido de compra gerado."); },
+    onError: (erro) => toast.error(erro.message),
+  });
+}
+
+export function useCriarPedidoCompraDireto() {
+  const invalidar = useInvalidarPedidos();
+  return useMutation<CompraPedido, Error, NovoPedidoCompra>({
+    mutationFn: async ({ empresaId, fornecedorId, origem, itens, dados }) => {
+      const { data, error } = await sb.rpc("sup_compra_criar_pedido_direto", {
+        p_empresa_id: empresaId,
+        p_fornecedor_id: fornecedorId,
+        p_itens: itens,
+        p_dados: { ...dados, origem },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => { invalidar(); toast.success("Pedido de compra criado em rascunho."); },
     onError: (erro) => toast.error(erro.message),
   });
 }

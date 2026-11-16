@@ -140,7 +140,8 @@ export function ModulosMenusTab() {
     queryFn: async () => {
       const { data, error } = await supabase.from("app_menu").select("*").order("ordem").order("nome");
       if (error) throw error;
-      return ((data ?? []) as Menu[]).filter((menu) => rotaVisivelNoGerenciamento(menu.rota));
+      return ((data ?? []) as Menu[]).filter((menu) =>
+        menu.codigo.startsWith("menu_lateral_copia_") || rotaVisivelNoGerenciamento(menu.rota));
     },
   });
 

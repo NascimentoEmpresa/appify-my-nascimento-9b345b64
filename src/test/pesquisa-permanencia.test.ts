@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import {
   FORMULARIO_PERMANENCIA_ID, ID_PERGUNTA_FORM, MIN_RESPOSTAS_GRUPO, PERGUNTAS, agrupar, agruparTurnover, alternar, alternarComplemento,
   contarPergunta, contextoIA, ehFormularioPermanencia, errosDaPergunta, filtrar, indicadores, linhasDoFormulario, paraPergunta,
-  perguntaPorId, perguntasDoFormulario, pontosDeAtencao, resumoGerencial, taxaTurnover, validarRespostas,
+  perguntaPorId, perguntasDoFormulario, perguntasIdentificacao, perguntasOriginais, pontosDeAtencao, resumoGerencial, taxaTurnover, validarRespostas,
+  IDENTIFICACAO, NAO_INFORMADO, cruzar, cruzarDuplo, impactoLideranca, intencaoDe, aprovacaoDe,
   type ConfigEscolha, type LinhaResposta, type LinhaTurnover, type Respostas,
 } from "../../supabase/functions/_shared/pesquisa-permanencia";
 
@@ -47,14 +48,32 @@ describe("catálogo do documento", () => {
     expect(trecho).toContain(FORMULARIO_PERMANENCIA_ID);
     const json = trecho.match(/'(\[\{.*\}\])'::jsonb/s)?.[1];
     expect(json).toBeTruthy();
-    expect(JSON.parse(json!)).toEqual(perguntasDoFormulario());
+    expect(JSON.parse(json!)).toEqual(perguntasOriginais());
     // A migração das respostas antigas usa os mesmos ids de pergunta.
-    for (const [cod, id] of Object.entries(ID_PERGUNTA_FORM)) if (cod !== "local") expect(sql).toContain(`('${cod}', '${id}')`);
+    for (const cod of PERGUNTAS.map((p) => p.id)) expect(sql).toContain(`('${cod}', '${ID_PERGUNTA_FORM[cod]}')`);
   });
-  it("o formulário é reconhecido como pesquisa de permanência; sem o local de trabalho, não", () => {
+  it("a mig 20261116140000 grava exatamente as 4 perguntas de identificação e tira o contrato", () => {
+    const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261116140000_sis_2026_0756_permanencia_identificacao_sem_contrato.sql"), "utf8");
+    const trecho = sql.slice(sql.indexOf("-- form-identificacao-inicio"), sql.indexOf("-- form-identificacao-fim"));
+    expect(trecho).toContain(FORMULARIO_PERMANENCIA_ID);
+    expect(trecho).toContain("IS DISTINCT FROM 'local_trabalho'");
+    const json = trecho.match(/'(\[\{.*?\}\])'::jsonb/s)?.[1];
+    expect(JSON.parse(json!)).toEqual(perguntasIdentificacao());
+    expect(perguntasDoFormulario().some((p) => p.tipo === "local_trabalho")).toBe(false);
+  });
+  it("as opções pedidas no chamado: 8 regiões, 4 áreas com exemplos, gênero e faixa", () => {
+    const [reg, area, gen, faixa] = IDENTIFICACAO;
+    expect(reg.titulo).toBe("Região de Atuação");
+    expect(reg.opcoes).toHaveLength(8);
+    expect(area.opcoes.map((o) => o.rotulo)).toEqual(["Operacional", "Operacional Técnico / Especialista", "Administrativo e Comercial", "Liderança e Supervisão de Campo"]);
+    expect(area.opcoes.every((o) => o.descricao?.startsWith("Exemplos:"))).toBe(true);
+    expect(gen.opcoes.map((o) => o.rotulo)).toEqual(["Feminino", "Masculino", "Prefiro não responder / Outro"]);
+    expect(faixa.opcoes.map((o) => o.rotulo)).toEqual(["Até 25 anos", "De 26 a 40 anos", "Mais de 40 anos"]);
+  });
+  it("o formulário é reconhecido como pesquisa de permanência sem o local de trabalho; sem uma das 8, não", () => {
     const ps = perguntasDoFormulario();
     expect(ehFormularioPermanencia(ps)).toBe(true);
-    expect(ehFormularioPermanencia(ps.filter((p) => p.tipo !== "local_trabalho"))).toBe(false);
+    expect(ehFormularioPermanencia(perguntasOriginais())).toBe(true);
     expect(ehFormularioPermanencia(ps.filter((p) => (p.config as ConfigEscolha).codigo !== "p8"))).toBe(false);
   });
 });
@@ -75,12 +94,65 @@ describe("dentro do Formulários", () => {
       ...Object.fromEntries(Object.entries(resp()).map(([cod, v]) => [ID_PERGUNTA_FORM[cod], v])),
     };
     const ls = linhasDoFormulario(ps, [
-      { formulario_id: "f1", enviado_em: "2026-11-01T01:00:00Z", itens },   // 31/10 22h em Brasília
-      { formulario_id: "f1", enviado_em: "2026-10-15T12:00:00Z", itens: { [ID_PERGUNTA_FORM.p1]: { marcadas: ["salario"] } } },
+      { formulario_id: "f1", enviado_em: "2026-11-01T01:00:00Z", itens },   // 31/10 22h em Brasília (resposta antiga, com contrato)
+      { formulario_id: "f1", enviado_em: "2026-11-15T12:00:00Z", itens: {
+        [ID_PERGUNTA_FORM.regiao]: { marcadas: ["rs_serra"] }, [ID_PERGUNTA_FORM.area]: { marcadas: ["tecnico"] },
+        [ID_PERGUNTA_FORM.genero]: { marcadas: ["feminino"] }, [ID_PERGUNTA_FORM.faixa]: { marcadas: ["mais_40"] },
+        [ID_PERGUNTA_FORM.p1]: { marcadas: ["salario"] } } },
     ]);
-    expect(ls).toHaveLength(1);
-    expect(ls[0]).toMatchObject({ mes: "2026-10", empresa: 1, filial: 10, contrato: "UFAC", posto: "PO-1", funcao: "AUX DE LIMPEZA" });
+    expect(ls).toHaveLength(2);
+    expect(ls[0]).toMatchObject({ mes: "2026-10", empresa: 1, filial: 10, contrato: "UFAC", posto: "PO-1", funcao: "AUX DE LIMPEZA", perfil: {} });
     expect(ls[0].r).toEqual(resp());
+    expect(ls[1]).toMatchObject({ empresa: null, contrato: "", perfil: { regiao: "rs_serra", area: "tecnico", genero: "feminino", faixa: "mais_40" } });
+    expect(ls[1].r).toEqual({ p1: { marcadas: ["salario"] } });
+    // Sem contrato: fora do "por contrato", dentro do "por região".
+    expect(agrupar(ls, "contrato").map((g) => g.chave)).toEqual(["1-10"]);
+    expect(agrupar(ls, "regiao", 1).map((g) => g.chave).sort()).toEqual([NAO_INFORMADO, "rs_serra"].sort());
+  });
+});
+
+describe("cruzamentos do dashboard (SIS-2026-0756)", () => {
+  const L = (perfil: LinhaResposta["perfil"], p7: string, p3: string, p2: string) =>
+    linha(resp({ p7: { marcadas: [p7] }, p3: { marcadas: [p3] }, p2: { marcadas: [p2], principal: p2 } }), { perfil, empresa: null, filial: null });
+  const ls = [
+    L({ regiao: "rs_sul", area: "operacional", genero: "masculino", faixa: "mais_40" }, "nao", "ruim", "salario_fora"),
+    L({ regiao: "rs_sul", area: "operacional", genero: "masculino", faixa: "mais_40" }, "nao", "ruim", "salario_fora"),
+    L({ regiao: "rs_sul", area: "tecnico", genero: "feminino", faixa: "26_40" }, "sim_mas", "regular", "sobrecarga"),
+    L({ regiao: "rs_sul", area: "operacional", genero: "masculino", faixa: "26_40" }, "sim", "bom", "lideranca"),
+    L({ regiao: "pr", area: "administrativo", genero: "feminino", faixa: "ate_25" }, "sim", "muito_bom", "pessoais"),
+  ];
+  it("intenção vem da pergunta 7 e aprovação da pergunta 3", () => {
+    expect(ls.map(intencaoDe)).toEqual(["sai", "sai", "duvida", "fica", "fica"]);
+    expect(ls.map(aprovacaoDe)).toEqual(["desaprova", "desaprova", "neutro", "aprova", "aprova"]);
+  });
+  it("C1: as 8 regiões sempre aparecem; a do Sul mostra lealdade e o motivo principal", () => {
+    const c = cruzar(ls, "regiao");
+    expect(c).toHaveLength(8);
+    const sul = c.find((x) => x.chave === "rs_sul")!;
+    expect(sul).toMatchObject({ n: 4, reservado: false, intencao: { fica: 1, duvida: 1, sai: 2 }, desaprova: 2 });
+    expect(sul.pct.sai).toBe(50);
+    expect(sul.motivo).toMatchObject({ cod: "salario_fora", n: 2 });
+    expect(c.find((x) => x.chave === "pr")!.reservado).toBe(true); // 1 resposta: só a quantidade
+  });
+  it("C2/C3: área e gênero × faixa", () => {
+    expect(cruzar(ls, "area").map((x) => x.n)).toEqual([3, 1, 1, 0]);
+    const m = cruzarDuplo(ls, "genero", "faixa");
+    expect(m.colunas.map((x) => x.chave)).toEqual(["ate_25", "26_40", "mais_40"]);
+    const masc = m.linhas.find((x) => x.chave === "masculino")!;
+    expect(masc.celulas.map((x) => x.n)).toEqual([0, 1, 2]);
+    expect(masc.total.n).toBe(3);
+  });
+  it("C4: quem desaprova — onde está e se pretende sair", () => {
+    const lid = impactoLideranca(ls, 2);
+    expect(lid.desaprovam).toBe(2);
+    expect(lid.porRegiao.map((x) => [x.chave, x.n])).toEqual([["rs_sul", 2]]);
+    expect(lid.porArea.map((x) => [x.chave, x.n])).toEqual([["operacional", 2]]);
+    expect(lid.diferencaSai).toBe(100); // 100% de risco em quem desaprova contra 0% em quem aprova
+  });
+  it("filtro combinado vale para todos os cruzamentos", () => {
+    expect(filtrar(ls, { regiao: "rs_sul", genero: "masculino" })).toHaveLength(3);
+    expect(filtrar(ls, { aprovacao: "desaprova", intencao: "sai" })).toHaveLength(2);
+    expect(filtrar([linha(resp())], { regiao: NAO_INFORMADO })).toHaveLength(1);
   });
 });
 

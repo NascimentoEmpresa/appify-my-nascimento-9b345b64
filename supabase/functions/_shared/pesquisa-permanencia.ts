@@ -53,6 +53,8 @@ export interface Complemento {
   texto?: { rotulo: string; max: number };
 }
 export interface Opcao extends OpcaoSimples {
+  /** Texto menor embaixo da alternativa (exemplos da "área em que trabalha"). */
+  descricao?: string;
   tom?: Tom;
   /** Pergunta 2: de quem é o motivo que levaria a pedir demissão. */
   categoria?: Categoria;
@@ -248,6 +250,101 @@ export const PERGUNTAS: Pergunta[] = [
   },
 ];
 
+// ─── Identificação (SIS-2026-0756, reaberto em 09/11 e 16/11/2026) ─────────
+//
+// Helena (RH), 09/11: "em vez de pedir o nome da cidade ou do contrato,
+// apresente estas opções" — Região de Atuação, área de trabalho, gênero e
+// faixa etária. A pergunta do contrato (local_trabalho) saiu do formulário na
+// mig 20261116140000; as respostas antigas continuam com o contrato gravado e
+// os relatórios por contrato/posto/função seguem valendo só para elas.
+// Ela pediu uma pesquisa "por amostragem", com menos respostas mas recortes
+// precisos: por isso, as categorias são fechadas (código por alternativa) e
+// todo recorte com menos de MIN_RESPOSTAS_GRUPO respostas não é detalhado —
+// gênero + faixa + região juntos identificariam alguém num contrato pequeno.
+
+export type CampoPerfil = "regiao" | "area" | "genero" | "faixa";
+export interface PerguntaPerfil { campo: CampoPerfil; titulo: string; tema: string; opcoes: Opcao[] }
+/** Resposta antiga (antes da identificação) ou pergunta pulada. */
+export const NAO_INFORMADO = "nao_informado";
+
+export const IDENTIFICACAO: PerguntaPerfil[] = [
+  {
+    campo: "regiao", tema: "Região", titulo: "Região de Atuação",
+    opcoes: [
+      { cod: "rs_metropolitana", rotulo: "RS - Região Metropolitana e Litoral (Porto Alegre, Canoas, Gravataí, Osório, Xangri-lá, etc.)" },
+      { cod: "rs_serra", rotulo: "RS - Serra Gaúcha (Caxias do Sul, Bento Gonçalves, Gramado, Vacaria, etc.)" },
+      { cod: "rs_norte", rotulo: "RS - Norte e Noroeste (Passo Fundo, Erechim, Ijuí, Santa Rosa, Carazinho, etc.)" },
+      { cod: "rs_centro", rotulo: "RS - Centro e Vales (Santa Maria, Santa Cruz do Sul, Lajeado, Cachoeira do Sul, etc.)" },
+      { cod: "rs_sul", rotulo: "RS - Sul e Campanha (Pelotas, Rio Grande, Bagé, Santana do Livramento, etc.)" },
+      { cod: "rs_fronteira", rotulo: "RS - Fronteira Oeste e Missões (Uruguaiana, São Borja, Alegrete, Santo Ângelo, etc.)" },
+      { cod: "sc", rotulo: "Santa Catarina (SC) - Todas as regiões" },
+      { cod: "pr", rotulo: "Paraná (PR) - Todas as regiões" },
+    ],
+  },
+  {
+    campo: "area", tema: "Área", titulo: "Em qual área você trabalha atualmente?",
+    opcoes: [
+      { cod: "operacional", rotulo: "Operacional",
+        descricao: "Exemplos: auxiliares gerais, portaria, limpeza, recepção, vigilância, ajudantes e funções de suporte inicial." },
+      { cod: "tecnico", rotulo: "Operacional Técnico / Especialista",
+        descricao: "Exemplos: eletricistas, mecânicos, encanadores, motoristas, operadores de máquinas, técnicos de TI e funções que exigem certificação técnica ou curso profissionalizante." },
+      { cod: "administrativo", rotulo: "Administrativo e Comercial",
+        descricao: "Exemplos: assistentes, analistas, faturamento, compras, recursos humanos, setor financeiro e atendimento de escritório." },
+      { cod: "lideranca", rotulo: "Liderança e Supervisão de Campo",
+        descricao: "Exemplos: encarregados de contrato, supervisores regionais, coordenadores e líderes de equipe que atuam direto na ponta ou viajando pelos contratos." },
+    ],
+  },
+  {
+    campo: "genero", tema: "Gênero", titulo: "Qual é o seu gênero?",
+    opcoes: [
+      { cod: "feminino", rotulo: "Feminino" },
+      { cod: "masculino", rotulo: "Masculino" },
+      { cod: "nao_informar", rotulo: "Prefiro não responder / Outro" },
+    ],
+  },
+  {
+    campo: "faixa", tema: "Faixa etária", titulo: "Em qual faixa etária você se encontra?",
+    opcoes: [
+      { cod: "ate_25", rotulo: "Até 25 anos" },
+      { cod: "26_40", rotulo: "De 26 a 40 anos" },
+      { cod: "mais_40", rotulo: "Mais de 40 anos" },
+    ],
+  },
+];
+
+/** Rótulo curto (sem a lista de cidades) para gráfico e tabela. */
+export function rotuloPerfil(campo: CampoPerfil, cod: string | null | undefined): string {
+  if (!cod || cod === NAO_INFORMADO) return "Não informado";
+  const o = IDENTIFICACAO.find((p) => p.campo === campo)?.opcoes.find((x) => x.cod === cod);
+  return o ? o.rotulo.replace(/\s*\(.*\)\s*$/, "") : cod;
+}
+
+// Intenção de permanência, aprovação da gestão e motivo de rejeição (os
+// eixos dos 4 cruzamentos que a Helena pediu) saem das perguntas que a
+// pesquisa já tem — não há pergunta nova com esses nomes:
+//   · intenção  = pergunta 7 (indicaria a um amigo): "Sim, com certeza" fica,
+//                 "Sim, mas há pontos a melhorar" em dúvida, "Não indicaria" risco de sair;
+//   · aprovação = pergunta 3 (relacionamento com o encarregado): Muito bom/Bom
+//                 aprova, Regular neutro, Ruim desaprova;
+//   · motivo    = pergunta 2, a situação marcada como a MAIS importante.
+export type Intencao = "fica" | "duvida" | "sai";
+export const INTENCOES: Intencao[] = ["fica", "duvida", "sai"];
+export const INTENCAO_ROTULO: Record<Intencao, string> = { fica: "Pretende ficar", duvida: "Em dúvida", sai: "Risco de sair" };
+export type Aprovacao = "aprova" | "neutro" | "desaprova";
+export const APROVACOES: Aprovacao[] = ["aprova", "neutro", "desaprova"];
+export const APROVACAO_ROTULO: Record<Aprovacao, string> = { aprova: "Aprova", neutro: "Neutro", desaprova: "Desaprova" };
+
+const INTENCAO_P7: Record<string, Intencao> = { sim: "fica", sim_mas: "duvida", nao: "sai" };
+const APROVACAO_P3: Record<string, Aprovacao> = { muito_bom: "aprova", bom: "aprova", regular: "neutro", ruim: "desaprova" };
+
+export const intencaoDe = (l: Pick<LinhaResposta, "r">): Intencao | null => INTENCAO_P7[l.r?.p7?.marcadas?.[0] ?? ""] ?? null;
+export const aprovacaoDe = (l: Pick<LinhaResposta, "r">): Aprovacao | null => APROVACAO_P3[l.r?.p3?.marcadas?.[0] ?? ""] ?? null;
+/** P2: a mais importante (ou a única marcada). */
+export const motivoSaidaDe = (l: Pick<LinhaResposta, "r">): string | null => {
+  const r = l.r?.p2;
+  return r?.principal ?? (r?.marcadas?.length === 1 ? r.marcadas[0] : null) ?? null;
+};
+
 export const CATEGORIA_ROTULO: Record<Categoria, string> = {
   empresa: "Problemas da empresa",
   fiscais: "Problemas com os fiscais",
@@ -406,14 +503,20 @@ export interface LinhaResposta {
   posto_nome: string | null;
   funcao: string;
   r: Respostas;
+  /** Identificação (código da alternativa); ausente = resposta antiga. */
+  perfil?: Partial<Record<CampoPerfil, string>>;
 }
 
-export type Dimensao = "contrato" | "posto" | "funcao" | "mes" | "aplicacao";
+export type Dimensao = "contrato" | "posto" | "funcao" | "mes" | "aplicacao" | CampoPerfil;
+export type DimensaoLocal = "contrato" | "posto" | "funcao";
+const DIM_LOCAL = new Set<Dimensao>(["contrato", "posto", "funcao"]);
+export const ehCampoPerfil = (d: string): d is CampoPerfil => d === "regiao" || d === "area" || d === "genero" || d === "faixa";
 
 export const chaveContrato = (empresa: number | null, filial: number | null) => `${empresa ?? "?"}-${filial ?? "?"}`;
 export const normFuncao = (s: string | null | undefined) => (s ?? "").normalize("NFC").replace(/\s+/g, " ").trim().toUpperCase();
 
-export function chaveDe(l: Pick<LinhaResposta, "empresa" | "filial" | "posto" | "funcao" | "mes" | "aplicacao_id">, d: Dimensao): string {
+export function chaveDe(l: Pick<LinhaResposta, "empresa" | "filial" | "posto" | "funcao" | "mes" | "aplicacao_id" | "perfil">, d: Dimensao): string {
+  if (ehCampoPerfil(d)) return l.perfil?.[d] ?? NAO_INFORMADO;
   switch (d) {
     case "contrato": return chaveContrato(l.empresa, l.filial);
     case "posto": return l.posto ?? `sem-posto:${chaveContrato(l.empresa, l.filial)}`;
@@ -423,7 +526,8 @@ export function chaveDe(l: Pick<LinhaResposta, "empresa" | "filial" | "posto" | 
   }
 }
 
-export function rotuloDe(l: Pick<LinhaResposta, "contrato" | "posto" | "posto_nome" | "funcao" | "mes">, d: Dimensao): string {
+export function rotuloDe(l: Pick<LinhaResposta, "contrato" | "posto" | "posto_nome" | "funcao" | "mes" | "perfil">, d: Dimensao): string {
+  if (ehCampoPerfil(d)) return rotuloPerfil(d, l.perfil?.[d]);
   switch (d) {
     case "contrato": return l.contrato;
     case "posto": return l.posto ? (l.posto_nome ? `${l.posto} · ${l.posto_nome}` : l.posto) : `Sem posto informado · ${l.contrato}`;
@@ -441,11 +545,24 @@ export interface Filtro {
   /** "YYYY-MM", inclusivo. */
   de?: string | null;
   ate?: string | null;
+  /** Identificação e eixos dos cruzamentos (código; NAO_INFORMADO = respostas antigas). */
+  regiao?: string | null;
+  area?: string | null;
+  genero?: string | null;
+  faixa?: string | null;
+  intencao?: Intencao | null;
+  aprovacao?: Aprovacao | null;
 }
 
 export function filtrar(linhas: LinhaResposta[], f: Filtro): LinhaResposta[] {
   return linhas.filter((l) =>
-    (!f.contrato || chaveDe(l, "contrato") === f.contrato)
+    (!f.regiao || chaveDe(l, "regiao") === f.regiao)
+    && (!f.area || chaveDe(l, "area") === f.area)
+    && (!f.genero || chaveDe(l, "genero") === f.genero)
+    && (!f.faixa || chaveDe(l, "faixa") === f.faixa)
+    && (!f.intencao || intencaoDe(l) === f.intencao)
+    && (!f.aprovacao || aprovacaoDe(l) === f.aprovacao)
+    && (!f.contrato || chaveDe(l, "contrato") === f.contrato)
     && (!f.posto || chaveDe(l, "posto") === f.posto)
     && (!f.funcao || chaveDe(l, "funcao") === normFuncao(f.funcao))
     && (!f.aplicacao || l.aplicacao_id === f.aplicacao)
@@ -564,6 +681,8 @@ export interface Grupo { chave: string; rotulo: string; linhas: LinhaResposta[];
 export function agrupar(linhas: LinhaResposta[], d: Dimensao, minimo = MIN_RESPOSTAS_GRUPO): Grupo[] {
   const m = new Map<string, { rotulo: string; linhas: LinhaResposta[] }>();
   for (const l of linhas) {
+    // Sem contrato (respostas depois da mig 20261116140000): fora dos recortes de local.
+    if (DIM_LOCAL.has(d) && (l.empresa == null || l.filial == null)) continue;
     const k = chaveDe(l, d);
     const g = m.get(k) ?? { rotulo: rotuloDe(l, d), linhas: [] };
     g.linhas.push(l);
@@ -661,6 +780,93 @@ export function pontosDeAtencao(linhas: LinhaResposta[], d: Dimensao = "contrato
   return out.sort((a, b) => (b.valor - b.geral) - (a.valor - a.geral));
 }
 
+// ─── Cruzamentos do dashboard (SIS-2026-0756, 09/11/2026) ──────────────────
+//
+// C1 Região × Intenção × Motivo · C2 Área × Intenção × Motivo ·
+// C3 Gênero × Faixa etária × Intenção × Motivo · C4 Aprovação da gestão ×
+// Intenção × (Região + Área). Todos recebem as linhas JÁ filtradas (o filtro
+// é um só para a tela inteira — clicar numa região filtra os outros três).
+
+export interface Celula {
+  chave: string; rotulo: string; n: number;
+  /** Menos de MIN_RESPOSTAS_GRUPO: só a quantidade aparece (anonimato). */
+  reservado: boolean;
+  intencao: Record<Intencao, number>;
+  /** % sobre quem respondeu a pergunta da intenção. */
+  pct: Record<Intencao, number>;
+  /** Motivo de saída mais importante (P2) e o ranking. */
+  motivo: { cod: string; rotulo: string; n: number; pct: number } | null;
+  motivos: { cod: string; rotulo: string; n: number; pct: number }[];
+  desaprova: number;
+}
+
+export function celula(chave: string, rotulo: string, linhas: LinhaResposta[], minimo = MIN_RESPOSTAS_GRUPO): Celula {
+  const intencao: Record<Intencao, number> = { fica: 0, duvida: 0, sai: 0 };
+  const motivos = new Map<string, number>();
+  let desaprova = 0;
+  for (const l of linhas) {
+    const i = intencaoDe(l);
+    if (i) intencao[i]++;
+    const m = motivoSaidaDe(l);
+    if (m) motivos.set(m, (motivos.get(m) ?? 0) + 1);
+    if (aprovacaoDe(l) === "desaprova") desaprova++;
+  }
+  const base = intencao.fica + intencao.duvida + intencao.sai;
+  const comMotivo = [...motivos.values()].reduce((s, x) => s + x, 0);
+  const ranking = [...motivos.entries()]
+    .map(([cod, k]) => ({ cod, rotulo: opcaoDe("p2", cod)?.rotulo ?? cod, n: k, pct: pct(k, comMotivo) }))
+    .sort((a, b) => b.n - a.n || a.rotulo.localeCompare(b.rotulo));
+  return {
+    chave, rotulo, n: linhas.length, reservado: linhas.length < minimo, intencao,
+    pct: { fica: pct(intencao.fica, base), duvida: pct(intencao.duvida, base), sai: pct(intencao.sai, base) },
+    motivo: ranking[0] ?? null, motivos: ranking, desaprova,
+  };
+}
+
+/** Uma célula por alternativa do campo, na ordem do formulário (vazias inclusas); "Não informado" só se houver. */
+export function cruzar(linhas: LinhaResposta[], campo: CampoPerfil, minimo = MIN_RESPOSTAS_GRUPO): Celula[] {
+  const ops = IDENTIFICACAO.find((p) => p.campo === campo)!.opcoes;
+  const out = ops.map((o) => celula(o.cod, rotuloPerfil(campo, o.cod), linhas.filter((l) => chaveDe(l, campo) === o.cod), minimo));
+  const sem = linhas.filter((l) => chaveDe(l, campo) === NAO_INFORMADO);
+  if (sem.length) out.push(celula(NAO_INFORMADO, "Não informado", sem, minimo));
+  return out;
+}
+
+/** C3: matriz linha × coluna (ex.: gênero × faixa etária). */
+export function cruzarDuplo(linhas: LinhaResposta[], a: CampoPerfil, b: CampoPerfil, minimo = MIN_RESPOSTAS_GRUPO) {
+  const linhasA = cruzar(linhas, a, minimo).map((x) => x.chave);
+  const colunas = cruzar(linhas, b, minimo).map((x) => ({ chave: x.chave, rotulo: x.rotulo }));
+  return {
+    colunas,
+    linhas: linhasA.map((ka) => {
+      const sub = linhas.filter((l) => chaveDe(l, a) === ka);
+      return {
+        chave: ka, rotulo: rotuloPerfil(a, ka), total: celula(ka, rotuloPerfil(a, ka), sub, minimo),
+        celulas: colunas.map((c) => celula(c.chave, c.rotulo, sub.filter((l) => chaveDe(l, b) === c.chave), minimo)),
+      };
+    }),
+  };
+}
+
+/**
+ * C4: quem DESAPROVA a gestão — onde está (região e área) e se pretende sair,
+ * comparado com quem aprova. Se quem desaprova tem risco de saída muito acima
+ * de quem aprova, o problema é a liderança (micro), não a empresa (macro).
+ */
+export function impactoLideranca(linhas: LinhaResposta[], minimo = MIN_RESPOSTAS_GRUPO) {
+  const porAprovacao = APROVACOES.map((a) => celula(a, APROVACAO_ROTULO[a], linhas.filter((l) => aprovacaoDe(l) === a), minimo));
+  const desaprovam = linhas.filter((l) => aprovacaoDe(l) === "desaprova");
+  const aprova = porAprovacao[0], desap = porAprovacao[2];
+  return {
+    porAprovacao,
+    desaprovam: desaprovam.length,
+    /** Pontos a mais de risco de saída em quem desaprova (null se algum dos dois lados é pequeno demais). */
+    diferencaSai: aprova.reservado || desap.reservado ? null : Math.round((desap.pct.sai - aprova.pct.sai) * 10) / 10,
+    porRegiao: cruzar(desaprovam, "regiao", minimo).filter((c) => c.n > 0),
+    porArea: cruzar(desaprovam, "area", minimo).filter((c) => c.n > 0),
+  };
+}
+
 // ─── Rotatividade (a mesma conta do Turn-over) ─────────────────────────────
 
 /**
@@ -690,7 +896,7 @@ export function taxaTurnover(trab: number[], dem: number[]): number | null {
   return t > 0 ? Math.round((soma(dem) / t) * 1000) / 10 : null;
 }
 
-export function agruparTurnover(linhas: LinhaTurnover[], d: Exclude<Dimensao, "mes" | "aplicacao">): GrupoTurnover[] {
+export function agruparTurnover(linhas: LinhaTurnover[], d: DimensaoLocal): GrupoTurnover[] {
   const m = new Map<string, { rotulo: string; trab: number[]; dem: number[]; adm: number[] }>();
   for (const l of linhas) {
     const base = { ...l, mes: "", aplicacao_id: "" };
@@ -754,7 +960,7 @@ export function contextoIA(linhas: LinhaResposta[], turnover: LinhaTurnover[], m
   const ls = filtrar(linhas, filtro);
   const tv = filtrarTurnover(turnover, filtro);
   const porContratoT = new Map(agruparTurnover(tv, "contrato").map((g) => [g.chave, g]));
-  const comTurnover = (d: Exclude<Dimensao, "mes" | "aplicacao">, limite: number) => {
+  const comTurnover = (d: DimensaoLocal, limite: number) => {
     const t = new Map(agruparTurnover(tv, d).map((g) => [g.chave, g]));
     return agrupar(ls, d).filter((g) => !g.reservado).slice(0, limite).map((g) => {
       const x = t.get(g.chave);
@@ -779,8 +985,26 @@ export function contextoIA(linhas: LinhaResposta[], turnover: LinhaTurnover[], m
       motivos_de_saida: c.riscoSaida.filter((x) => x.n > 0).map((x) => `${x.rotulo}: ${x.n} (${x.pct}%), mais importante para ${x.principal}`),
       detalhes: c.detalhes.slice(0, 8).map((x) => `${x.origem} › ${x.rotulo}: ${x.n}`),
     })),
-    pontos_de_atencao: [...pontosDeAtencao(ls, "contrato"), ...pontosDeAtencao(ls, "funcao")].slice(0, 25)
+    pontos_de_atencao: [...pontosDeAtencao(ls, "regiao"), ...pontosDeAtencao(ls, "area"), ...pontosDeAtencao(ls, "contrato"), ...pontosDeAtencao(ls, "funcao")].slice(0, 25)
       .map((p) => `${p.dimensao} ${p.rotulo} (${p.n} respostas): ${p.descricao} ${p.valor}% contra ${p.geral}% no geral`),
+    regra_cruzamentos: "intenção de permanência = pergunta 'indicaria a um amigo' (Sim com certeza = pretende ficar; Sim mas há pontos = em dúvida; Não indicaria = risco de sair); aprovação da gestão = pergunta do relacionamento com o encarregado (Muito bom/Bom = aprova, Regular = neutro, Ruim = desaprova); motivo de rejeição = situação MAIS importante que levaria a pedir demissão.",
+    cruzamentos: (() => {
+      const cel = (c: Celula) => c.reservado ? { grupo: c.rotulo, respostas: c.n, detalhe: "menos de 3 respostas, não detalhado" } : {
+        grupo: c.rotulo, respostas: c.n, pretende_ficar_pct: c.pct.fica, em_duvida_pct: c.pct.duvida, risco_de_sair_pct: c.pct.sai,
+        desaprovam_gestao: c.desaprova, motivo_saida_mais_importante: c.motivo ? `${c.motivo.rotulo} (${c.motivo.n})` : null,
+      };
+      const lid = impactoLideranca(ls);
+      return {
+        por_regiao: cruzar(ls, "regiao").filter((c) => c.n > 0).map(cel),
+        por_area: cruzar(ls, "area").filter((c) => c.n > 0).map(cel),
+        por_genero_e_faixa: cruzarDuplo(ls, "genero", "faixa").linhas.flatMap((l) => l.celulas.filter((c) => c.n > 0).map((c) => cel({ ...c, rotulo: `${l.rotulo} · ${c.rotulo}` }))),
+        lideranca: {
+          por_aprovacao: lid.porAprovacao.map(cel),
+          risco_de_sair_a_mais_em_quem_desaprova_pts: lid.diferencaSai,
+          desaprovam_por_regiao: lid.porRegiao.map(cel), desaprovam_por_area: lid.porArea.map(cel),
+        },
+      };
+    })(),
     por_contrato: comTurnover("contrato", 60),
     por_funcao: comTurnover("funcao", 40),
     por_posto: comTurnover("posto", 40),
@@ -818,6 +1042,7 @@ export const TITULO_LOCAL = "Onde você trabalha";
 
 /** Id fixo de cada pergunta no formulário (a migração das respostas antigas usa os mesmos). */
 export const ID_PERGUNTA_FORM: Record<string, string> = {
+  // Saiu do formulário na mig 20261116140000; as respostas antigas guardam o contrato neste id.
   local: "65c6c19d-a958-47fb-8b66-1b07bd7a58dc",
   p1: "4e5df533-32eb-4940-baff-4d573e864846",
   p2: "2c95e9da-12d2-467b-bdee-f6501cac74f8",
@@ -827,15 +1052,20 @@ export const ID_PERGUNTA_FORM: Record<string, string> = {
   p6: "d077e8ec-8b72-4949-80e4-da39a7000cce",
   p7: "cdc477b0-f272-491b-bb14-dfa03b5c57be",
   p8: "231250a9-8a01-4b26-bf21-536963f38561",
+  // Identificação (mig 20261116140000).
+  regiao: "ac6ebbe3-1ad0-44e6-91f2-0b686bb8fa5c",
+  area: "6d506331-d677-47fd-a31a-ea3e3406b541",
+  genero: "311ec60f-c5bb-4b26-9026-2cc9aa88aa7c",
+  faixa: "f47fc316-212e-4d0b-bdc5-648f6d494ad2",
 };
 
 /** O `config` de uma pergunta "escolha_complemento" (o banco valida a mesma forma). */
 export interface ConfigEscolha {
-  /** Código da pergunta para os relatórios (p1..p8 na pesquisa de permanência). */
+  /** Código da pergunta para os relatórios (p1..p8 e regiao/area/genero/faixa na pesquisa de permanência). */
   codigo?: string;
   /** 1 = resposta única; >1 = até N escolhas + a mais importante. */
   max: number;
-  itens: { cod: string; rotulo: string; exclusiva?: boolean; complemento?: Complemento }[];
+  itens: { cod: string; rotulo: string; descricao?: string; exclusiva?: boolean; complemento?: Complemento }[];
 }
 
 /** Valor gravado pela pergunta "local_trabalho" (o banco reescreve contrato/posto_nome pelo cadastro). */
@@ -850,36 +1080,55 @@ export interface ValorLocal {
 export function paraPergunta(id: string, titulo: string, numero: number, cfg: ConfigEscolha): Pergunta {
   return {
     id, numero, titulo, tema: titulo, max: Math.max(1, Number(cfg?.max) || 1),
-    opcoes: (cfg?.itens ?? []).map((o) => ({ cod: o.cod, rotulo: o.rotulo, exclusiva: o.exclusiva, complemento: o.complemento })),
+    opcoes: (cfg?.itens ?? []).map((o) => ({ cod: o.cod, rotulo: o.rotulo, descricao: o.descricao, exclusiva: o.exclusiva, complemento: o.complemento })),
   };
 }
 
-/** As perguntas do formulário, na ordem do documento (o que a migration grava). */
-export function perguntasDoFormulario() {
-  const limpo = <T>(o: T): T => JSON.parse(JSON.stringify(o));
+const limpo = <T>(o: T): T => JSON.parse(JSON.stringify(o));
+
+const perguntasDoCatalogo = () => PERGUNTAS.map((p) => ({
+  id: ID_PERGUNTA_FORM[p.id], tipo: TIPO_ESCOLHA, titulo: p.titulo, descricao: null, obrigatoria: true, imagem_url: null,
+  opcoes: p.opcoes.map((o) => o.rotulo),
+  config: limpo({
+    codigo: p.id, max: p.max,
+    itens: p.opcoes.map((o) => ({
+      cod: o.cod, rotulo: o.rotulo,
+      ...(o.exclusiva ? { exclusiva: true } : {}),
+      ...(o.complemento ? { complemento: o.complemento } : {}),
+    })),
+  } satisfies ConfigEscolha),
+}));
+
+/** As 4 perguntas de identificação, como a mig 20261116140000 grava (o teste confere). */
+export function perguntasIdentificacao() {
+  return IDENTIFICACAO.map((p) => ({
+    id: ID_PERGUNTA_FORM[p.campo], tipo: TIPO_ESCOLHA, titulo: p.titulo, descricao: null, obrigatoria: true, imagem_url: null,
+    opcoes: p.opcoes.map((o) => o.rotulo),
+    config: limpo({
+      codigo: p.campo, max: 1,
+      itens: p.opcoes.map((o) => ({ cod: o.cod, rotulo: o.rotulo, ...(o.descricao ? { descricao: o.descricao } : {}) })),
+    } satisfies ConfigEscolha),
+  }));
+}
+
+/** O formulário como a mig 20261030001000 gravou (com o local de trabalho). */
+export function perguntasOriginais() {
   return [
     { id: ID_PERGUNTA_FORM.local, tipo: TIPO_LOCAL, titulo: TITULO_LOCAL, descricao: null, obrigatoria: true, imagem_url: null, opcoes: [], config: {} },
-    ...PERGUNTAS.map((p) => ({
-      id: ID_PERGUNTA_FORM[p.id], tipo: TIPO_ESCOLHA, titulo: p.titulo, descricao: null, obrigatoria: true, imagem_url: null,
-      opcoes: p.opcoes.map((o) => o.rotulo),
-      config: limpo({
-        codigo: p.id, max: p.max,
-        itens: p.opcoes.map((o) => ({
-          cod: o.cod, rotulo: o.rotulo,
-          ...(o.exclusiva ? { exclusiva: true } : {}),
-          ...(o.complemento ? { complemento: o.complemento } : {}),
-        })),
-      } satisfies ConfigEscolha),
-    })),
+    ...perguntasDoCatalogo(),
   ];
+}
+
+/** As perguntas do formulário hoje: identificação + as 8 do documento. */
+export function perguntasDoFormulario() {
+  return [...perguntasIdentificacao(), ...perguntasDoCatalogo()];
 }
 
 interface PerguntaFormMin { id: string; tipo: string; config?: Record<string, unknown> | null }
 
-/** O formulário tem o recorte (local de trabalho) e as perguntas do catálogo? Aí os relatórios de permanência valem. */
+/** O formulário tem as perguntas do catálogo? Aí os relatórios de permanência valem. */
 export function ehFormularioPermanencia(perguntas: PerguntaFormMin[] | null | undefined): boolean {
   const ps = perguntas ?? [];
-  if (!ps.some((p) => p.tipo === TIPO_LOCAL)) return false;
   const codigos = new Set(ps.filter((p) => p.tipo === TIPO_ESCOLHA).map((p) => String(p.config?.codigo ?? "")));
   return PERGUNTAS.every((p) => codigos.has(p.id));
 }
@@ -887,33 +1136,37 @@ export function ehFormularioPermanencia(perguntas: PerguntaFormMin[] | null | un
 /**
  * Respostas do Formulários (CS_FORM_RESPOSTAS, lidas pela RLS de quem pede)
  * → as linhas dos relatórios. Só o mês sai daqui, como na pesquisa antiga.
- * Resposta sem local de trabalho fica de fora (não tem como recortar).
+ * O contrato só existe nas respostas de antes da mig 20261116140000 (a
+ * pergunta saiu, o valor ficou gravado no id dela); a identificação, só nas
+ * de depois. Nenhuma das duas é obrigatória para a linha entrar.
  */
 export function linhasDoFormulario(
   perguntas: PerguntaFormMin[],
   respostas: { formulario_id?: string; enviado_em: string; itens: Record<string, unknown> | null }[],
 ): LinhaResposta[] {
-  const local = perguntas.find((p) => p.tipo === TIPO_LOCAL);
-  if (!local) return [];
+  const localId = perguntas.find((p) => p.tipo === TIPO_LOCAL)?.id ?? ID_PERGUNTA_FORM.local;
   const porCodigo = perguntas
     .filter((p) => p.tipo === TIPO_ESCOLHA && p.config?.codigo)
     .map((p) => [String(p.config!.codigo), p.id] as const);
   const out: LinhaResposta[] = [];
   for (const r of respostas) {
-    const l = r.itens?.[local.id] as ValorLocal | undefined;
-    if (!l || typeof l !== "object" || l.empresa == null || l.filial == null) continue;
+    const raw = r.itens?.[localId] as ValorLocal | undefined;
+    const l = raw && typeof raw === "object" && raw.empresa != null && raw.filial != null ? raw : null;
     const rr: Respostas = {};
+    const perfil: Partial<Record<CampoPerfil, string>> = {};
     for (const [cod, pid] of porCodigo) {
       const v = r.itens?.[pid] as RespostaPergunta | undefined;
-      if (v && Array.isArray(v.marcadas)) rr[cod] = v;
+      if (!v || !Array.isArray(v.marcadas)) continue;
+      if (ehCampoPerfil(cod)) { if (v.marcadas[0]) perfil[cod] = String(v.marcadas[0]); }
+      else rr[cod] = v;
     }
     const d = new Date(r.enviado_em);
     // Mês no fuso de Brasília, como o pp_respostas fazia (to_char … America/Sao_Paulo).
     const mes = isNaN(+d) ? "" : new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 7);
     out.push({
       aplicacao_id: r.formulario_id ?? "", mes,
-      empresa: Number(l.empresa), filial: Number(l.filial), contrato: String(l.contrato ?? ""),
-      posto: l.posto ?? null, posto_nome: l.posto_nome ?? null, funcao: normFuncao(l.funcao), r: rr,
+      empresa: l ? Number(l.empresa) : null, filial: l ? Number(l.filial) : null, contrato: l ? String(l.contrato ?? "") : "",
+      posto: l?.posto ?? null, posto_nome: l?.posto_nome ?? null, funcao: l ? normFuncao(l.funcao) : "", r: rr, perfil,
     });
   }
   return out;

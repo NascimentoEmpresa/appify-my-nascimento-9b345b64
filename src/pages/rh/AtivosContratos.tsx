@@ -36,7 +36,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
-  ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send, Stethoscope, Pencil,
+  ShieldAlert, Sparkles, UserMinus, ListChecks, Users, UserX, MessageSquare, Trash2, Send, Stethoscope, Pencil,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
@@ -51,6 +51,7 @@ import {
   type ContratoAtivos, type ConferenciaContrato, type ConferenciaPosto, type PessoaContrato,
   type PendenteSenior, type Situacao, type PainelAtivos,
 } from "./conferenciaAtivos";
+import { DialogSaneamentoPostos } from "./DialogSaneamentoPostos";
 
 type Filtro = "todos" | "falta" | "excesso" | "ok" | "sem_posto" | "sem_planilha";
 type Linha = { c: ContratoAtivos; conf: ConferenciaContrato };
@@ -169,6 +170,8 @@ export default function AtivosContratos() {
   const [pessoasDe, setPessoasDe] = useState<{ filial: string } | null>(null);
   // Atestados dia a dia (03/11/2026): null = fechado; contratoId null = todos.
   const [atestadosDe, setAtestadosDe] = useState<{ contratoId: string | null } | null>(null);
+  // Saneamento de postos Senior × ERP (13/11/2026): relatório à parte, só carrega ao abrir.
+  const [saneamento, setSaneamento] = useState(false);
 
   const linhas: Linha[] = useMemo(
     () => (data?.contratos ?? []).map((c) => ({ c, conf: conferirContrato(c) })),
@@ -269,6 +272,12 @@ export default function AtivosContratos() {
         subtitle="Quantas pessoas cada posto tem implantado (previsto na Planilha de Custo, ajustado pela Licitação) e quantas tem de fato."
         module="Operacional"
         breadcrumb={["Operacional", "Ativos/Contratos"]}
+        actions={
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setSaneamento(true)}
+            title="Postos da Senior × postos do ERP: o que está padronizado e o que falta corrigir">
+            <ListChecks className="h-4 w-4" /> Saneamento de postos
+          </Button>
+        }
       />
 
       {error && data && (
@@ -400,6 +409,7 @@ export default function AtivosContratos() {
       )}
 
       <DialogPessoasFilial filial={pessoasDe?.filial ?? null} onClose={() => setPessoasDe(null)} />
+      <DialogSaneamentoPostos aberto={saneamento} onClose={() => setSaneamento(false)} />
       <DialogAtestadosPorDia aberto={!!atestadosDe} contratoId={atestadosDe?.contratoId ?? null}
         linhas={linhas} onContrato={(id) => setAtestadosDe({ contratoId: id })} onClose={() => setAtestadosDe(null)} />
     </div>

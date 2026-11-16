@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import {
-  AlertTriangle, ArrowLeft, ClipboardList, ExternalLink, ListChecks, Loader2, Plus, Send, Sparkles, TrendingDown,
+  AlertTriangle, ArrowLeft, ClipboardList, ExternalLink, Grid3x3, ListChecks, Loader2, Plus, Send, Sparkles, TrendingDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -31,6 +31,8 @@ import {
   filtrar, filtrarTurnover, indicadores, pontosDeAtencao, resumoGerencial, taxaTurnover,
   type Dimensao, type Filtro, type Grupo, type LinhaResposta, type LinhaTurnover, type PontoAtencao,
 } from "../../../supabase/functions/_shared/pesquisa-permanencia";
+import { APROVACAO_ROTULO, APROVACOES, IDENTIFICACAO, NAO_INFORMADO, rotuloPerfil } from "../../../supabase/functions/_shared/pesquisa-permanencia";
+import { Cruzamentos } from "./PermanenciaCruzamentos";
 
 // =====================================================================
 // FORMULÁRIOS › ROTATIVIDADE, PLANO DE AÇÃO E ASSISTENTE DE I.A
@@ -56,7 +58,9 @@ import {
 const TODOS = "__todos__";
 const fmt = (n: number) => n.toLocaleString("pt-BR");
 const fmtPct = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
-type Aba = "relatorios" | "rotatividade" | "planos" | "ia";
+// "cruzamentos" (SIS-2026-0756, 16/11/2026): os 4 cruzamentos da Helena —
+// região, área, gênero × faixa e liderança (PermanenciaCruzamentos.tsx).
+type Aba = "cruzamentos" | "relatorios" | "rotatividade" | "planos" | "ia";
 
 export default function FormularioAnalise() {
   const { id } = useParams<{ id: string }>();
@@ -69,7 +73,7 @@ export default function FormularioAnalise() {
   const podeIA = can("assistente_ia");
 
   const abas: Aba[] = permanencia
-    ? (["relatorios", ...(podeRotatividade ? ["rotatividade", "planos"] : []), ...(podeIA ? ["ia"] : [])] as Aba[])
+    ? (["cruzamentos", "relatorios", ...(podeRotatividade ? ["rotatividade", "planos"] : []), ...(podeIA ? ["ia"] : [])] as Aba[])
     : (podeIA ? ["ia"] : []);
   const pedida = params.get("aba") as Aba | null;
   const aba: Aba | undefined = pedida && abas.includes(pedida) ? pedida : abas[0];
@@ -98,7 +102,7 @@ export default function FormularioAnalise() {
       <div className="flex items-center gap-2">{voltar}</div>
       <PageHeader title={form.data.titulo} breadcrumb={["Central de Serviços", "Formulários"]}
         subtitle={permanencia
-          ? "Motivos de permanência e de saída por contrato, posto e função — com a rotatividade do mesmo recorte e o plano de ação."
+          ? "Intenção de permanência e motivos de saída por região, área, gênero e faixa etária — e, nas respostas antigas, por contrato, posto e função, com a rotatividade e o plano de ação."
           : "Assistente de I.A sobre as respostas deste formulário."} />
       {permanencia
         ? <ConteudoPermanencia form={form.data} aba={aba} abas={abas}
@@ -130,12 +134,18 @@ function ConteudoPermanencia({ form, aba, abas, setAba, podeRotatividade }: {
 
       <Tabs value={aba} onValueChange={(v) => setAba(v as Aba)}>
         <TabsList className="flex-wrap">
+          <TabsTrigger value="cruzamentos"><Grid3x3 className="mr-1.5 h-4 w-4" />Cruzamentos</TabsTrigger>
           <TabsTrigger value="relatorios"><ClipboardList className="mr-1.5 h-4 w-4" />Relatórios</TabsTrigger>
           {abas.includes("rotatividade") && <TabsTrigger value="rotatividade"><TrendingDown className="mr-1.5 h-4 w-4" />Rotatividade</TabsTrigger>}
           {abas.includes("planos") && <TabsTrigger value="planos"><ListChecks className="mr-1.5 h-4 w-4" />Plano de ação</TabsTrigger>}
           {abas.includes("ia") && <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-4 w-4" />Assistente de I.A</TabsTrigger>}
         </TabsList>
 
+        <TabsContent value="cruzamentos">
+          {resp.isLoading ? <Carregando /> : resp.error ? <Erro msg={(resp.error as Error).message} /> : (
+            <Cruzamentos todas={todas} filtro={filtro} setFiltro={setFiltro} />
+          )}
+        </TabsContent>
         <TabsContent value="relatorios">
           {resp.isLoading ? <Carregando /> : resp.error ? <Erro msg={(resp.error as Error).message} /> : (
             <Relatorios linhas={linhas} turnover={turnover} podeAlterar={podeRotatividade} novoPlano={novoPlano} />
@@ -180,7 +190,7 @@ function Filtros({ todas, turnover, filtro, setFiltro }: {
   ], [todas, turnover]);
   const opcoes = (d: Dimensao, sub: typeof base) => {
     const m = new Map<string, string>();
-    for (const l of sub) m.set(chaveDe(l, d), d === "contrato" ? l.contrato : d === "posto" ? (l.posto ? `${l.posto} · ${l.posto_nome ?? ""}` : `Sem posto · ${l.contrato}`) : chaveDe(l, d));
+    for (const l of sub) if (l.empresa != null) m.set(chaveDe(l, d), d === "contrato" ? l.contrato : d === "posto" ? (l.posto ? `${l.posto} · ${l.posto_nome ?? ""}` : `Sem posto · ${l.contrato}`) : chaveDe(l, d));
     return [{ value: TODOS, label: "Todos" }, ...[...m.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))];
   };
   const noContrato = filtro.contrato ? base.filter((l) => chaveDe(l, "contrato") === filtro.contrato) : base;
@@ -189,14 +199,42 @@ function Filtros({ todas, turnover, filtro, setFiltro }: {
   const v = (x: string | null | undefined) => x ?? TODOS;
   const set = (k: keyof Filtro, x: string) => setFiltro({ ...filtro, [k]: x === TODOS || !x ? null : x });
 
+  // Contrato/posto/função só existem nas respostas de antes da mig
+  // 20261116140000 (a pergunta saiu) e na rotatividade.
+  const temLocal = base.some((l) => l.empresa != null);
+  // Identificação: as opções do formulário, com quantas respostas cada uma tem
+  // nos OUTROS filtros (um filtro atualiza os demais).
+  const opcoesPerfil = (campo: "regiao" | "area" | "genero" | "faixa") => {
+    const sub = filtrar(todas, { ...filtro, [campo]: null });
+    const cont = (cod: string) => sub.filter((l) => (l.perfil?.[campo] ?? NAO_INFORMADO) === cod).length;
+    const ops = IDENTIFICACAO.find((p) => p.campo === campo)!.opcoes.map((o) => o.cod);
+    if (sub.some((l) => !l.perfil?.[campo])) ops.push(NAO_INFORMADO);
+    return [{ value: TODOS, label: "Todas" }, ...ops.map((cod) => ({ value: cod, label: `${rotuloPerfil(campo, cod)} (${cont(cod)})` }))];
+  };
+  const perfil: { campo: "regiao" | "area" | "genero" | "faixa"; rotulo: string }[] = [
+    { campo: "regiao", rotulo: "Região de atuação" }, { campo: "area", rotulo: "Área" },
+    { campo: "genero", rotulo: "Gênero" }, { campo: "faixa", rotulo: "Faixa etária" },
+  ];
+
   return (
     <Card className="grid gap-3 p-4 md:grid-cols-6">
-      <div className="md:col-span-2"><Label className="text-xs">Contrato</Label>
+      {perfil.map((p) => (
+        <div key={p.campo} className={p.campo === "regiao" ? "md:col-span-2" : ""}><Label className="text-xs">{p.rotulo}</Label>
+          <SearchableSelect value={v(filtro[p.campo])} options={opcoesPerfil(p.campo)} onChange={(x) => set(p.campo, x)} /></div>
+      ))}
+      <div><Label className="text-xs">Gestão (encarregado)</Label>
+        <Select value={v(filtro.aprovacao)} onValueChange={(x) => set("aprovacao", x)}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value={TODOS}>Todas</SelectItem>{APROVACOES.map((a) => <SelectItem key={a} value={a}>{APROVACAO_ROTULO[a]}</SelectItem>)}</SelectContent>
+        </Select></div>
+      {temLocal && (<>
+      <div className="md:col-span-2"><Label className="text-xs">Contrato (respostas antigas)</Label>
         <SearchableSelect value={v(filtro.contrato)} options={opcoes("contrato", base)} onChange={(x) => setFiltro({ ...filtro, contrato: x === TODOS || !x ? null : x, posto: null, funcao: null })} /></div>
       <div className="md:col-span-2"><Label className="text-xs">Posto de trabalho</Label>
         <SearchableSelect value={v(filtro.posto)} options={opcoes("posto", noContrato)} onChange={(x) => setFiltro({ ...filtro, posto: x === TODOS || !x ? null : x, funcao: null })} /></div>
       <div className="md:col-span-2"><Label className="text-xs">Função</Label>
         <SearchableSelect value={v(filtro.funcao)} options={opcoes("funcao", noPosto)} onChange={(x) => set("funcao", x)} /></div>
+      </>)}
       <div><Label className="text-xs">De (mês)</Label>
         <Select value={v(filtro.de)} onValueChange={(x) => set("de", x)}>
           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -216,6 +254,11 @@ function Filtros({ todas, turnover, filtro, setFiltro }: {
 
 // ─── Relatórios ────────────────────────────────────────────────────────────
 
+const ROTULO_DIM: Record<string, string> = {
+  regiao: "Região", area: "Área", genero: "Gênero", faixa: "Faixa etária", contrato: "Contrato", posto: "Posto", funcao: "Função", mes: "Mês", aplicacao: "Aplicação",
+};
+const DIM_ANTIGA = new Set<Dimensao>(["contrato", "posto", "funcao"]);
+
 type NovoPlano = (o: Partial<OrigemPlano> & { motivo: string }) => void;
 
 /** Origem do plano a partir de um grupo (contrato/posto/função). */
@@ -228,14 +271,19 @@ function origemDoGrupo(g: Grupo, d: Dimensao): Partial<OrigemPlano> {
 }
 
 function Relatorios({ linhas, turnover, podeAlterar, novoPlano }: { linhas: LinhaResposta[]; turnover: LinhaTurnover[]; podeAlterar: boolean; novoPlano: NovoPlano }) {
-  const [dim, setDim] = useState<Dimensao>("contrato");
+  const [dim, setDim] = useState<Dimensao>("regiao");
   const ind = useMemo(() => indicadores(linhas), [linhas]);
   const resumo = useMemo(() => resumoGerencial(linhas), [linhas]);
-  const pontos = useMemo(() => [...pontosDeAtencao(linhas, "contrato"), ...pontosDeAtencao(linhas, "posto"), ...pontosDeAtencao(linhas, "funcao")], [linhas]);
+  const pontos = useMemo(() => [...pontosDeAtencao(linhas, "regiao"), ...pontosDeAtencao(linhas, "area"), ...pontosDeAtencao(linhas, "contrato"), ...pontosDeAtencao(linhas, "posto"), ...pontosDeAtencao(linhas, "funcao")], [linhas]);
   const grupos = useMemo(() => agrupar(linhas, dim), [linhas, dim]);
-  const tv = useMemo(() => dim === "mes" || dim === "aplicacao" ? new Map() : new Map(agruparTurnover(turnover, dim).map((g) => [g.chave, g])), [turnover, dim]);
+  const tv = useMemo(() => !DIM_ANTIGA.has(dim) ? new Map() : new Map(agruparTurnover(turnover, dim as "contrato" | "posto" | "funcao").map((g) => [g.chave, g])), [turnover, dim]);
   const periodos = useMemo(() => agrupar(linhas, "mes"), [linhas]);
 
+  // Anonimato: com a identificação (região + gênero + faixa…) o recorte pode
+  // cair em 1-2 pessoas; aí nada é detalhado, como nos grupos pequenos.
+  if (linhas.length > 0 && linhas.length < MIN_RESPOSTAS_GRUPO) {
+    return <Card className="p-8 text-center text-sm text-muted-foreground">Menos de {MIN_RESPOSTAS_GRUPO} respostas neste recorte — os detalhes ficam ocultos para não identificar ninguém. Afrouxe os filtros.</Card>;
+  }
   if (!linhas.length) {
     return <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma resposta neste recorte ainda. Publique o formulário e mande o link/QR Code (botões do card em Formulários) para os contratos.</Card>;
   }
@@ -290,17 +338,17 @@ function Relatorios({ linhas, turnover, podeAlterar, novoPlano }: { linhas: Linh
       {/* Por contrato / posto / função */}
       <Card className="p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-semibold">Por {dim === "contrato" ? "contrato" : dim === "posto" ? "posto de trabalho" : "função"}</h3>
+          <h3 className="font-semibold">Por {ROTULO_DIM[dim].toLowerCase()}{DIM_ANTIGA.has(dim) && <span className="ml-1 text-xs font-normal text-muted-foreground">(só respostas antigas, quando a pesquisa ainda perguntava o contrato)</span>}</h3>
           <div className="flex gap-1">
-            {(["contrato", "posto", "funcao"] as Dimensao[]).map((d) => (
-              <Button key={d} size="sm" variant={dim === d ? "default" : "outline"} onClick={() => setDim(d)}>{d === "contrato" ? "Contrato" : d === "posto" ? "Posto" : "Função"}</Button>
+            {(["regiao", "area", "genero", "faixa", "contrato", "posto", "funcao"] as Dimensao[]).map((d) => (
+              <Button key={d} size="sm" variant={dim === d ? "default" : "outline"} onClick={() => setDim(d)}>{ROTULO_DIM[d]}</Button>
             ))}
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="py-2 pr-2">{dim === "contrato" ? "Contrato" : dim === "posto" ? "Posto" : "Função"}</th>
+              <th className="py-2 pr-2">{ROTULO_DIM[dim]}</th>
               <th className="px-2 text-right">Resp.</th><th className="px-2 text-right">Satisf.</th><th className="px-2 text-right">Insatisf.</th>
               <th className="px-2 text-right">Não indica</th><th className="px-2 text-right">Outra melhor</th>
               <th className="px-2 text-right">Empresa</th><th className="px-2 text-right">Fiscais</th><th className="px-2 text-right">Órgão</th>

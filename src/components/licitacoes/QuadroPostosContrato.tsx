@@ -25,7 +25,7 @@
 // 20260930000081), e função nova nasce aguardando aprovação, entrando no
 // mesmo lote do Catálogo — não aprovada por fora.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,7 +41,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   type LinhaQuadroForm, LINHA_VAZIA, faltamNaLinha, erroDaLinha, rotuloDaLinha,
   totalDeColaboradores, totalDePostos, totalDeFuncoes, totalDeVagas, totalSalarialMensal,
-  brl, paraInteiro, paraNumero, chavePosto, linhaEmUso,
+  brl, paraInteiro, paraNumero, chavePosto, chaveLinha, linhaEmUso,
   paresDoCatalogo, mesclarComCatalogo, aplicarHerancaNoQuadro,
 } from "@/lib/licitacoes/quadroPostos";
 import type { HerancaConvencao } from "@/lib/licitacoes/convencoes";
@@ -135,7 +135,17 @@ export function QuadroPostosContrato({
   // permite editar uma linha que veio do catálogo sem tratá-la diferente; o
   // que não tem quantidade é descartado por `paraPayload` na hora de gravar.
   function mexer(i: number, patch: Partial<LinhaQuadroForm>) {
-    onChange(exibidas.map((l, k) => (k === i ? { ...l, ...patch } : l)));
+    const editada = { ...exibidas[i], ...patch };
+    const novas = exibidas.map((l, k) => (k === i ? editada : l));
+    onChange(novas);
+    // Posto/função mudam a ordem da cascata: a linha aberta acompanha a
+    // linha editada para o novo lugar, em vez de abrir a vizinha.
+    if (aberta === i && ("posto_nome" in patch || "funcao_nome" in patch)) {
+      const k = chaveLinha(editada) || chavePosto(editada.posto_nome);
+      const nova = mesclarComCatalogo(novas, pares)
+        .findIndex(l => (editada.id ? l.id === editada.id : (chaveLinha(l) || chavePosto(l.posto_nome)) === k));
+      if (nova >= 0) setAberta(nova);
+    }
   }
 
   function adicionar(base?: Partial<LinhaQuadroForm>) {
@@ -265,6 +275,44 @@ interface LinhaProps {
   somenteLeitura: boolean;
   /** Convenção do contrato: benefícios/percentuais só leitura, vindos dela. */
   convencaoId: string | null;
+}
+
+/**
+ * Caixa de Posto/Função que só manda o valor para o quadro ao SAIR do campo
+ * (blur/Enter) ou ao escolher uma opção da lista.
+ *
+ * 13/11/2026 — "coloca uma letra e precisa preencher de novo": posto e função
+ * são a identidade da linha (chave do React e ordem da cascata, ver
+ * `mesclarComCatalogo`). Mandar cada tecla reordenava/recriava a linha e o
+ * cursor saía do campo a cada letra. Enquanto a pessoa digita, o texto fica
+ * só aqui.
+ */
+function CampoAoSair({
+  valor, onConfirmar, ...props
+}: Omit<React.ComponentProps<typeof Input>, "value" | "onChange" | "onBlur"> & {
+  valor: string;
+  onConfirmar: (v: string) => void;
+}) {
+  const [rascunho, setRascunho] = useState(valor);
+  const [editando, setEditando] = useState(false);
+  useEffect(() => { if (!editando) setRascunho(valor); }, [valor, editando]);
+  const confirmar = (v: string) => { if (v !== valor) onConfirmar(v); };
+  return (
+    <Input
+      {...props}
+      value={rascunho}
+      onFocus={() => setEditando(true)}
+      onChange={e => {
+        setRascunho(e.target.value);
+        // Escolheu da lista (datalist): grava na hora.
+        if ((e.nativeEvent as InputEvent).inputType === "insertReplacementText" || !(e.nativeEvent as InputEvent).inputType) {
+          confirmar(e.target.value);
+        }
+      }}
+      onBlur={() => { setEditando(false); confirmar(rascunho); }}
+      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); confirmar(rascunho); } }}
+    />
+  );
 }
 
 function LinhaDoQuadro({
@@ -423,18 +471,18 @@ function LinhaDoQuadro({
               {/* Datalist e não <select>: escolher do catálogo e digitar um
                   posto novo é a MESMA caixa. Um select com item "＋ criar
                   novo" abriria um segundo campo para a mesma informação. */}
-              <Input
+              <CampoAoSair
                 list={`postos-${i}`}
                 className="h-9"
                 placeholder="Ex: BLOCO CIRURGICO"
-                value={l.posto_nome}
+                valor={l.posto_nome}
                 disabled={somenteLeitura}
                 // Trocar de posto zera a função: a função pertence ao posto, e
                 // manter "SERVENTE DE LIMPEZA" ao pular para outro posto
                 // gravaria uma função que não é daquela cascata.
-                onChange={e => onMexer({
-                  posto_nome: e.target.value,
-                  ...(chavePosto(e.target.value) !== chavePosto(l.posto_nome)
+                onConfirmar={v => onMexer({
+                  posto_nome: v,
+                  ...(chavePosto(v) !== chavePosto(l.posto_nome)
                     ? { funcao_nome: "", sup_funcao_id: "" } : {}),
                 })}
               />
@@ -454,20 +502,20 @@ function LinhaDoQuadro({
 
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Função <span className="text-destructive">*</span></Label>
-              <Input
+              <CampoAoSair
                 list={`funcoes-${i}`}
                 className="h-9"
                 placeholder="Ex: SERVENTE DE LIMPEZA"
-                value={l.funcao_nome}
+                valor={l.funcao_nome}
                 disabled={somenteLeitura}
-                onChange={e => onMexer({
-                  funcao_nome: e.target.value,
+                onConfirmar={v => onMexer({
+                  funcao_nome: v,
                   // O cargo da vaga começa igual à função — é o que o
                   // ModalNovaVaga já faz no modo manual (onFuncaoNome). Só
                   // preenche enquanto o cargo está vazio ou ainda espelha a
                   // função: quem editou o cargo à mão não é sobrescrito.
                   ...(!l.cargo.trim() || chavePosto(l.cargo) === chavePosto(l.funcao_nome)
-                    ? { cargo: e.target.value } : {}),
+                    ? { cargo: v } : {}),
                 })}
               />
               <datalist id={`funcoes-${i}`}>

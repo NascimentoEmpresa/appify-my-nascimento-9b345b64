@@ -8,11 +8,14 @@ import { Circle, FolderClosed, type LucideIcon } from "lucide-react";
  * ordem, nome exibido). A organização salva mora em "MENU_LATERAL_VERSAO"
  * (mig 20261105040000), uma linha por gravação — o histórico é a tabela.
  *
- * O QUE ISTO NÃO É: permissão. Quem vê cada tela continua sendo decidido pelo
- * ENDEREÇO dela (Sidebar.canSee / RouteGuard → matchMenuCode →
- * list_accessible_menus). Por isso:
- *   · mover ou copiar uma entrada não dá acesso a ninguém — a tela só aparece
- *     no lugar novo para quem já tinha permissão nela;
+ * O QUE ISTO NÃO É: permissão da tela de negócio. Quem pode abrir a tela
+ * continua sendo decidido por app_menu / RouteGuard. Desde o SIS-2026-0837,
+ * porém, cada CÓPIA ganha também um app_menu próprio: ele decide se aquela
+ * posição aparece, sem fazer as outras cópias da mesma rota aparecerem.
+ * Por isso:
+ *   · mover uma entrada preserva a permissão da tela;
+ *   · copiar cria uma permissão independente, inicialmente herdada da tela
+ *     original para não mudar os acessos existentes no momento da publicação;
  *   · tirar do menu não bloqueia — quem tem permissão abre pelo endereço;
  *   · "novo submódulo" é ATALHO para uma tela que já existe, nunca uma tela
  *     nova, e só aceita endereço interno (/app…) — o banco recusa o resto;
@@ -40,6 +43,8 @@ export interface ItemEstrutura {
   ref?: string;
   /** Preenchido nas cópias: id da entrada copiada. */
   copiaDe?: string;
+  /** app_menu exclusivo desta posição. Existe apenas em cópias. */
+  menuCodigo?: string;
 }
 
 export interface CategoriaEstrutura {
@@ -68,6 +73,8 @@ export interface ItemCatalogo {
   label: string;
   to: string;
   icon: LucideIcon;
+  /** Permissão da posição quando o item é uma cópia no menu lateral. */
+  menuCodigo?: string;
 }
 
 export interface GrupoCatalogo<I extends ItemCatalogo = ItemCatalogo> {
@@ -90,6 +97,28 @@ export interface ModuloCatalogo<I extends ItemCatalogo = ItemCatalogo> {
 /** Endereço aceito numa entrada do menu. A mesma regra está no banco (menu_lateral_salvar). */
 export const ROTA_VALIDA = /^\/app(\/|\?|$)/;
 export const ROTULO_MAX = 120;
+export const PREFIXO_MENU_COPIA = "menu_lateral_copia_";
+const CODIGO_MENU_COPIA_RE = /^menu_lateral_copia_[a-z0-9_:-]+$/;
+
+/**
+ * Código legível e estável para a permissão de uma cópia nova. O backend
+ * valida a unicidade e, ao restaurar versões antigas sem `menuCodigo`, gera um
+ * código equivalente antes de persistir a nova versão.
+ */
+export function codigoPermissaoDaCopia(itemId: string): string {
+  const parte = itemId
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 72);
+  return `${PREFIXO_MENU_COPIA}${parte || "item"}`;
+}
+
+export function ehMenuDeCopia(codigo: string | null | undefined): boolean {
+  return !!codigo?.startsWith(PREFIXO_MENU_COPIA);
+}
 
 const porNome = (a: string, b: string) => a.localeCompare(b, "pt-BR", { sensitivity: "base" });
 
@@ -288,7 +317,7 @@ export function montarMenu<I extends ItemCatalogo, M extends ModuloCatalogo<I>>(
       items: c.itens.map((it) => {
         const ent = (it.ref && porRef.get(it.ref)) || porRota.get(it.rota);
         const doCatalogo = ent?.item ?? ({ label: it.rota, to: it.rota, icon: Circle } as unknown as I);
-        return { ...doCatalogo, to: it.rota, label: rotuloCom(it, idx) } as I;
+        return { ...doCatalogo, to: it.rota, label: rotuloCom(it, idx), menuCodigo: it.menuCodigo } as I;
       }),
     }));
     return {
@@ -337,7 +366,13 @@ export function copiarItem(e: EstruturaMenu, itemId: string, destCatId: string, 
   const dst = categoria(s, destCatId);
   if (!org || !dst) return e;
   const orig = org.c.itens[org.i];
-  const copia: ItemEstrutura = { id: novoId, rota: orig.rota, ref: orig.ref, copiaDe: orig.copiaDe ?? orig.id };
+  const copia: ItemEstrutura = {
+    id: novoId,
+    rota: orig.rota,
+    ref: orig.ref,
+    copiaDe: orig.copiaDe ?? orig.id,
+    menuCodigo: codigoPermissaoDaCopia(novoId),
+  };
   if (orig.rotulo) copia.rotulo = orig.rotulo;
   dst.c.itens.splice(clamp(destIndex, dst.c.itens.length), 0, copia);
   return s;
@@ -374,7 +409,10 @@ export function copiarItens(e: EstruturaMenu, ids: readonly string[], destCatId:
   if (!itens.length || !categoria(e, destCatId)) return e;
   const s = structuredClone(e);
   const dst = categoria(s, destCatId)!.c;
-  const copias = itens.map((it) => ({ ...it, id: gerarId(), copiaDe: it.copiaDe ?? it.id }));
+  const copias = itens.map((it) => {
+    const id = gerarId();
+    return { ...it, id, copiaDe: it.copiaDe ?? it.id, menuCodigo: codigoPermissaoDaCopia(id) };
+  });
   dst.itens.splice(clamp(destIndex, dst.itens.length), 0, ...copias);
   return s;
 }
@@ -522,6 +560,9 @@ export function validarEstrutura(e: EstruturaMenu): string[] {
         id(i.id, "Entrada");
         rotulo(i.rotulo, `Entrada ${i.id}`, !i.ref);
         if (typeof i.rota !== "string" || !ROTA_VALIDA.test(i.rota)) erros.push(`Endereço não permitido: ${String(i.rota)}.`);
+        if (i.menuCodigo !== undefined && (!i.copiaDe || !CODIGO_MENU_COPIA_RE.test(i.menuCodigo) || i.menuCodigo.length > 100)) {
+          erros.push(`Permissão de cópia inválida na entrada ${i.id}.`);
+        }
       }
     }
   }

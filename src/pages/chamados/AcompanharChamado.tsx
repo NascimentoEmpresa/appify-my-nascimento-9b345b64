@@ -26,6 +26,7 @@ import {
   labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado, conversaChamadoFechada,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
+import { listaImpactados, rotuloModuloImpactado } from "./impactados";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
@@ -186,6 +187,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Ambiente">{labelDe(AMBIENTES, chamado.ambiente)}</Campo>
               <Campo label="Módulo / Sistema">{moduloLabel(chamado)}</Campo>
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
+              {/* Alcance informado na abertura (mig 20261115001000). */}
+              <Campo label="Setores impactados">{listaImpactados(chamado.setores_impactados)}</Campo>
+              <Campo label="Módulos impactados">{listaImpactados(chamado.modulos_impactados, rotuloModuloImpactado)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
               <Campo label="Responsável">{nomeDe(chamado.responsavel_id)}</Campo>
               {/* Prazo informado pelo dev ao iniciar o desenvolvimento (mig 20261028001400). */}

@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
+import { ehMenuDeCopia } from "@/lib/menuLateral/estrutura";
 
 /**
  * Returns the set of menu codes the current user can VIEW.
@@ -134,10 +135,19 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 export function rotaVisivelNoMenu(
   to: string,
   access: { codes: Set<string>; routes: MenuRoute[]; inactiveCodes: Set<string> } | undefined,
+  menuCodigo?: string,
 ): boolean {
   if (ACESSO_ABERTO_SEM_PERMISSOES) return true;
   if (rotaSempreLiberada(to)) return true;
   if (!access) return false;
+  if (menuCodigo) {
+    // Uma cópia nunca reativa uma tela desligada no Catálogo: além da
+    // permissão da posição, a rota precisa conservar uma entrada original
+    // ativa. Isso impede que um atalho sobreviva à desativação da tela.
+    const originaisAtivas = matchingMenuRoutes(rotaMovida(to) ?? to, access.routes)
+      .some((r) => r.ativo && !ehMenuDeCopia(r.codigo));
+    return originaisAtivas && !access.inactiveCodes.has(menuCodigo) && access.codes.has(menuCodigo);
+  }
   // Favoritos e entradas salvas com o endereço antigo seguem a mesma
   // resolução do RouteGuard, mantendo a permissão do destino.
   const code = matchMenuCode(rotaMovida(to) ?? to, access.routes);
@@ -146,17 +156,46 @@ export function rotaVisivelNoMenu(
 }
 
 export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | null {
-  let best: { code: string; len: number; ativo: boolean } | null = null;
+  const matches = matchingMenuRoutes(pathname, routes);
+  if (!matches.length) return null;
+
+  // A permissão da cópia governa só aquela POSIÇÃO no menu. Para usos
+  // globais (StatusDev, favoritos e a entrada original), o código original
+  // continua sendo a referência. Entre originais, preserva o desempate pelo
+  // ativo que corrigiu o incidente de Recrutamento documentado acima.
+  return matches.find((r) => r.ativo && !ehMenuDeCopia(r.codigo))?.codigo
+    ?? matches.find((r) => !ehMenuDeCopia(r.codigo))?.codigo
+    ?? matches.find((r) => r.ativo)?.codigo
+    ?? matches[0].codigo;
+}
+
+/** Todas as entradas que casam no mesmo maior prefixo da rota. */
+export function matchingMenuRoutes(pathname: string, routes: MenuRoute[]): MenuRoute[] {
+  let bestLen = -1;
+  const matches: MenuRoute[] = [];
   for (const { codigo, rota, ativo } of routes) {
     // Normalize dynamic segments like /:id by comparing only up to the first ":"
     const base = rota.split("/:")[0];
     if (pathname === rota || pathname === base || pathname.startsWith(base + "/")) {
-      const melhor =
-        !best ||
-        base.length > best.len ||
-        (base.length === best.len && ativo && !best.ativo);
-      if (melhor) best = { code: codigo, len: base.length, ativo };
+      if (base.length > bestLen) {
+        bestLen = base.length;
+        matches.length = 0;
+      }
+      if (base.length === bestLen) matches.push({ codigo, rota, ativo });
     }
   }
-  return best?.code ?? null;
+  return matches;
+}
+
+/**
+ * Porta que libera a rota no RouteGuard. Uma cópia pode ser a porta, mas
+ * nunca mantém no ar uma tela cujo app_menu original foi desativado.
+ */
+export function menuCodeComAcessoNaRota(
+  pathname: string,
+  access: { codes: Set<string>; routes: MenuRoute[] },
+): string | null {
+  const matches = matchingMenuRoutes(pathname, access.routes);
+  if (!matches.some((m) => m.ativo && !ehMenuDeCopia(m.codigo))) return null;
+  return matches.find((m) => m.ativo && access.codes.has(m.codigo))?.codigo ?? null;
 }

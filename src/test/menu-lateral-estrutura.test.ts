@@ -1,6 +1,6 @@
 // SIS-2026-0772 (fase 2): menu lateral organizável. A garantia central é que
 // organizar o menu só muda ONDE a tela aparece — nunca cria endereço novo nem
-// some com tela. Quem vê cada uma continua sendo decidido pela rota (canSee).
+// some com tela. Desde o SIS-2026-0837, cada cópia tem permissão de posição.
 import { describe, expect, it } from "vitest";
 import { Bell, Circle } from "lucide-react";
 import { NAV_MODULOS_ORIGEM } from "@/components/layout/Sidebar";
@@ -10,7 +10,7 @@ import {
   type EstruturaMenu, type ModuloCatalogo,
 } from "@/lib/menuLateral/estrutura";
 
-type Item = { label: string; to: string; icon: typeof Circle; notif?: string };
+type Item = { label: string; to: string; icon: typeof Circle; notif?: string; menuCodigo?: string };
 const mod = (id: string, label: string, grupos: Record<string, [string, string][]>, extra: Partial<ModuloCatalogo<Item>> = {}): ModuloCatalogo<Item> => ({
   id, label, description: `desc ${id}`, icon: Circle, basePath: `/app/${id}`, status: "active",
   groups: Object.entries(grupos).map(([g, itens]) => ({ label: g, items: itens.map(([l, to]) => ({ label: l, to, icon: Circle })) })),
@@ -76,7 +76,9 @@ describe("operações do editor", () => {
     expect(rotasDaEstrutura(e).filter((r) => r === "/app/cs/reunioes")).toHaveLength(2);
     const copia = e.modulos.find((m) => m.origem === "encarregados")!.categorias[0].itens.find((i) => i.id === "x1")!;
     expect(copia.copiaDe).toBe(de.i.id);
-    expect(montarMenu(CAT, e).find((m) => m.id === "encarregados")!.groups![0].items.some((i) => i.label === "Agenda de Reunião")).toBe(true);
+    expect(copia.menuCodigo).toBe("menu_lateral_copia_x1");
+    const itemMontado = montarMenu(CAT, e).find((m) => m.id === "encarregados")!.groups![0].items.find((i) => i.label === "Agenda de Reunião");
+    expect(itemMontado).toMatchObject({ menuCodigo: "menu_lateral_copia_x1" });
     expect(validarEstrutura(e)).toEqual([]);
   });
 
@@ -178,5 +180,15 @@ describe("validarEstrutura (mesmas regras do banco)", () => {
     const e = base("/app/x", "ok");
     e.modulos[0].categorias[0].itens.push({ id: "i", rota: "/app/y", rotulo: "y" });
     expect(validarEstrutura(e).some((m) => m.includes("repetido"))).toBe(true);
+  });
+  it("recusa menuCodigo fora de uma cópia ou com prefixo inválido", () => {
+    const semCopia = base("/app/x", "ok");
+    semCopia.modulos[0].categorias[0].itens[0].menuCodigo = "menu_lateral_copia_x";
+    expect(validarEstrutura(semCopia)).toContain("Permissão de cópia inválida na entrada i.");
+
+    const copia = base("/app/x", "ok");
+    copia.modulos[0].categorias[0].itens[0].copiaDe = "origem";
+    copia.modulos[0].categorias[0].itens[0].menuCodigo = "outro_codigo";
+    expect(validarEstrutura(copia)).toContain("Permissão de cópia inválida na entrada i.");
   });
 });

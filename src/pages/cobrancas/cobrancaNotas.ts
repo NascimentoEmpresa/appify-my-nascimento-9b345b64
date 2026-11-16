@@ -302,3 +302,57 @@ export function ordenarLinhas(linhas: LinhaCobranca[], coluna: ColunaOrdem, desc
     return (desc ? -c : c) || a.contrato.localeCompare(b.contrato, "pt-BR") || a.numero.localeCompare(b.numero);
   });
 }
+
+// ── Data da cobrança por setor (SIS-2026-0878) ────────────────────────────────────────────────────────────────────
+// Como no sistema antigo: cada nota mostra "Jurídico: dd/mm/aaaa" e "Financeiro: dd/mm/aaaa" (a última cobrança de cada setor).
+// Financeiro = o maior entre o registro manual do setor e o e-mail automático em produção que levou a nota; Jurídico = o registro manual.
+
+export type SetorCobranca = "financeiro" | "juridico";
+export const ROTULO_SETOR: Record<SetorCobranca, string> = { financeiro: "Financeiro", juridico: "Jurídico" };
+
+/** Datas "YYYY-MM-DD" da última cobrança de cada setor; null = nunca cobrada por esse setor. */
+export interface DatasPorSetor { financeiro: string | null; juridico: string | null }
+export const SEM_DATAS: DatasPorSetor = { financeiro: null, juridico: null };
+
+export interface RegistroCobranca { nf_emissao_id: string; setor: SetorCobranca; data_cobranca: string }
+/** Um e-mail automático enviado em produção, com as notas que ele levou (cobranca_auto_envio.notas). */
+export interface EnvioAutomaticoNotas { criado_em: string; notas: { id: string }[] | null }
+
+const maior = (a: string | null, b: string | null): string | null => (a && b ? (a > b ? a : b) : (a ?? b));
+
+export function datasPorNota(registros: RegistroCobranca[], enviosAutomaticos: EnvioAutomaticoNotas[]): Map<string, DatasPorSetor> {
+  const mapa = new Map<string, DatasPorSetor>();
+  const atual = (id: string) => mapa.get(id) ?? { financeiro: null, juridico: null };
+  for (const r of registros) {
+    const d = atual(r.nf_emissao_id);
+    d[r.setor] = maior(d[r.setor], r.data_cobranca.slice(0, 10));
+    mapa.set(r.nf_emissao_id, d);
+  }
+  for (const e of enviosAutomaticos) {
+    const dia = hojeEmSaoPaulo(new Date(e.criado_em)); // o e-mail automático é do Financeiro; o dia é o de São Paulo
+    for (const n of e.notas ?? []) {
+      const d = atual(n.id);
+      d.financeiro = maior(d.financeiro, dia);
+      mapa.set(n.id, d);
+    }
+  }
+  return mapa;
+}
+
+/** Última cobrança de cada setor entre as notas (a linha do contrato mostra a mais recente do conjunto). */
+export function datasDoConjunto(ids: string[], mapa: Map<string, DatasPorSetor>): DatasPorSetor {
+  let r: DatasPorSetor = { financeiro: null, juridico: null };
+  for (const id of ids) {
+    const d = mapa.get(id);
+    if (d) r = { financeiro: maior(r.financeiro, d.financeiro), juridico: maior(r.juridico, d.juridico) };
+  }
+  return r;
+}
+
+/** Que setores o usuário pode registrar: Jurídico = aprovar ou alterar; Financeiro = alterar (espelha a RPC cobranca_registrar). */
+export function setoresQueEuRegistro(p: { alterar: boolean; aprovar: boolean }): SetorCobranca[] {
+  const lista: SetorCobranca[] = [];
+  if (p.aprovar || p.alterar) lista.push("juridico");
+  if (p.alterar) lista.push("financeiro");
+  return lista;
+}
