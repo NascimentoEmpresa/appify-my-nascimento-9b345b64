@@ -176,6 +176,8 @@ import ExtratorBeneficios from "./pages/rh/ExtratorBeneficios";
 import ChecklistFaturamento from "./pages/financeiro/ChecklistFaturamento";
 import SolicitacoesAjuste from "./pages/financeiro/SolicitacoesAjuste";
 import DocCanaa from "./pages/financeiro/DocCanaa";
+// SIS-2026-0922: OSC Canaã — gestão financeira da escola (recharts + xlsx: lazy).
+const OscCanaa = lazy(() => import("./pages/financeiro/OscCanaa"));
 import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
@@ -1006,6 +1008,7 @@ const App = () => (
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
+            <Route path="financeiro/osc-canaa" element={<OscCanaa />} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
             <Route path="financeiro/gestao-financeira/cartao-credito/classificar" element={<ClassificarLancamentos />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
