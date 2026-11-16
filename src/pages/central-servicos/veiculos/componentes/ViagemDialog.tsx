@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, CheckCircle2, FileText, Fuel, Gauge, History, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, Save, Video, X } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, FileText, Fuel, Gauge, History, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, Save, Video, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,7 +12,7 @@ import {
 import {
   LABEL_TURNO, MIDIA_MAX_MB, abrirArquivoVeiculo, abrirMidiaViagem, formatarData, hojeISO,
   useAnexarMidiaViagem, useConcluirAgendamento, useContratosParaAgendamento, useDefinirContratosDaViagem, useExcluirMidiaViagem, useFecharKm,
-  useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useResponderAbastecimento, useSalvarRelatoViagem, useViagem,
+  useHistoricoAgendamento, useRegistrarAbastecimento, useRegistrarKmInicial, useResponderAbastecimento, useResponderAvaria, useSalvarRelatoViagem, useViagem,
   type ContratoSimples,
 } from "@/hooks/useAgendamentoVeiculos";
 import { podeConcluirAgendamento } from "@/lib/veiculos/concluirAgendamento";
@@ -51,6 +51,10 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
   const salvarContratos = useDefinirContratosDaViagem();
   const registrar = useRegistrarAbastecimento();
   const responder = useResponderAbastecimento();
+  const responderAvaria = useResponderAvaria();
+  // "Houve avaria?" (17/11/2026): Sim abre a descrição antes de gravar.
+  const [avariaSim, setAvariaSim] = useState(false);
+  const [avariaDesc, setAvariaDesc] = useState("");
   const anexarMidia = useAnexarMidiaViagem();
   const excluirMidia = useExcluirMidiaViagem();
   const salvarRelato = useSalvarRelatoViagem();
@@ -129,6 +133,9 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
   useEffect(() => {
     if (aberto) setRelato(v?.relato ?? "");
   }, [aberto, v?.relato]);
+  useEffect(() => {
+    if (aberto) { setAvariaSim(v?.avaria === true); setAvariaDesc(v?.avaria_descricao ?? ""); }
+  }, [aberto, v?.avaria, v?.avaria_descricao]);
 
   const enviarKmInicial = async () => {
     if (!agendamentoId || !podeEnviarKmInicial) return;
@@ -304,6 +311,51 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                 </div>
               )}
             </section>
+
+            {/* ── Avaria (17/11/2026, mig 20261117000600) ───────────
+                "Para concluir, falta: Informar se há avaria" — e não havia
+                onde informar: a avaria só existia no checklist de chegada.
+                Agora a pergunta fica aqui; com checklist de chegada, a
+                resposta de lá vem marcada e gravar aqui muda as duas. */}
+            {(v.km_final != null || v.avaria != null) && (
+              <section className={`rounded-xl border p-4 ${v.avaria == null && kmObrigatorio ? "border-amber-400 bg-amber-50/50 dark:bg-amber-500/10" : "border-border"}`}>
+                <h4 className="mb-3 flex items-center gap-2 text-sm font-bold"><AlertTriangle className="h-4 w-4 text-primary" /> Houve avaria no veículo?{kmObrigatorio && <span className="text-destructive"> *</span>}</h4>
+                <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Houve avaria no veículo?">
+                  {([[true, "Sim"], [false, "Não"]] as const).map(([valor, rotulo]) => {
+                    const marcado = valor ? (avariaSim || v.avaria === true) : (!avariaSim && v.avaria === false);
+                    return (
+                      <button key={rotulo} type="button" role="radio" aria-checked={marcado} disabled={!souDono || responderAvaria.isPending}
+                        onClick={() => {
+                          if (!agendamentoId) return;
+                          if (valor) { setAvariaSim(true); return; }
+                          setAvariaSim(false);
+                          if (v.avaria !== false) responderAvaria.mutate({ id: agendamentoId, avaria: false });
+                        }}
+                        className={`h-9 rounded-lg border px-5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${marcado ? "border-primary bg-primary/10 text-primary" : "border-border bg-background"}`}>
+                        {rotulo}
+                      </button>
+                    );
+                  })}
+                  {v.avaria == null && !avariaSim && <span className="text-xs text-muted-foreground">Sem resposta ainda.</span>}
+                </div>
+                {(avariaSim || v.avaria === true) && (
+                  <div className="mt-3 space-y-2">
+                    <Label htmlFor="avaria-desc">O que aconteceu? *</Label>
+                    <Textarea id="avaria-desc" rows={2} maxLength={1000} value={avariaDesc} disabled={!souDono}
+                      placeholder="Ex.: risco na porta traseira direita; retrovisor solto."
+                      onChange={(e) => setAvariaDesc(e.target.value)} />
+                    {souDono && (
+                      <Button size="sm" className="gap-1.5"
+                        disabled={!avariaDesc.trim() || responderAvaria.isPending || (v.avaria === true && avariaDesc.trim() === (v.avaria_descricao ?? "").trim())}
+                        onClick={() => agendamentoId && responderAvaria.mutate({ id: agendamentoId, avaria: true, descricao: avariaDesc })}>
+                        {responderAvaria.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Salvar avaria
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* ── Contratos da viagem ────────────────────────────── */}
             <section className="rounded-xl border border-border p-4">
