@@ -629,13 +629,15 @@ export default function Colaboradores() {
       patch["Nascimento"] = form["__nascimento"] || null;
       patch["nascimento_ajustado_em"] = new Date().toISOString();
     }
-    let { error } = await (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]);
+    // Um só cast (a catraca do lint conta cada `any` novo no arquivo).
+    const gravar = () => (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]);
+    let { error } = await gravar();
     let semMarca = false;
     if (error && mudouNasc && /nascimento_ajustado_em/.test(error.message ?? "")) {
       // Banco ainda sem a coluna (migration não entrou): salva a data assim
       // mesmo e avisa que a Senior pode trazer a antiga de volta.
       delete patch["nascimento_ajustado_em"];
-      ({ error } = await (supabase as any).from("EMPREGADOS").update(patch).eq("ID", editing["ID"]));
+      ({ error } = await gravar());
       semMarca = !error;
     }
     if (error) { aviso("Erro ao salvar: " + error.message, "err"); return; }
