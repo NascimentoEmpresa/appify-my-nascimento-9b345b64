@@ -487,6 +487,8 @@ const financeiroModule: ModuleDef = {
         // reexposto só no Gerenciamento de Acesso (dc0d7389) — a tela
         // continuou viva e acessível só por URL. Volta aqui, na rota atual.
         { label: "Conta Garantida", to: "/app/financeiro/conta-garantida", icon: ShieldCheck },
+        // SIS-2026-0922: repasse, despesas do Malote, reservas e projeção da OSC Canaã (escola). Menu financeiro-osc-canaa.
+        { label: "OSC Canaã — Gestão da Escola", to: "/app/financeiro/osc-canaa", icon: GraduationCap },
       ],
     },
     {
