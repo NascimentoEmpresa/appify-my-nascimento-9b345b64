@@ -80,3 +80,27 @@ export function erroEmpresaNoRateio(
   }
   return null;
 }
+
+/**
+ * Regra de Contrato no Rateio do Malote (SIS-2026-0905).
+ *
+ * Classificação do tipo "contrato" EXIGE contrato na linha: é dele que o Fluxo de Caixa tira o Centro de Custo, e a Empresa da linha vem
+ * dele (RateioGrid.atualizarContratoDaLinha). Só que nenhuma tela conferia isso no envio: erroEmpresaNoRateio só olha a Empresa. Dava para enviar
+ * uma linha com a Empresa preenchida (ex.: escolhida antes de trocar a classificação para uma do tipo contrato) e o Contrato vazio; a coluna
+ * Empresa mostrava "HAGG", a despesa passava por toda a aprovação e chegava ao Fluxo com o Centro de Custo em branco ("—"): DM-2026-3711,
+ * 3791 e 3792, por exemplo.
+ *
+ * `tipoDaLinha(i)`: tipo da classificação da linha i (a mesma resolução do RateioGrid: a da própria linha quando há classificação por linha,
+ * senão a única da despesa). Classificação administrativa não entra: o contrato dela é opcional e o banco preenche o ADMINISTRATIVO da empresa
+ * (migration 20261116180000).
+ */
+export function erroContratoNoRateio(
+  linhas: { contrato_id: string | null }[],
+  tipoDaLinha: (indice: number) => string | null | undefined,
+): string | null {
+  const faltando = linhas.flatMap((l, i) => (tipoDaLinha(i) === "contrato" && !l.contrato_id ? [i + 1] : []));
+  if (faltando.length === 0) return null;
+  return faltando.length === 1
+    ? `Selecione o Contrato na linha ${faltando[0]} do rateio: a classificação dela exige contrato (é dele que vem o Centro de Custo no Fluxo de Caixa).`
+    : `Selecione o Contrato nas linhas ${faltando.join(", ")} do rateio: a classificação delas exige contrato (é dele que vem o Centro de Custo no Fluxo de Caixa).`;
+}
