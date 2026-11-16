@@ -71,7 +71,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes || percentuaisPendentes) return;
-    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente, exigeInscricaoTomador, Number(nf.pis_total) + Number(nf.cofins_total) > 0)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
+    try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente, exigeInscricaoTomador, Number(nf.pis_total) + Number(nf.cofins_total) > 0)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Você já pode preparar outra nota; a emissão continua em segundo plano.`); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível registrar a solicitação."); }
   }
   async function documento(caminho: string) {
@@ -111,6 +111,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       <div className="flex flex-wrap justify-between gap-2"><Badge variant={s.estado === "erro" || s.estado === "rejeitada" ? "destructive" : "secondary"}>{s.estado === "autorizada" && producao ? "Autorizada em produção" : ESTADOS[s.estado]}</Badge>
         <span className="text-sm">DPS {s.numero_dps} / série {s.serie}{s.numero_nf ? ` · NFS-e ${s.numero_nf}` : ""}</span></div>
       {s.mensagem && <p className="text-sm whitespace-pre-wrap">{s.mensagem}</p>}
+      {["pendente", "processando", "aguardando", "incerta"].includes(s.estado) && <p className="text-sm text-muted-foreground">A emissão continua em segundo plano. Você pode fechar esta janela e preparar outra nota. Volte e use Atualizar para conferir a autorização e os documentos.</p>}
       <p className="text-xs text-muted-foreground">Atualizado em {new Date(s.atualizado_em).toLocaleString("pt-BR")}</p>
       <div className="flex flex-wrap gap-2">
         <AcessoGate menu="financeiro-nfse" acao="exportar">

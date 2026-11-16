@@ -482,6 +482,26 @@ local de prestação informados; não se copia automaticamente o município do
 prestador para o tomador ou para a prestação. Situações fora desse recorte
 devem permanecer no portal até a próxima etapa da integração.
 
+## Volume de notas na fila
+
+O operador pode registrar uma solicitação, fechar a conferência e preparar a
+próxima nota sem esperar a autorização. A solicitação permanece no banco;
+"Na fila" ainda não é autorização. Use **Atualizar** na nota para acompanhar
+o resultado oficial e os documentos.
+
+No GitHub Actions contínuo, cada ciclo atende até **200 operações prontas**,
+uma por vez, sem pausa artificial entre notas. Uma operação pode ser envio,
+consulta de resultado ou recuperação de PDF; portanto 200 operações não
+significam 200 autorizações. O processador verifica seu prazo entre operações
+e mantém 60 segundos entre ciclos. Cada solicitação continua respeitando a
+data da próxima tentativa definida no banco. Não há chamadas em paralelo à
+prefeitura nem retransmissão de DPS cujo envio já foi iniciado.
+
+O limite e a pausa evitam ocupar indefinidamente o runner ou consultar uma
+fila vazia em laço. A disponibilidade do Actions e o tempo de autorização da
+prefeitura continuam variáveis. O modo de diagnóstico mantém até dois ciclos
+individuais; não é o modo de operação para volume.
+
 ## Falhas e recuperação
 
 - **Erro antes do envio:** corrigir dados/configuração e retomar, ou descartar a
