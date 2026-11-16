@@ -236,6 +236,19 @@ CREATE TABLE IF NOT EXISTS public."OSC_HISTORICO" (
 );
 CREATE INDEX IF NOT EXISTS idx_osc_historico_parceria ON public."OSC_HISTORICO"(parceria_id, created_at DESC);
 
+-- Índice em toda FOREIGN KEY (guardião M2): sem ele, JOIN pela coluna e
+-- DELETE na tabela referenciada varrem a tabela inteira. As FKs cobertas
+-- pelo início de um UNIQUE/índice composto já existente não precisam de outro.
+CREATE INDEX IF NOT EXISTS osc_parceria_empresa_id_idx ON public."OSC_PARCERIA" (empresa_id);
+CREATE INDEX IF NOT EXISTS osc_rubrica_classificacao_classificacao_id_idx ON public."OSC_RUBRICA_CLASSIFICACAO" (classificacao_id);
+CREATE INDEX IF NOT EXISTS osc_rubrica_classificacao_rubrica_id_idx ON public."OSC_RUBRICA_CLASSIFICACAO" (rubrica_id);
+CREATE INDEX IF NOT EXISTS osc_previsao_parceria_id_idx ON public."OSC_PREVISAO" (parceria_id);
+CREATE INDEX IF NOT EXISTS osc_previsao_mes_parceria_id_idx ON public."OSC_PREVISAO_MES" (parceria_id);
+CREATE INDEX IF NOT EXISTS osc_lancamento_rubrica_id_idx ON public."OSC_LANCAMENTO" (rubrica_id);
+CREATE INDEX IF NOT EXISTS osc_pagamento_ajuste_rubrica_id_idx ON public."OSC_PAGAMENTO_AJUSTE" (rubrica_id);
+CREATE INDEX IF NOT EXISTS osc_projeto_parceria_id_idx ON public."OSC_PROJETO" (parceria_id);
+CREATE INDEX IF NOT EXISTS osc_projeto_rubrica_id_idx ON public."OSC_PROJETO" (rubrica_id);
+
 -- ── 2. updated_at ────────────────────────────────────────────────────────
 DO $$
 DECLARE t text;
@@ -1154,26 +1167,26 @@ BEGIN
                            'OSC_HISTORICO'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS osc_select ON public.%I', t);
-    EXECUTE format('CREATE POLICY osc_select ON public.%I FOR SELECT TO authenticated USING (public.has_screen_access(auth.uid(), %L, %L))',
+    EXECUTE format('CREATE POLICY osc_select ON public.%I FOR SELECT TO authenticated USING ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L)))',
                    t, 'financeiro-osc-canaa', 'visualizar');
   END LOOP;
 
   FOREACH t IN ARRAY ARRAY['OSC_PARCERIA','OSC_ANO','OSC_RUBRICA','OSC_RUBRICA_CLASSIFICACAO','OSC_COMPETENCIA',
                            'OSC_PREVISAO','OSC_PREVISAO_MES'] LOOP
     EXECUTE format('DROP POLICY IF EXISTS osc_gerenciar ON public.%I', t);
-    EXECUTE format('CREATE POLICY osc_gerenciar ON public.%I FOR ALL TO authenticated USING (public.has_screen_access(auth.uid(), %L, %L)) WITH CHECK (public.has_screen_access(auth.uid(), %L, %L))',
+    EXECUTE format('CREATE POLICY osc_gerenciar ON public.%I FOR ALL TO authenticated USING ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L))) WITH CHECK ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L)))',
                    t, 'financeiro-osc-canaa', 'alterar', 'financeiro-osc-canaa', 'alterar');
   END LOOP;
 
   FOREACH t IN ARRAY ARRAY['OSC_LANCAMENTO','OSC_PROJETO'] LOOP
     EXECUTE format('DROP POLICY IF EXISTS osc_incluir ON public.%I', t);
-    EXECUTE format('CREATE POLICY osc_incluir ON public.%I FOR INSERT TO authenticated WITH CHECK (public.has_screen_access(auth.uid(), %L, %L))',
+    EXECUTE format('CREATE POLICY osc_incluir ON public.%I FOR INSERT TO authenticated WITH CHECK ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L)))',
                    t, 'financeiro-osc-canaa', 'incluir');
     EXECUTE format('DROP POLICY IF EXISTS osc_alterar ON public.%I', t);
-    EXECUTE format('CREATE POLICY osc_alterar ON public.%I FOR UPDATE TO authenticated USING (public.has_screen_access(auth.uid(), %L, %L)) WITH CHECK (public.has_screen_access(auth.uid(), %L, %L))',
+    EXECUTE format('CREATE POLICY osc_alterar ON public.%I FOR UPDATE TO authenticated USING ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L))) WITH CHECK ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L)))',
                    t, 'financeiro-osc-canaa', 'alterar', 'financeiro-osc-canaa', 'alterar');
     EXECUTE format('DROP POLICY IF EXISTS osc_excluir ON public.%I', t);
-    EXECUTE format('CREATE POLICY osc_excluir ON public.%I FOR DELETE TO authenticated USING (public.has_screen_access(auth.uid(), %L, %L))',
+    EXECUTE format('CREATE POLICY osc_excluir ON public.%I FOR DELETE TO authenticated USING ((SELECT public.has_screen_access((SELECT auth.uid()), %L, %L)))',
                    t, 'financeiro-osc-canaa', 'excluir');
   END LOOP;
 END $$;
