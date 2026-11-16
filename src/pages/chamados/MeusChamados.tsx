@@ -162,7 +162,10 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         .select("chamado_id, qualidade, prazo, comunicacao, clareza, facilidade, satisfacao")
         .eq("solicitante_id", user!.id);
       const m: Record<string, number> = {};
-      ((data ?? []) as AvaliacaoChamado[]).forEach((a) => { m[a.chamado_id] = mediaAvaliacao(a); });
+      ((data ?? []) as AvaliacaoChamado[]).forEach((a) => {
+        const n = Number(mediaAvaliacao(a));
+        if (Number.isFinite(n)) m[a.chamado_id] = n;
+      });
       return m;
     },
   });
@@ -212,7 +215,14 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
 
   // Painel do solicitante: só os MEUS chamados (já carregados acima).
   const painel = useMemo(() => {
-    const notas = Object.values(minhasNotas);
+    // 16/11/2026: o painel mostrava "NaN (244 avaliações)" para quem tinha 6
+    // chamados concluídos — a consulta trazia notas de chamados que não são
+    // da pessoa, e alguma sem número válido. Só contam as notas dos MEUS
+    // chamados e só valor numérico.
+    const meus = new Set(chamados.map((c) => c.id));
+    const notas = Object.entries(minhasNotas)
+      .filter(([id, n]) => meus.has(id) && Number.isFinite(n))
+      .map(([, n]) => n);
     return {
       abertos: chamados.filter((c) => chamadoAtivo(c.status)).length,
       notaMedia: mediaSimples(notas),
@@ -401,7 +411,10 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         </div>
 
         {/* Filtros do topo — por padrão nenhum, e a visão é "com pendência". */}
-        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+        {/* 16/11/2026: em tela larga eram 8 colunas e as DUAS datas dividiam
+            uma só — o "Até" saía para fora do cartão. Agora 9 colunas, com
+            duas para as datas, e min-w-0 para nenhum campo empurrar o vizinho. */}
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-9 [&>*]:min-w-0">
           <div className="relative sm:col-span-2 lg:col-span-1 2xl:col-span-2">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input value={filtros.busca} onChange={(e) => mudarFiltro({ busca: e.target.value })} placeholder="Nº ou assunto" className="h-9 pl-8" />
@@ -447,9 +460,9 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
               <SelectItem value="conclusao">Data de conclusão</SelectItem>
             </SelectContent>
           </Select>
-          <div className="flex items-center gap-1 sm:col-span-2 lg:col-span-2 2xl:col-span-1">
-            <Input type="date" value={filtros.de} onChange={(e) => mudarFiltro({ de: e.target.value })} className="h-9 px-2 text-xs" title="De" />
-            <Input type="date" value={filtros.ate} onChange={(e) => mudarFiltro({ ate: e.target.value })} className="h-9 px-2 text-xs" title="Até" />
+          <div className="flex min-w-0 items-center gap-1 sm:col-span-2 lg:col-span-2 2xl:col-span-2">
+            <Input type="date" value={filtros.de} onChange={(e) => mudarFiltro({ de: e.target.value })} className="h-9 min-w-0 flex-1 px-2 text-xs" title="De" />
+            <Input type="date" value={filtros.ate} onChange={(e) => mudarFiltro({ ate: e.target.value })} className="h-9 min-w-0 flex-1 px-2 text-xs" title="Até" />
           </div>
         </div>
         {filtrosAtivos(filtros) && (

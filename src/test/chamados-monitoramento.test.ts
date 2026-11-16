@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  analiseQualidade, avaliarChamado, calcularKpis, classificarTema, leituraControladoria,
+  analiseQualidade, avaliarChamado, calcularKpis, classificarTema, entraNoMonitoramento, leituraControladoria,
   rankingSolicitantes, resumoTemas, termosPresentes, type ChamadoMonitor, type LinhaMonitor,
 } from "@/lib/chamados/monitoramento";
 
@@ -55,11 +55,13 @@ describe("Monitoramento de Chamados — tema", () => {
     expect(termosPresentes(" deu erros na tela ", ["erro"])).toEqual(["erro"]);
   });
 
-  it("ajuste manual de tema vence o automático", () => {
-    const a = avaliarChamado(chamado({ assunto: "Relatório", ajustes: { tema: "visao_estrategica" } }), AGORA);
-    expect(a.tema).toBe("visao_estrategica");
-    expect(a.temaAuto.tema).toBe("relatorios");
-    expect(a.ajustado).toContain("tema");
+  // SIS-2026-0904: o ajuste manual saiu. A RPC ainda manda `ajustes` (tabela
+  // antiga), mas a avaliação fica só no automático.
+  it("ajuste manual antigo vindo da RPC é ignorado", () => {
+    const comAjuste = { ...chamado({ assunto: "Relatório", descricao: BOM }), ajustes: { tema: "visao_estrategica", indice: "9,5", efetividade: "10" } } as ChamadoMonitor;
+    const a = avaliarChamado(comAjuste, AGORA);
+    expect(a.tema).toBe(a.temaAuto.tema);
+    expect(a).toEqual(avaliarChamado(chamado({ assunto: "Relatório", descricao: BOM }), AGORA));
   });
 });
 
@@ -94,18 +96,6 @@ describe("Monitoramento de Chamados — índice 0–10", () => {
     const sem = avaliarChamado(chamado({ descricao: "ver tela" }), AGORA);
     const com = avaliarChamado(chamado({ descricao: "ver tela", aval_dev_clareza: 5 }), AGORA);
     expect(com.criterios.clareza_problema.nota!).toBeGreaterThan(sem.criterios.clareza_problema.nota!);
-  });
-
-  it("ajuste manual do índice substitui, mas guarda o automático", () => {
-    const a = avaliarChamado(chamado({ descricao: BOM, ajustes: { indice: "9,5" } }), AGORA);
-    expect(a.indice).toBe(9.5);
-    expect(a.indiceAuto).not.toBe(9.5);
-    expect(a.ajustado).toContain("indice");
-  });
-
-  it("ajuste fora da faixa é ignorado", () => {
-    const a = avaliarChamado(chamado({ ajustes: { indice: "15", efetividade: "-3" } }), AGORA);
-    expect(a.ajustado).toEqual([]);
   });
 });
 
@@ -144,9 +134,17 @@ describe("Monitoramento de Chamados — consolidação", () => {
     linha({ id: "d", solicitante_id: "u3", solicitante_nome: "Caio", setor: "RH", status: "cancelado", assunto: "Relatório" }),
   ];
 
-  it("cancelado fica só no contador próprio", () => {
+  // SIS-2026-0904: cancelado não entra no monitoramento — a tela tira na
+  // entrada (entraNoMonitoramento) e as contas ignoram mesmo se chegar.
+  it("cancelado fica fora do monitoramento", () => {
+    expect(linhas.filter((l) => entraNoMonitoramento(l.c)).map((l) => l.c.id)).toEqual(["a", "b", "c"]);
+    expect(entraNoMonitoramento({ status: "reprovado" })).toBe(true);
+  });
+
+  it("cancelado não pesa em total, solicitantes nem médias", () => {
     const k = calcularKpis(linhas);
-    expect(k).toMatchObject({ total: 3, solicitantes: 2, concluidas: 1, emAndamento: 1, pendentes: 1, canceladas: 1 });
+    expect(k).toMatchObject({ total: 3, solicitantes: 2, concluidas: 1, emAndamento: 1, pendentes: 1 });
+    expect(k).toEqual(calcularKpis(linhas.slice(0, 3)));
     expect(k.efetividadeMedia).toBe(100);
   });
 

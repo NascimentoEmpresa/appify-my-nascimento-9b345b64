@@ -604,6 +604,41 @@ export function nomeSalvarAnexo(a: { nome_arquivo?: string | null; storage_path:
 }
 
 /**
+ * O Storage não entregou porque estava sem fôlego, não porque o arquivo falta
+ * (16/11/2026). Anexos dos chamados não abriam e o console enchia de "status
+ * 544". No storage-api (v1.80.2) 544 é só um erro: DatabaseTimeout ("The
+ * connection to the database timed out"). Ele sai quando o pedido espera mais
+ * de 3 s por uma das 20 conexões que o Storage tem com o banco, ou quando a
+ * consulta passa de 30 s. 429/502/503/504 contam também. Nesses casos vale
+ * tentar de novo depois, com calma. 404/403 não melhoram com novas tentativas.
+ */
+export function servidorAnexoSobrecarregado(erro: unknown): boolean {
+  if (!erro) return false;
+  const e = erro as { message?: string; status?: number; statusCode?: string | number; code?: string };
+  const temporarios = [429, 502, 503, 504, 544];
+  if (temporarios.includes(Number(e.status ?? 0)) || temporarios.includes(Number(e.statusCode ?? 0))) return true;
+  return /DatabaseTimeout|database timed out/i.test(`${e.code ?? ""} ${e.message ?? ""}`);
+}
+
+/**
+ * Espera antes da próxima tentativa de baixar uma imagem do chat (16/11/2026),
+ * ou null para desistir. Antes eram 5 tentativas fixas a cada 15 s, e cada uma
+ * fazia download e ainda pedia URL assinada: 10 idas ao Storage por imagem,
+ * todas brigando pelas mesmas 20 conexões dele com o banco quando ele já
+ * respondia 544. Agora: no máximo 4 downloads, com espera crescente (cobre
+ * pouco mais de 1 min, um ciclo do espelho entre os nós; ver TENTATIVAS em
+ * useAnexoChamado), e falta de permissão para na hora.
+ */
+export const ESPERAS_IMAGEM_ANEXO_MS = [5_000, 15_000, 40_000] as const;
+export function proximaEsperaImagemAnexo(tentativa: number, erro: unknown): number | null {
+  const e = (erro ?? {}) as { status?: number; statusCode?: string | number };
+  // O Storage responde HTTP 400 com o código de verdade em statusCode ("403").
+  const codigos = [Number(e.status ?? 0), Number(e.statusCode ?? 0)];
+  if (codigos.includes(401) || codigos.includes(403)) return null;
+  return ESPERAS_IMAGEM_ANEXO_MS[tentativa - 1] ?? null;
+}
+
+/**
  * Motivo legível de um download de anexo que falhou (03/11/2026). O clique no
  * .docx da abertura do chamado da HELENA "não fazia nada": o link assinado
  * sai mesmo sem o arquivo no nó que respondeu, e a aba aberta depois do
@@ -615,6 +650,9 @@ export function motivoFalhaAnexo(erro: unknown): string {
   const e = (erro ?? {}) as { message?: string; status?: number; statusCode?: string | number };
   const msg = String(e.message ?? "");
   const codigo = String(e.statusCode ?? "");
+  if (servidorAnexoSobrecarregado(erro)) {
+    return "O servidor de arquivos está sobrecarregado agora. Tente de novo em alguns segundos.";
+  }
   if (e.status === 404 || /^(404|not_found|NoSuchKey)$/i.test(codigo) || /not.?found|no such/i.test(msg)) {
     return "Arquivo não encontrado no servidor. Ele pode ter ficado de fora da migração dos anexos — avise o T.I.";
   }

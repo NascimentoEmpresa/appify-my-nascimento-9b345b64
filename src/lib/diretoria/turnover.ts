@@ -28,6 +28,12 @@ export interface ContratoTurnover {
   /** Todas as demissões (a página Analistas não usa o recorte). */
   demissoes_todas: number;
   aviso_trabalhado: number; aviso_indenizado: number;
+  /**
+   * Contrato encerrado com o cliente (Licitações › Contratos, status
+   * "encerrado" — mig 20261116130000). A RPC já zera as demissões dele e o
+   * tira do efetivo do grupo; a linha fica com o efetivo do próprio contrato.
+   */
+  encerrado?: boolean;
 }
 export interface PainelTurnover {
   ano: number; mes: number | null;
@@ -46,10 +52,12 @@ export interface PainelTurnover {
 
 /** Nota do painel sobre os desligamentos por encerramento de contrato (null = nada a dizer). */
 export function notaForaTurnover(n: number | null | undefined): string | null {
+  // Desde a mig 20261116130000 o número soma também os desligamentos de
+  // contrato encerrado na Licitação e os de "Fim do Contrato de Trabalho".
   if (!n || n <= 0) return null;
   return n === 1
-    ? "1 desligamento por encerramento de contrato com o cliente ficou fora da conta."
-    : `${n.toLocaleString("pt-BR")} desligamentos por encerramento de contrato com o cliente ficaram fora da conta.`;
+    ? "1 desligamento por fim de contrato (com o cliente ou de trabalho) ficou fora da conta."
+    : `${n.toLocaleString("pt-BR")} desligamentos por fim de contrato (com o cliente ou de trabalho) ficaram fora da conta.`;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;

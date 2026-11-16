@@ -420,7 +420,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais, horasEstima
             </div>
           )}
           <p className="text-[10px] text-muted-foreground">
-            Valor/hora fixo de desenvolvedor sênior; valores fixos depois de gerados. Estimativa automática, não é orçamento. Gerado em {fmtDataHora(parecer.gerado_em)}{parecer.modelo ? ` · ${parecer.modelo}` : ""}.
+            Preço = horas × valor/hora fixo, com teto de horas pela complexidade (regra de 16/11/2026); valores fixos depois de gerados. Estimativa automática, não é orçamento. Gerado em {fmtDataHora(parecer.gerado_em)}{parecer.modelo ? ` · ${parecer.modelo}` : ""}.
           </p>
 
           <ChatParecerIa key={parecer.gerado_em ?? ""} chamadoId={chamadoId} />
