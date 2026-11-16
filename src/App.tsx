@@ -299,6 +299,7 @@ import IndicadoresLucratividade from "./pages/operacional/indicadores/Lucrativid
 import IndicadoresPessoas from "./pages/operacional/indicadores/PessoasCapacidade";
 import IndicadoresKaizen from "./pages/operacional/indicadores/KaizenEfetividade";
 import IndicadoresContratos from "./pages/operacional/indicadores/IndicadoresContratos";
+import OrganogramaOperacional from "./pages/operacional/OrganogramaOperacional";
 import EfetividadeControlePostos from "./pages/operacional/efetividade/ControlePostos";
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
@@ -1088,6 +1089,8 @@ const App = () => (
             <Route path="operacional/indicadores/kaizen-efetividade" element={<IndicadoresKaizen />} />
             {/* Indicadores por Contrato (11/11/2026, mig 20261111100000): os 7 da Gerência Operacional. */}
             <Route path="operacional/indicadores/contratos" element={<IndicadoresContratos />} />
+            {/* Organograma › Operacional (17/11/2026, mig 20261117000100): fonte do encarregado de cada contrato. */}
+            <Route path="operacional/organograma" element={<OrganogramaOperacional />} />
             <Route path="operacional/efetividade" element={<EfetividadePainelDia />} />
             <Route path="operacional/efetividade/postos" element={<EfetividadeControlePostos />} />
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />
