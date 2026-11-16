@@ -1371,6 +1371,16 @@ const operacionalModule: ModuleDef = {
       ],
     },
     {
+      // Organograma › Operacional (17/11/2026, mig 20261117000100, menu
+      // ope_organograma): gerente › supervisores › encarregados › contratos.
+      // É a fonte do encarregado de cada contrato (Ponto, Documentos do RH, Treinamento).
+      label: "Organograma",
+      defaultOpen: true,
+      items: [
+        { label: "Operacional", to: "/app/operacional/organograma", icon: Network },
+      ],
+    },
+    {
       // Vieram do RH em 03/11/2026 (mig 20261103005100), a pedido do Pablo:
       // centralizar no Operacional. Mesmos códigos de menu (colaboradores,
       // rh_ativos_contratos) — quem tinha acesso continua tendo.
