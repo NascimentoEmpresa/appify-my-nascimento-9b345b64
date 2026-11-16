@@ -46,7 +46,7 @@ describe("nota do painel de Turnover", () => {
   it("só aparece quando algum desligamento ficou fora", () => {
     expect(notaForaTurnover(undefined)).toBeNull();
     expect(notaForaTurnover(0)).toBeNull();
-    expect(notaForaTurnover(1)).toBe("1 desligamento por encerramento de contrato com o cliente ficou fora da conta.");
-    expect(notaForaTurnover(1234)).toBe("1.234 desligamentos por encerramento de contrato com o cliente ficaram fora da conta.");
+    expect(notaForaTurnover(1)).toBe("1 desligamento por fim de contrato (com o cliente ou de trabalho) ficou fora da conta.");
+    expect(notaForaTurnover(1234)).toBe("1.234 desligamentos por fim de contrato (com o cliente ou de trabalho) ficaram fora da conta.");
   });
 });
