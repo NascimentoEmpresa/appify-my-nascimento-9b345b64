@@ -12,6 +12,8 @@ import { NfEmissaoRow } from "@/hooks/useNfEmissao";
 import { abrirDocumentoNfse, AmbienteNfse, EstadoNfse, ParametrosNfse, SolicitacaoNfse, useConfiguracaoNfse, useReprocessarNfse, useSolicitacoesNfse, useSolicitarNfse } from "@/hooks/useNfseIntegracao";
 import { fmtMoney } from "../nf-emissao/shared";
 import { validarParametrosNfse } from "./validarParametrosNfse";
+import { MunicipioNfseCampo } from "./MunicipioNfseCampo";
+import { PisCofinsNfseEditor } from "./PisCofinsNfseEditor";
 
 const ESTADOS: Record<EstadoNfse, string> = {
   pendente: "Na fila", processando: "Processando", aguardando: "Aguardando a prefeitura",
@@ -37,9 +39,9 @@ function Campo({ titulo, valor, alterar, obrigatorio = true, tipo = "text", maxi
     <Input value={valor} onChange={e => alterar(e.target.value)} readOnly={somenteLeitura} required={obrigatorio} type={tipo} maxLength={maximo} step={tipo === "number" ? "0.01" : undefined} min={tipo === "number" ? "0" : undefined} />
   </Label>;
 }
-function Escolha({ titulo, valor, alterar, opcoes, obrigatorio = true }: { titulo: string; valor: string; alterar: (valor: string) => void; opcoes: [string,string][]; obrigatorio?: boolean }) {
+function Escolha({ titulo, valor, alterar, opcoes, obrigatorio = true, desabilitado = false }: { titulo: string; valor: string; alterar: (valor: string) => void; opcoes: [string,string][]; obrigatorio?: boolean; desabilitado?: boolean }) {
   return <Label className="grid gap-2 text-sm font-normal">{titulo}
-    <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={valor} onChange={e => alterar(e.target.value)} required={obrigatorio}>
+    <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={valor} onChange={e => alterar(e.target.value)} required={obrigatorio} disabled={desabilitado}>
       <option value="">Selecione</option>{valor && !opcoes.some(([codigo]) => codigo === valor) && <option value={valor} disabled>Valor inválido: {valor} — revise</option>}{opcoes.map(([codigo,nome]) => <option key={codigo} value={codigo}>{nome}</option>)}
     </select>
   </Label>;
@@ -57,6 +59,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   const [parametros, setParametros] = useState(() => parametrosIniciais(nf));
   const [editando, setEditando] = useState(false);
   const [baixando, setBaixando] = useState(false);
+  const [percentuaisPendentes, setPercentuaisPendentes] = useState(false);
   const exigeCodigoPrefeitura = producao && parametros.municipio_emissor === "4322004" && parametros.codigo_tributacao.replace(/[.\-/\s]/g, "") === "170501";
   const solicitacoes = consulta.data ?? [];
   const atual = solicitacoes[0];
@@ -67,7 +70,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   const salvarImovel = (campo: keyof NonNullable<ParametrosNfse["imovel"]>, valor: string) => setParametros(p => ({ ...p, confirmacao_fiscal: false, confirmacao_producao: false, imovel: { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", inscricao: "", ...p.imovel, [campo]: valor } }));
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
-    if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes) return;
+    if (!parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes || percentuaisPendentes) return;
     try { await solicitar.mutateAsync(validarParametrosNfse(parametros, ambiente, exigeInscricaoTomador, Number(nf.pis_total) + Number(nf.cofins_total) > 0)); setEditando(false); toast.success(`Solicitação de ${rotuloAmbiente} registrada. Use Atualizar para acompanhar.`); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível registrar a solicitação."); }
   }
@@ -100,7 +103,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       <div className="flex items-center gap-2"><h3 className="font-semibold">Emissão de NFS-e na prefeitura</h3><Badge variant={producao ? "destructive" : "outline"}>{producao ? "Produção — nota real" : "Homologação"}</Badge></div>
       <Button type="button" size="sm" variant="outline" onClick={() => void consulta.refetch()} disabled={consulta.isFetching}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button>
     </div>
-    <Escolha titulo="Ambiente fiscal" valor={ambiente} alterar={v => { setAmbiente(v as AmbienteNfse); setEditando(false); setParametros(parametrosIniciais(nf)); }} opcoes={[["homologacao","Homologação — documentos de teste"],["producao","Produção — nota fiscal real"]]} />
+    <Escolha titulo="Ambiente fiscal" valor={ambiente} desabilitado={percentuaisPendentes} alterar={v => { setAmbiente(v as AmbienteNfse); setEditando(false); setPercentuaisPendentes(false); setParametros(parametrosIniciais(nf)); }} opcoes={[["homologacao","Homologação — documentos de teste"],["producao","Produção — nota fiscal real"]]} />
     <p className="text-sm text-muted-foreground">{producao ? "A solicitação em produção gera uma nota fiscal real. Confira os dados antes de transmitir. O resultado oficial e os documentos serão exibidos abaixo." : "Homologação gera documentos de teste e não altera o número ou a conclusão interna da preparação."}</p>
     {producao && !liberado && <p role="status" className="text-sm text-muted-foreground">Emissão em produção ainda não liberada para esta empresa ou preparação.</p>}
     {consulta.isError && <p role="alert" className="text-sm text-destructive">Não foi possível carregar as solicitações. Confira se a integração foi instalada e tente Atualizar.</p>}
@@ -122,13 +125,17 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       </div>
     </div>)}
     {!existeAtiva && nf.status === "enviada" && !consulta.isError && !consulta.isLoading && liberado && <AcessoGate menu="financeiro-nfse" acao="incluir">
-      <Button type="button" variant="outline" disabled={configuracoes.isLoading} onClick={() => { if (editando) setEditando(false); else preparar(); }}>
+      <Button type="button" variant="outline" disabled={configuracoes.isLoading || percentuaisPendentes} onClick={() => { if (editando) setEditando(false); else preparar(); }}>
         <ChevronDown className="mr-2 h-4 w-4" />{editando ? `Fechar preparação de ${rotuloAmbiente}` : `Preparar emissão em ${rotuloAmbiente}`}
       </Button>
     </AcessoGate>}
     {editando && !existeAtiva && <AcessoGate menu="financeiro-nfse" acao="incluir"><form onSubmit={enviar} className="space-y-5">
       <div className="rounded-md bg-muted p-3 text-sm">Valores salvos: serviços <strong>{fmtMoney(nf.vlr_bruto_total)}</strong> · líquido <strong>{fmtMoney(nf.vlr_liquido_total)}</strong>. A integração utiliza esses valores e as retenções salvas da preparação.</div>
       {alteracoesPendentes && <p role="alert" className="text-sm text-destructive">Há valores alterados nesta conferência. Salve a preparação na tela de Emissão de NF antes de solicitar a integração.</p>}
+      <PisCofinsNfseEditor nf={nf} bloqueado={alteracoesPendentes || solicitar.isPending} aoAlterar={pendente => {
+        setPercentuaisPendentes(pendente); setParametros(p => ({ ...p, confirmacao_fiscal: false, confirmacao_producao: false }));
+      }} />
+      {percentuaisPendentes && <p role="alert" className="text-sm text-muted-foreground">Salve os percentuais ou mantenha os valores salvos antes de solicitar a emissão.</p>}
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Prestador e documento</legend>
         <Campo titulo="Data de execução do serviço / competência da NFS-e" valor={parametros.data_competencia ?? ""} alterar={v => salvarCampo("data_competencia",v)} tipo="date" />
         <p className="text-sm text-muted-foreground md:col-span-2">A data escolhida será enviada para o campo Competência da NFS-e no documento fiscal.</p>
@@ -142,7 +149,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Tomador</legend>
         <Campo titulo="CPF/CNPJ" valor={parametros.tomador.documento} alterar={v => salvarTomador("documento",v)} maximo={18} />
         <Campo titulo="Nome / razão social" valor={parametros.tomador.nome} alterar={v => salvarTomador("nome",v)} maximo={150} />
-        <Campo titulo="Município — código IBGE" valor={parametros.tomador.municipio} alterar={v => salvarTomador("municipio",v)} maximo={7} />
+        <MunicipioNfseCampo titulo="Município" codigo={parametros.tomador.municipio} alterar={v => salvarTomador("municipio",v)} />
         <Campo titulo="Inscrição municipal do tomador" valor={parametros.tomador.inscricao_municipal ?? ""} alterar={v => salvarTomador("inscricao_municipal",v)} obrigatorio={exigeInscricaoTomador} maximo={15} />
         <p className="text-sm text-muted-foreground md:col-span-3">Informe a inscrição municipal do cliente conforme o cadastro na prefeitura, preservando os zeros iniciais. {exigeInscricaoTomador ? "A rejeição P4016 exige esse dado para identificar o cadastro correto do tomador." : "Preencha quando o tomador possuir inscrição municipal ou quando a prefeitura exigir."}</p>
         <Campo titulo="CEP" valor={parametros.tomador.cep} alterar={v => salvarTomador("cep",v)} maximo={9} />
@@ -158,7 +165,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Campo titulo="Código do serviço na prefeitura" valor={parametros.codigo_integracao_municipal ?? ""} alterar={v => salvarCampo("codigo_integracao_municipal",v)} obrigatorio={exigeCodigoPrefeitura} maximo={20} />
         <p className="text-sm text-muted-foreground md:col-span-3">Informe o código municipal usado no portal para esta prestação, conforme o responsável fiscal. Quando a prefeitura indicar mais de um serviço possível, esse código identifica qual deve ser utilizado.</p>
         <Campo titulo="Desdobramento municipal, se aplicável" valor={parametros.codigo_municipal} alterar={v => salvarCampo("codigo_municipal",v)} obrigatorio={false} maximo={3} />
-        <Campo titulo="Local da prestação — código IBGE" valor={parametros.local_prestacao} alterar={v => salvarCampo("local_prestacao",v)} maximo={7} />
+        <MunicipioNfseCampo titulo="Local da prestação" codigo={parametros.local_prestacao} alterar={v => salvarCampo("local_prestacao",v)} />
         <Campo titulo="Alíquota do ISS (%)" valor={parametros.aliquota_iss} alterar={v => salvarCampo("aliquota_iss",v)} tipo="number" />
         <Escolha titulo="Retenção do ISS" valor={parametros.iss_retido} alterar={v => salvarCampo("iss_retido",v)} opcoes={[["1","Não retido"],["2","Retido pelo tomador"]]} />
         {(Number(nf.pis_total) + Number(nf.cofins_total)) > 0 && <>
@@ -192,7 +199,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       </fieldset>
       <Label className="flex items-start gap-3 font-normal"><Checkbox checked={parametros.confirmacao_fiscal} onCheckedChange={v => salvarCampo("confirmacao_fiscal",v === true)} /><span>Revisei os dados fiscais, as retenções e a série liberada.</span></Label>
       {producao && <Label className="flex items-start gap-3 font-normal"><Checkbox checked={parametros.confirmacao_producao === true} onCheckedChange={v => setParametros(p => ({ ...p, confirmacao_producao: v === true }))} /><span>Autorizo a emissão de uma nota fiscal real em produção para esta preparação.</span></Label>}
-      <Button type="submit" disabled={solicitar.isPending || !parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes}><Send className="mr-2 h-4 w-4" />{solicitar.isPending ? "Registrando..." : `Solicitar emissão em ${rotuloAmbiente}`}</Button>
+      <Button type="submit" disabled={solicitar.isPending || !parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes || percentuaisPendentes}><Send className="mr-2 h-4 w-4" />{solicitar.isPending ? "Registrando..." : `Solicitar emissão em ${rotuloAmbiente}`}</Button>
     </form></AcessoGate>}
   </section>;
 }

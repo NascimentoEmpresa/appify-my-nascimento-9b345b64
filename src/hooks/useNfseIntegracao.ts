@@ -123,3 +123,27 @@ export async function abrirDocumentoNfse(caminho: string) {
   link.rel = "noopener noreferrer";
   link.click();
 }
+export function useSalvarPisCofinsNfse(notaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (entrada: { pisPct: number; cofinsPct: number; versao: string; base: unknown }) => {
+      if (!entrada.versao) throw new Error("Reabra a nota para carregar os valores atuais antes de salvar.");
+      const { error } = await clienteNfse.rpc("nfse_atualizar_pis_cofins", {
+        _nf_id: notaId, _pis_pct: entrada.pisPct, _cofins_pct: entrada.cofinsPct,
+        _versao: entrada.versao, _base_itens: entrada.base,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["nf_emissao_historico", notaId] });
+      try {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ["nf_emissao"] }, { throwOnError: true }),
+          qc.invalidateQueries({ queryKey: ["nf_emissao_item", notaId] }, { throwOnError: true }),
+        ]);
+      } catch {
+        throw new Error("Percentuais gravados, mas não foi possível atualizar os valores da tela. Reabra a nota antes de emitir.");
+      }
+    },
+  });
+}

@@ -6,7 +6,10 @@ import type { NfEmissaoRow } from "@/hooks/useNfEmissao";
 import type { ParametrosNfse, SolicitacaoNfse } from "@/hooks/useNfseIntegracao";
 import { parametrosNfse } from "./fixtures/parametrosNfse";
 const estado = vi.hoisted(() => ({ habilitado: false, piloto: null as string | null, enviar: vi.fn(async (_parametros: ParametrosNfse) => "solicitacao"),
+  salvarPercentuais: vi.fn(async (_dados: unknown) => undefined),
   solicitacoes: [] as SolicitacaoNfse[], reprocessar: vi.fn(async (_dados: { id: string; descartar?: boolean }) => undefined), erro: vi.fn(), permitirIncluir: true }));
+vi.mock("@/hooks/useIBGEMunicipios", () => ({ useIBGEMunicipios: () => ({ municipios: [], isLoading: false, erro: false, recarregar: vi.fn() }) }));
+vi.mock("@/hooks/useNfEmissao", () => ({ useItensNfEmissao: () => ({ data: [{ id: "item", vlr_bruto: 100, pis: 0, cofins: 0, vlr_liquido: 82.2 }], isLoading: false, isError: false }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: estado.erro } }));
 vi.mock("@/components/auth/AcessoGate", () => ({ AcessoGate: ({ children, acao }: { children: ReactNode; acao: string }) => acao !== "incluir" || estado.permitirIncluir ? children : null }));
 vi.mock("@/hooks/useNfseIntegracao", () => ({
@@ -17,6 +20,7 @@ vi.mock("@/hooks/useNfseIntegracao", () => ({
   useSolicitacoesNfse: () => ({ data: estado.solicitacoes, isLoading: false, isError: false, isFetching: false, refetch: vi.fn() }),
   useSolicitarNfse: () => ({ mutateAsync: estado.enviar, isPending: false }),
   useReprocessarNfse: () => ({ mutateAsync: estado.reprocessar, isPending: false }),
+  useSalvarPisCofinsNfse: () => ({ mutateAsync: estado.salvarPercentuais, isPending: false }),
   abrirDocumentoNfse: vi.fn(),
 }));
 const nota = { id: "nota-piloto", empresa_id: "empresa", status: "enviada", competencia: "2026-10-01", vlr_bruto_total: 100, vlr_liquido_total: 82.2, issqn_total: 2, csll_total: 0 } as unknown as NfEmissaoRow;
@@ -27,9 +31,30 @@ beforeAll(() => vi.stubGlobal("ResizeObserver", class {
 }));
 afterAll(() => vi.unstubAllGlobals());
 afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; estado.enviar.mockClear();
-  estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.permitirIncluir = true; });
+  estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.salvarPercentuais.mockReset(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("prevê e salva percentuais sem emitir, bloqueia envio durante edição e exige nova revisão fiscal", async () => {
+    estado.habilitado = true;
+    const atual = { ...nota, pis_total: 0, cofins_total: 0, pis_pct: 0, cofins_pct: 0, updated_at: "2026-11-16T15:00:00Z" };
+    render(<NfseIntegracaoPainel nf={atual} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button", { name: "Preparar emissão em produção" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Revisei os dados fiscais, as retenções e a série liberada." }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Autorizo a emissão de uma nota fiscal real em produção para esta preparação." }));
+    fireEvent.click(screen.getByRole("button", { name: "Ajustar percentuais de PIS/COFINS" }));
+    fireEvent.change(screen.getByLabelText("PIS (%)"), { target: { value: "0,65" } });
+    fireEvent.change(screen.getByLabelText("COFINS (%)"), { target: { value: "3" } });
+    expect(screen.getByRole("status")).toHaveTextContent(/PIS.*0,65.*COFINS.*3,00.*líquido.*78,55/);
+    const enviar = screen.getByRole("button", { name: "Solicitar emissão em produção" });
+    expect(enviar).toBeDisabled();
+    fireEvent.submit(enviar.closest("form")!); expect(estado.enviar).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar percentuais e recalcular" }));
+    await waitFor(() => expect(estado.salvarPercentuais).toHaveBeenCalledOnce());
+    expect(estado.salvarPercentuais).toHaveBeenCalledWith({ pisPct: .65, cofinsPct: 3, versao: atual.updated_at, base: [{ id: "item", bruto: 100, pis: 0, cofins: 0, liquido: 82.2 }] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ajustar percentuais de PIS/COFINS" })).toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: "Revisei os dados fiscais, as retenções e a série liberada." })).not.toBeChecked();
+    expect(estado.enviar).not.toHaveBeenCalled();
+  });
   it("explica os tipos opcionais e mantém valor legado inválido visível para revisão", () => {
     estado.habilitado = true;
     const parametros = {...parametrosNfse(),codigo_integracao_municipal:"8111700",tipo_operacao:"0",tipo_ente_governamental:"0"};

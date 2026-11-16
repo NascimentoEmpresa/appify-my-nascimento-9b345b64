@@ -504,6 +504,36 @@ por empresa e no processador; mudar apenas a URL não habilita emissão real.
 
 ## Verificação
 
+### Cidade e percentuais antes da emissão (PR 1286)
+
+Em **Financeiro → Controle de Notas → Validação de Notas**, abra a preparação
+enviada ao Financeiro e expanda **Preparar emissão**. Em **Local da prestação**
+e no município do tomador, digite o nome da cidade, confira a UF e selecione
+o resultado: o código IBGE é preenchido automaticamente. A consulta usa o
+catálogo oficial do IBGE, compartilhado entre os campos e armazenado em cache
+por sete dias. Se estiver indisponível, é possível informar o código manualmente.
+
+Use **Ajustar percentuais de PIS/COFINS** para informar, por exemplo, PIS `0,65`
+e COFINS `3`. A prévia calcula sobre o bruto salvo de cada item, com
+arredondamento em centavos por item. **Salvar percentuais e recalcular** grava
+percentuais, valores dos itens, totais e líquido em uma transação e registra
+o histórico. Esses percentuais substituem os de PIS/COFINS de todos os itens
+da preparação. As demais retenções e o bruto são preservados. O CST continua
+sendo uma classificação fiscal a confirmar com o responsável, não um percentual.
+
+O ajuste exige `financeiro-nfse/alterar`, `nf_emissao_controle/visualizar` e
+`nf-emissao/incluir`, conforme a trava já existente de edição de preparações.
+Não é permitido em NF numerada, concluída, excluída ou com solicitação fiscal
+ativa em qualquer ambiente. Corrija/descarte o pedido anterior antes de editar.
+Mudanças concorrentes no cabeçalho/valores dos itens exigem reabrir a nota.
+Salvar percentuais não transmite documento. Após salvar, confira os valores,
+informe o CST adequado, revise novamente as confirmações e solicite a emissão.
+
+`worker/test/nfse-pis-cofins.sql` verifica no PostgreSQL 18 descartável o
+recálculo, permissões, proteção de dados emitidos/ativos, versão dos dados,
+snapshot da emissão e rollback se a auditoria falhar. Os testes de interface
+e cálculo estão em `src/test/nfse-*.test.*`.
+
 `npm run test -- --run src/test/nfse-integracao.test.ts` verifica documento,
 assinaturas, XSD, certificado, bloqueio de produção e recuperação de falhas.
 Instalar também as dependências de `worker` antes dos testes. O job de testes
