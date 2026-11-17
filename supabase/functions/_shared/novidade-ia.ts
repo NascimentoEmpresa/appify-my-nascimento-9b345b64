@@ -176,7 +176,8 @@ export function montarPrompt(c: ChamadoParaNovidade, prTitulo?: string | null): 
  */
 export function limparVazamentos(texto: string, c: ChamadoParaNovidade): string {
   let t = texto;
-  if (c.numero) t = t.replaceAll(c.numero, "").replace(/\s{2,}/g, " ");
+  // split/join em vez de replaceAll: a lib do type-check (CI "tipos") é anterior ao ES2021.
+  if (c.numero) t = t.split(c.numero).join("").replace(/\s{2,}/g, " ");
   t = t.replace(/\bSIS-\d{4}-\d+\b/g, "").replace(/\s{2,}/g, " ");
   // Nome do solicitante, inteiro ou só o primeiro nome (a IA costuma abreviar).
   const nome = (c.solicitante_nome ?? "").trim();
