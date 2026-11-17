@@ -15,13 +15,14 @@ import {
   telasDoModeloParaPessoa, telasFaltando, telasForaDoModelo,
   type ModeloAcesso, type NivelCargo, type PessoaAcesso,
 } from "@/lib/acessoPorSetorCargo";
+import { menuPendente } from "@/lib/novosModulos";
 
 // Tabelas e RPCs de 10/11/2026 (SIS-2026-0851) — fora do types.ts.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = supabase as any;
 
 interface Modulo { id: string; codigo: string; nome: string }
-interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ativo: boolean }
+interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ativo: boolean; liberado_em?: string | null }
 
 const CLASSE_SELECT = "h-9 rounded-md border border-input bg-background px-2 text-sm";
 // acesso_efetivo_usuarios aceita até 300 ids por chamada (Encarregados, o maior grupo, tem ~94).
@@ -162,7 +163,9 @@ export function AcessoPorSetorCargoPanel({ podeGerenciar, modulos, menus, menusC
   }, [perfisQ.data, userSetoresQ.data, cargos]);
   const nomePorId = useMemo(() => new Map(pessoas.map((p) => [p.id, p.nome] as const)), [pessoas]);
 
-  const menusAtivos = useMemo(() => menus.filter((m) => m.ativo), [menus]);
+  // Tela nova aguardando liberação (SIS-2026-0931) não entra em modelo nem em
+  // aplicação em massa: libera-se em Novos Módulos (a RPC também recusa).
+  const menusAtivos = useMemo(() => menus.filter((m) => m.ativo && !menuPendente(m)), [menus]);
   const menusValidos = useMemo(() => new Set(menusAtivos.map((m) => m.codigo)), [menusAtivos]);
   const nomeDoMenu = useMemo(() => new Map(menusAtivos.map((m) => [m.codigo, m.nome] as const)), [menusAtivos]);
 
@@ -649,9 +652,14 @@ export function AplicarModeloNovoUsuario({ userId, setores, cargo }: { userId: s
     queryKey: ["acesso-menus-validos"],
     enabled: disponivel,
     queryFn: async () => {
-      const { data, error } = await sb.from("app_menu").select("codigo").eq("ativo", true);
+      // select("*") e não "codigo, liberado_em": antes da migration do
+      // SIS-2026-0931 a coluna não existe, e pedi-la pelo nome daria erro.
+      // Tela aguardando liberação fica de fora (a RPC em massa a recusa).
+      const { data, error } = await sb.from("app_menu").select("*").eq("ativo", true);
       if (error) throw error;
-      return new Set(((data ?? []) as { codigo: string }[]).map((r) => r.codigo));
+      return new Set(((data ?? []) as { codigo: string; liberado_em?: string | null }[])
+        .filter((r) => !menuPendente(r))
+        .map((r) => r.codigo));
     },
   });
 

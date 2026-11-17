@@ -174,9 +174,10 @@ positivo, e falso positivo custa mais confiança do que um achado a menos.
 
 ### J1.B — Exceção individual vence o `concede_tudo`
 
-Em `has_screen_access` a ordem é: (1) `screen_permission_user`, (2) perfil
-`concede_tudo`, (3) perfis comuns. O passo 1 vem **antes** do admin. E o
-painel, ao desligar um toggle, não apaga a linha: grava `allow = false`.
+Em `has_screen_access` a ordem é: (0) tela **pendente** de liberação nega
+tudo (J2), (1) `screen_permission_user`, (2) perfil `concede_tudo`, (3) perfis
+comuns. O passo 1 vem **antes** do admin. E o painel, ao desligar um toggle,
+não apaga a linha: grava `allow = false`.
 
 Consequência: um toggle desligado no passado deixa uma linha `allow = false`
 que bloqueia até o Administrador Geral, para sempre, e ninguém entende por
@@ -253,24 +254,46 @@ Toda PR que toca acesso tem que responder isto no corpo, e o revisor confere:
 Se essa frase não puder ser escrita com honestidade, a PR não resolveu o
 problema de acesso — apenas o adiou. Diga isso no comentário.
 
+Para **tela nova** (J2), o teste começa um passo antes: depois do merge a tela
+está pendente para todos; libere-a para o usuário de teste em Módulos & Menus
+› **Novos Módulos** e só então faça o teste acima. A PR não "falha a J1.G"
+por a tela estar pendente antes disso — é o comportamento pedido.
+
 ---
 
-## J2 — Menu novo nasce ABERTO
+## J2 — Menu novo nasce PENDENTE (liberação em Novos Módulos)
 
-Sem regra semeada em `perfil_acesso_permissao`, o `RouteGuard` trata o menu
-como "ninguém configurou ainda" e libera para todo usuário autenticado. É
-fail-open de propósito, para não quebrar telas antigas — mas significa que
-esquecer o seed **publica a tela para o escritório inteiro**.
+**Desde 17/11/2026 (SIS-2026-0931, mig `20261118093100`) a regra se inverteu.**
+Antes, menu sem regra semeada nascia ABERTO (fail-open) e esquecer o seed
+publicava a tela para o escritório inteiro — por isso esta regra mandava
+reprovar migration sem `INSERT` em `perfil_acesso_permissao`.
 
-Continua acontecendo: 25 migrations criam linha em `app_menu` sem semear
-permissão nenhuma, a mais recente de 07/09/2026
-(`20260907000002_financeiro_fluxo_caixa_gestao.sql`). Não é dívida antiga, é
-hábito atual.
+Agora um gatilho em `app_menu` faz toda linha nova nascer **pendente**
+(`liberado_em IS NULL`), e `has_screen_access`/`list_accessible_menus` negam
+tela pendente **antes de qualquer permissão** — exceção individual,
+Administrador Geral, perfil do módulo, cópia do menu lateral, URL direta. Só
+abre quando é liberada em `/app/administracao?tab=modulos&visao=novos`, por
+quem tem a permissão própria `administracao_novos_modulos` (nasceu só com o
+Iury e o Eduardo; um gatilho impede que quem não a tem a conceda a alguém).
 
-Migration que insere em `app_menu` sem `INSERT` correspondente em
-`perfil_acesso_permissao` = **reprovar**. Exceção única: se o `app_modulo`
-também for novo, um trigger cria o perfil espelho sozinho — mas aí a PR tem
-que dizer isso.
+**Reprove** migration que semeie `administracao_novos_modulos` para outra
+pessoa, ou que a ponha em perfil, sem o pedido explícito do Iury citado na PR.
+
+O que conferir na PR:
+
+- **Seed na migration é opcional** e vira "acesso preparado" (aparece
+  pré-marcado no modal; só vale depois de liberado). **Não reprove** migration
+  de menu novo por falta de seed — essa era a regra antiga.
+- **Reprove** migration que tente contornar: `UPDATE app_menu SET
+  liberado_em = ...`, `concede_tudo_alcanca = true` numa tela nova, ou
+  desligar `trg_app_menu_nasce_pendente`/`trg_app_menu_liberacao_so_pela_tela`.
+  O gatilho já ignora e avisa (WARNING, nunca EXCEPTION — não para a fila), mas
+  a intenção é o problema.
+- Código de menu reaproveitado de tela que já existe herda o "liberado" (para
+  não fechar tela em uso) — mais um motivo para a J1.D: código novo, único.
+- A PR de tela nova deve avisar no corpo que, depois do merge, a tela precisa
+  ser liberada em Novos Módulos — o solicitante do chamado vai receber a URL e
+  ver "Esta tela é nova e aguarda liberação" até isso acontecer.
 
 ---
 
