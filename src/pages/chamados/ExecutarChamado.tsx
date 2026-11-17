@@ -269,8 +269,9 @@ export default function ExecutarChamado() {
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {/* 12/11/2026: aberto de uma lista (ex.: Bonificação), setas para o anterior/próximo. */}
-            <NavegacaoListaChamados id={id} />
+            {/* 12/11/2026: aberto de uma lista (ex.: Bonificação), setas para o anterior/próximo.
+                16/11/2026: também pelo Painel do Desenvolvedor/Distribuição e, sem lista, pela fila do responsável. */}
+            <NavegacaoListaChamados chamado={chamado} />
             <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
             <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>
           </div>
