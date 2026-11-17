@@ -226,3 +226,19 @@ describe("12. Vencido em aberto sem projetadas e sem vencimento", () => {
     expect(r.futuro).toBe(400);
   });
 });
+
+describe("Ajustes pelo mock do chamado (17/11)", () => {
+  it("competência do índice: a escolhida ou a mais recente; sem lançamento → null", async () => {
+    const { aplicacaoDaCompetencia } = await import("@/pages/juridico/patrimonio/financiamento");
+    const h = [{ competencia: "2026-01-01", correcao: 580 }, { competencia: "2026-02-01", correcao: 503 }];
+    expect(aplicacaoDaCompetencia(h, "")?.correcao).toBe(503);
+    expect(aplicacaoDaCompetencia(h, "2026-01")?.correcao).toBe(580);
+    expect(aplicacaoDaCompetencia(h, "2026-03")).toBeNull();
+    expect(aplicacaoDaCompetencia([], "")).toBeNull();
+  });
+  it("o CSV exportado usa MPI, como o demonstrativo", () => {
+    const csv = csvDasParcelas(resolverParcelas([{ id: 1, numero: 83, seguro_mip: 24.58 }], [], HOJE));
+    expect(csv.split("\n")[0]).toContain(";MPI;DFI;");
+    expect(lerImportacao(csv).linhas[0]).toMatchObject({ seguro_mip: 24.58 });
+  });
+});

@@ -24,7 +24,7 @@ import {
   opcoesDePeriodo, rotuloPeriodo, rotuloIndice, corDaSituacao, SITUACOES, historicoIncc, calcularIncc,
   APLICACOES_INCC, MODALIDADES_INCC, BASES_INCC, rotuloAplicacaoIncc, lerImportacao, planejarImportacao,
   csvDasParcelas, detalheReconhecido, rotuloParcela, CAMPOS_COMPONENTES, recortesDaAba, parcelaParaEdicao,
-  pagamentosSemComprovante, tipoDoIndice, permissoesDaAba,
+  pagamentosSemComprovante, tipoDoIndice, permissoesDaAba, aplicacaoDaCompetencia,
   type ParcelaFinanciamento, type PagamentoParcela, type LinhaResolvida, type Situacao, type EvolucaoSaldo,
 } from "./financiamento";
 
@@ -101,7 +101,7 @@ const sinal = (v: number | null, pos: string, neg: string) => v == null ? null :
 const mesAno = (s?: string | null) => { if (!s) return null; const [a, m] = s.slice(0, 7).split("-"); return `${m}/${a}`; };
 
 /** Texto vazio: cada campo tem o seu ("Não informado", "A confirmar", "A apurar"). */
-type Vazio = "Não informado" | "Não informada" | "A confirmar" | "A apurar" | "A informar" | "Nada pago";
+type Vazio = "Não informado" | "Não informada" | "A confirmar" | "A apurar" | "A informar" | "Nada pago" | "Conforme contrato";
 const ou = (v: string | null | undefined, vazio: Vazio = "Não informado") => (v == null || v === "" ? vazio : v);
 
 const COR = { azul: "#0f3171", verde: "#15803d", laranja: "#ea580c", cinza: "#64748b", claro: "#94a3b8", borda: "#e2e8f0", texto: "#0f172a" };
@@ -138,7 +138,7 @@ const CAMPOS_PARC_DATA = ["vencimento", "data_pagamento", "documento_data"];
 const CAMPOS_PARC_NUM = ["numero", "valor", "valor_pago", ...CAMPOS_COMPONENTES];
 const CAMPOS_PARC = [...CAMPOS_PARC_TXT, ...CAMPOS_PARC_DATA, ...CAMPOS_PARC_NUM, "financiamento_id"];
 const ROTULO_COMP: Record<string, string> = {
-  amortizacao: "Amortização", juros: "Juros", seguro_mip: "MIP", seguro_dfi: "DFI", seguros_fghab: "Seguros / FGHAB",
+  amortizacao: "Amortização", juros: "Juros", seguro_mip: "MPI", seguro_dfi: "DFI", seguros_fghab: "Seguros / FGHAB",
   taxas: "Taxas", valor_fcvs: "Valor FCVS", fgts_utilizado: "FGTS utilizado", encargo_liquido: "Encargo líquido",
   valor_impontualidade: "Valores da impontualidade", multa_atraso: "Multa por atraso", juros_atraso: "Juros por atraso",
   diferenca_valor: "Diferença de valor", atualizacao_monetaria: "Atualização monetária", outros_movimentos: "Outros movimentos do saldo",
@@ -164,6 +164,8 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
   const [fSituacao, setFSituacao] = useState<"" | Situacao>("");
   const [aberta, setAberta] = useState<number | null>(null);
   const [verTodas, setVerTodas] = useState(false);
+  // "Competência do índice" do bloco INCC (AAAA-MM); "" = a mais recente.
+  const [compIncc, setCompIncc] = useState("");
 
   const [modalFin, setModalFin] = useState<null | { id: number | null; foco: "condicoes" | "incc" }>(null);
   const [formFin, setFormFin] = useState<FormTexto>({});
@@ -265,6 +267,14 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
     await logHist("Aplicação do INCC lançada", `${mesAno(linha.competencia)} · ${linha.modalidade ?? "INCC"} · correção ${money(correcao) ?? "a apurar"}`);
     setFormApl(f => ({ ...f, competencia: "", taxa_indice_pct: "", percentual_aplicado: "", fator_aplicado: "", base_calculo: "", valor_anterior: "", valor_corrigido: "", correcao: "", observacao: "" }));
     toast("Aplicação lançada.", "ok"); carregar();
+  };
+  // Modalidade escolhida direto no bloco (o select do mock), sem abrir o modal.
+  const trocarModalidade = async (m: string) => {
+    if (!fin) return;
+    const { error } = await db.from("JUR_PATRIMONIO_FINANCIAMENTOS").update({ incc_modalidade: m || null, atualizado_por: autor }).eq("id", fin.id);
+    if (error) { toast("Erro: " + error.message, "err"); return; }
+    await logHist("Modalidade do INCC alterada", m || "não informada");
+    carregar();
   };
   const excluirAplicacao = async (a: AplicacaoInccLinha) => {
     if (!confirm(`Excluir a aplicação do INCC de ${mesAno(a.competencia)}?`)) return;
@@ -485,7 +495,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
           <div style={grade(130)}>
             <Campo rotulo="Amortização" valor={m(c.amortizacao)} vazio="A apurar" />
             <Campo rotulo="Juros" valor={m(c.juros)} vazio="A apurar" />
-            <Campo rotulo="MIP" valor={m(c.seguro_mip)} />
+            <Campo rotulo="MPI" valor={m(c.seguro_mip)} />
             <Campo rotulo="DFI" valor={m(c.seguro_dfi)} />
             <Campo rotulo={`Seguros / FGHAB${p.seguros_fghab_subtotal !== false ? " — subtotal" : ""}`} valor={m(c.seguros_fghab)} />
             <Campo rotulo="Taxas" valor={m(c.taxas)} />
@@ -510,7 +520,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
             <Campo rotulo={`Índice de correção${c.indice_tipo ? ` — ${c.indice_tipo}` : ""}`} valor={rotuloIndice(c.indice_correcao, c.indice_tipo)} />
           </div>
           <div style={{ fontSize: 11.5, color: COR.cinza, marginTop: 12, lineHeight: 1.5 }}>
-            {p.seguros_fghab_subtotal !== false ? "Seguros / FGHAB é o subtotal de MIP e DFI — não é somado de novo." : "Seguros / FGHAB é cobrado à parte de MIP e DFI."}
+            {p.seguros_fghab_subtotal !== false ? "Seguros / FGHAB é o subtotal de MPI e DFI — não é somado de novo." : "Seguros / FGHAB é cobrado à parte de MPI e DFI."}
             {p.encargos_inclusos !== false && (c.seguros != null || c.taxas != null) && " Seguros e taxas já estão incluídos no valor devido."}
             {c.diferenca_valor ? " A diferença de valor fica sujeita à conciliação." : ""}
           </div>
@@ -598,6 +608,12 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
       <select className="jp-fi" style={{ width: "auto", minWidth: 130 }} value={fSituacao} onChange={e => setFSituacao(e.target.value as "" | Situacao)}>
         {SITUACOES.map(s => <option key={s.valor} value={s.valor}>{s.rotulo}</option>)}
       </select>
+      {/* De onde vêm os números (no mock: "valores do demonstrativo"). */}
+      {(fin?.documento_origem || parcelas[0]?.origem) && (
+        <span style={{ fontSize: 11.5, color: "#64748b" }}>
+          {fin?.documento_origem ? `Valores do ${fin.documento_origem}${fin.documento_data ? ` de ${fmtDt(fin.documento_data)}` : ""}` : `Origem: ${parcelas[0]?.origem}`}
+        </span>
+      )}
       <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
         {pode.novaParcela && <button className="jp-btn" onClick={() => abrirParc(null)} style={btn("#fff", COR.azul, "#dbe4f0")}>+ Parcela</button>}
         {pode.importar && <button className="jp-btn" onClick={() => { setTextoImp(""); setImpProjetado(false); setModalImp(true); }} style={btn("#fff", COR.azul, "#dbe4f0")}>⬆ Importar composição</button>}
@@ -657,7 +673,8 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
         {(fin ? pode.editarContrato : pode.cadastrarContrato) && <button className="jp-btn" onClick={() => abrirFin("incc")} style={btn("#fff", COR.azul, "#cbd5e1")}>Configurar INCC</button>}
       </div>
       {(() => {
-        const ult = aplicacoes[aplicacoes.length - 1];
+        // A aplicação da competência escolhida no campo (ou a mais recente).
+        const ult = aplicacaoDaCompetencia(aplicacoes, compIncc);
         const fase = fin?.incc_fase ? ` · fase: ${fin.incc_fase}` : "";
         const base = ult?.base_calculo ?? ult?.valor_anterior;
         const baseTipo = BASES_INCC.find(b => b.valor === (ult?.base_tipo ?? fin?.incc_base_tipo))?.rotulo;
@@ -667,16 +684,24 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
         return (<>
           <div style={grade(160)}>
             <Campo rotulo="Aplicação no contrato" valor={rotuloAplicacaoIncc(fin?.incc_aplicacao) + fase} />
-            <Campo rotulo="Modalidade do INCC" valor={ult?.modalidade ?? fin?.incc_modalidade} vazio="Não informado" />
-            <Campo rotulo="Competência do índice" valor={mesAno(ult?.competencia)} vazio="Não informado" />
+            {fin && pode.editarContrato
+              ? <div><div style={rotuloCampo}>Modalidade do INCC</div>
+                  <select className="jp-fi" style={{ height: 34 }} value={fin.incc_modalidade ?? ""} onChange={e => trocarModalidade(e.target.value)}>
+                    <option value="">Selecionar</option>{MODALIDADES_INCC.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+              : <Campo rotulo="Modalidade do INCC" valor={ult?.modalidade ?? fin?.incc_modalidade} vazio="Não informado" />}
+            <div><div style={rotuloCampo}>Competência do índice</div>
+              <input className="jp-fi" style={{ height: 34 }} type="month" placeholder="MM/AAAA" title={compIncc ? "Mostrando esta competência" : "Vazio = a aplicação mais recente"}
+                value={compIncc || (ult?.competencia ?? "").slice(0, 7)} onChange={e => setCompIncc(e.target.value)} /></div>
             <Campo rotulo="Taxa de INCC (%)" valor={taxa} vazio="Não informada" />
             <Campo rotulo={`Base de cálculo (R$)${baseTipo ? ` — ${baseTipo.toLowerCase()}` : ""}`} valor={money(base)} vazio="A informar" />
             <Campo rotulo="Correção por INCC (R$)" valor={money(ult?.correcaoValor)} vazio="A apurar" />
-            <Campo rotulo="Periodicidade / defasagem" valor={per2 || null} vazio="A confirmar" />
+            <Campo rotulo="Periodicidade / defasagem" valor={per2 || null} vazio="Conforme contrato" />
             <Campo rotulo="Vigência" valor={vig} vazio="A informar" />
           </div>
           <div style={{ fontSize: 11.5, color: COR.claro, marginTop: 10 }}>
             Modalidades disponíveis: INCC-M, INCC-DI e INCC-10.
+            {compIncc && !ult && ` Nenhuma aplicação lançada em ${mesAno(compIncc)}.`}
+            {!aplicacoes.length && fin?.documento_origem && ` INCC não informado no ${fin.documento_origem.toLowerCase().startsWith("demonstrativo") ? "" : "documento "}${fin.documento_origem}.`}
             {aplicacoes.length ? ` Correção acumulada: ${money(aplicacoes[aplicacoes.length - 1].acumulado)} em ${aplicacoes.length} aplicação(ões).` : " Nenhuma aplicação do índice lançada."}
             {fin?.indexador && !/INCC/i.test(fin.indexador) && ` O indexador contratual deste financiamento é ${fin.indexador}; a correção dele aparece em "Correção do saldo".`}
           </div>
@@ -919,7 +944,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
                 <option value="">Detectar</option><option value="fator">Fator</option><option value="percentual">Percentual (%)</option></select></div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5, color: "#475569", margin: "4px 0 10px" }}>
-            <label><input type="checkbox" checked={flagsParc.seguros_fghab_subtotal} onChange={e => setFlagsParc(f => ({ ...f, seguros_fghab_subtotal: e.target.checked }))} /> “Seguros / FGHAB” é o subtotal de MIP + DFI (não somar de novo)</label>
+            <label><input type="checkbox" checked={flagsParc.seguros_fghab_subtotal} onChange={e => setFlagsParc(f => ({ ...f, seguros_fghab_subtotal: e.target.checked }))} /> “Seguros / FGHAB” é o subtotal de MPI + DFI (não somar de novo)</label>
             <label><input type="checkbox" checked={flagsParc.encargos_inclusos} onChange={e => setFlagsParc(f => ({ ...f, encargos_inclusos: e.target.checked }))} /> Seguros e taxas já estão incluídos no valor devido</label>
             <label><input type="checkbox" checked={flagsParc.projetado} onChange={e => setFlagsParc(f => ({ ...f, projetado: e.target.checked }))} /> Valores projetados (ainda não confirmados por demonstrativo)</label>
           </div>
@@ -977,7 +1002,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
           <div style={{ fontSize: 16, fontWeight: 800, color: COR.texto, marginBottom: 4 }}>Importar composição das parcelas</div>
           <div style={{ fontSize: 12, color: COR.cinza, marginBottom: 10, lineHeight: 1.5 }}>
             Cole aqui a tabela do demonstrativo (copiada do Excel) ou escolha um arquivo .xlsx/.csv. A primeira linha com os títulos é o cabeçalho.
-            Colunas reconhecidas: Parcela, Vencimento, Valor devido, Amortização, Juros, MIP, DFI, Seguros / FGHAB, Taxas, Valor FCVS, FGTS, Encargo líquido,
+            Colunas reconhecidas: Parcela, Vencimento, Valor devido, Amortização, Juros, MPI (MIP), DFI, Seguros / FGHAB, Taxas, Valor FCVS, FGTS, Encargo líquido,
             Impontualidade, Valor pago, Data do pagamento, Diferença, Atualização monetária, Saldo anterior, Saldo devedor, Índice, Outros.
             A parcela é casada pelo número (ou pelo mês do vencimento); a que não existe é criada. Coluna que não veio não apaga nada.
           </div>

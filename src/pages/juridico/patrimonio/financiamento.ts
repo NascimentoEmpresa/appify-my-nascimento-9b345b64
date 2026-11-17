@@ -777,7 +777,7 @@ const COLS_EXPORT: Array<[string, (l: LinhaResolvida) => string | number | null]
   ["Valor devido", l => numeroOuNulo(l.p.valor)],
   ["Amortização", l => l.comp.amortizacao],
   ["Juros", l => l.comp.juros],
-  ["MIP", l => l.comp.seguro_mip],
+  ["MPI", l => l.comp.seguro_mip],
   ["DFI", l => l.comp.seguro_dfi],
   ["Seguros / FGHAB", l => l.comp.seguros_fghab],
   ["Seguros (total)", l => l.comp.seguros],
@@ -880,3 +880,14 @@ export function permissoesDaAba(tem: { incluir: boolean; alterar: boolean; exclu
   };
 }
 export type PermissoesDaAba = ReturnType<typeof permissoesDaAba>;
+
+/**
+ * A aplicação do INCC que o bloco mostra: a da competência escolhida no
+ * campo "Competência do índice" (AAAA-MM) ou, sem escolha, a mais recente.
+ * Competência sem aplicação lançada → null (o bloco diz "Não informada" /
+ * "A apurar", como no mock do chamado — nunca zero).
+ */
+export function aplicacaoDaCompetencia<A extends { competencia: string }>(historico: A[], competencia: string): A | null {
+  if (!competencia) return historico.length ? historico[historico.length - 1] : null;
+  return historico.find(a => String(a.competencia).slice(0, 7) === competencia) ?? null;
+}
