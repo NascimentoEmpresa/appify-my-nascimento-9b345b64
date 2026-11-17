@@ -28,6 +28,9 @@ import {
   type ChamadoMonitor, type LinhaMonitor, type RankingSolicitante,
 } from "@/lib/chamados/monitoramento";
 import { cn } from "@/lib/utils";
+// Ranking 70/30 (SIS-2026-0919) — import à parte para não mexer nas linhas dos filtros.
+import { RANKING_PESO_HISTORICO, RANKING_PESO_RECENTE, RANKING_RECENTES } from "@/lib/chamados/monitoramento";
+import { ArrowDownRight, ArrowRight, ArrowUpRight } from "lucide-react";
 
 // =====================================================================
 // MONITORAMENTO DE CHAMADOS (22/10/2026, mig 20261022000180).
@@ -550,10 +553,15 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
 // =====================================================================
 // RANKING DOS SOLICITANTES (13/11/2026, Pablo: "o ranking tá bem fraco o
 // layout, ajusta ele e deixa melhor, mais completo"). Pódio com os 3
-// primeiros e tabela com tudo o que explica a posição: nota do ranking
-// (média ajustada pelo volume — rankingSolicitantes na lib), média simples,
-// melhor chamado, % bem especificados, tema mais pedido, efetividade e
-// quantos já têm a nota da I.A. Clicar numa pessoa filtra a tela por ela.
+// primeiros e tabela com tudo o que explica a posição. Clicar numa pessoa
+// filtra a tela por ela.
+// 16/11/2026 (SIS-2026-0919, Yuri Rosa): a nota do ranking passou a ser
+// 70% histórica ajustada + 30% média dos últimos 20 (rankingSolicitantes na
+// lib), e a tela mostra as peças separadas, como no modelo anexado ao
+// chamado: nota do ranking, média histórica ajustada, média dos últimos 20,
+// chamados avaliados e tendência (recente − histórica). Saíram da tabela a
+// média simples, o melhor chamado e o % bem especificado (o % segue no pódio)
+// — média simples ao lado da ajustada só confundia a leitura.
 // =====================================================================
 const MEDALHA = ["bg-amber-400 text-white", "bg-slate-400 text-white", "bg-orange-500 text-white"];
 const MOLDURA_PODIO = ["border-amber-300 bg-amber-50/60 dark:bg-amber-500/10", "border-slate-300 bg-slate-50/60 dark:bg-slate-500/10", "border-orange-300 bg-orange-50/60 dark:bg-orange-500/10"];
@@ -578,9 +586,8 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-amber-500" /> Ranking dos solicitantes</p>
           <p className="mt-0.5 max-w-3xl text-[11px] text-muted-foreground">
-            Ordem pela <b>nota do ranking</b>: a média de inteligência dos chamados de cada pessoa, ajustada pelo volume —
-            quem abriu poucos chamados tem a nota puxada para a média geral{mediaGeral != null && <> ({fmt1(mediaGeral)})</>},
-            então não passa à frente de quem mantém a qualidade em muitos pedidos.
+            Ordem pela <b>nota do ranking</b>: 70% da média histórica ajustada pelo volume + 30% da média dos últimos{" "}
+            {RANKING_RECENTES} chamados — o histórico pesa mais, mas a evolução recente aparece.
             {totalCh > 0 && totalIa < totalCh && <> A I.A já avaliou {totalIa} de {totalCh} chamados; o restante ainda usa a regra automática.</>}
           </p>
         </div>
@@ -613,8 +620,14 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                     <p className="truncate text-sm font-semibold">{r.nome}</p>
                     <p className="truncate text-[11px] text-muted-foreground">{r.setor || "sem setor"}</p>
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      {r.total} chamado(s) · média {fmt1(r.indiceMedio)} · {r.pctBons}% bem especificados
+                      {r.pctBons}% bem especificados{r.efetividadeMedia != null && <> · {r.efetividadeMedia}% de efetividade</>}
                     </p>
+                    <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                      <div className="flex justify-between gap-1"><dt>Histórica ajust.</dt><dd className="font-semibold text-foreground">{fmt1(r.notaHistorica)}</dd></div>
+                      <div className="flex justify-between gap-1"><dt>Últimos {r.qtdRecentes}</dt><dd className="font-semibold text-foreground">{fmt1(r.mediaRecente)}</dd></div>
+                      <div className="flex justify-between gap-1"><dt>Avaliados</dt><dd className="font-semibold text-foreground">{r.total}</dd></div>
+                      <div className="flex justify-between gap-1"><dt>Tendência</dt><dd><Tendencia valor={r.tendencia} /></dd></div>
+                    </dl>
                   </div>
                   <div className="text-right">
                     <p className={cn("text-2xl font-bold leading-none", corIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</p>
@@ -631,11 +644,11 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                 <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
                   <th className="w-10 py-2">#</th>
                   <th className="py-2">Solicitante</th>
-                  <th className="py-2 text-center">Chamados</th>
-                  <th className="py-2" title="Média ajustada pelo volume — é o que ordena">Nota do ranking</th>
-                  <th className="py-2 text-center" title="Média simples dos chamados">Média</th>
-                  <th className="py-2 text-center">Melhor chamado</th>
-                  <th className="py-2" title="Chamados com índice 8 ou mais">Bem especificados</th>
+                  <th className="py-2 text-center" title="Chamados válidos no período (sem cancelados)">Chamados avaliados</th>
+                  <th className="py-2" title="70% média histórica ajustada + 30% média dos últimos 20 — é o que ordena">Nota do ranking</th>
+                  <th className="py-2 text-center" title="Média de todos os chamados, puxada para a média geral quando há poucos">Média histórica ajustada</th>
+                  <th className="py-2 text-center" title={`Média simples dos ${RANKING_RECENTES} chamados abertos mais recentemente (ou dos que houver)`}>Média últimos {RANKING_RECENTES}</th>
+                  <th className="py-2 text-center" title="Média dos últimos 20 − média histórica ajustada">Tendência</th>
                   <th className="py-2">Tema mais pedido</th>
                   <th className="py-2 text-center">Efetividade</th>
                 </tr>
@@ -670,16 +683,12 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                           </span>
                         </div>
                       </td>
-                      <td className={cn("py-2 text-center font-semibold", corIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</td>
-                      <td className={cn("py-2 text-center", corIndice(r.melhorIndice))}>{fmt1(r.melhorIndice)}</td>
-                      <td className="py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-                            <span className="block h-full rounded-full bg-success" style={{ width: `${r.pctBons}%` }} />
-                          </span>
-                          <span className="w-9 text-right font-medium">{r.pctBons}%</span>
-                        </div>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.notaHistorica))}>{fmt1(r.notaHistorica)}</td>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.mediaRecente))}>
+                        {fmt1(r.mediaRecente)}
+                        {r.qtdRecentes < RANKING_RECENTES && <p className="text-[10px] font-normal text-muted-foreground">({r.qtdRecentes} chamado{r.qtdRecentes === 1 ? "" : "s"})</p>}
                       </td>
+                      <td className="py-2 text-center"><Tendencia valor={r.tendencia} pilula /></td>
                       <td className="py-2">
                         {r.temaPrincipal ? (
                           <span className="inline-block max-w-[180px] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
@@ -701,6 +710,24 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
               {todos ? "Mostrar só os 10 primeiros" : `Ver o ranking completo (${ranking.length})`}
             </button>
           )}
+
+          <div className="mt-4 grid gap-3 rounded-md border border-info/30 bg-info/5 p-3 text-[11px] text-muted-foreground md:grid-cols-[auto_1fr_1fr_1fr]">
+            <p className="flex items-center gap-1.5 font-semibold text-info"><Info className="h-4 w-4 shrink-0" /> Como é calculada a nota do ranking?</p>
+            <p>
+              <b className="text-foreground">Nota do ranking</b> = {RANKING_PESO_HISTORICO * 100}% média histórica ajustada
+              + {RANKING_PESO_RECENTE * 100}% média dos últimos {RANKING_RECENTES} chamados. Ex.: 6,3 × 0,7 + 8,5 × 0,3 = 6,96 → 7,0.
+            </p>
+            <p>
+              <b className="text-foreground">Média histórica ajustada:</b> todos os chamados da pessoa no período, puxada para a média
+              geral{mediaGeral != null && <> ({fmt1(mediaGeral)})</>} quando há poucos. <b className="text-foreground">Últimos {RANKING_RECENTES}:</b>{" "}
+              os abertos mais recentemente (com menos, usa os que houver). Cancelados não entram em nenhuma.
+            </p>
+            <p>
+              <b className="text-foreground">Tendência:</b> média dos últimos {RANKING_RECENTES} − média histórica ajustada
+              (<span className="font-semibold text-success">↑ +2,2</span> = evolução de 2,2 pontos;{" "}
+              <span className="font-semibold text-destructive">↓</span> = queda).
+            </p>
+          </div>
         </>
       )}
     </Card>
@@ -708,6 +735,24 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
 }
 
 const normalizarBusca = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+/** Tend\u00eancia do ranking (recente \u2212 hist\u00f3rica): \u2191 verde, \u2193 vermelho, \u2192 est\u00e1vel. */
+function Tendencia({ valor, pilula }: { valor: number; pilula?: boolean }) {
+  const sobe = valor > 0;
+  const cai = valor < 0;
+  const Icone = sobe ? ArrowUpRight : cai ? ArrowDownRight : ArrowRight;
+  const texto = `${sobe ? "+" : cai ? "\u2212" : ""}${fmt1(Math.abs(valor))}`;
+  return (
+    <span
+      title={sobe ? "\u00daltimos chamados acima do hist\u00f3rico" : cai ? "\u00daltimos chamados abaixo do hist\u00f3rico" : "Est\u00e1vel"}
+      className={cn("inline-flex items-center gap-0.5 font-semibold",
+        sobe ? "text-success" : cai ? "text-destructive" : "text-muted-foreground",
+        pilula && "rounded border px-1.5 py-0.5",
+        pilula && (sobe ? "border-success/30 bg-success/10" : cai ? "border-destructive/30 bg-destructive/10" : "border-border bg-muted/40"))}>
+      <Icone className="h-3 w-3" />{texto}
+    </span>
+  );
+}
 
 function BarraQualidade({ label, pct, cor }: { label: string; pct: number; cor: string }) {
   return (
