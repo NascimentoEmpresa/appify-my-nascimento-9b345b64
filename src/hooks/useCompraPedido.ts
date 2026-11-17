@@ -1,7 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  enriquecerCatalogoPedidoCompra,
+  type FichaEstoqueCatalogoCompra,
+  type ItemCatalogoCompra,
+  type ItemCatalogoCompraBase,
+  type SaldoEstoqueCatalogoCompra,
+} from "@/lib/suprimentos/catalogoPedidoCompra";
 import { toast } from "sonner";
+
+export type { ItemCatalogoCompra } from "@/lib/suprimentos/catalogoPedidoCompra";
 
 const sb = supabase as any;
 const CHAVE = "sup_compra_pedido";
@@ -61,14 +70,6 @@ export interface CompraPedido {
     cidade: string | null; uf: string | null; cep: string | null;
     telefone: string | null; email: string | null;
   } | null;
-}
-
-export interface ItemCatalogoCompra {
-  id: string;
-  nome: string;
-  tipo: string;
-  tamanho: string | null;
-  item_pai_id: string | null;
 }
 
 export interface NovoPedidoCompra {
@@ -133,21 +134,40 @@ export function usePedidoAtivoDaDespesa(despesaId?: string | null) {
   });
 }
 
-/** Catálogo da empresa para montar um pedido formal sem depender do Malote. */
+/**
+ * Catálogo aprovado enriquecido com a identidade usada na consulta de
+ * estoque. As consultas de ficha e saldo são leves: não trazem as etiquetas.
+ */
 export function useCatalogoPedidoCompra(empresaId?: string | null) {
   return useQuery<ItemCatalogoCompra[]>({
     queryKey: [CHAVE, "catalogo", empresaId],
     enabled: !!empresaId,
     queryFn: async () => {
-      const { data, error } = await sb.from("sup_item")
-        .select("id,nome,tipo,tamanho,item_pai_id")
+      const { data: itens, error } = await sb.from("sup_item")
+        .select("id,nome,tipo,codigo,tamanho,item_pai_id")
         .eq("empresa_id", empresaId)
         .eq("ativo", true)
         .eq("aprovado", true)
         .order("nome")
         .limit(5000);
       if (error) throw error;
-      return data ?? [];
+
+      const [{ data: fichas, error: erroFichas }, { data: saldos, error: erroSaldos }] = await Promise.all([
+        sb.from("sup_estoque_item")
+          .select("id,sup_item_id,arquivado_em,almoxarifado:almoxarifado_id(nome)")
+          .eq("empresa_id", empresaId),
+        sb.from("sup_estoque_saldo")
+          .select("item_estoque_id,disponivel,fisico")
+          .eq("empresa_id", empresaId),
+      ]);
+      if (erroFichas) throw erroFichas;
+      if (erroSaldos) throw erroSaldos;
+
+      return enriquecerCatalogoPedidoCompra(
+        (itens ?? []) as ItemCatalogoCompraBase[],
+        (fichas ?? []) as FichaEstoqueCatalogoCompra[],
+        (saldos ?? []) as SaldoEstoqueCatalogoCompra[],
+      );
     },
   });
 }

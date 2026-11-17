@@ -4,10 +4,10 @@ import { criarPdfPedidoCompra } from "@/lib/suprimentos/pedidoCompraPdf";
 import type { CompraPedido, ItemCatalogoCompra } from "@/hooks/useCompraPedido";
 
 const catalogo: ItemCatalogoCompra[] = [
-  { id: "base-jaqueta", nome: "JAQUETA", tipo: "uniforme", tamanho: null, item_pai_id: null },
-  { id: "jaqueta-m", nome: "JAQUETA M", tipo: "uniforme", tamanho: "M", item_pai_id: "base-jaqueta" },
-  { id: "jaqueta-g", nome: "JAQUETA G", tipo: "uniforme", tamanho: "G", item_pai_id: "base-jaqueta" },
-  { id: "luva", nome: "LUVA", tipo: "epi", tamanho: null, item_pai_id: null },
+  { id: "base-jaqueta", nome: "JAQUETA", tipo: "uniforme", tamanho: null, item_pai_id: null, codigo: "0001", almoxarifados: [], disponivel: 0, fisico: 0, situacaoEstoque: "sem_ficha" },
+  { id: "jaqueta-m", nome: "JAQUETA M", tipo: "uniforme", tamanho: "M", item_pai_id: "base-jaqueta", codigo: "0002", almoxarifados: ["Matriz"], disponivel: 2, fisico: 2, situacaoEstoque: "ativo" },
+  { id: "jaqueta-g", nome: "JAQUETA G", tipo: "uniforme", tamanho: "G", item_pai_id: "base-jaqueta", codigo: "0003", almoxarifados: ["Matriz"], disponivel: 1, fisico: 1, situacaoEstoque: "ativo" },
+  { id: "luva", nome: "LUVA", tipo: "epi", tamanho: null, item_pai_id: null, codigo: "0004", almoxarifados: [], disponivel: 0, fisico: 0, situacaoEstoque: "sem_ficha" },
 ];
 
 describe("SIS-2026-0842 - preparação do pedido pelo Estoque Saudável", () => {
