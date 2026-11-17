@@ -14,6 +14,11 @@ const ASSINATURAS: Record<string, Assinatura> = {
     resumo: "Conciliação Financeira ampliada: 24 indicadores em 4 fontes (indisponível ≠ zero), detalhamento até a nota, impostos/descontos, conta vinculada, filtros, Excel e tratativas com histórico",
     onde: "src/pages/financeiro/conciliacao-servicos/ (indicadores.ts, regras.ts, tratativas.ts) e textos em infos.tsx",
   },
+  "SIS-2026-0927": {
+    chamado: "SIS-2026-0927", desde: "17/11/2026",
+    resumo: "unificar 2+ lançamentos (Malote/Débito Automático) de um mesmo pagamento bancário numa linha só; os originais ficam guardados e some só da leitura; rateio por classificação e centro de custo fecha sempre com o total; só a Controladoria; histórico completo",
+    onde: "src/pages/financeiro/fluxo-caixa/unificacao.ts (conferências), RPCs fluxo_caixa_unificar/_ratear/_desfazer e views v_malote_pagamento_fluxo_caixa/v_debito_automatico_fluxo_caixa (migration 20261117240000)",
+  },
   "SIS-2026-0925": {
     chamado: "SIS-2026-0925", desde: "17/11/2026",
     resumo: "Reserva de Investimento (%) por competência no Fechamento dos Sócios: Total a Distribuir = Resultado do Período − Reserva; consumo da Empresa e retiradas saem depois da divisão",

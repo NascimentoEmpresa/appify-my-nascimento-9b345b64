@@ -137,7 +137,8 @@ export interface FluxoCaixaMaloteLinha {
   // despesa_id só pra aplicar (id da APLICACAO_FINANCEIRA); resgate usa o
   // id do próprio resgate (não tem edição/exclusão pela tela de Fluxo, só
   // pela tela de Aplicações Financeiras).
-  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
+  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida" | "unificado";
+  // SIS-2026-0927: "unificado" = linha que a Controladoria formou juntando lançamentos do mesmo pagamento (despesa_id = id da unificação).
   // SIS-2026-0489: true quando existe uma linha em
   // financeiro_fluxo_caixa_ajuste pra este lançamento — os campos exibidos
   // já vêm resolvidos pela view (COALESCE(ajuste, original)), este flag é

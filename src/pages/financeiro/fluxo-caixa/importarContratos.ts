@@ -5,7 +5,7 @@
 // Casamento: Nº + data de pagamento + tipo + empresa + valor (+ parcela). NUNCA sobrescreve um contrato já preenchido no Fluxo.
 // Fora do escopo da importação (ficam num relatório): cartão de crédito e aplicação financeira, que não têm contrato pela tela do Fluxo.
 
-export type OrigemFluxo = "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
+export type OrigemFluxo = "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida" | "unificado";
 
 export interface LinhaPlanilhaContrato {
   linha: number; // número da linha na planilha (cabeçalho = 1)
@@ -76,7 +76,7 @@ export const ROTULO_MOTIVO: Record<MotivoPendencia, string> = {
   contrato_nao_encontrado: "Contrato da planilha não existe no sistema",
   sem_correspondencia_no_fluxo: "Linha não encontrada no Fluxo (ou já alterada)",
   ja_tem_outro_contrato: "O lançamento já tem outro contrato (não sobrescrito)",
-  origem_sem_suporte: "Origem sem contrato pelo Fluxo (cartão / aplicação financeira)",
+  origem_sem_suporte: "Origem sem contrato pelo Fluxo (cartão / aplicação financeira / lançamento unificado)",
   contratos_diferentes_no_mesmo_lancamento: "Contratos diferentes para o mesmo lançamento (rateio)",
   dados_invalidos: "Dados da linha ilegíveis (data, valor ou tipo)",
 };
@@ -199,7 +199,7 @@ export function casarContratos(
       continue;
     }
 
-    if (linhaFluxo.origem === "cartao_fatura" || linhaFluxo.origem === "aplicacao_financeira" || linhaFluxo.origem === "conta_garantida") {
+    if (linhaFluxo.origem === "cartao_fatura" || linhaFluxo.origem === "aplicacao_financeira" || linhaFluxo.origem === "conta_garantida" || linhaFluxo.origem === "unificado") {
       usadas.add(linhaFluxo);
       pendencias.push({ motivo: "origem_sem_suporte", linha: p.linha, numero: p.numero, detalhe: p.contratoNome });
       continue;

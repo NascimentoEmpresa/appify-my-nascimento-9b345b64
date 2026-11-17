@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, Info, Layers } from "lucide-react";
+import { AlertTriangle, Info, Layers, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,6 +12,9 @@ import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcament
 import { useContasBanco } from "@/hooks/useContasBanco";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { rotuloConta } from "@/lib/contaBanco";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { ConfirmarUnificacaoDialog, MENU_UNIFICAR, RatearUnificacaoDialog } from "./UnificacaoDialogs";
+import { planejarUnificacao, type LinhaUnificavel } from "./unificacao";
 import {
   chaveDaLinhaMassa, contarMotivos, planejarAtribuicaoDeConta, planejarTrocaDeCentroDeCusto, planejarTrocaDeClassificacao, planejarTrocaDeIntegrante, type LinhaMassa, type PlanoMassa, type TipoMassa,
 } from "./alteracaoEmMassa";
@@ -36,7 +39,10 @@ export function AlteracaoEmMassaBar({
   /** Mantém marcadas só as chaves informadas (depois de aplicar, ficam as que deram erro). */
   onSelecionadas: (chaves: Set<string>) => void;
 }) {
-  const [tipo, setTipo] = useState<TipoMassa | "">("");
+  // SIS-2026-0927: "unificar" não troca campo (não usa destino nem o plano): junta as linhas marcadas num pagamento só.
+  const [tipo, setTipo] = useState<TipoMassa | "unificar" | "">("");
+  const [confirmandoUnif, setConfirmandoUnif] = useState(false);
+  const [ratearUnifId, setRatearUnifId] = useState<string | null>(null);
   const [destinoId, setDestinoId] = useState("");
   const [confirmando, setConfirmando] = useState(false);
   const [ciente, setCiente] = useState(false);
@@ -58,7 +64,7 @@ export function AlteracaoEmMassaBar({
   const opcoesClassificacao = useMemo(() => classificacoes.filter((c) => c.ativo).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [classificacoes]);
 
   const plano: PlanoMassa | null = useMemo(() => {
-    if (!tipo || !destinoId) return null;
+    if (!tipo || tipo === "unificar" || !destinoId) return null;
     if (tipo === "classificacao") return planejarTrocaDeClassificacao(selecionadas, destinoId);
     if (tipo === "integrante") return planejarTrocaDeIntegrante(selecionadas, Number(destinoId));
     if (tipo === "conta_banco") {
@@ -76,13 +82,15 @@ export function AlteracaoEmMassaBar({
   const mexeNoOrcamento = tipo === "centro_custo" && !!plano?.aplicar.some((l) => l.origem === "malote");
   const podeAplicar = ativo && !!plano && selecionadas.length > 0 && !massa.isPending;
 
+  const planoUnif = useMemo(() => (tipo === "unificar" ? planejarUnificacao(selecionadas as unknown as LinhaUnificavel[]) : null), [tipo, selecionadas]);
+
   function trocarTipo(v: string) {
-    setTipo(v as TipoMassa);
+    setTipo(v as TipoMassa | "unificar");
     setDestinoId("");
   }
 
   async function aplicar() {
-    if (!tipo || !plano || plano.aplicar.length === 0) return;
+    if (!tipo || tipo === "unificar" || !plano || plano.aplicar.length === 0) return;
     setProgresso({ feitas: 0, total: plano.aplicar.length });
     try {
       const r = await massa.mutateAsync({
@@ -124,10 +132,15 @@ export function AlteracaoEmMassaBar({
             <SelectItem value="classificacao">{ROTULO_TIPO.classificacao}</SelectItem>
             {opcoesConta.length > 0 && <SelectItem value="conta_banco">{ROTULO_TIPO.conta_banco}</SelectItem>}
             <SelectItem value="integrante">{ROTULO_TIPO.integrante}</SelectItem>
+            <AcessoGate menu={MENU_UNIFICAR} acao="visualizar"><SelectItem value="unificar">Unificar lançamentos</SelectItem></AcessoGate>
           </SelectContent>
         </Select>
 
-        {tipo === "integrante" ? (
+        {tipo === "unificar" ? (
+          <span className="text-xs font-medium text-sky-900 dark:text-sky-200">
+            {selecionadas.length < 2 ? "Marque 2 ou mais lançamentos do mesmo pagamento" : `${selecionadas.length} lançamentos selecionados (${planoUnif?.somaTexto ?? ""})`}
+          </span>
+        ) : tipo === "integrante" ? (
           <SearchableSelect
             value={destinoId || null}
             onChange={setDestinoId}
@@ -152,9 +165,15 @@ export function AlteracaoEmMassaBar({
         )}
 
         <span className="text-xs text-muted-foreground">{ativo ? `${selecionadas.length} linha(s) marcada(s)` : ""}</span>
-        <Button className="ml-auto gap-1.5" disabled={!podeAplicar} onClick={() => { setResultado(null); setConfirmando(true); }}>
-          <Layers className="h-4 w-4" /> Aplicar em massa
-        </Button>
+        {tipo === "unificar" ? (
+          <Button className="ml-auto gap-1.5" disabled={!ativo || selecionadas.length < 2} onClick={() => setConfirmandoUnif(true)}>
+            <Link2 className="h-4 w-4" /> Unificar lançamentos
+          </Button>
+        ) : (
+          <Button className="ml-auto gap-1.5" disabled={!podeAplicar} onClick={() => { setResultado(null); setConfirmando(true); }}>
+            <Layers className="h-4 w-4" /> Aplicar em massa
+          </Button>
+        )}
       </div>
 
       {resultado && (
@@ -168,6 +187,18 @@ export function AlteracaoEmMassaBar({
           {errosPorMotivo.length > 0 && <p className="mt-1 text-muted-foreground">As linhas com erro continuam marcadas para você corrigir e tentar de novo.</p>}
         </div>
       )}
+
+      <ConfirmarUnificacaoDialog
+        aberto={confirmandoUnif}
+        plano={planoUnif}
+        onClose={() => setConfirmandoUnif(false)}
+        onUnificada={(id, ratearAgora) => {
+          setConfirmandoUnif(false);
+          onSelecionadas(new Set());
+          if (ratearAgora) setRatearUnifId(id);
+        }}
+      />
+      <RatearUnificacaoDialog unificacaoId={ratearUnifId} onClose={() => setRatearUnifId(null)} />
 
       <Dialog open={confirmando} onOpenChange={(o) => { if (!massa.isPending) setConfirmando(o); }}>
         <DialogContent className="max-w-lg">
