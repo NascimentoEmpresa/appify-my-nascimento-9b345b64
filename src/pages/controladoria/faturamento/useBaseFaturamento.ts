@@ -3,7 +3,7 @@ import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
-import { contratoEncerradoNaCompetencia } from "../vigenciaContrato";
+import { contratoEncerradoNaCompetencia, inicioDaPlanilhaVigente } from "../vigenciaContrato";
 import { contaNoFaturamento, executavelSemPlanilha } from "./regras";
 import type { FonteExecutavel } from "./composicao";
 
@@ -61,7 +61,11 @@ export function useBaseFaturamento(codigos: readonly string[] = CODIGOS_PADRAO) 
 
   const executavelDoContrato = useCallback((c: ContratoERP, anoMes: string): number => origemExecutavel(c, anoMes).valor, [origemExecutavel]);
 
-  return { contratos, nfs, empresas, contratoPorId, empresaNomePorId, executavelDoContrato, origemExecutavel, carregando: c1 || c2 || c3 };
+  // SIS-2026-0915: vigência da Planilha de Custos no mês (informativa, ao lado da vigência do contrato): desde quando valem os valores.
+  const vigenciaDaPlanilha = useCallback((contratoId: string, anoMes: string): string | null =>
+    inicioDaPlanilhaVigente(resolverLinhasPorPeriodo(planilhaPorContrato.get(contratoId) ?? [], contratoId, fimDoMes(anoMes))), [planilhaPorContrato]);
+
+  return { contratos, nfs, empresas, contratoPorId, empresaNomePorId, executavelDoContrato, origemExecutavel, vigenciaDaPlanilha, carregando: c1 || c2 || c3 };
 }
 
 export const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
