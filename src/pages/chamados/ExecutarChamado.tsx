@@ -16,7 +16,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { aguardandoGestorConcluir, aguardandoGestorSistemas, podeFinalizarGestao } from "./validacaoPresidencia";
+import {
+  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeFinalizarGestao,
+} from "./validacaoPresidencia";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil, ArrowRightLeft } from "lucide-react";
 import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
@@ -70,6 +76,9 @@ export default function ExecutarChamado() {
   // Concluir passa pela avaliação de quem pediu (mig 20261020000070) — com
   // a saída "Concluir sem avaliar" dentro do próprio diálogo.
   const [concluindoOpen, setConcluindoOpen] = useState(false);
+  // Concluir com o chamado pendente do Gestor de Sistemas pede confirmação
+  // antes (17/11/2026, Pablo — acaoAoConcluir em validacaoPresidencia.ts).
+  const [confirmandoPendente, setConfirmandoPendente] = useState(false);
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
   // Horas gastas pendentes (concluído pelo merge da PR — mig 20261029002400).
   const [horasDepois, setHorasDepois] = useState("");
@@ -190,6 +199,12 @@ export default function ExecutarChamado() {
   /** Fim do diálogo de concluir. Desde 12/11/2026 sem horas gastas: a I.A
    *  avalia o chamado pelo escopo ao concluir (mig 20261112001000). */
   const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem") => {
+    // 17/11/2026: o responsável que conclui ENTREGA ao Gestor de Sistemas — o
+    // chamado fica pendente do gestor, não concluído para o solicitante.
+    if (chamado && acaoAoConcluir(chamado, canGestorSistemas, user?.id) === "entregar") {
+      await entregarAoGestor();
+      return;
+    }
     await mudarStatus(
       "concluido",
       "Chamado concluído",
@@ -197,6 +212,29 @@ export default function ExecutarChamado() {
       {},
       resultado === "pulou" ? "Chamado concluído sem avaliar quem pediu" : "Chamado concluído",
     );
+  };
+
+  /** Botão/seletor "Concluir chamado": confirma antes quando já está pendente do gestor. */
+  const pedirConclusao = () => {
+    if (chamado && acaoAoConcluir(chamado, canGestorSistemas, user?.id) === "concluir_confirmando") {
+      setConfirmandoPendente(true);
+      return;
+    }
+    setConcluindoOpen(true);
+  };
+
+  /** Entrega ao Gestor de Sistemas (mig 20261117235500): não muda o status. */
+  const entregarAoGestor = async () => {
+    if (agindo) return;
+    setAgindo("concluido");
+    // RPC nova, ainda fora dos tipos gerados: tipada aqui (sem `any`, a catraca do lint barra).
+    const rpc = supabase.rpc as unknown as (fn: "chamado_entregar_ao_gestor", args: { p_chamado_id: string | undefined }) => Promise<{ error: { message: string } | null }>;
+    const { error } = await rpc.call(supabase, "chamado_entregar_ao_gestor", { p_chamado_id: id });
+    setAgindo(null);
+    if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Desenvolvimento concluído", description: "Falta o Gestor de Sistemas concluir o chamado." });
+    setFlash(true); setTimeout(() => setFlash(false), 700);
+    invalidar();
   };
 
   /** Concluído pelo merge da PR: o dev informa as horas depois. */
@@ -421,7 +459,7 @@ export default function ExecutarChamado() {
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status atual</p>
               {podeAgir ? (
                 <Select value={chamado.status} onValueChange={(v) => (v === "concluido" && chamado.status !== "concluido"
-                  ? setConcluindoOpen(true)
+                  ? pedirConclusao()
                   : mudarStatus(v, `Status alterado para ${STATUS_CHAMADO[v]?.label ?? v}`, "status"))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -562,8 +600,8 @@ export default function ExecutarChamado() {
                     "concluído". Revisão da PR #1310, 17/11/2026. */}
                 {aguardandoGestorConcluir(chamado) && (
                   <p className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-xs text-info">
-                    PR mergeada em {fmtDataHora(chamado.desenvolvimento_entregue_em!)}: desenvolvimento entregue.
-                    Falta o <b>Gestor de Sistemas</b> concluir o chamado.
+                    {chamado.desenvolvimento_entregue_pr ? "PR mergeada" : "Desenvolvimento concluído"} em {fmtDataHora(chamado.desenvolvimento_entregue_em!)}.
+                    Pendente de conclusão do <b>Gestor de Sistemas</b> — o solicitante ainda não vê o chamado como concluído.
                   </p>
                 )}
                 {/* Em desenvolvimento (mig 20261028001400): o dev avisa o
@@ -580,7 +618,7 @@ export default function ExecutarChamado() {
                 <Button
                   className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
                   disabled={!!agindo}
-                  onClick={() => setConcluindoOpen(true)}
+                  onClick={pedirConclusao}
                 >
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
@@ -683,6 +721,21 @@ export default function ExecutarChamado() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmandoPendente} onOpenChange={setConfirmandoPendente}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Concluir o chamado?</AlertDialogTitle>
+            <AlertDialogDescription>{CONFIRMA_CONCLUIR_PENDENTE_GESTOR}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setConfirmandoPendente(false); setConcluindoOpen(true); }}>
+              Sim, concluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AvaliarSolicitanteDialog
         open={concluindoOpen} onOpenChange={setConcluindoOpen}

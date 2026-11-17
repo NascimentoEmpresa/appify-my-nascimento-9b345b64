@@ -109,9 +109,15 @@ Do merge até o fim:
    para o solicitante, com as URLs das telas alteradas
    (`.github/scripts/rotas-da-pr.cjs`), lendo só os commits do chamado e o
    código alterado neles (`.github/scripts/contexto-resumo-pr.cjs`).
+   O dev clicando em **"Concluir chamado"** na tela faz a mesma entrega (RPC
+   `chamado_entregar_ao_gestor`): o chamado fica "Pendente de conclusão do
+   Gestor de Sistemas", não concluído.
 2. **Gestor de Sistemas conclui o chamado** — botão "Concluir chamado"
    (status `concluido`). É aqui que o solicitante vê que o chamado foi
-   concluído (sino, push, parecer da I.A).
+   concluído (sino, push, parecer da I.A). Quem não é Gestor de Sistemas
+   também consegue concluir um chamado pendente, mas a tela pede antes "O
+   chamado está pendente de conclusão do Gestor de Sistemas. Tem certeza que
+   deseja concluir?" (regra em `acaoAoConcluir`, `validacaoPresidencia.ts`).
 3. **Solicitante confirma** — botão "Confirmar conclusão"
    (`conclusao_confirmada_em`, mig 20261028001300), ou reabre.
 4. **Gestor de Sistemas finaliza** — botão "Finalizar chamado"

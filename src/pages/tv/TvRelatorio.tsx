@@ -7,7 +7,7 @@ import { rotuloMeses } from "@/lib/diretoria/turnover";
 import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
 import { corDoRelatorioTv, mesesTurnoverTv, paginaNoTempo, paginasDoRelatorio, tempoDaPaginaMs, type DadosRelTv } from "@/lib/tv/relatorioTv";
 import { Aviso, Moldura, Palco } from "./relatorio/base";
-import { PaginaDestaques, PaginaGeral, PaginaResumo } from "./relatorio/paginasPadrao";
+import { PaginaDestaques, PaginaGeral, PaginaGeralComparativo, PaginaResumo } from "./relatorio/paginasPadrao";
 import { PaginaVagasAndamento, PaginaVagasContratos, PaginaVagasResumo } from "./relatorio/paginasVagas";
 import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } from "./relatorio/paginasTurnover";
 import { PaginaLicitacaoAberturas, PaginaLicitacaoMapa, PaginaLicitacaoResponsaveis, PaginaLicitacaoResumo } from "./relatorio/paginasLicitacao";
@@ -74,7 +74,8 @@ const CACHE = new Map<string, { em: number; dados: DadosRelTv }>();
 const VALIDADE_MS = 60 * 60_000;
 const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record<string, unknown>) => Promise<{ data: any; error: { message: string } | null }>;
 
-const ORDEM_GERAL = ["recrutamento", "demissoes", "materiais", "ferias", "medida-disciplinar", "mudanca-funcao", "chamados", "orientacoes"];
+// 18/11/2026 (mig 20261118140000): + Turn-over — a mesma lista do tv_relatorio.
+const ORDEM_GERAL = ["recrutamento", "demissoes", "materiais", "ferias", "medida-disciplinar", "mudanca-funcao", "chamados", "orientacoes", "turnover"];
 
 /** Cor e ícone de cada relatório na TV. */
 function aparencia(slug: string | null | undefined): { cor: string; Icone: LucideIcon } {
@@ -326,6 +327,7 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
           erro ? <Aviso cor={cor} titulo="Não foi possível carregar o relatório" sub={erro} girando={false} />
             : <Aviso cor={cor} titulo="Carregando os números do ERP…" />
         ) : atual === "geral" && dados.tipo === "geral" ? <PaginaGeral sistemas={dados.sistemas} />
+          : atual === "geral-comparativo" && dados.tipo === "geral" ? <PaginaGeralComparativo sistemas={dados.sistemas} />
           : atual === "vagas-resumo" && dados.tipo === "vagas" ? <PaginaVagasResumo p={dados.painel} cor={cor} />
           : atual === "vagas-andamento" && dados.tipo === "vagas" ? <PaginaVagasAndamento p={dados.painel} cor={cor} />
           : atual === "vagas-contratos" && dados.tipo === "vagas" ? <PaginaVagasContratos p={dados.painel} cor={cor} />
