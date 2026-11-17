@@ -227,7 +227,9 @@ export default function ExecutarChamado() {
   const entregarAoGestor = async () => {
     if (agindo) return;
     setAgindo("concluido");
-    const { error } = await (supabase as any).rpc("chamado_entregar_ao_gestor", { p_chamado_id: id });
+    // RPC nova, ainda fora dos tipos gerados: tipada aqui (sem `any`, a catraca do lint barra).
+    const rpc = supabase.rpc as unknown as (fn: "chamado_entregar_ao_gestor", args: { p_chamado_id: string | undefined }) => Promise<{ error: { message: string } | null }>;
+    const { error } = await rpc.call(supabase, "chamado_entregar_ao_gestor", { p_chamado_id: id });
     setAgindo(null);
     if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Desenvolvimento concluído", description: "Falta o Gestor de Sistemas concluir o chamado." });
