@@ -237,3 +237,35 @@ describe("Novidade IA — 'Saiba mais' com a posição em rota", () => {
     expect(fonteSaibaMais("//evil.com")).toBeNull();
   });
 });
+
+import { rankingsDeTelas, ehCorrecao } from "@/lib/chamados/impactoSistemico";
+
+describe("Monitoramento — rankings por tela (correções, reflexo, integrações)", () => {
+  const CAIXA = "/app/financeiro/fluxo-caixa";
+  const FECH = "/app/controladoria/fechamento-empresa";
+  const base = { status: "aberto", setores_impactados: ["Controladoria"] };
+  const r = rankingsDeTelas([
+    // Ajuste no Fluxo de Caixa refletindo em Auditoria, Lucratividade e Fechamento (exemplo do pedido).
+    { ...base, id: "1", modulo_sistema: CAIXA, modulos_impactados: [CAIXA, AUDITORIA, LUCRO, FECH], tipo_solicitacao: "ajuste" },
+    // Correção na Lucratividade refletindo na Auditoria.
+    { ...base, id: "2", modulo_sistema: LUCRO, modulos_impactados: [AUDITORIA], tipo_solicitacao: "correcao" },
+    // Categoria Correção de Erro também conta.
+    { ...base, id: "3", modulo_sistema: AUDITORIA, modulos_impactados: [AUDITORIA], categorias: ["correcao_erro"] },
+    // Sem setor informado = sem impacto informado: fica fora.
+    { id: "4", status: "aberto", modulo_sistema: CAIXA, modulos_impactados: [CAIXA, LUCRO], setores_impactados: [], tipo_solicitacao: "correcao" },
+  ]);
+
+  it("correções por tela (tipo Correção ou categoria Correção de Erro)", () => {
+    expect(ehCorrecao({ tipo_solicitacao: "correcao", categorias: null })).toBe(true);
+    expect(ehCorrecao({ tipo_solicitacao: "melhoria", categorias: ["correcao_erro"] })).toBe(true);
+    expect(r.correcoes).toEqual([{ valor: AUDITORIA, qtd: 2 }, { valor: LUCRO, qtd: 1 }]);
+  });
+
+  it("reflexo: impactada por alteração feita em outra tela", () => {
+    expect(r.reflexo).toEqual([{ valor: AUDITORIA, qtd: 2 }, { valor: FECH, qtd: 1 }, { valor: LUCRO, qtd: 1 }]);
+  });
+
+  it("integrações: a tela ajustada e em quantas outras a mudança reflete", () => {
+    expect(r.integracoes).toEqual([{ valor: CAIXA, qtd: 3 }, { valor: LUCRO, qtd: 1 }]);
+  });
+});

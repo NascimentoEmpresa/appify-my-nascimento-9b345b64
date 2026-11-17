@@ -66,7 +66,7 @@ describe("ArvoreModulosPicker", () => {
   it("busca filtra setores e telas", () => {
     render(<Multiplo onMudar={() => {}} />);
     fireEvent.click(screen.getByRole("combobox"));
-    fireEvent.change(screen.getByPlaceholderText("Buscar setor ou tela…"), { target: { value: "caixa" } });
+    fireEvent.change(screen.getByPlaceholderText("Buscar módulo..."), { target: { value: "caixa" } });
     expect(screen.queryByText("Controladoria")).toBeNull();
     expect(screen.getByText("Fluxo de Caixa")).toBeTruthy();
   });

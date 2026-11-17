@@ -27,10 +27,16 @@
 // passa `rotuloLegado`) e o Monitoramento mostra os dois lado a lado.
 // =====================================================================
 
+/** Ícone de setor (o mesmo componente lucide da barra lateral). */
+export type IconeSetor = ComponentType<{ className?: string }>;
+
+import type { ComponentType } from "react";
+
 /** O que a árvore precisa de um módulo da barra lateral (forma de ModuloCatalogo). */
 export interface ModuloMenu {
   id: string;
   label: string;
+  icon?: IconeSetor;
   status?: "active" | "soon";
   groups?: { label: string; items: { label: string; to: string }[] }[];
 }
@@ -46,6 +52,8 @@ export interface TelaArvore {
 export interface SetorArvore {
   id: string;
   rotulo: string;
+  /** Ícone do setor na barra lateral (iconeDoModulo). */
+  icone?: IconeSetor;
   telas: TelaArvore[];
 }
 
@@ -81,7 +89,7 @@ export function montarArvoreModulos(modulos: readonly ModuloMenu[]): SetorArvore
         telas.push({ rota, rotulo: it.label?.trim() || rota, categoria: g.label });
       }
     }
-    if (telas.length) saida.push({ id: m.id, rotulo: m.label, telas });
+    if (telas.length) saida.push({ id: m.id, rotulo: m.label, icone: m.icon, telas });
   }
   return saida;
 }

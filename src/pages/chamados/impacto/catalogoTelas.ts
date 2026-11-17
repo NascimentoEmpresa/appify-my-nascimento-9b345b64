@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { NAV_MODULOS, modulosComFixos, type NavItemDef, type NavModuleDef } from "@/components/layout/Sidebar";
+import { NAV_MODULOS, iconeDoModulo, modulosComFixos, type NavItemDef, type NavModuleDef } from "@/components/layout/Sidebar";
 import { useMenuLateral } from "@/hooks/useMenuLateral";
 import { montarMenu } from "@/lib/menuLateral/estrutura";
 import {
@@ -23,7 +23,8 @@ import {
 // =====================================================================
 
 /** A árvore da barra lateral a partir dos módulos já organizados. */
-export const arvoreDaBarra = (modulos: NavModuleDef[]) => montarArvoreModulos(modulosComFixos(modulos));
+export const arvoreDaBarra = (modulos: NavModuleDef[]) =>
+  montarArvoreModulos(modulosComFixos(modulos).map((m) => ({ ...m, icon: iconeDoModulo(m) })));
 
 // Registro imediato com o catálogo (sem a organização salva), para rótulos em
 // lista/CSV antes de a Sidebar montar. A Sidebar registra de novo com a

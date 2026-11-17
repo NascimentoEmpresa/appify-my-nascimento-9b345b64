@@ -120,6 +120,9 @@ export interface ChamadoImpacto {
   modulo_sistema: string | null;
   modulos_impactados?: string[] | null;
   setores_impactados?: string[] | null;
+  /** Para "telas com mais correções" (SIS-2026-0921). */
+  tipo_solicitacao?: string | null;
+  categorias?: string[] | null;
 }
 
 export interface ContagemImpacto {
@@ -204,6 +207,53 @@ export function analisarImpacto(chamados: readonly ChamadoImpacto[]): AnaliseImp
     homologacao: setores.filter((s) => s.emAberto > 0)
       .sort((a, b) => b.emAberto - a.emAberto || a.valor.localeCompare(b.valor, "pt-BR")),
   };
+}
+
+// ---- Rankings por tela (SIS-2026-0921) --------------------------------
+//
+// O pedido do chamado lista o que a Controladoria quer ler por módulo/tela
+// no Monitoramento. Além de "mais alterações" (analisarImpacto.modulos):
+//   · CORREÇÕES — chamados do tipo Correção ou da categoria Correção de Erro
+//     que impactam a tela;
+//   · REFLEXO — vezes em que a tela foi impactada por uma alteração feita em
+//     OUTRA tela (impactada, mas não era a posição);
+//   · INTEGRAÇÕES — quando a tela é a posição (onde a mudança é feita), em
+//     quantas outras telas a mudança reflete, somado.
+// Mesma base das outras análises: só chamado com impacto informado, com a
+// posição incluída (modulosDoChamado).
+
+export interface ContagemTela { valor: string; qtd: number }
+
+export interface RankingsTelas {
+  correcoes: ContagemTela[];
+  reflexo: ContagemTela[];
+  integracoes: ContagemTela[];
+}
+
+export const ehCorrecao = (ch: Pick<ChamadoImpacto, "tipo_solicitacao" | "categorias">) =>
+  ch.tipo_solicitacao === "correcao" || (ch.categorias ?? []).includes("correcao_erro");
+
+const ordenarTela = (a: ContagemTela, b: ContagemTela) => b.qtd - a.qtd || a.valor.localeCompare(b.valor, "pt-BR");
+
+export function rankingsDeTelas(chamados: readonly ChamadoImpacto[]): RankingsTelas {
+  const correcoes = new Map<string, number>();
+  const reflexo = new Map<string, number>();
+  const integracoes = new Map<string, number>();
+  const soma = (m: Map<string, number>, v: string, n = 1) => { if (n > 0) m.set(v, (m.get(v) ?? 0) + n); };
+  for (const ch of chamados) {
+    if (normalizarLista(ch.setores_impactados).length === 0) continue;
+    const modulos = modulosDoChamado(ch);
+    if (modulos.length === 0) continue;
+    const posicao = posicaoEhModulo(ch.modulo_sistema) ? (ch.modulo_sistema as string).trim() : null;
+    const correcao = ehCorrecao(ch);
+    for (const m of modulos) {
+      if (correcao) soma(correcoes, m);
+      if (posicao && m !== posicao) soma(reflexo, m);
+    }
+    if (posicao) soma(integracoes, posicao, modulos.filter((m) => m !== posicao).length);
+  }
+  const lista = (m: Map<string, number>) => [...m.entries()].map(([valor, qtd]) => ({ valor, qtd })).sort(ordenarTela);
+  return { correcoes: lista(correcoes), reflexo: lista(reflexo), integracoes: lista(integracoes) };
 }
 
 /** Nº de módulos impactados do chamado (abrangência), contando a posição; null = não informado. */

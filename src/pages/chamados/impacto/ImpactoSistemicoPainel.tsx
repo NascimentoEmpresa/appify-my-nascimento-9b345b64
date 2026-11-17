@@ -1,7 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Building2, ClipboardCheck, Crosshair, FolderTree, Layers, Network } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { analisarImpacto, modulosDoChamado, normalizarLista, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
+import { analisarImpacto, modulosDoChamado, normalizarLista, rankingsDeTelas, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
 import { contarPorSetor, rotuloModulo } from "@/lib/chamados/arvoreModulos";
 import { rotuloModuloLegado } from "../impactados";
 import { useArvoreModulos } from "./catalogoTelas";
@@ -21,25 +21,37 @@ import { cn } from "@/lib/utils";
 // Lucratividade de Contratos"); entra a coluna "Setores do ERP mais
 // impactados" (cada chamado conta uma vez por setor do menu em que marcou
 // tela) — clicar filtra o setor inteiro. Valores amplos de chamados antigos
-// aparecem como o próprio setor, com o rótulo de antes.
+// aparecem como o próprio setor, com o rótulo de antes. A coluna de telas
+// troca de leitura, como o pedido lista: mais alterações, mais correções,
+// mais impactadas por alterações em outras telas (reflexo) e as que mais
+// geram integrações (mudança nela que reflete em outras) — rankingsDeTelas.
 // =====================================================================
+
+type VisaoTelas = "alteracoes" | "correcoes" | "reflexo" | "integracoes";
+const VISOES_TELAS: { id: VisaoTelas; rotulo: string; dica: string }[] = [
+  { id: "alteracoes", rotulo: "Alterações", dica: "Chamados que impactam a tela (em destaque: quantas vezes ela foi o módulo ajustado)" },
+  { id: "correcoes", rotulo: "Correções", dica: "Chamados do tipo Correção ou da categoria Correção de Erro que impactam a tela" },
+  { id: "reflexo", rotulo: "Reflexo", dica: "Vezes em que a tela foi impactada por uma alteração feita em outra tela" },
+  { id: "integracoes", rotulo: "Integrações", dica: "Quando a tela é a ajustada: em quantas outras telas a mudança reflete (soma)" },
+];
 
 const LIMITE = 8;
 
-function Barras({ titulo, icone: Icone, itens, rotulo, onClicar, ativo, mostrarPosicao }: {
+function Barras({ titulo, icone: Icone, itens, rotulo, onClicar, ativo, mostrarPosicao, unidade = "chamado(s)", extra }: {
   titulo: string; icone: typeof Layers; itens: ContagemImpacto[]; rotulo: (v: string) => string;
-  onClicar: (v: string) => void; ativo: string | null; mostrarPosicao?: boolean;
+  onClicar: (v: string) => void; ativo: string | null; mostrarPosicao?: boolean; unidade?: string; extra?: ReactNode;
 }) {
   const max = Math.max(1, ...itens.map((i) => i.qtd));
   return (
     <div className="min-w-0">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-bold"><Icone className="h-3.5 w-3.5 text-primary" /> {titulo}</p>
+      {extra}
       {itens.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados no filtro.</p> : (
         <div className="space-y-1">
           {itens.slice(0, LIMITE).map((i) => (
             <button
               key={i.valor} type="button" onClick={() => onClicar(i.valor)}
-              title={`${rotulo(i.valor)}: ${i.qtd} chamado(s)${mostrarPosicao ? ` · ${i.comoPosicao} como módulo ajustado` : ""}. Clique para filtrar.`}
+              title={`${rotulo(i.valor)}: ${i.qtd} ${unidade}${mostrarPosicao ? ` · ${i.comoPosicao} como módulo ajustado` : ""}. Clique para filtrar.`}
               className={cn("block w-full rounded-md px-1.5 py-1 text-left transition-colors hover:bg-muted/60", ativo === i.valor && "bg-primary/10 ring-1 ring-primary/40")}
             >
               <span className="flex items-center justify-between gap-2 text-[11px]">
@@ -87,6 +99,12 @@ export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSet
     };
   }, [chamados, indice]);
   const maxFaixa = Math.max(1, ...a.faixas.map((f) => f.qtd));
+  const [visaoTelas, setVisaoTelas] = useState<VisaoTelas>("alteracoes");
+  const rankings = useMemo(() => rankingsDeTelas(chamados), [chamados]);
+  const itensTelas: ContagemImpacto[] = visaoTelas === "alteracoes"
+    ? a.modulos
+    : rankings[visaoTelas].map((t) => ({ valor: t.valor, qtd: t.qtd, comoPosicao: 0, emAberto: 0 }));
+  const visao = VISOES_TELAS.find((v) => v.id === visaoTelas)!;
 
   return (
     <Card className="mb-4 p-4">
@@ -102,8 +120,22 @@ export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSet
         <Barras titulo="Setores do ERP mais impactados" icone={FolderTree} itens={porSetorErp.itens}
           rotulo={(v) => porSetorErp.rotulos.get(v) ?? rotuloModuloImpactado(v)}
           onClicar={onFiltrarModulo} ativo={moduloAtivo} />
-        <Barras titulo="Telas com mais alterações" icone={Layers} itens={a.modulos} rotulo={rotuloModuloImpactado}
-          onClicar={onFiltrarModulo} ativo={moduloAtivo} mostrarPosicao />
+        <Barras titulo={`Telas — ${visao.rotulo.toLowerCase()}`} icone={Layers} itens={itensTelas} rotulo={rotuloModuloImpactado}
+          onClicar={onFiltrarModulo} ativo={moduloAtivo} mostrarPosicao={visaoTelas === "alteracoes"}
+          unidade={visaoTelas === "integracoes" ? "tela(s) com reflexo" : "chamado(s)"}
+          extra={(
+            <div className="mb-2 flex flex-wrap gap-1" role="tablist" aria-label="Leitura das telas">
+              {VISOES_TELAS.map((v) => (
+                <button key={v.id} type="button" role="tab" aria-selected={visaoTelas === v.id} title={v.dica}
+                  onClick={() => setVisaoTelas(v.id)}
+                  className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors",
+                    visaoTelas === v.id ? "border-accent bg-accent text-accent-foreground" : "border-border text-muted-foreground hover:bg-muted")}>
+                  {v.rotulo}
+                </button>
+              ))}
+              <p className="w-full text-[10px] leading-tight text-muted-foreground">{visao.dica}.</p>
+            </div>
+          )} />
         <Barras titulo="Setores mais impactados" icone={Building2} itens={a.setores} rotulo={(v) => v}
           onClicar={onFiltrarSetor} ativo={setorAtivo} />
 

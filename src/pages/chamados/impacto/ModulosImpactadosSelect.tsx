@@ -35,7 +35,7 @@ export function ModulosImpactadosSelect({ value, onChange, posicao, disabled }: 
       onChange={(v) => onChange(incluirPosicao(v, posicao))}
       destaque={posicao && posicao !== POSICAO_OUTRO ? posicao : null}
       disabled={disabled}
-      placeholder="Selecionar setor › telas impactadas"
+      placeholder="Selecionar módulos"
     />
   );
 }

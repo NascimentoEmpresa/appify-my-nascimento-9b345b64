@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, ChevronsUpDown, Crosshair, Search, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Crosshair, FileText, FolderClosed, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
@@ -12,11 +10,17 @@ import {
 } from "@/lib/chamados/arvoreModulos";
 
 // =====================================================================
-// SELETOR SETOR → TELAS (SIS-2026-0921), no desenho do modelo anexado ao
-// chamado: à esquerda os setores da barra lateral, na ordem dela; clicar num
-// setor abre ao lado as telas dele (agrupadas pelas categorias do menu) para
-// marcar. Dá para marcar telas de vários setores; o contador ao lado de cada
-// setor diz quantas já estão marcadas. A busca procura em setores e telas.
+// SELETOR SETOR → TELAS (SIS-2026-0921), no desenho do "modelo proposto"
+// anexado ao chamado (Yuri, Controladoria): busca "Buscar módulo..." no topo;
+// à esquerda os setores da barra lateral, com o MESMO ícone e na MESMA ordem
+// dela; o setor aberto fica laranja, com a seta para baixo; ao lado, o
+// cabeçalho do setor e as telas dele em duas colunas, na ordem da barra
+// (de cima para baixo, coluna por coluna), cada uma com ícone de arquivo —
+// a marcada fica laranja cheia. A categoria da barra (Cadastros Mestres,
+// Ferramentas...) aparece ao passar o mouse.
+//
+// Dá para marcar telas de vários setores; o número ao lado do setor diz
+// quantas dele já estão marcadas.
 //
 // Dois jeitos:
 //   · `multiplo` — Módulos do sistema impactados (chips no gatilho);
@@ -65,26 +69,24 @@ export function ArvoreModulosPicker(props: ArvoreModulosPickerProps) {
   const filtrada = useMemo(() => filtrarArvore(arvore, busca), [arvore, busca]);
   const contagem = useMemo(() => marcadasPorSetor(arvore, selecao), [arvore, selecao]);
   const setor = filtrada.find((s) => s.id === setorId) ?? filtrada[0] ?? null;
-  const categorias = useMemo(() => {
-    const m = new Map<string, SetorArvore["telas"]>();
-    for (const t of setor?.telas ?? []) m.set(t.categoria, [...(m.get(t.categoria) ?? []), t]);
-    return [...m.entries()];
-  }, [setor]);
 
   const abrir = (o: boolean) => {
     setAberto(o);
     if (o) { setBusca(""); setSetorId(setorInicial()); setVerTelas(false); }
   };
 
+  const escolherUm = (v: string) => { (props.onChange as (v: string) => void)(v); setAberto(false); };
   const escolher = (rota: string) => {
     if (props.multiplo) props.onChange(alternarTela(props.value, rota, destaque));
-    else { (props.onChange as (v: string) => void)(rota); setAberto(false); }
+    else escolherUm(rota);
   };
 
   const remover = (v: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (props.multiplo) props.onChange(props.value.filter((x) => x !== v));
   };
+
+  const IconeSetor = setor?.icone ?? FolderClosed;
 
   return (
     <div className={cn("relative", className)}>
@@ -98,7 +100,7 @@ export function ArvoreModulosPicker(props: ArvoreModulosPickerProps) {
               ) : props.multiplo ? (
                 selecao.map((v) => (
                   <Badge key={v} variant="secondary" title={rotulo(v)}
-                    className={cn("max-w-full gap-1 pr-1 text-xs", v === destaque && "border-primary/40 bg-primary/10 text-primary")}>
+                    className={cn("max-w-full gap-1 pr-1 text-xs font-medium", v === destaque && "border-accent/40 bg-accent/10 text-accent")}>
                     {v === destaque && <Crosshair className="h-3 w-3 shrink-0" />}
                     <span className="truncate">{rotulo(v)}</span>
                     {!disabled && v !== destaque && (
@@ -114,42 +116,46 @@ export function ArvoreModulosPicker(props: ArvoreModulosPickerProps) {
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-[min(680px,calc(100vw-2rem))] p-0">
-          <div className="border-b border-border p-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input autoFocus value={busca} onChange={(e) => { setBusca(e.target.value); setVerTelas(false); }}
-                placeholder="Buscar setor ou tela…" className="h-9 pl-8" />
-            </div>
+        <PopoverContent align="end" className="w-[min(600px,calc(100vw-2rem))] overflow-hidden p-0">
+          <div className="flex items-center gap-2 border-b border-border px-3">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input autoFocus value={busca} onChange={(e) => { setBusca(e.target.value); setVerTelas(false); }}
+              placeholder="Buscar módulo..." aria-label="Buscar módulo"
+              className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
           </div>
 
           {filtrada.length === 0 && !props.extras?.length ? (
             <p className="p-4 text-center text-sm text-muted-foreground">Nenhum setor ou tela encontrado.</p>
           ) : (
-            <div className="flex h-[min(380px,60vh)]">
-              {/* Setores */}
-              <div className={cn("w-full shrink-0 overflow-y-auto border-r border-border p-1 sm:block sm:w-56", verTelas && "hidden")}>
+            <div className="flex h-[min(340px,60vh)]">
+              {/* Setores, como na barra lateral */}
+              <div className={cn("w-full shrink-0 overflow-y-auto border-r border-border p-1.5 sm:block sm:w-52", verTelas && "hidden")}>
                 {filtrada.map((s) => {
                   const n = contagem.get(s.id) ?? 0;
+                  const ativo = setor?.id === s.id;
+                  const Icone = s.icone ?? FolderClosed;
                   return (
                     <button key={s.id} type="button" onClick={() => { setSetorId(s.id); setVerTelas(true); }}
-                      className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
-                        setor?.id === s.id && "bg-primary/10 font-semibold text-primary")}>
+                      className={cn("flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-muted",
+                        ativo && "bg-accent/10 font-semibold text-accent hover:bg-accent/15")}>
+                      <Icone className={cn("h-4 w-4 shrink-0", ativo ? "text-accent" : "text-muted-foreground")} />
                       <span className="min-w-0 flex-1 truncate">{s.rotulo}</span>
-                      {n > 0 && <span className="rounded-full bg-primary px-1.5 text-[10px] font-bold leading-4 text-primary-foreground">{n}</span>}
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                      {n > 0 && <span className="rounded-full bg-accent px-1.5 text-[10px] font-bold leading-4 text-accent-foreground">{n}</span>}
+                      {ativo
+                        ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                        : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />}
                     </button>
                   );
                 })}
                 {!props.multiplo && props.extras?.map((x) => (
-                  <button key={x.value} type="button" onClick={() => { (props.onChange as (v: string) => void)(x.value); setAberto(false); }}
-                    className={cn("mt-1 flex w-full items-center gap-2 rounded-md border-t border-border px-2 py-1.5 text-left text-sm hover:bg-muted",
-                      props.value === x.value && "font-semibold text-primary")}>
+                  <button key={x.value} type="button" onClick={() => escolherUm(x.value)}
+                    className={cn("mt-1 flex w-full items-center gap-2.5 rounded-md border-t border-border px-2 py-1.5 text-left text-[13px] hover:bg-muted",
+                      props.value === x.value && "bg-accent font-semibold text-accent-foreground hover:bg-accent")}>
+                    <FolderClosed className="h-4 w-4 shrink-0 opacity-70" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">{x.label}</span>
-                      {x.hint && <span className="block truncate text-[11px] text-muted-foreground">{x.hint}</span>}
+                      {x.hint && <span className="block truncate text-[11px] opacity-75">{x.hint}</span>}
                     </span>
-                    {props.value === x.value && <Check className="h-4 w-4" />}
                   </button>
                 ))}
               </div>
@@ -158,35 +164,31 @@ export function ArvoreModulosPicker(props: ArvoreModulosPickerProps) {
               <div className={cn("min-w-0 flex-1 overflow-y-auto p-2 sm:block", !verTelas && "hidden")}>
                 {setor ? (
                   <>
-                    <div className="mb-1 flex items-center gap-1">
+                    <div className="mb-1.5 flex items-center gap-2 px-1 pt-0.5">
                       <button type="button" onClick={() => setVerTelas(false)} className="rounded p-0.5 hover:bg-muted sm:hidden" aria-label="Voltar aos setores">
                         <ChevronLeft className="h-4 w-4" />
                       </button>
-                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{setor.rotulo}</p>
+                      <IconeSetor className="h-4 w-4 text-accent" />
+                      <p className="text-sm font-bold text-foreground">{setor.rotulo}</p>
                     </div>
-                    {categorias.map(([cat, telas]) => (
-                      <div key={cat} className="mb-2">
-                        <p className="px-1 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">{cat}</p>
-                        <div className="grid gap-0.5 md:grid-cols-2">
-                          {telas.map((t) => {
-                            const marcada = selecao.includes(t.rota);
-                            const fixa = props.multiplo && t.rota === destaque;
-                            return (
-                              <button key={t.rota} type="button" onClick={() => escolher(t.rota)} disabled={fixa}
-                                title={fixa ? "Posição — módulo diretamente ajustado (troque a posição para tirar)" : t.rota}
-                                className={cn("flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-muted disabled:cursor-default",
-                                  marcada && "bg-primary/5 font-medium")}>
-                                {props.multiplo
-                                  ? <Checkbox checked={marcada} tabIndex={-1} className="pointer-events-none" />
-                                  : <Check className={cn("h-4 w-4 shrink-0 text-primary", !marcada && "opacity-0")} />}
-                                <span className="min-w-0 flex-1 truncate">{t.rotulo}</span>
-                                {t.rota === destaque && <Crosshair className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
+                    <div className="gap-1 sm:columns-2">
+                      {setor.telas.map((t) => {
+                        const marcada = selecao.includes(t.rota);
+                        const ehDestaque = t.rota === destaque;
+                        const fixa = props.multiplo && ehDestaque;
+                        const Icone = ehDestaque ? Crosshair : FileText;
+                        return (
+                          <button key={t.rota} type="button" onClick={() => escolher(t.rota)} disabled={fixa}
+                            aria-pressed={marcada}
+                            title={fixa ? "Posição — módulo diretamente ajustado (troque a posição para tirar)" : `${t.categoria} · ${t.rota}`}
+                            className={cn("mb-0.5 flex w-full break-inside-avoid items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors disabled:cursor-default",
+                              marcada ? "bg-accent font-medium text-accent-foreground" : "hover:bg-muted")}>
+                            <Icone className={cn("h-3.5 w-3.5 shrink-0", marcada ? "opacity-90" : "text-muted-foreground")} />
+                            <span className="min-w-0 flex-1 truncate">{t.rotulo}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </>
                 ) : (
                   <p className="p-4 text-sm text-muted-foreground">Escolha um setor.</p>
@@ -197,7 +199,7 @@ export function ArvoreModulosPicker(props: ArvoreModulosPickerProps) {
 
           {props.multiplo && (
             <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-              <span>{selecao.length} tela(s) marcada(s) · os setores e telas são os da barra lateral</span>
+              <span>{selecao.length} módulo(s) marcado(s) · setores e telas da barra lateral</span>
               <Button type="button" size="sm" className="h-7" onClick={() => setAberto(false)}>Concluir</Button>
             </div>
           )}

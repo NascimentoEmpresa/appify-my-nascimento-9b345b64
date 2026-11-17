@@ -1654,14 +1654,14 @@ export const NAV_FIXOS = {
  * posição em que aparecem (topo e rodapé). Usado pela árvore do chamado.
  */
 export function modulosComFixos<M extends ModuleDef>(modulos: M[]): ModuleDef[] {
-  const fixo = (id: string, label: string, itens: { label: string; to: string }[]): ModuleDef => ({
-    id, label, description: label, icon: Home, basePath: "/app", status: "active",
+  const fixo = (id: string, label: string, itens: { label: string; to: string }[], icon: LucideIcon = Home): ModuleDef => ({
+    id, label, description: label, icon, basePath: "/app", status: "active",
     groups: [{ label, items: itens.map((i) => ({ label: i.label, to: i.to, icon: Home })) }],
   });
   return [
     fixo("fixos-topo", "Início e atalhos", [NAV_FIXOS.inicio, NAV_FIXOS.novidades, NAV_FIXOS.aprovacoes]),
     ...modulos,
-    fixo("fixos-rodape", NAV_FIXOS.configuracoes.label, [{ label: "Administração", to: NAV_FIXOS.configuracoes.to }]),
+    fixo("fixos-rodape", NAV_FIXOS.configuracoes.label, [{ label: "Administração", to: NAV_FIXOS.configuracoes.to }], Settings),
   ];
 }
 
@@ -1704,7 +1704,8 @@ const ICONE_DO_MODULO: Record<string, LucideIcon> = {
   organograma: Network,
   "plano-acoes": Target,
 };
-const iconeDoModulo = (mod: ModuleDef): LucideIcon => ICONE_DO_MODULO[mod.id] ?? mod.icon;
+/** Exportado para a árvore Setor → telas dos chamados (SIS-2026-0921) usar o mesmo ícone da barra. */
+export const iconeDoModulo = (mod: ModuleDef): LucideIcon => ICONE_DO_MODULO[mod.id] ?? mod.icon;
 
 /** Quadradinho do ícone de um item de primeiro nível. `on`: "ativo" (rota
  *  atual, laranja cheio), "aberto" (só o painel aberto nele) ou nada. */
