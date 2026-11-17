@@ -111,15 +111,17 @@ implementação (usada manualmente ou disparada pelo `worker/`).
 
 **Ao abrir a PR que resolve um chamado, o título TEM que começar com
 `SIS-AAAA-NNNN: <resumo>`** (sem colchetes) — CI (`chamado_pr_sync.yml`)
-bloqueia o merge se faltar. **Abrir a PR não conclui nada** — só registra
-"PR aberta" no histórico do chamado. No **merge na `main`**,
-`chamado_concluir_no_merge.yml` conclui **só a etapa do desenvolvedor** e põe
-no chat do chamado um resumo da entrega para o solicitante, escrito pela I.A a
-partir dos commits do chamado e do código alterado na PR já mergeada, com as
-URLs das telas. O chamado só fica de fato concluído depois que o
-**solicitante** clica em Confirmar conclusão e o **Gestor de Sistemas** em
-Finalizar chamado — o merge não pula nenhuma das duas (até 17/11/2026 a
-abertura da PR concluía; foi desfeito).
+bloqueia o merge se faltar. **Nem abrir nem mergear a PR conclui o
+chamado.** Abrir só registra "PR aberta" no histórico. No **merge na
+`main`**, `chamado_concluir_no_merge.yml` chama a Edge
+`chamado-concluir-pr`, que **entrega o chamado ao Gestor de Sistemas**
+(marca `desenvolvimento_entregue_em` e avisa no sino) e põe no chat um resumo
+da entrega para o solicitante, escrito pela I.A a partir dos commits do
+chamado e do código alterado na PR já mergeada, com as URLs das telas. Quem
+**conclui o chamado** (o que o solicitante vê) é o Gestor de Sistemas, no
+botão; depois o solicitante confirma e o gestor finaliza. Até 17/11/2026 a PR
+concluía sozinha; foi desfeito na revisão da PR #1310. Mudança em workflow do
+GitHub Actions passa pelo time antes.
 Por isso a mensagem de commit do chamado deve dizer o que mudou. PR sem
 chamado relacionado usa `[SEM-CHAMADO]:` (com colchetes) no início do título.
 

@@ -16,7 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { aguardandoGestorSistemas, podeFinalizarGestao, seloConclusao } from "./validacaoPresidencia";
+import { aguardandoGestorConcluir, aguardandoGestorSistemas, podeFinalizarGestao } from "./validacaoPresidencia";
 import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil, ArrowRightLeft } from "lucide-react";
 import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
@@ -482,8 +482,7 @@ export default function ExecutarChamado() {
               {chamado.status === "concluido" ? (
                 <>
                   <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
-                    {/* "Chamado concluído" só depois do Gestor de Sistemas (17/11/2026). */}
-                    <CheckCircle2 className="h-4 w-4 animate-check-pop" /> {seloConclusao(chamado)}
+                    <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
                   </div>
                   {/* Horas gastas (mig 20261029002400). Concluído antes da regra = "—".
                       Concluído pelo merge da PR depois dela = pendente, e o
@@ -552,6 +551,15 @@ export default function ExecutarChamado() {
                 </>
               ) : (
                 <>
+                {/* PR mergeada (mig 20261117235500): o merge entrega ao Gestor
+                    de Sistemas, que conclui o chamado — só aí o solicitante vê
+                    "concluído". Revisão da PR #1310, 17/11/2026. */}
+                {aguardandoGestorConcluir(chamado) && (
+                  <p className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-xs text-info">
+                    PR mergeada em {fmtDataHora(chamado.desenvolvimento_entregue_em!)}: desenvolvimento entregue.
+                    Falta o <b>Gestor de Sistemas</b> concluir o chamado.
+                  </p>
+                )}
                 {/* Em desenvolvimento (mig 20261028001400): o dev avisa o
                     solicitante que começou — com prazo obrigatório. */}
                 {podeIniciarDesenvolvimento(chamado) && (

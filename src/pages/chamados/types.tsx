@@ -139,6 +139,10 @@ export interface Chamado {
   // confirmação do solicitante. NULL com 'concluido' = ainda não fechou de vez.
   gestao_finalizada_em?: string | null;
   gestao_finalizada_por?: string | null;
+  // PR mergeada na main (mig 20261117235500): o desenvolvimento foi entregue
+  // ao Gestor de Sistemas, que conclui o chamado. Zera a cada troca de status.
+  desenvolvimento_entregue_em?: string | null;
+  desenvolvimento_entregue_pr?: string | null;
   // Início do desenvolvimento + prazo informado pelo dev (mig 20261028001400).
   // Com status 'em_andamento': iniciado = "Em desenvolvimento"; sem = na fila.
   desenvolvimento_iniciado_em?: string | null;

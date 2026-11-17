@@ -1,24 +1,16 @@
 name: Concluir Chamado pela PR
 
-# O MERGE da PR que resolve um chamado conclui a ETAPA DO DESENVOLVEDOR no
-# ERP e manda o resumo da entrega para o chat do solicitante.
+# Fecha o último passo manual do ciclo: a PR que resolve um chamado conclui o
+# chamado sozinha no ERP — sem o dev precisar abrir /app/sistemas/chamados/:id
+# e clicar em "Concluir chamado".
 #
-# ABRIR A PR NÃO CONCLUI NADA (17/11/2026). De 12 a 17/11 havia aqui o job
-# concluir-na-abertura: PR aberta já marcava o chamado como concluído (no
-# SIS-2026-0909 a PR #1302 abriu e o chat mostrou "Chamado concluído
-# automaticamente — PR #1302 aberta" com a PR ainda sem revisão nem merge).
-# Pedido do Pablo: abrir a PR no máximo registra no histórico (isso já é o
-# chamado-vincular-pr do chamado_pr_sync.yml, "PR aberta: ..."); só o merge
-# na main conclui, e só a parte do dev.
-#
-# TRÊS ETAPAS, o merge faz só a primeira:
-#   1. dev conclui → status 'concluido' (o que o merge faz aqui, igual ao
-#      botão "Concluir chamado");
-#   2. SOLICITANTE confirma → conclusao_confirmada_em (mig 20261028001300);
-#   3. GESTOR DE SISTEMAS finaliza → gestao_finalizada_em (mig 20261110009000).
-# Só com as três o chamado está de fato concluído. O merge NÃO confirma pelo
-# solicitante nem finaliza pelo gestor — os gatilhos zeram as duas colunas
-# a cada troca de status, e a Edge não toca nelas.
+# DESDE 12/11/2026 (pedido do Pablo: "quando o desenvolvedor abrir um PR
+# conclua o chamado automaticamente e também coloque um resumo bom do que foi
+# feito no chat pro solicitante ver ... e as URLS pra ele acessar"):
+#   · job concluir-na-abertura — PR aberta (ou reaberta, ou saída de rascunho)
+#     conclui o chamado;
+#   · job concluir-chamado — no MERGE: conclui como reserva (PR aberta antes
+#     desta mudança, título corrigido depois) e manda o RESUMO para o chat.
 #
 # RESUMO SÓ NO MERGE (13/11/2026). Pablo: "a i.a tem que ler os commits e a PR
 # inteira depois do merge, pq enquanto a PR tá no github ela ainda pode ter
@@ -30,24 +22,76 @@ name: Concluir Chamado pela PR
 # alterado neles e as URLs das telas (.github/scripts/contexto-resumo-pr.cjs).
 # A Edge manda o resumo uma vez por PR e não manda para chamado reaberto.
 #
+# "Concluído" aqui é o mesmo do botão: o chamado fica aguardando o SOLICITANTE
+# confirmar a conclusão (mig 20261028001300) e, até ele confirmar, conta na
+# trava de 3 pendências para abrir chamado novo. O merge NÃO confirma por ele.
+#
 # Arquivo separado do chamado_pr_sync.yml de propósito: lá o job
 # validar-chamado é required status check na proteção da main, e acrescentar o
 # evento "closed" aos gatilhos daquele arquivo mexeria com o merge de toda PR.
 #
 # pull_request_target (não pull_request): precisa dos secrets do repositório
-# base. NÃO executamos nada do código da branch da PR. O checkout é do commit
-# de merge (o que já está na main), só da pasta .github/scripts; o App.tsx e
-# os trechos alterados chegam como TEXTO pela API e só são lidos.
+# base. NÃO executamos nada do código da branch da PR. No merge, o checkout é
+# do commit de merge (o que já está na main), só da pasta .github/scripts; o
+# App.tsx e os trechos alterados chegam como TEXTO pela API e só são lidos.
 on:
   pull_request_target:
-    types: [closed]
+    types: [opened, reopened, ready_for_review, closed]
 
 jobs:
-  concluir-chamado:
-    # PR fechada sem merge não conclui nada — só o merge NA MAIN é entrega.
+  concluir-na-abertura:
+    # Rascunho não é entrega: conclui quando sai do rascunho (ready_for_review).
     if: >-
-      github.event.action == 'closed' && github.event.pull_request.merged == true
-      && github.event.pull_request.base.ref == 'main'
+      (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'ready_for_review')
+      && github.event.pull_request.draft == false
+      && startsWith(github.event.pull_request.title, 'SIS-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Concluir o chamado (o resumo vai no merge)
+        uses: actions/github-script@v7
+        env:
+          SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
+          CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+        with:
+          script: |
+            // Best-effort do começo ao fim: nunca falha o workflow (não é check
+            // obrigatório e um erro aqui não tem nada a corrigir na PR).
+            const pr = context.payload.pull_request;
+            const titulo = pr.title || "";
+            const m = titulo.match(/^SIS-\d{4}-\d+/);
+            if (!m) { core.info("Título sem número de chamado — nada a concluir."); return; }
+            try {
+              const res = await fetch(`${process.env.SUPABASE_FUNCTIONS_URL}/chamado-concluir-pr`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${process.env.CHAMADOS_CI_SECRET}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  origem: "pr_aberta",
+                  numero: m[0],
+                  pr_url: pr.html_url,
+                  pr_titulo: titulo,
+                  pr_autor_github: pr.user.login,
+                  pr_numero: pr.number,
+                  pr_commits: pr.commits ?? null,
+                  pr_linhas_adicionadas: pr.additions ?? null,
+                  pr_arquivos_alterados: pr.changed_files ?? null,
+                }),
+                signal: AbortSignal.timeout(30000),
+              });
+              const corpo = await res.text();
+              if (!res.ok) { core.warning(`chamado-concluir-pr respondeu HTTP ${res.status}: ${corpo}`); return; }
+              core.info(`Resposta: ${corpo}`);
+              const j = JSON.parse(corpo);
+              if (j.concluido) core.info(`Chamado ${m[0]} concluído. O resumo para o solicitante sai no merge.`);
+              else core.warning(`Chamado ${m[0]} não foi concluído: ${j.motivo || "motivo não informado"}`);
+            } catch (e) {
+              core.warning(`Não foi possível contatar o serviço de chamados — ${m[0]} segue aberto para conclusão manual (${e.message}).`);
+            }
+
+  concluir-chamado:
+    # PR fechada sem merge não conclui nada — só o merge significa entrega.
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,7 +105,7 @@ jobs:
             .github/scripts
           persist-credentials: false
 
-      - name: Concluir a etapa do dev e mandar o resumo da PR mergeada
+      - name: Concluir (reserva) e mandar o resumo da PR mergeada
         uses: actions/github-script@v7
         env:
           # Um lugar só para a virada: a variável de repositório
