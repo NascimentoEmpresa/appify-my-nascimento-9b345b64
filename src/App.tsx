@@ -415,6 +415,8 @@ import RemetentesEmail from "./pages/email/RemetentesEmail";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
 import WhatsAppDashboard from "./pages/whatsapp/WhatsAppDashboard";
+import WhatsAppAtendimento from "./pages/whatsapp/WhatsAppAtendimento";
+import WhatsAppAtendimentoBase from "./pages/whatsapp/WhatsAppAtendimentoBase";
 import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
@@ -704,6 +706,9 @@ const App = () => (
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
+            {/* SIS-2026-0929: atendimento dos supervisores (canal corporativo, protocolo, I.A com base aprovada) */}
+            <Route path="whatsapp/atendimento" element={<WhatsAppAtendimento />} />
+            <Route path="whatsapp/atendimento/base" element={<WhatsAppAtendimentoBase />} />
             <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
             <Route path="central-servicos/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />
             <Route path="encarregados/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />

@@ -1219,6 +1219,9 @@ const whatsappModule: ModuleDef = {
       items: [
         { label: "Caixa de Entrada", to: "/app/whatsapp", icon: MessageCircle },
         { label: "Dashboard", to: "/app/whatsapp/dashboard", icon: BarChart3 },
+        // SIS-2026-0929 — menus whatsapp_atd_fila / whatsapp_atd_base (nascem pendentes).
+        { label: "Atendimento Supervisores", to: "/app/whatsapp/atendimento", icon: Headset },
+        { label: "Base e Regras (Supervisores)", to: "/app/whatsapp/atendimento/base", icon: BookOpenCheck },
         { label: "Chatbot", to: "/app/whatsapp/chatbot", icon: Bot },
         { label: "Testes", to: "/app/whatsapp/testes", icon: FlaskConical },
       ],

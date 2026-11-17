@@ -13,6 +13,8 @@
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+// SIS-2026-0929: responde pelo número do canal da conversa (WA_CANAL).
+import { numeroDaConversa } from "../_shared/whatsapp-canal.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -85,8 +87,9 @@ Deno.serve(async (req) => {
   const { data: contato } = await db.from("WA_CONTATO")
     .select("wa_id").eq("id", conversa.contato_id).maybeSingle();
   if (!contato?.wa_id) return json({ ok: true, avisado: false, motivo: "contato sem número" });
+  const numero = await numeroDaConversa(db, conversaId, PHONE_NUMBER_ID);
 
-  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+  const res = await fetch(`${GRAPH}/${numero}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to: contato.wa_id, type: "text", text: { body: texto } }),
