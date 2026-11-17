@@ -172,6 +172,26 @@ describe("webhook — canal dos supervisores", () => {
     expect(env[0]).toContain("Passei seu atendimento");
   });
 
+  it("devolve a trilha do que aconteceu (é o que o simulador mostra)", async () => {
+    iaResponde("[[CONSULTAR:cadastro_basico|Fulano de Tal]]");
+    const b = bancoFalso({ preparar: PREP({ enviar_aviso: true }), historico: HIST, consulta: { autorizada: false, motivo: "alvo_nao_encontrado" } });
+    const t = await processarAtendimento({ admin: b.admin, enviar: async () => {} },
+      { conversaId: "conv-1", waId: "551188880001", msgType: "text", texto: "em que contrato o Fulano trabalha?", canal: CANAL });
+    expect(t.protocolo).toBe("ATD-2026-000042");
+    expect(t.status_final).toBe("aguardando_humano");
+    expect(t.eventos.map((e) => e.tipo)).toEqual(expect.arrayContaining(["identificacao", "aviso", "base", "consulta", "encaminhado"]));
+    expect(t.system).toContain("ATD-2026-000042");
+    expect(t.ia?.bruto).toContain("[[CONSULTAR:");
+  });
+
+  it("resolvido: trilha termina em concluído", async () => {
+    iaResponde("Por nada! [[RESOLVIDO]]");
+    const b = bancoFalso({ preparar: PREP(), historico: HIST });
+    const t = await processarAtendimento({ admin: b.admin, enviar: async () => {} },
+      { conversaId: "conv-1", waId: "551188880001", msgType: "text", texto: "era só isso", canal: CANAL });
+    expect(t.status_final).toBe("concluido");
+  });
+
   it("sem protocolo (falha ao preparar): não responde nada", async () => {
     iaResponde("não deveria");
     const b = bancoFalso({ preparar: null, historico: HIST });
