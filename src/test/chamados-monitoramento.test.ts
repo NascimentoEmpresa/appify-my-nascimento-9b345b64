@@ -258,6 +258,24 @@ describe("Ranking dos solicitantes — histórico + desempenho recente (SIS-2026
     expect(r.mediaRecente).toBe(r.indiceMedio);
   });
 
+  it("até 20 chamados a tendência fica sem valor (só mediria o ajuste por volume)", () => {
+    // revisão: 3 chamados nota 9 com o resto do grupo em 6 davam "↑ +1,9" sem mudança nenhuma
+    const ls = [
+      ...Array.from({ length: 3 }, (_, i) => L(`n${i}`, "nove", i + 1, 9)),
+      ...Array.from({ length: 30 }, (_, i) => L(`g${i}`, `g${i % 6}`, 1 + (i % 25), 6)),
+    ];
+    const nove = rankingSolicitantes(ls).find((x) => x.nome === "nove")!;
+    expect(nove.mediaRecente).toBeGreaterThan(nove.notaHistorica);
+    expect(nove.tendencia).toBeNull();
+    // a nota do ranking continua sendo o 70/30 literal
+    expect(nove.notaRanking).toBe(notaRankingComposta(nove.notaHistorica, nove.mediaRecente));
+    // exatamente 20: ainda sem base; 21: passa a ter tendência
+    const vinte = rankingSolicitantes(Array.from({ length: 20 }, (_, i) => L(`v${i}`, "v", 1 + (i % 25), 8)))[0];
+    expect(vinte.tendencia).toBeNull();
+    const vinteUm = rankingSolicitantes(Array.from({ length: 21 }, (_, i) => L(`w${i}`, "w", 1 + (i % 25), 8)))[0];
+    expect(vinteUm.tendencia).not.toBeNull();
+  });
+
   it("cancelado não entra na média recente nem na histórica", () => {
     const ls = [
       ...Array.from({ length: 3 }, (_, i) => L(`v${i}`, "bia", i + 1, 8)),

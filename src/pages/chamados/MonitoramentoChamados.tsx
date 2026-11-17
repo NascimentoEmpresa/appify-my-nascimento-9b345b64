@@ -559,9 +559,9 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
 // 70% histórica ajustada + 30% média dos últimos 20 (rankingSolicitantes na
 // lib), e a tela mostra as peças separadas, como no modelo anexado ao
 // chamado: nota do ranking, média histórica ajustada, média dos últimos 20,
-// chamados avaliados e tendência (recente − histórica). Saíram da tabela a
-// média simples, o melhor chamado e o % bem especificado (o % segue no pódio)
-// — média simples ao lado da ajustada só confundia a leitura.
+// chamados avaliados e tendência (recente − histórica; "—" com até 20
+// chamados, quando não há "antes" para comparar). Média simples, melhor
+// chamado e % bem especificados continuam na tabela, ao lado das novas.
 // =====================================================================
 const MEDALHA = ["bg-amber-400 text-white", "bg-slate-400 text-white", "bg-orange-500 text-white"];
 const MOLDURA_PODIO = ["border-amber-300 bg-amber-50/60 dark:bg-amber-500/10", "border-slate-300 bg-slate-50/60 dark:bg-slate-500/10", "border-orange-300 bg-orange-50/60 dark:bg-orange-500/10"];
@@ -639,7 +639,7 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-xs">
+            <table className="w-full min-w-[1180px] text-xs">
               <thead>
                 <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
                   <th className="w-10 py-2">#</th>
@@ -649,6 +649,9 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                   <th className="py-2 text-center" title="Média de todos os chamados, puxada para a média geral quando há poucos">Média histórica ajustada</th>
                   <th className="py-2 text-center" title={`Média simples dos ${RANKING_RECENTES} chamados abertos mais recentemente (ou dos que houver)`}>Média últimos {RANKING_RECENTES}</th>
                   <th className="py-2 text-center" title="Média dos últimos 20 − média histórica ajustada">Tendência</th>
+                  <th className="py-2 text-center" title="Média simples dos chamados">Média</th>
+                  <th className="py-2 text-center">Melhor chamado</th>
+                  <th className="py-2" title="Chamados com índice 8 ou mais">Bem especificados</th>
                   <th className="py-2">Tema mais pedido</th>
                   <th className="py-2 text-center">Efetividade</th>
                 </tr>
@@ -689,6 +692,16 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                         {r.qtdRecentes < RANKING_RECENTES && <p className="text-[10px] font-normal text-muted-foreground">({r.qtdRecentes} chamado{r.qtdRecentes === 1 ? "" : "s"})</p>}
                       </td>
                       <td className="py-2 text-center"><Tendencia valor={r.tendencia} pilula /></td>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</td>
+                      <td className={cn("py-2 text-center", corIndice(r.melhorIndice))}>{fmt1(r.melhorIndice)}</td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                            <span className="block h-full rounded-full bg-success" style={{ width: `${r.pctBons}%` }} />
+                          </span>
+                          <span className="w-9 text-right font-medium">{r.pctBons}%</span>
+                        </div>
+                      </td>
                       <td className="py-2">
                         {r.temaPrincipal ? (
                           <span className="inline-block max-w-[180px] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
@@ -700,7 +713,7 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                   );
                 })}
                 {lista.length === 0 && (
-                  <tr><td colSpan={9} className="py-4 text-center text-muted-foreground">Ninguém encontrado com "{busca}".</td></tr>
+                  <tr><td colSpan={12} className="py-4 text-center text-muted-foreground">Ninguém encontrado com "{busca}".</td></tr>
                 )}
               </tbody>
             </table>
@@ -725,7 +738,7 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
             <p>
               <b className="text-foreground">Tendência:</b> média dos últimos {RANKING_RECENTES} − média histórica ajustada
               (<span className="font-semibold text-success">↑ +2,2</span> = evolução de 2,2 pontos;{" "}
-              <span className="font-semibold text-destructive">↓</span> = queda).
+              <span className="font-semibold text-destructive">↓</span> = queda; — = até {RANKING_RECENTES} chamados, sem base para comparar).
             </p>
           </div>
         </>
@@ -736,15 +749,24 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
 
 const normalizarBusca = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-/** Tend\u00eancia do ranking (recente \u2212 hist\u00f3rica): \u2191 verde, \u2193 vermelho, \u2192 est\u00e1vel. */
-function Tendencia({ valor, pilula }: { valor: number; pilula?: boolean }) {
+/**
+ * Tendência do ranking (recente − histórica): ↑ verde, ↓ vermelho, → estável;
+ * "—" quando os últimos 20 já são todos os chamados (sem base para comparar).
+ */
+function Tendencia({ valor, pilula }: { valor: number | null; pilula?: boolean }) {
+  if (valor == null) {
+    return (
+      <span className="cursor-help text-muted-foreground"
+        title={`Sem base para comparar: os últimos ${RANKING_RECENTES} já são todos os chamados desta pessoa no período.`}>—</span>
+    );
+  }
   const sobe = valor > 0;
   const cai = valor < 0;
   const Icone = sobe ? ArrowUpRight : cai ? ArrowDownRight : ArrowRight;
-  const texto = `${sobe ? "+" : cai ? "\u2212" : ""}${fmt1(Math.abs(valor))}`;
+  const texto = `${sobe ? "+" : cai ? "−" : ""}${fmt1(Math.abs(valor))}`;
   return (
     <span
-      title={sobe ? "\u00daltimos chamados acima do hist\u00f3rico" : cai ? "\u00daltimos chamados abaixo do hist\u00f3rico" : "Est\u00e1vel"}
+      title={sobe ? "Últimos chamados acima do histórico" : cai ? "Últimos chamados abaixo do histórico" : "Estável"}
       className={cn("inline-flex items-center gap-0.5 font-semibold",
         sobe ? "text-success" : cai ? "text-destructive" : "text-muted-foreground",
         pilula && "rounded border px-1.5 py-0.5",

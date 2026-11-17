@@ -517,8 +517,13 @@ export interface RankingSolicitante {
   mediaRecente: number;
   /** Quantos chamados entraram na média recente (≤ RANKING_RECENTES). */
   qtdRecentes: number;
-  /** mediaRecente − notaHistorica: > 0 melhorando, < 0 piorando. */
-  tendencia: number;
+  /**
+   * mediaRecente − notaHistorica: > 0 melhorando, < 0 piorando. null quando
+   * os últimos 20 já são TODOS os chamados dele: aí a "recente" é a média de
+   * tudo e a diferença mediria só o ajuste por volume, não uma mudança
+   * (revisão de 16/11/2026: 3 chamados nota 9 com média geral 6 davam "↑ +1,9").
+   */
+  tendencia: number | null;
   melhorIndice: number;
   /** % dos chamados com índice ≥ 8 (bem especificados). */
   pctBons: number;
@@ -610,7 +615,7 @@ export function rankingSolicitantes(linhas: LinhaMonitor[], m = RANKING_PESO_MED
       notaHistorica,
       mediaRecente,
       qtdRecentes: recentes.length,
-      tendencia: arred1(mediaRecente - notaHistorica),
+      tendencia: recentes.length < ls.length ? arred1(mediaRecente - notaHistorica) : null,
       melhorIndice: arred1(Math.max(...idx)),
       pctBons: Math.round((idx.filter((x) => x >= 8).length / ls.length) * 100),
       efetividadeMedia: em == null ? null : Math.round(em),
