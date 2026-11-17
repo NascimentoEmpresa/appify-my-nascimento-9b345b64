@@ -45,6 +45,7 @@ import {
   CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
 import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
+import { AcessoModuloResumo } from "./AcessoModuloUsuarios";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
 
@@ -306,6 +307,8 @@ export default function ExecutarChamado() {
             </div>
             {/* SIS-2026-0910: onde mexer × o que testar/homologar. */}
             <ImpactoSistemicoResumo chamado={chamado} />
+            {/* SIS-2026-0934: a quem liberar o módulo. */}
+            <AcessoModuloResumo chamado={chamado} />
           </Card>
 
           {/* CHAMADO REABERTO / pedido de transferência (mig 20261112190000):
