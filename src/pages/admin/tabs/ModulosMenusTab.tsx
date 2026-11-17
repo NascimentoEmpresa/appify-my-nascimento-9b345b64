@@ -14,7 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search, SlidersHorizontal, Users } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, BookOpen, UserCog, X, CheckSquare, Save, Layers, Boxes, Search, SlidersHorizontal, Users, Sparkles, Lock } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { FormCap } from "@/hooks/useFormPerms";
@@ -25,6 +26,9 @@ import { TrocaFuncaoSetoresUsuario } from "@/components/admin/TrocaFuncaoSetores
 import { rotaVisivelNoGerenciamento } from "@/lib/menusOcultosGerenciamento";
 import { acoesGravadasPeloToggle } from "@/lib/acoesDoToggleAcesso";
 import { AcessoPorSetorCargoPanel } from "@/pages/admin/tabs/AcessoPorSetorCargoPanel";
+import { NovosModulosPanel } from "@/pages/admin/tabs/NovosModulosPanel";
+import { useNovosModulos } from "@/hooks/useNovosModulos";
+import { menuPendente } from "@/lib/novosModulos";
 import { chaveSetor, setoresUnicos } from "@/lib/formularios/setorChave";
 import { apagarGrantSetor } from "@/lib/formularios/setorAcesso";
 
@@ -98,7 +102,9 @@ const MENUS_COM_AJUSTE_POR_PESSOA: readonly string[] = [
 ];
 
 interface Modulo { id: string; codigo: string; nome: string; ordem: number; ativo: boolean; icone: string | null }
-interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean }
+// liberado_em: NULL = tela nova aguardando liberação (SIS-2026-0931). Opcional
+// porque vem do select("*"): antes da migration a coluna não existe.
+interface Menu { id: string; modulo_id: string; codigo: string; nome: string; rota: string | null; ordem: number; ativo: boolean; liberado_em?: string | null }
 interface ProfileRow { id: string; display_name: string | null; email: string | null }
 
 // Remove acentos antes de virar slug - "Solicitações" → "solicitacoes", não "solicitações".
@@ -115,7 +121,7 @@ function slugify(text: string): string {
     .replace(/\s+/g, "_");
 }
 
-type View = "catalogo" | "acesso" | "por_modulo" | "por_setor_cargo";
+type View = "catalogo" | "acesso" | "por_modulo" | "por_setor_cargo" | "novos";
 
 interface PerfilAcesso { id: string; nome: string; descricao: string | null; concede_tudo: boolean; ativo: boolean }
 
@@ -123,8 +129,19 @@ export function ModulosMenusTab() {
   const qc = useQueryClient();
   const { can } = usePermissoes();
   const podeGerenciar = can("alterar", undefined, "administracao");
-  const [view, setView] = useState<View>("catalogo");
+  // Liberar/bloquear tela nova é permissão própria (SIS-2026-0931, pedido do
+  // Iury): nasce só com ele e o Eduardo, e não vem de "administracao" nem do
+  // Administrador Geral. Quem só vê a Administração consulta a aba.
+  const podeLiberarNovos = can("alterar", undefined, "administracao_novos_modulos");
+  // ?tab=modulos&visao=novos abre direto em Novos Módulos (link do aviso de
+  // "tela aguardando liberação" e das outras visões). Só na abertura.
+  const [searchParams] = useSearchParams();
+  const [view, setView] = useState<View>(searchParams.get("visao") === "novos" ? "novos" : "catalogo");
   const [showAddForm, setShowAddForm] = useState(false);
+  // Contador do selo laranja: telas novas aguardando liberação (SIS-2026-0931).
+  const { lista: novosModulos } = useNovosModulos();
+  const pendentesDeLiberacao = novosModulos.filter((m) => m.situacao === "pendente").length;
+  const abrirNovos = () => { setView("novos"); setShowAddForm(false); };
 
   const modulosQ = useQuery({
     queryKey: ["app_modulo"],
@@ -147,7 +164,7 @@ export function ModulosMenusTab() {
 
   return (
     <section className="card-elevated">
-      <header className="flex items-center gap-3 border-b border-border px-5 py-3.5">
+      <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3.5">
         <div className="flex-1">
           <h2 className="font-display text-sm font-bold">Módulos & Menus</h2>
           <p className="text-xs text-muted-foreground">Catálogo do ERP e controle de acesso por usuário.</p>
@@ -165,7 +182,7 @@ export function ModulosMenusTab() {
           </Button>
         )}
 
-        <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
+        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
           <button
             onClick={() => { setView("catalogo"); setShowAddForm(false); }}
             className={cn(
@@ -206,6 +223,21 @@ export function ModulosMenusTab() {
             <Users className="h-3.5 w-3.5" />
             Por Setor / Cargo
           </button>
+          <button
+            onClick={abrirNovos}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "novos" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Novos Módulos
+            {pendentesDeLiberacao > 0 && (
+              <span className="rounded-full bg-orange-500 px-1.5 text-[10px] font-semibold leading-4 text-white" title={`${pendentesDeLiberacao} tela(s) aguardando liberação`}>
+                {pendentesDeLiberacao}
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
@@ -226,6 +258,7 @@ export function ModulosMenusTab() {
           podeGerenciar={podeGerenciar}
           modulos={modulosQ.data ?? []}
           menus={menusQ.data ?? []}
+          onAbrirNovos={abrirNovos}
         />
       )}
 
@@ -234,6 +267,7 @@ export function ModulosMenusTab() {
           podeGerenciar={podeGerenciar}
           modulos={modulosQ.data ?? []}
           menus={menusQ.data ?? []}
+          onAbrirNovos={abrirNovos}
         />
       )}
 
@@ -245,6 +279,8 @@ export function ModulosMenusTab() {
           menusComAjustePorPessoa={MENUS_COM_AJUSTE_POR_PESSOA}
         />
       )}
+
+      {view === "novos" && <NovosModulosPanel podeGerenciar={podeLiberarNovos} />}
     </section>
   );
 }
@@ -471,7 +507,7 @@ const ACAO_DESCRICAO_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, s
 const rotuloAcao = (menuCodigo: string, acao: AppAcao) =>
   ACAO_LABEL_POR_MENU[menuCodigo]?.[acao] ?? ACAO_LABEL[acao];
 
-function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
+function UserAccessPanel({ podeGerenciar, modulos, menus, onAbrirNovos }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[]; onAbrirNovos: () => void }) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Map of menu_codigo → desired allow value (staged, not yet saved)
@@ -765,7 +801,12 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
             // voltava sozinho para desligado no refetch — parecia bug de save e
             // era menu desligado (21 dos 192 estão assim). Quem quiser liberá-lo
             // ativa o menu primeiro, na aba Módulos & Menus.
-            const modMenus = menus.filter((x) => x.modulo_id === m.id && x.ativo);
+            // Tela nova aguardando liberação (SIS-2026-0931) também fica fora
+            // dos switches: o banco nega antes de olhar permissão, então ligar
+            // aqui gravaria e "voltaria sozinho". Ela se libera num lugar só,
+            // a visão Novos Módulos — e aparece logo abaixo, explicada.
+            const modMenus = menus.filter((x) => x.modulo_id === m.id && x.ativo && !menuPendente(x));
+            const modMenusPendentes = menus.filter((x) => x.modulo_id === m.id && x.ativo && menuPendente(x));
             // Menus DESLIGADOS do módulo. Não entram em modMenus (não são
             // liberáveis), mas precisam aparecer: desde que o acesso passou a
             // negar por padrão, menu desligado BLOQUEIA a tela — e como o
@@ -786,7 +827,7 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
             return (
               <div key={m.id}>
                 <div className="flex items-center gap-2 px-5 py-3 hover:bg-muted/40">
-                  {modMenus.length > 0 ? (
+                  {modMenus.length > 0 || modMenusPendentes.length > 0 ? (
                     <button onClick={() => toggleExpand(m.id)} className="text-muted-foreground">
                       {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     </button>
@@ -798,7 +839,12 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                     <p className="text-[11px] font-mono text-muted-foreground">{m.codigo}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {modMenus.length === 0 && (
+                    {modMenusPendentes.length > 0 && (
+                      <span className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                        <Lock className="h-3 w-3" /> {modMenusPendentes.length} aguardando liberação
+                      </span>
+                    )}
+                    {modMenus.length === 0 && modMenusPendentes.length === 0 && (
                       <Switch
                         checked={moduloAccess}
                         disabled={!podeGerenciar}
@@ -814,9 +860,9 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                   </div>
                 </div>
 
-                {open && modMenus.length > 0 && (
+                {open && (modMenus.length > 0 || modMenusPendentes.length > 0) && (
                   <div className="bg-muted/20 divide-y divide-border/60">
-                    {podeGerenciar && (
+                    {podeGerenciar && modMenus.length > 0 && (
                       <div className="flex items-center justify-end px-12 py-1.5">
                         <Button
                           size="sm"
@@ -929,6 +975,13 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                       );
                     })}
 
+                    {/* Telas NOVAS aguardando liberação (SIS-2026-0931). Sem
+                        switch pelo mesmo motivo das desligadas: o banco nega
+                        antes de olhar permissão. Libera-se em Novos Módulos. */}
+                    {modMenusPendentes.length > 0 && (
+                      <TelasAguardandoLiberacao telas={modMenusPendentes} onAbrirNovos={onAbrirNovos} />
+                    )}
+
                     {/* Telas DESLIGADAS do módulo. Sem switch de propósito:
                         permissão não vence menu desligado — o acesso é negado
                         antes de olhar permissão. Aparecem só para o admin
@@ -968,7 +1021,31 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
 // eixo de leitura/escrita é trocado (RPC list_users_with_menu_access em vez de
 // list_accessible_menus; grava em screen_permission_user com a mesma lógica de
 // ACOES_DO_TOGGLE que a visão por usuário já usa).
-function ModuleAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[] }) {
+// Telas novas de um módulo que ainda aguardam liberação (SIS-2026-0931), nas
+// visões "Acesso por Usuário" e "Por Módulo". Só informam e levam para Novos
+// Módulos — liberar tela nova é decisão de um lugar só.
+function TelasAguardandoLiberacao({ telas, onAbrirNovos }: { telas: Menu[]; onAbrirNovos: () => void }) {
+  return (
+    <div className="border-t border-border/60 bg-amber-50/50 px-12 py-2.5 dark:bg-amber-950/20">
+      <div className="flex flex-wrap items-center gap-2">
+        <Lock className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400" />
+        <p className="flex-1 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+          Telas novas aguardando liberação — ninguém acessa até um administrador liberar em Novos Módulos.
+        </p>
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAbrirNovos}>Abrir Novos Módulos</Button>
+      </div>
+      <div className="mt-1.5 space-y-1">
+        {telas.map((mn) => (
+          <p key={mn.id} className="text-[11px] font-mono text-muted-foreground">
+            {mn.nome} · {mn.codigo}{mn.rota ? ` · ${mn.rota}` : ""}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ModuleAccessPanel({ podeGerenciar, modulos, menus, onAbrirNovos }: { podeGerenciar: boolean; modulos: Modulo[]; menus: Menu[]; onAbrirNovos: () => void }) {
   const [selectedModuloId, setSelectedModuloId] = useState<string>("");
   const [selectedMenuCodigo, setSelectedMenuCodigo] = useState<string | null>(null);
 
@@ -977,12 +1054,16 @@ function ModuleAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: b
   // não é liberável (`can_access` e `list_accessible_menus` exigem
   // `ativo = true`), então marcar alguém nele grava a permissão, diz que
   // salvou e volta sozinho no refetch. 21 dos 192 menus estão desativados.
-  const menusDoModulo = menus.filter((mn) => mn.modulo_id === selectedModuloId && mn.ativo);
+  // Tela nova aguardando liberação (SIS-2026-0931) fica fora pelo mesmo
+  // motivo, e aparece no bloco TelasAguardandoLiberacao.
+  const menusDoModulo = menus.filter((mn) => mn.modulo_id === selectedModuloId && mn.ativo && !menuPendente(mn));
+  const menusPendentesDoModulo = menus.filter((mn) => mn.modulo_id === selectedModuloId && mn.ativo && menuPendente(mn));
 
   // Módulo-folha (sem submenus): ele mesmo é o menu_codigo a marcar pessoas.
+  // Módulo cujas telas estão todas aguardando liberação NÃO é folha.
   useEffect(() => {
     if (!moduloSelecionado) { setSelectedMenuCodigo(null); return; }
-    setSelectedMenuCodigo(menusDoModulo.length === 0 ? moduloSelecionado.codigo : null);
+    setSelectedMenuCodigo(menusDoModulo.length === 0 && menusPendentesDoModulo.length === 0 ? moduloSelecionado.codigo : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModuloId]);
 
@@ -1038,6 +1119,10 @@ function ModuleAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: b
             );
           })}
         </div>
+      )}
+
+      {selectedModuloId && menusPendentesDoModulo.length > 0 && (
+        <TelasAguardandoLiberacao telas={menusPendentesDoModulo} onAbrirNovos={onAbrirNovos} />
       )}
 
       {selectedModuloId && menusDoModulo.length === 0 && selectedMenuCodigo && (

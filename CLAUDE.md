@@ -33,6 +33,14 @@ Deny-by-default é o padrão atual e definitivo (`ACESSO_ABERTO_SEM_PERMISSOES =
 em `src/lib/acesso.ts`) — foi `true` só durante uma janela curta em julho/2026
 enquanto o backend de permissões era construído.
 
+**Tela nova nasce PENDENTE** (SIS-2026-0931, desde 17/11/2026): linha nova em
+`app_menu` fica bloqueada para todos — inclusive Administrador Geral e perfil do
+módulo — até ser liberada em Módulos & Menus › Novos Módulos
+(`?tab=modulos&visao=novos`). Liberar exige a permissão própria
+`administracao_novos_modulos` (nasceu só com o Iury e o Eduardo; só quem a tem
+a concede). O seed na migration vira "acesso preparado" e não libera nada
+sozinho. Detalhe na J2 do `.github/REGRAS-PR.md`.
+
 ## Convenções de banco (ver `.claude/skills/backend-supabase/SKILL.md` para o detalhe)
 
 - Tabelas de **domínio/negócio**: `"NOME_MAIUSCULO"` citado (ex. `"CHAMADO_SISTEMA"`).

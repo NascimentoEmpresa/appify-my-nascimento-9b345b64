@@ -351,13 +351,13 @@ jobs:
           | Para conferir | Leia |
           |---|---|
           | J1.A — quais ações o toggle concede | `src/pages/admin/tabs/ModulosMenusTab.tsx`, constante `ACOES_DO_TOGGLE_PADRAO` |
-          | J1.B — ordem de resolução da permissão | `20260717200003_rewrite_gate_functions_perfil_acesso.sql`, função `has_screen_access` |
+          | J1.B — ordem de resolução da permissão | `20260717200003_rewrite_gate_functions_perfil_acesso.sql`, função `has_screen_access` (definição atual em `20261118093100_sis_2026_0931_novos_modulos_liberacao.sql`) |
           | J1.C — menu inativo derruba `can_access` | mesma migration, função `can_access` |
           | J1.D — colisão de `menu_codigo` | `20260730000001_fix_menu_codigo_colisoes.sql` |
           | J1.E — filtro de empresa | `20260901000001_suprimentos_sem_filtro_de_empresa.sql` |
           | J1.F — gate no front | `src/components/auth/AcessoGate.tsx`, `src/components/auth/RouteGuard.tsx`, `src/context/PermissoesContext.tsx` |
           | J1.G — o teste do usuário sem perfil | `contexto-da-pr.txt` |
-          | J2 — menu novo nasce aberto | `src/lib/acesso.ts`, `src/hooks/useAccessibleMenus.ts` |
+          | J2 — menu novo nasce pendente (Novos Módulos) | `20261118093100_sis_2026_0931_novos_modulos_liberacao.sql`, `src/lib/novosModulos.ts` |
 
           Para saber se um `menu_codigo` já existe, prefira um Grep único por
           esse código em `supabase/migrations/` a abrir vários arquivos.
