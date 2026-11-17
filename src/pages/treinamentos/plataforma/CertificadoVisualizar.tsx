@@ -25,9 +25,9 @@ export default function CertificadoVisualizar() {
     queryKey: ["trn-certificado", id],
     enabled: !!id,
     queryFn: async () => {
-      const { data: c, error } = await sb.from("TRN_CERTIFICADO").select("*, aluno:TRN_ALUNO(nome, documento), curso:TRN_CURSO(nome, carga_horaria_min)").eq("id", id).single();
+      const { data: c, error } = await sb.from("TRN_CERTIFICADO").select("*, aluno:TRN_ALUNO(nome, documento, empregado_id), curso:TRN_CURSO(nome, carga_horaria_min)").eq("id", id).single();
       if (error) throw error;
-      const cert = c as Certificado & { aluno: { nome: string; documento: string | null }; curso: { nome: string; carga_horaria_min: number | null } };
+      const cert = c as Certificado & { aluno: { nome: string; documento: string | null; empregado_id: number | null }; curso: { nome: string; carga_horaria_min: number | null } };
       const [{ data: modelo }, { data: mods }, assinatura] = await Promise.all([
         cert.modelo_id ? sb.from("TRN_CERTIFICADO_MODELO").select("*").eq("id", cert.modelo_id).maybeSingle() : Promise.resolve({ data: null }),
         sb.from("TRN_MODULO").select("nome, posicao, TRN_AULA(nome, posicao)").eq("curso_id", cert.curso_id).order("posicao"),
@@ -47,7 +47,13 @@ export default function CertificadoVisualizar() {
     cargaHorariaMin: data.cert.carga_horaria_min ?? data.cert.curso.carga_horaria_min, codigo: data.cert.codigo_validacao,
     modulos: data.modulos.map((m) => ({ nome: m.nome, aulas: (m.TRN_AULA ?? []).sort((a: any, b: any) => a.posicao - b.posicao).map((a: any) => a.nome) })),
     assinatura: data.assinatura,
+    assinaturaAluno: data.cert.assinatura_aluno ?? null,
+    empresa: data.cert.empresa ?? null,
   };
+  // 13/11/2026 (mig 20261115000200): o certificado só sai com a assinatura do
+  // colaborador, que ele faz no Portal do Colaborador. Aluno sem vínculo com
+  // EMPREGADOS não tem portal para assinar — esse imprime com a linha em branco.
+  const aguardandoAluno = !dados.assinaturaAluno && data.cert.aluno.empregado_id != null;
 
   return (
     <div className="trn mx-auto max-w-5xl">
@@ -55,8 +61,13 @@ export default function CertificadoVisualizar() {
       <style>{`@media print { body * { visibility: hidden } .trn-cert, .trn-cert * { visibility: visible } .trn-cert { position: fixed; inset: 0; width: 100vw; height: 100vh; border: none; border-radius: 0; page-break-after: always } }`}</style>
       <div className="mb-3 flex items-center justify-between print:hidden">
         <div className="text-sm text-slate-600">Certificado de <b>{dados.aluno}</b> · {dados.curso} · código <span className="font-mono">{dados.codigo}</span></div>
-        <Button onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" /> Imprimir / salvar PDF</Button>
+        <Button disabled={aguardandoAluno} onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" /> Imprimir / salvar PDF</Button>
       </div>
+      {aguardandoAluno && (
+        <Card className="mb-3 border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
+          Aguardando a assinatura do colaborador. Ele assina no Portal do Colaborador, em Treinamentos › {dados.curso} › Certificado — depois disso o certificado sai com as duas assinaturas.
+        </Card>
+      )}
       <div className="space-y-4">
         <CertificadoFrente modelo={data.modelo} dados={dados} />
         {data.modelo.frente_verso && <CertificadoVerso modelo={data.modelo} dados={dados} />}
