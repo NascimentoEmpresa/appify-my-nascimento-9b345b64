@@ -36,12 +36,16 @@ import {
   type Chamado, type Evento, type AvaliacaoChamado, type Anexo,
   CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
 } from "./types";
+import { listaImpactados, rotuloModuloImpactado } from "./impactados";
+import { PosicaoModuloSelect } from "./impacto/ModulosImpactadosSelect";
+import { separarModulos } from "@/lib/chamados/impactoSistemico";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
 import { ChamadosVinculados } from "./ChamadosVinculados";
 import { CardReaberturaChamado, CardTransferenciaChamado } from "./ReaberturaTransferenciaChamado";
 import { CardAcoesGestaoChamado } from "./AcoesGestaoChamado";
 import { podeDecidir } from "@/lib/chamados/reabertura";
+import { useIndiceDasTelas } from "./impacto/catalogoTelas";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
 const DESCRICAO_LONGA_CHARS = 700;
@@ -83,6 +87,8 @@ function TarefaRow({ c, indice, podeArrastar, atual }: { c: Chamado; indice: num
 }
 
 export default function CoordenarChamado() {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const { id } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -452,7 +458,10 @@ export default function CoordenarChamado() {
   const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
   const infos: Array<[string, React.ReactNode]> = [
     ["Tipo de solicitação", labelDe(TIPOS, chamado.tipo_solicitacao)],
-    ["Módulo / Sistema", moduloLabel(chamado)],
+    // SIS-2026-0910: posição (módulo diretamente ajustado) × demais impactados.
+    ["Módulo diretamente ajustado", moduloLabel(chamado)],
+    ["Demais módulos impactados", listaImpactados(separarModulos(chamado.modulos_impactados, chamado.modulo_sistema).demais, rotuloModuloImpactado)],
+    ["Setores impactados", listaImpactados(chamado.setores_impactados)],
     ["Ambiente", labelDe(AMBIENTES, chamado.ambiente)],
     ["Impacto no trabalho", labelDe(IMPACTOS, chamado.impacto_trabalho)],
     ["Urgência informada", labelDe(URGENCIAS, chamado.urgencia)],
@@ -529,13 +538,9 @@ export default function CoordenarChamado() {
         <TooltipProvider delayDuration={150}>
         <div className="grid gap-3 border-b border-border px-5 py-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <div className="space-y-1">
-            <p className="text-xs font-medium">Módulo / Sistema</p>
-            <Select value={modulo} onValueChange={setModulo} disabled={!canCoordenar}>
-              <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                {MODULOS_ERP.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <p className="text-xs font-medium" title="Posição do novo módulo ou módulo diretamente ajustado">Módulo ajustado (posição)</p>
+            {/* SIS-2026-0921: mesma árvore Setor → telas da abertura. */}
+            <PosicaoModuloSelect value={modulo} onChange={setModulo} disabled={!canCoordenar} className="text-xs" />
           </div>
           <div className="space-y-1">
             <p className="text-xs font-medium">Categoria</p>
