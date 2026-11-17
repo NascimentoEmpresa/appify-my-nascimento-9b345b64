@@ -52,7 +52,8 @@ function proximoMes(anoMes: string): string {
 // [de, ate): datas "YYYY-MM-DD", fim exclusivo.
 // SIS-2026-0642: `semContrato` busca as despesas administrativas (saídas sem contrato) em vez dos custos de contrato.
 // SIS-2026-0721: `base` escolhe a coluna do período (competência ou data de pagamento) e já deixa em cada linha o mês em que ela conta.
-async function buscarView(view: string, ordem: string[], de: string, ate: string, semContrato = false, base: BaseDespesa = "competencia", tipo: "saida" | "entrada" = "saida"): Promise<LinhaFluxoCusto[]> {
+// SIS-2026-0908: `contratoIds` busca só os lançamentos desses contratos (a Conciliação de Estoque lê os contratos de estoque).
+async function buscarView(view: string, ordem: string[], de: string, ate: string, semContrato = false, base: BaseDespesa = "competencia", tipo: "saida" | "entrada" = "saida", contratoIds?: string[]): Promise<LinhaFluxoCusto[]> {
   const linhas: LinhaFluxoCusto[] = [];
   for (let pagina = 0; ; pagina++) {
     let q = (supabase as any)
@@ -64,7 +65,7 @@ async function buscarView(view: string, ordem: string[], de: string, ate: string
       .or(base === "pagamento"
         ? `and(data_pagamento.gte.${de},data_pagamento.lt.${ate})`
         : `and(competencia.gte.${de},competencia.lt.${ate}),and(competencia.is.null,data_pagamento.gte.${de},data_pagamento.lt.${ate})`);
-    q = semContrato ? q.is("contrato_id", null) : q.not("contrato_id", "is", null);
+    q = contratoIds ? q.in("contrato_id", contratoIds) : semContrato ? q.is("contrato_id", null) : q.not("contrato_id", "is", null);
     for (const col of ordem) q = q.order(col, { ascending: true });
     const { data, error } = await q.range(pagina * TAMANHO_PAGINA, (pagina + 1) * TAMANHO_PAGINA - 1);
     if (error) throw error;
@@ -145,3 +146,22 @@ export function useEntradasAdmAno(ano: number, base: BaseDespesa = "competencia"
     },
   });
 }
+
+// SIS-2026-0908: saídas do período lançadas nos contratos indicados (os contratos de estoque, na Conciliação de Estoque). Mesmas seis fontes e mesma
+// base (competência ou pagamento) do Fechamento, para a compra de estoque aqui ser o mesmo número que o Fechamento põe em Outras Despesas.
+export async function buscarSaidasDosContratos(contratoIds: string[], de: string, ate: string, base: BaseDespesa = "competencia"): Promise<LinhaFluxoCusto[]> {
+  if (contratoIds.length === 0) return [];
+  const partes = await Promise.all(
+    FONTES.map((f) =>
+      buscarView(f.view, f.ordem, de, ate, false, base, "saida", contratoIds)
+        .catch((e: { code?: string }) => (e?.code === "42703" && f.view.includes("importado") ? buscarView(f.view, ["despesa_id"], de, ate, false, base, "saida", contratoIds) : Promise.reject(e)))
+        .catch((e: { code?: string }) => {
+          if (e?.code === "PGRST205" || e?.code === "42P01") return [] as LinhaFluxoCusto[];
+          throw e;
+        })
+    )
+  );
+  return partes.flat();
+}
+
+export { proximoMes };

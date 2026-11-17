@@ -25,6 +25,8 @@ interface SearchableMultiSelectProps {
   className?: string;
   /** Mostra no máximo N badges e resume o resto em "+K" — mantém a altura em grades de filtro. */
   maxBadges?: number;
+  /** Classe extra dos badges selecionados (ex.: chips laranja do impacto sistêmico). */
+  badgeClassName?: string;
 }
 
 export function SearchableMultiSelect({
@@ -37,6 +39,7 @@ export function SearchableMultiSelect({
   disabled,
   className,
   maxBadges,
+  badgeClassName,
 }: SearchableMultiSelectProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -70,7 +73,7 @@ export function SearchableMultiSelect({
                 <span className="text-muted-foreground">{placeholder}</span>
               ) : (
                 visibleOptions.map((o) => (
-                  <Badge key={o.value} variant="secondary" className="text-xs gap-1 pr-1">
+                  <Badge key={o.value} variant="secondary" className={cn("text-xs gap-1 pr-1", badgeClassName)}>
                     {o.label}
                     {!disabled && (
                       <button

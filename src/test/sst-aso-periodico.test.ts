@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  calcularVencimento, contarPainel, diasParaVencer, nomeContrato, ordenar, pendenciasParaRealizar, periodicidadeMeses,
-  somarMeses, statusPeriodico, type ItemPeriodico,
+  calcularVencimento, contarPainel, diasParaVencer, erroConfig, erroMesesContrato, nomeContrato, ordenar,
+  pendenciasParaRealizar, periodicidadeMeses, rotuloPeriodicidade, somarMeses, statusPeriodico, type ItemPeriodico,
 } from "@/lib/sst/asoPeriodico";
 
 const HOJE = "2026-11-14";
@@ -11,15 +11,46 @@ const item = (x: Partial<ItemPeriodico> = {}): ItemPeriodico => ({
   vencimento: "2027-06-01", status: "Em dia", ciclo: null, ultimo_periodico: null, ...x,
 });
 
-describe("periodicidade por contrato", () => {
-  it("UFFS renova a cada 1 ano", () => {
-    expect(periodicidadeMeses("UFFS CHAPECO - 041/2021")).toBe(12);
-    expect(periodicidadeMeses(null, "Nascimento - uffs erechim")).toBe(12);
+describe("periodicidade por contrato (configuração, SIS-2026-0918)", () => {
+  const config = [
+    { contrato_id: "uffs", periodicidade_meses: 12 },  // semente da migration
+    { contrato_id: "ufrgs", periodicidade_meses: null }, // listado, sem periodicidade própria
+    { contrato_id: "semestral", periodicidade_meses: 6 },
+  ];
+  it("contrato configurado usa a dele", () => {
+    expect(periodicidadeMeses("uffs", config)).toBe(12);
+    expect(periodicidadeMeses("semestral", config)).toBe(6);
   });
-  it("demais contratos, a cada 2 anos", () => {
-    expect(periodicidadeMeses("UFRGS - LIMPEZA - 020/2022")).toBe(24);
-    expect(periodicidadeMeses(null, null)).toBe(24);
-    expect(periodicidadeMeses("BUFFSUL")).toBe(24); // só a sigla inteira conta
+  it("sem configuração, sem contrato ou contrato desconhecido: o padrão (2 anos)", () => {
+    expect(periodicidadeMeses("ufrgs", config)).toBe(24);
+    expect(periodicidadeMeses("outro", config)).toBe(24);
+    expect(periodicidadeMeses(null, config)).toBe(24);
+    expect(periodicidadeMeses(undefined, [])).toBe(24);
+  });
+  it("o padrão também é configurável", () => {
+    expect(periodicidadeMeses("ufrgs", config, 36)).toBe(36);
+    expect(periodicidadeMeses("uffs", config, 36)).toBe(12);
+  });
+  it("não procura UFFS no nome: o nome não decide nada", () => {
+    expect(periodicidadeMeses("UFFS - 041/2021", [])).toBe(24);
+  });
+  it("rótulo", () => {
+    expect(rotuloPeriodicidade(12)).toBe("1 ano");
+    expect(rotuloPeriodicidade(24)).toBe("2 anos");
+    expect(rotuloPeriodicidade(6)).toBe("6 meses");
+    expect(rotuloPeriodicidade(18)).toBe("18 meses");
+    expect(rotuloPeriodicidade(1)).toBe("1 mês");
+  });
+  it("validação da configuração (faixas dos CHECKs do banco)", () => {
+    expect(erroConfig(60, 24)).toBeNull();
+    expect(erroConfig(0, 24)).toMatch(/Dias de aviso/);
+    expect(erroConfig(366, 24)).toMatch(/Dias de aviso/);
+    expect(erroConfig(30.5, 24)).toMatch(/Dias de aviso/);
+    expect(erroConfig(60, 0)).toMatch(/Periodicidade padrão/);
+    expect(erroConfig(60, 61)).toMatch(/Periodicidade padrão/);
+    expect(erroMesesContrato(12)).toBeNull();
+    expect(erroMesesContrato(0)).not.toBeNull();
+    expect(erroMesesContrato(Number.NaN)).not.toBeNull();
   });
 });
 
@@ -59,6 +90,20 @@ describe("status", () => {
     expect(st({ ultimo_tipo: "periodico", vencimento: "2026-12-01" })).toBe("Próximo do vencimento");
   });
   it("sem nenhuma data", () => expect(st({ vencimento: null, ultimo_aso: null })).toBe("Sem ASO"));
+  it("janela de aviso configurável", () => {
+    const v = item({ vencimento: "2027-01-01" }); // 48 dias depois de HOJE
+    expect(statusPeriodico(v, HOJE, 30)).toBe("Em dia");
+    expect(statusPeriodico(v, HOJE, 48)).toBe("Próximo do vencimento");
+    expect(statusPeriodico(v, HOJE, 90)).toBe("Próximo do vencimento");
+    expect(statusPeriodico(item({ vencimento: "2026-11-13" }), HOJE, 1)).toBe("Vencido");
+  });
+  it("UFFS (12 meses) e demais (24) a partir do mesmo último ASO", () => {
+    const ultimo = "2025-12-01";
+    const uffs = item({ ultimo_aso: ultimo, vencimento: calcularVencimento(ultimo, 12) });
+    const outro = item({ ultimo_aso: ultimo, vencimento: calcularVencimento(ultimo, 24) });
+    expect(statusPeriodico(uffs, HOJE)).toBe("Próximo do vencimento");
+    expect(statusPeriodico(outro, HOJE)).toBe("Em dia");
+  });
 });
 
 describe("painel", () => {

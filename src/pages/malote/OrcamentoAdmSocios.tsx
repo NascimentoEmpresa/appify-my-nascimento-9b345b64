@@ -1,4 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { TituloComFormula } from "@/pages/controladoria/faturamento/Rentabilidade";
+import { AssinaturaRegra } from "./AssinaturaRegra";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, ArrowUpDown, Info } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -24,7 +27,7 @@ import { ehContratoAdministrativo } from "@/pages/controladoria/faturamento/regr
 import { fmtMoney } from "./orcamentoUtils";
 import { SeletorContratos } from "./orcamento-adm-socios/SeletorContratos";
 import {
-  CONFIG_VAZIA, agruparPorSetor, aplicarEmGrupo, configVazia, equipesDasPessoas, filtrarPessoas, ordenarPessoas, pessoaDaEquipe, saldoDaClassificacao, setorDaPessoa,
+  CONFIG_VAZIA, agruparPorSetor, composicaoDaClassificacao, aplicarEmGrupo, configVazia, equipesDasPessoas, filtrarPessoas, ordenarPessoas, pessoaDaEquipe, saldoDaClassificacao, setorDaPessoa,
   type ChaveOrdem, type ConfigPessoa, type DirecaoOrdem, type PessoaOrcamento, type TipoOrcamento,
 } from "./orcamento-adm-socios/regras";
 
@@ -111,6 +114,29 @@ export default function OrcamentoAdmSocios() {
   }, [doTipo, configs, grupos, utilizado, anoMes]); // eslint-disable-line react-hooks/exhaustive-deps
   const saldoDe = (c: ConfigPessoa): number | null =>
     c.classificacaoId ? saldos.get(`${c.classificacaoId}|${[...c.contratoIds].sort().join(",")}`) ?? null : null;
+
+  // SIS-2026-0828: resumo de como o orçamento da classificação foi formado (executável da planilha × faturado do mês), contrato a contrato.
+  // Lista as classificações que as pessoas desta aba usam; a escolhida (ou a primeira) abre o resumo.
+  const [resumoId, setResumoId] = useState<string | null>(null);
+  const classificacoesEmUso = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of doTipo) { const c = configDe(p.userId); if (c.classificacaoId) ids.add(c.classificacaoId); }
+    return [...ids];
+  }, [doTipo, configs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const resumoClassificacao = resumoId && classificacoesEmUso.includes(resumoId) ? resumoId : classificacoesEmUso[0] ?? null;
+  const contratosDoResumo = useMemo(() => {
+    const u = new Set<string>();
+    for (const p of doTipo) { const c = configDe(p.userId); if (c.classificacaoId === resumoClassificacao) c.contratoIds.forEach((id) => u.add(id)); }
+    return [...u];
+  }, [doTipo, configs, resumoClassificacao]); // eslint-disable-line react-hooks/exhaustive-deps
+  const composicao = useMemo(
+    () => composicaoDaClassificacao(grupos, utilizado, resumoClassificacao, anoMes, contratosDoResumo),
+    [grupos, utilizado, resumoClassificacao, anoMes, contratosDoResumo],
+  );
+  const totaisComposicao = useMemo(() => composicao.reduce(
+    (t, l) => ({ executavel: t.executavel + l.executavel, executado: t.executado + l.executado, utilizado: t.utilizado + l.utilizado, saldo: t.saldo + l.saldo }),
+    { executavel: 0, executado: 0, utilizado: 0, saldo: 0 },
+  ), [composicao]);
 
   const nomeClassificacao = useMemo(() => new Map(opcoesClassificacao.map((o) => [o.value, o.label])), [opcoesClassificacao]);
   const visiveis = useMemo(
@@ -393,6 +419,75 @@ export default function OrcamentoAdmSocios() {
               </TableBody>
             </Table>
           </div>
+
+          {classificacoesEmUso.length > 0 && (
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold"><TituloComFormula alinhar="left" titulo="Como o orçamento foi formado" formula={<><span className="block">Abre o saldo da classificação escolhida, contrato a contrato, para as pessoas da aba. A soma da coluna Saldo é o "Saldo da classificação" da lista.</span><span className="block">Saldo de cada contrato = executado − utilizado no Malote no mês (nunca negativo).</span><AssinaturaRegra chamado="SIS-2026-0828" /></>} /></h3>
+                  <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+                    O orçamento de cada contrato é o que ele <b>faturou no mês</b> (executado) a partir de 70% do executável da Planilha de Custo; antes disso (nota parcial ou ainda não emitida)
+                    vale o executável (<b>Previsto</b>), e mês passado sem nota fica em zero. A rubrica da classificação mantém a proporção da planilha. Só entram os contratos escolhidos.
+                  </p>
+                </div>
+                <div className="w-64">
+                  <Label className="text-xs">Classificação</Label>
+                  <SearchableSelect
+                    value={resumoClassificacao}
+                    onChange={setResumoId}
+                    options={classificacoesEmUso.map((id) => ({ value: id, label: nomeClassificacao.get(id) ?? id }))}
+                    placeholder="Selecione"
+                    searchPlaceholder="Buscar classificação..."
+                    className="w-full"
+                    triggerClassName="h-9 bg-background text-xs"
+                  />
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Contrato</TableHead>
+                      <TableHead className="text-right"><TituloComFormula titulo="Executável (planilha)" formula={<span>O que a Planilha de Custo prevê para a classificação neste contrato no mês (referência; não é mais a base do orçamento).</span>} /></TableHead>
+                      <TableHead className="text-right"><TituloComFormula titulo="Executado (faturado no mês)" formula={<><span className="block">Executável da classificação × (faturado do contrato ÷ executável do contrato) quando ele já faturou 70% ou mais; senão, o próprio executável (Previsto). É o orçado. Clique no valor para ver os executados dos contratos.</span><AssinaturaRegra chamado="SIS-2026-0828" /></>} /></TableHead>
+                      <TableHead className="text-right"><TituloComFormula titulo="Utilizado no mês" formula={<span>Despesas do Malote na classificação e no contrato, na competência do mês.</span>} /></TableHead>
+                      <TableHead className="text-right"><TituloComFormula titulo="Saldo" formula={<span>Executado − utilizado, sem ficar negativo (um contrato estourado não consome o saldo de outro).</span>} /></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {composicao.length === 0 && <TableRow><TableCell colSpan={5} className="py-6 text-center text-muted-foreground">Nenhum contrato escolhido tem orçamento nesta classificação no mês.</TableCell></TableRow>}
+                    {composicao.map((l) => (
+                      <TableRow key={l.contratoId}>
+                        <TableCell className="font-medium">
+                          {l.contrato}
+                          <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-normal ${l.fonte === "faturado" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : l.fonte === "previsto" ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>
+                            {l.fonte === "faturado" ? "Faturado" : l.fonte === "previsto" ? "Previsto" : "Sem nota"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">{fmtMoney(l.executavel)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          <Link to={`/app/malote/orcamento-contratos?mes=${anoMes}`} className="font-semibold text-primary underline-offset-2 hover:underline" title="Ver os valores executados dos contratos">{fmtMoney(l.executado)}</Link>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtMoney(l.utilizado)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtMoney(l.saldo)}</TableCell>
+                      </TableRow>
+                    ))}
+                    {composicao.length > 0 && (
+                      <TableRow className="bg-muted/40 font-semibold">
+                        <TableCell>Total</TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">{fmtMoney(totaisComposicao.executavel)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          <Link to={`/app/malote/orcamento-contratos?mes=${anoMes}`} className="text-primary underline-offset-2 hover:underline" title="Ver os valores executados dos contratos">{fmtMoney(totaisComposicao.executado)}</Link>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtMoney(totaisComposicao.utilizado)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtMoney(totaisComposicao.saldo)}</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
 
           <p role="status" aria-live="polite" className="min-h-[1.25rem] text-xs text-emerald-800">{status}</p>
           <p className="text-[11px] text-muted-foreground">Saldo da classificação é um valor compartilhado: não representa um saldo exclusivo da pessoa.</p>

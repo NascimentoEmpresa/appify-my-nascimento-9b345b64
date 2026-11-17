@@ -35,6 +35,7 @@ import {
 } from "@/pages/chamados/types";
 import { BotaoStatusChamado, SeloEtapaValidacao, useInvalidarValidacao } from "@/pages/chamados/StatusValidacao";
 import type { EtapaValidacao, ValidacaoChamado } from "@/pages/chamados/validacaoPresidencia";
+import { useIndiceDasTelas } from "@/pages/chamados/impacto/catalogoTelas";
 
 interface LinhaPresidencia {
   chamado_id: string;
@@ -99,6 +100,8 @@ function paraValidacao(l: LinhaPresidencia): ValidacaoChamado {
 }
 
 export default function ChamadosDesenvolvimento() {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const { toast } = useToast();
   const invalidar = useInvalidarValidacao();
   const { data: access, isLoading: carregandoAcesso } = useAccessibleMenus("visualizar");

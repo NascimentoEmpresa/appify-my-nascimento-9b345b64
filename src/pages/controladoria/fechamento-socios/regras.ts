@@ -7,10 +7,14 @@ import { INTEGRANTE_EMPRESA_ID } from "@/lib/integranteEmpresa";
 //     Investimentos e de Obras Adm: no Resultado Gerencial Líquido do Fechamento da Empresa elas já saíram, e aqui elas são as retiradas de cada sócio
 //     (descontar de novo seria descontar duas vezes).
 //   Integrante "Empresa" (id −1) dentro de Investimentos e Obras Adm: é gasto da própria empresa, consome o lucro ANTES da divisão entre os sócios.
-//   Lucro a Distribuir = Resultado antes das retiradas − o que a Empresa consumiu em Investimentos/Obras Adm.
+//   SIS-2026-0925: Reserva de Investimento (%), por competência, sobre o Resultado do Período (só quando positivo): fica na empresa e sai ANTES da divisão.
+//   Lucro a Distribuir (Total a Distribuir) = Resultado do Período − Reserva. É a base da divisão entre os sócios (antes da SIS-2026-0925 era o resultado
+//   menos o consumo da Empresa; o consumo deixou de reduzir a base e passou a ser mostrado à parte, depois da divisão).
 //   Cada sócio recebe o seu percentual do Lucro a Distribuir e, do que recebe, saem as RETIRADAS ANTECIPADAS dele:
 //     a coluna dele (despesas do contrato ADMINISTRATIVO <sócio>) + o que Investimentos e Obras Adm têm com ELE como integrante (não por centro de custo).
-//   Saldo a Retirar (complemento) = parte do lucro − retiradas antecipadas.
+//   Saldo a Retirar (complemento) do sócio = parte do lucro − retiradas antecipadas.
+//   Saldo final do Fechamento = Lucro a Distribuir − Consumo da Empresa − Retiradas antecipadas (com reserva 0% é o Resultado Gerencial após Ajustes do
+//   Fechamento da Empresa, que já tira as colunas dos sócios, Investimentos e Obras Adm).
 //   Linha de Investimentos/Obras Adm sem integrante (ou com um colaborador que não é sócio) não pertence a nenhum sócio: fica com a Empresa (é o que o
 //   Fechamento da Empresa já faz hoje, tirando do resultado), mas aparece à parte como "sem integrante" para ser corrigida.
 //   Mês negativo: o prejuízo é abatido — o Lucro a Distribuir do mês pode ficar negativo e os totais do ano somam tudo (um mês compensa o outro).
@@ -66,13 +70,26 @@ export interface ResultadoMes {
   /** Tributos sobre o Resultado (IRPJ e CSLL) do mês */
   tributos: number;
   resultadoAntesRetiradas: number;
+  /** SIS-2026-0925: Reserva de Investimento do mês (percentual informado e o valor que fica na empresa) */
+  reservaPercentual: number;
+  reserva: number;
   consumoEmpresa: { investimentos: number; obras: number; semIntegrante: number; total: number };
+  /** Total a Distribuir aos sócios = Resultado do Período − Reserva */
   lucroDistribuir: number;
   somaPercentual: number;
   percentualOk: boolean;
   socios: SocioNoMes[];
   totalRetiradas: number;
+  /** soma do saldo a retirar de cada sócio (parte do lucro − retiradas dele) */
   totalSaldo: number;
+  /** Lucro a Distribuir − Consumo da Empresa − Retiradas: o saldo final do fechamento */
+  saldoFinal: number;
+}
+
+/** Reserva de Investimento: percentual sobre o resultado; mês sem resultado positivo não reserva nada (o prejuízo não vira reserva negativa). */
+export function calcularReserva(resultado: number, percentual: number): number {
+  const p = Math.min(Math.max(Number(percentual) || 0, 0), 100);
+  return resultado > 0 ? r2((resultado * p) / 100) : 0;
 }
 
 /** Divide `total` pelos percentuais em centavos, sem sobra nem falta: o que sobra dos arredondamentos vai para quem tem a maior fração. */
@@ -108,6 +125,7 @@ export function calcularMes(
   socios: SocioConfig[],
   percentuais: Map<string, number>, // socioId → % do mês (sem entrada vale o padrão)
   linhas: LinhaIntegrante[],
+  reservaPercentual = 0, // SIS-2026-0925: Reserva de Investimento (%) do mês; sem registro vale 0
 ): ResultadoMes {
   const ativos = socios.filter((s) => s.ativo);
   const consumo = { investimentos: 0, obras: 0, semIntegrante: 0, total: 0 };
@@ -131,7 +149,8 @@ export function calcularMes(
   consumo.total = r2(consumo.investimentos + consumo.obras + consumo.semIntegrante);
 
   const resultadoAntesRetiradas = r2(entrada.resultadoAposOutrasReceitas - entrada.tributos);
-  const lucroDistribuir = r2(resultadoAntesRetiradas - consumo.total);
+  const reserva = calcularReserva(resultadoAntesRetiradas, reservaPercentual);
+  const lucroDistribuir = r2(resultadoAntesRetiradas - reserva);
   const pcts = ativos.map((s) => ({ id: s.id, percentual: percentuais.get(s.id) ?? s.percentualPadrao }));
   const parte = distribuirPorPercentual(lucroDistribuir, pcts);
   const somaPercentual = r2(pcts.reduce((s, p) => s + p.percentual, 0));
@@ -147,10 +166,13 @@ export function calcularMes(
     };
   });
   return {
-    mes: entrada.mes, resultadoAposOutrasReceitas: r2(entrada.resultadoAposOutrasReceitas), tributos: r2(entrada.tributos), resultadoAntesRetiradas, consumoEmpresa: consumo, lucroDistribuir, somaPercentual, percentualOk: Math.abs(somaPercentual - 100) < 0.005,
+    mes: entrada.mes, resultadoAposOutrasReceitas: r2(entrada.resultadoAposOutrasReceitas), tributos: r2(entrada.tributos), resultadoAntesRetiradas,
+    reservaPercentual: Math.min(Math.max(Number(reservaPercentual) || 0, 0), 100), reserva, consumoEmpresa: consumo, lucroDistribuir, somaPercentual,
+    percentualOk: Math.abs(somaPercentual - 100) < 0.005,
     socios: linhasSocios,
     totalRetiradas: r2(linhasSocios.reduce((s, x) => s + x.retiradas, 0)),
     totalSaldo: r2(linhasSocios.reduce((s, x) => s + x.saldo, 0)),
+    saldoFinal: r2(lucroDistribuir - consumo.total - linhasSocios.reduce((s, x) => s + x.retiradas, 0)),
   };
 }
 
@@ -158,12 +180,15 @@ export interface TotalPeriodo {
   resultadoAposOutrasReceitas: number;
   tributos: number;
   resultadoAntesRetiradas: number;
+  /** SIS-2026-0925: soma da Reserva de Investimento dos meses (cada mês com o seu percentual) */
+  reserva: number;
   consumoEmpresa: number;
   /** o consumo da Empresa aberto: Investimentos e Obras Adm com integrante "Empresa" e o que está sem integrante */
   consumoDetalhe: { investimentos: number; obras: number; semIntegrante: number };
   lucroDistribuir: number;
   totalRetiradas: number;
   totalSaldo: number;
+  saldoFinal: number;
   socios: {
     socioId: string; nome: string; valorLucro: number; retiradas: number; saldo: number; percentualEfetivo: number;
     /** de onde vêm as retiradas: a coluna do contrato ADMINISTRATIVO <sócio> e Investimentos/Obras Adm em que ele é o integrante */
@@ -196,11 +221,13 @@ export function somarMeses(meses: ResultadoMes[]): TotalPeriodo {
     resultadoAposOutrasReceitas: soma((m) => m.resultadoAposOutrasReceitas),
     tributos: soma((m) => m.tributos),
     resultadoAntesRetiradas: soma((m) => m.resultadoAntesRetiradas),
+    reserva: soma((m) => m.reserva),
     consumoEmpresa: soma((m) => m.consumoEmpresa.total),
     consumoDetalhe: { investimentos: soma((m) => m.consumoEmpresa.investimentos), obras: soma((m) => m.consumoEmpresa.obras), semIntegrante: soma((m) => m.consumoEmpresa.semIntegrante) },
     lucroDistribuir: lucro,
     totalRetiradas: r2(socios.reduce((s, x) => s + x.retiradas, 0)),
     totalSaldo: r2(socios.reduce((s, x) => s + x.saldo, 0)),
+    saldoFinal: soma((m) => m.saldoFinal),
     socios,
   };
 }
@@ -222,6 +249,8 @@ export interface LinhaHistorico {
   mes: string;
   status: StatusCompetencia;
   resultadoAntesRetiradas: number;
+  /** Reserva de Investimento do mês (SIS-2026-0925) */
+  reserva: number;
   lucroDistribuir: number;
   retiradas: number;
   complementoPago: number;
@@ -234,19 +263,19 @@ export const totalComplementoPago = (s: SocioFechado[]) => r2(s.reduce((t, x) =>
 /** Mês fechado vale o que foi gravado no fechamento; mês aberto, o que o cálculo de hoje mostra (complemento ainda não pago). */
 export function linhaDoHistorico(
   calculado: ResultadoMes,
-  fechamento: { status: StatusCompetencia; dataFechamento: string | null; socios: SocioFechado[]; resultadoAntesRetiradas: number; lucroDistribuir: number } | undefined,
+  fechamento: { status: StatusCompetencia; dataFechamento: string | null; socios: SocioFechado[]; resultadoAntesRetiradas: number; lucroDistribuir: number; reserva?: number } | undefined,
 ): LinhaHistorico {
   if (fechamento && fechamento.status === "fechado") {
     const retiradas = r2(fechamento.socios.reduce((s, x) => s + x.retiradas, 0));
     const saldo = r2(fechamento.socios.reduce((s, x) => s + x.saldo, 0));
     const pago = totalComplementoPago(fechamento.socios);
     return {
-      mes: calculado.mes, status: "fechado", resultadoAntesRetiradas: fechamento.resultadoAntesRetiradas, lucroDistribuir: fechamento.lucroDistribuir, retiradas,
+      mes: calculado.mes, status: "fechado", resultadoAntesRetiradas: fechamento.resultadoAntesRetiradas, reserva: fechamento.reserva ?? 0, lucroDistribuir: fechamento.lucroDistribuir, retiradas,
       complementoPago: pago, saldoRemanescente: r2(saldo - pago), dataFechamento: fechamento.dataFechamento,
     };
   }
   return {
-    mes: calculado.mes, status: "aberto", resultadoAntesRetiradas: calculado.resultadoAntesRetiradas, lucroDistribuir: calculado.lucroDistribuir, retiradas: calculado.totalRetiradas,
+    mes: calculado.mes, status: "aberto", resultadoAntesRetiradas: calculado.resultadoAntesRetiradas, reserva: calculado.reserva, lucroDistribuir: calculado.lucroDistribuir, retiradas: calculado.totalRetiradas,
     complementoPago: 0, saldoRemanescente: calculado.totalSaldo, dataFechamento: null,
   };
 }
@@ -270,7 +299,7 @@ export function pendenciasParaFechar(r: ResultadoMes): string[] {
 /** Mês FECHADO: o resultado vale o que foi gravado (a divisão de retiradas por tipo não é gravada: tudo vai em `retiradaColuna`). */
 export function resultadoDoFechamento(
   mes: string,
-  f: { resultadoAntesRetiradas: number; consumoEmpresa: number; lucroDistribuir: number; socios: SocioFechado[] },
+  f: { resultadoAntesRetiradas: number; consumoEmpresa: number; lucroDistribuir: number; socios: SocioFechado[]; reservaPercentual?: number; reserva?: number },
 ): ResultadoMes {
   const socios: SocioNoMes[] = f.socios.map((s) => ({
     socioId: s.socioId, nome: s.nome, percentual: s.percentual, valorLucro: s.valorLucro, retiradaColuna: s.retiradas, retiradaInvestimentos: 0, retiradaObras: 0,
@@ -279,9 +308,11 @@ export function resultadoDoFechamento(
   const somaPercentual = r2(socios.reduce((t, x) => t + x.percentual, 0));
   return {
     mes, resultadoAposOutrasReceitas: f.resultadoAntesRetiradas, tributos: 0, resultadoAntesRetiradas: f.resultadoAntesRetiradas,
+    reservaPercentual: f.reservaPercentual ?? 0, reserva: f.reserva ?? 0,
     consumoEmpresa: { investimentos: 0, obras: 0, semIntegrante: 0, total: f.consumoEmpresa },
     lucroDistribuir: f.lucroDistribuir, somaPercentual, percentualOk: Math.abs(somaPercentual - 100) < 0.005, socios,
     totalRetiradas: r2(socios.reduce((t, x) => t + x.retiradas, 0)), totalSaldo: r2(socios.reduce((t, x) => t + x.saldo, 0)),
+    saldoFinal: r2(f.lucroDistribuir - f.consumoEmpresa - socios.reduce((t, x) => t + x.retiradas, 0)),
   };
 }
 

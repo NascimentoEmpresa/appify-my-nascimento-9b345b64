@@ -40,10 +40,11 @@ import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValid
 import {
   StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado, conversaChamadoFechada,
+  labelDe, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado, conversaChamadoFechada,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
+import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
 
@@ -269,8 +270,9 @@ export default function ExecutarChamado() {
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {/* 12/11/2026: aberto de uma lista (ex.: Bonificação), setas para o anterior/próximo. */}
-            <NavegacaoListaChamados id={id} />
+            {/* 12/11/2026: aberto de uma lista (ex.: Bonificação), setas para o anterior/próximo.
+                16/11/2026: também pelo Painel do Desenvolvedor/Distribuição e, sem lista, pela fila do responsável. */}
+            <NavegacaoListaChamados chamado={chamado} />
             <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
             <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>
           </div>
@@ -293,7 +295,6 @@ export default function ExecutarChamado() {
               <Campo label="Tipo de solicitação">{labelDe(TIPOS, chamado.tipo_solicitacao)}</Campo>
               <Campo label="Prioridade"><PrioridadeBadge prioridade={chamado.prioridade} /></Campo>
               <Campo label="Ambiente">{labelDe(AMBIENTES, chamado.ambiente)}</Campo>
-              <Campo label="Módulo / Sistema">{moduloLabel(chamado)}</Campo>
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
               <Campo label="Última atualização">{fmtDataHora(chamado.updated_at)}{eventos[0] ? ` · por ${nomeDe(eventos[0].autor_id)}` : ""}</Campo>
@@ -303,6 +304,8 @@ export default function ExecutarChamado() {
               {/* Prazo esperado por quem abriu (mig 20261028001420). */}
               <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
+            {/* SIS-2026-0910: onde mexer × o que testar/homologar. */}
+            <ImpactoSistemicoResumo chamado={chamado} />
           </Card>
 
           {/* CHAMADO REABERTO / pedido de transferência (mig 20261112190000):

@@ -127,7 +127,7 @@ async function processarFilaNfse(supabase, ambiente = process.env) {
   }
   const atualizado=await rpc(supabase,'nfse_registrar_resultado',{_id:s.id,_reserva:s.reserva,_resultado:resultado});
   if(!atualizado) console.warn('[nfse] Reserva expirada; o próximo ciclo reconciliará a solicitação.');
-  return { aguardarConsulta: Boolean(atualizado && (['aguardando','incerta'].includes(resultado.estado) ||
+  return { processado: Boolean(atualizado), aguardarConsulta: Boolean(atualizado && (['aguardando','incerta'].includes(resultado.estado) ||
     (resultado.estado === 'autorizada' && !resultado.pdf_path))) };
 }
 module.exports={ processarFilaNfse, executarSolicitacao, tratarLote, recuperarNota };

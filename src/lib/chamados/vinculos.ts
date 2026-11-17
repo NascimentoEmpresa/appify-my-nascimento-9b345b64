@@ -8,6 +8,7 @@
 //   - Ao abrir chamado novo dá para vincular a um existente.
 // Lógica pura, testada em src/test/chamado-vinculos.test.ts.
 // =====================================================================
+import { incluirPosicao, normalizarLista } from "./impactoSistemico";
 
 export type MotivoReabertura = "nao_atendeu" | "modificacoes";
 
@@ -58,6 +59,9 @@ export interface ChamadoBase {
   modulo_sistema_outro: string | null;
   ambiente: string | null;
   afeta_usuarios: number | null;
+  /** Impacto sistêmico (SIS-2026-0910) — vai junto para a parte nova. */
+  setores_impactados?: string[] | null;
+  modulos_impactados?: string[] | null;
 }
 
 export interface FormularioBaseado {
@@ -75,6 +79,8 @@ export interface FormularioBaseado {
   moduloOutro: string;
   ambiente: string;
   afetaUsuarios: string;
+  setoresImpactados: string[];
+  modulosImpactados: string[];
 }
 
 const TITULO_MAX = 120;
@@ -102,6 +108,8 @@ export function formularioBaseadoEm(c: ChamadoBase, proximaParte: number, hoje: 
     moduloOutro: c.modulo_sistema_outro ?? "",
     ambiente: c.ambiente ?? "producao",
     afetaUsuarios: c.afeta_usuarios != null ? String(c.afeta_usuarios) : "",
+    setoresImpactados: normalizarLista(c.setores_impactados),
+    modulosImpactados: incluirPosicao(c.modulos_impactados, c.modulo_sistema),
   };
 }
 

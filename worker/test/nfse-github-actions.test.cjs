@@ -67,6 +67,80 @@ function ambiente() {
   };
 }
 describe('NFS-e no GitHub Actions', () => {
+  it('envia 100 notas prontas sem uma pausa por nota e consulta os resultados no ciclo seguinte', async () => {
+    const env = {...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0, chamadas=0, emExecucao=0, maximoSimultaneo=0;
+    const notas=Array.from({length:100},(_,id)=>({id,envios:0,consultas:0,consultarApos:Infinity,autorizada:false}));
+    const pausas=[];
+    await executarNoGithub(env,{
+      carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{
+        chamadas++; emExecucao++; maximoSimultaneo=Math.max(maximoSimultaneo,emExecucao);
+        try {
+          await Promise.resolve();
+          const nota=notas.find(n=>n.envios===0||(!n.autorizada&&n.consultarApos<=tempo));
+          if(!nota) return;
+          if(nota.envios===0){nota.envios++;nota.consultarApos=tempo+60_000;}
+          else {nota.consultas++;nota.autorizada=true;}
+          return {processado:true,aguardarConsulta:!nota.autorizada};
+        } finally {emExecucao--;}
+      },
+      aguardar:async ms=>{
+        assert.equal(notas.filter(n=>n.envios===1).length,100);
+        pausas.push(ms);tempo+=ms;
+      },
+    });
+    assert.deepEqual(pausas,[60_000]); assert.equal(chamadas,202); assert.equal(maximoSimultaneo,1);
+    assert.ok(notas.every(n=>n.envios===1&&n.consultas===1&&n.autorizada));
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('a fila real sinaliza trabalho confirmado, inclusive erro de preparação, e reconhece fila vazia', async () => {
+    for(const confirmado of [true,false]) {
+      const nomes=[];
+      const banco={rpc:async(nome,parametros)=>{
+        nomes.push(nome);
+        if(nome==='nfse_reservar_trabalho')return {data:[{id:'nota-sintetica',serie:1041,ambiente:'homologacao',estado:'processando',tentativas:1,
+          reserva:'reserva-sintetica',envio_iniciado_em:null,dados:{empresa:{cnpj:'11222333000181'}}}],error:null};
+        assert.equal(nome,'nfse_registrar_resultado');assert.equal(parametros._resultado.estado,'erro');
+        return {data:confirmado,error:null};
+      }};
+      const resultado=await processarFilaNfse(banco,{NFSE_HABILITADO:'1',NFSE_CONFIG_ARQUIVO:join(tmpdir(),'nfse-config-inexistente-0841.json')});
+      assert.equal(resultado.processado,confirmado);assert.equal(resultado.aguardarConsulta,false);
+      assert.deepEqual(nomes,['nfse_reservar_trabalho','nfse_registrar_resultado']);
+    }
+    let reservas=0;
+    const vazio=await processarFilaNfse({rpc:async()=>{reservas++;return {data:[],error:null};}},{NFSE_HABILITADO:'1'});
+    assert.equal(vazio,undefined);assert.equal(reservas,1);
+  });
+  it('limita o ciclo a 200 operações sob carga contínua e preserva a pausa de 60 segundos', async () => {
+    const env={...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0,operacoes=0;const pausas=[];
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{operacoes++;return {processado:true};},
+      aguardar:async ms=>{assert.equal(operacoes,200);pausas.push(ms);tempo+=ms;},
+    });
+    assert.equal(operacoes,400);assert.deepEqual(pausas,[60_000]);assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('confere o prazo entre operações e não reserva novas notas após o término', async () => {
+    const env={...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'1'};
+    let tempo=0,operacoes=0,pausas=0;
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{assert.ok(tempo<60_000);operacoes++;tempo+=15_000;return {processado:true};},
+      aguardar:async()=>{pausas++;},
+    });
+    assert.equal(operacoes,4);assert.equal(pausas,0);assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('uma falha de infraestrutura interrompe a drenagem e retoma no ciclo seguinte sem expor dados', async t => {
+    const env={...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0,operacoes=0;const avisos=[];
+    t.mock.method(console,'warn',m=>avisos.push(m));
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{operacoes++;if(operacoes===2)throw new Error('segredo-sintetico');return operacoes===1||operacoes===3?{processado:true}:undefined;},
+      aguardar:async ms=>{assert.equal(operacoes,2);assert.equal(ms,60_000);tempo+=ms;},
+    });
+    assert.equal(operacoes,4);assert.equal(avisos.length,1);assert.doesNotMatch(avisos.join(' '),/segredo-sintetico/);
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
   it('recusa branches, forks e secrets ausentes antes de criar o certificado', () => {
     for (const troca of [{ GITHUB_REF: 'refs/heads/eduardo' }, { GITHUB_REPOSITORY: 'outro/repo' },
       { GITHUB_ACTIONS: 'false' }, { NFSE_CERTIFICADO_SENHA: '' }]) {
