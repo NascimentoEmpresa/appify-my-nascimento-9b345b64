@@ -51,7 +51,8 @@ export function DetalheDespesaDialog({ detalhe, onClose }: { detalhe: DetalheAbe
                 <div className="flex items-start gap-3">
                   <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><FileText className="h-4 w-4" /></span>
                   <div>
-                    <DialogTitle className="text-base">Detalhamento da despesa — {detalhe.titulo}</DialogTitle>
+                    {/* SIS-2026-0928: o detalhe das Receitas Extras mostra entradas, então o título diz "receitas"; só o texto muda. */}
+                    <DialogTitle className="text-base">{detalhe.receitaExtra ? "Detalhamento de receitas" : "Detalhamento da despesa"} — {detalhe.titulo}</DialogTitle>
                     <DialogDescription>{detalhe.subtitulo}</DialogDescription>
                   </div>
                 </div>
