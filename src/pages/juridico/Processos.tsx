@@ -6,6 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { sugerirContrato, cidadeDoContrato } from "./processos/contratoMunicipio";
+// SIS-2026-0936: filtro por contrato na consulta de processos.
+import { contratosDoFiltro, processoNoContrato, SEM_CONTRATO, semContratoCount } from "./processos/filtroContrato";
 import { ModalExportarDados } from "@/components/exportar/ModalExportarDados";
 import { baixar } from "@/lib/exportarRelatorio";
 import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
@@ -452,6 +454,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [fReclamada, setFReclamada] = useState("");
   const [fAno, setFAno] = useState("");
   const [fTipo, setFTipo] = useState<"" | TipoProcesso>("");
+  const [fContrato, setFContrato] = useState("");
   const [pagina, setPagina] = useState(1);
   // filtros da agenda de Audiências
   const [aStatus, setAStatus] = useState("");
@@ -608,12 +611,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     if (fReclamada.trim() && !contem(p.reclamada, fReclamada)) return false;
     if (fTipo && p.tipo_processo !== fTipo) return false;
     if (fAno && String(p.ano_processo || "") !== fAno) return false;
-    if (busca) { const q = busca.toLowerCase(); return [p.numero_processo, String(p.id_sequencial), p.reclamante, p.reclamada, p.motivos, p.comarca, String(p.ano_processo)].some(x => String(x || "").toLowerCase().includes(q)); }
+    if (!processoNoContrato(p, fContrato)) return false;
+    if (busca) { const q = busca.toLowerCase(); return [p.numero_processo, String(p.id_sequencial), p.reclamante, p.reclamada, p.motivos, p.comarca, String(p.ano_processo), p.contrato].some(x => String(x || "").toLowerCase().includes(q)); }
     return true;
-  }), [processos, busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo]);
+  }), [processos, busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo, fContrato]);
+  const contratosFiltro = useMemo(() => contratosDoFiltro(processos), [processos]);
+  const semContratoN = useMemo(() => semContratoCount(processos), [processos]);
   const anosDisponiveis = useMemo(() => [...new Set(processos.map(p => p.ano_processo).filter(Boolean))].sort((a, b) => b - a), [processos]);
-  const filtrosAtivos = [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo].filter(v => String(v).trim()).length;
-  const limparProc = () => { setBusca(""); setFStatus(""); setFMotivo(""); setFId(""); setFNumero(""); setFReclamante(""); setFReclamada(""); setFAno(""); setFTipo(""); };
+  const filtrosAtivos = [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo, fContrato].filter(v => String(v).trim()).length;
+  const limparProc = () => { setBusca(""); setFStatus(""); setFMotivo(""); setFId(""); setFNumero(""); setFReclamante(""); setFReclamada(""); setFAno(""); setFTipo(""); setFContrato(""); };
   // opções do filtro: TODOS os motivos (grafias juntadas), com quantos processos
   // têm cada um em qualquer posição, ordenados por frequência + "(Sem motivo)"
   const motivosDoFiltro = useMemo(() => {
@@ -632,7 +638,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const reclamadasDistintas = useMemo(() => [...new Set(rows.map(r => String(r.reclamada || "").trim()).filter(Boolean))].sort(), [rows]);
   const statusPredominante = useMemo(() => { const c: Record<string, number> = {}; filtrados.forEach(p => c[p.status] = (c[p.status] || 0) + 1); return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || "—"; }, [filtrados]);
   // paginação da lista de processos (50 por página)
-  useEffect(() => { setPagina(1); }, [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo]);
+  useEffect(() => { setPagina(1); }, [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo, fContrato]);
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = useMemo(() => filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE), [filtrados, paginaAtual]);
@@ -1196,6 +1202,13 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 <div><label>Ano</label>
                   <select className="jpr-fi" value={fAno} onChange={e => setFAno(e.target.value)}>
                     <option value="">Todos os anos</option>{anosDisponiveis.map(a => <option key={a} value={String(a)}>{a}</option>)}
+                  </select>
+                </div>
+                <div><label>Contrato</label>
+                  <select className="jpr-fi" value={fContrato} onChange={e => setFContrato(e.target.value)}>
+                    <option value="">Todos os contratos</option>
+                    {semContratoN > 0 && <option value={SEM_CONTRATO}>⚠️ Sem contrato · {semContratoN}</option>}
+                    {contratosFiltro.map(c => <option key={c.chave} value={c.chave}>{c.nome} · {c.n}</option>)}
                   </select>
                 </div>
                 <div><label>Busca geral</label><input className="jpr-fi" placeholder="Pesquisar em todos os campos" value={busca} onChange={e => setBusca(e.target.value)} /></div>
