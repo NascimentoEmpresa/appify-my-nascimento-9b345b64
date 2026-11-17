@@ -295,7 +295,7 @@ ON CONFLICT (id) DO NOTHING;
 DROP POLICY IF EXISTS "sst calcados laudos select" ON storage.objects;
 CREATE POLICY "sst calcados laudos select" ON storage.objects FOR SELECT TO authenticated
 USING (bucket_id = 'sst-calcados-laudos' AND ((SELECT public.sst_calcado_pode_ler_laudo())
-  OR (split_part(name, '/', 1) = 'pedido' AND owner = auth.uid())));
+  OR (split_part(name, '/', 1) = 'pedido' AND owner = (SELECT auth.uid()))));
 DROP POLICY IF EXISTS "sst calcados laudos insert" ON storage.objects;
 CREATE POLICY "sst calcados laudos insert" ON storage.objects FOR INSERT TO authenticated
 WITH CHECK (bucket_id = 'sst-calcados-laudos' AND (
