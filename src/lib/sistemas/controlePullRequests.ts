@@ -80,7 +80,14 @@ const dataHoraFmt = new Intl.DateTimeFormat("pt-BR", {
 });
 export const fmtDataHoraBrasilia = (iso: string) => dataHoraFmt.format(new Date(iso));
 
-export const linhasAlteradas = (p: PrControle) => (p.adicoes ?? 0) + (p.remocoes ?? 0);
+// Commits da PR vêm direto da API do GitHub (repo público), não do banco: o
+// painel só guarda a contagem. Hora = data do committer, como o GitHub mostra.
+export const urlApiCommitsPr = (urlPr: string) =>
+  urlPr.replace("https://github.com/", "https://api.github.com/repos/").replace(/\/pull\/(\d+)$/, "/pulls/$1/commits?per_page=100");
+
+export const urlCommitNaPr = (urlPr: string, sha: string) => `${urlPr}/changes/${sha}`;
+
+export const linhasAlteradas =(p: PrControle) => (p.adicoes ?? 0) + (p.remocoes ?? 0);
 
 const celulaCsv = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
