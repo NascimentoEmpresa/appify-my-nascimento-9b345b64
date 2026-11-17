@@ -17,6 +17,7 @@ import {
 } from "@/lib/exportarRelatorio";
 import { rotuloTipoLancamento, ehContratoParcelado, mapaValorQueFalta } from "./parcelas";
 import { aplicarBaixaDasContas, type ParcelaPlanilha, type ContaDoContrato } from "./baixaParcelas";
+import { componentesDaParcela, rotuloIndice, type ParcelaFinanciamento } from "./financiamento";
 
 export { baixar };
 export type { Linha };
@@ -155,12 +156,27 @@ const colunasContas = (seloDaConta: (o: Linha) => string): Coluna[] => [
   { rotulo: "Comprovante", valor: o => o.comprovante_nome },
   { rotulo: "Enviado ao Malote em", tipo: "datahora", valor: o => o.enviado_malote_em },
 ];
+const comp = (p: Linha) => componentesDaParcela(p as unknown as ParcelaFinanciamento);
 const COLUNAS_PARCELAS: Coluna[] = [
   { rotulo: "Nº", tipo: "inteiro", valor: p => p.numero },
   { rotulo: "Parcela", valor: p => p.rotulo },
   { rotulo: "Vencimento", tipo: "data", valor: p => p.vencimento },
-  { rotulo: "Valor", tipo: "moeda", valor: p => p.valor },
+  { rotulo: "Valor devido", tipo: "moeda", valor: p => p.valor },
+  // Composição (SIS-2026-0909): o pedido inclui "exportar os dados exibidos,
+  // incluindo o detalhamento das parcelas". Mesma leitura da aba — campo
+  // estruturado ou, na falta, a coluna solta da planilha. Vazio = não informado.
+  { rotulo: "Amortização", tipo: "moeda", valor: p => comp(p).amortizacao },
+  { rotulo: "Juros", tipo: "moeda", valor: p => comp(p).juros },
+  { rotulo: "MIP", tipo: "moeda", valor: p => comp(p).seguro_mip },
+  { rotulo: "DFI", tipo: "moeda", valor: p => comp(p).seguro_dfi },
+  { rotulo: "Seguros (total)", tipo: "moeda", valor: p => comp(p).seguros },
+  { rotulo: "Taxas", tipo: "moeda", valor: p => comp(p).taxas },
+  { rotulo: "Impontualidade", tipo: "moeda", valor: p => comp(p).valor_impontualidade },
   { rotulo: "Valor pago", tipo: "moeda", valor: p => p.valor_pago },
+  { rotulo: "Diferença de valor", tipo: "moeda", valor: p => comp(p).diferenca_valor },
+  { rotulo: "Atualização monetária", tipo: "moeda", valor: p => comp(p).atualizacao_monetaria },
+  { rotulo: "Saldo devedor", tipo: "moeda", valor: p => comp(p).saldo_devedor },
+  { rotulo: "Índice de correção", valor: p => { const c = comp(p); return rotuloIndice(c.indice_correcao, c.indice_tipo); } },
   { rotulo: "Situação", valor: p => p.situacao, selo: true },
 ];
 const COLUNAS_ACESSOS: Coluna[] = [

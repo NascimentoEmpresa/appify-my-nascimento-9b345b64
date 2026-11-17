@@ -22,7 +22,8 @@ import {
   podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
 } from "./patrimonio/vinculoMalote";
 import { nomeDespesaMalote } from "./patrimonio/nomeMalote";
-import { aplicarBaixaDasContas, resumoDasParcelas } from "./patrimonio/baixaParcelas";
+import { aplicarBaixaDasContas } from "./patrimonio/baixaParcelas";
+import { AbaFinanciamento, type ParcelaDaAba } from "./patrimonio/AbaFinanciamento";
 
 // JUR_PATRIMONIO* e SISTEMA_COMENTARIOS não estão no types.ts gerado; mesmo
 // padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -360,6 +361,11 @@ export default function Patrimonios() {
       db.from("SISTEMA_COMENTARIOS").select("*").eq("modulo", "patrimonio").eq("entidade_id", String(p.id)).order("created_at", { ascending: false }),
     ]);
     setObrs(o.data ?? []); setParcelas(pc.data ?? []); setAcessos(a.data ?? []); setContatos(c.data ?? []); setDocs(d.data ?? []); setHist(h.data ?? []); setComentarios(cm.data ?? []);
+  };
+  const recarregarParcelas = async () => {
+    if (!sel) return;
+    const { data } = await db.from("JUR_PATRIMONIO_PARCELAS").select("*").eq("patrimonio_id", sel.id).order("ordem", { ascending: true }).limit(1000);
+    setParcelas(data ?? []);
   };
   const recarregarObrs = async () => { if (!sel) return; const { data } = await db.from("JUR_PATRIMONIO_OBRIGACOES").select("*").eq("patrimonio_id", sel.id).order("vencimento"); setObrs(data ?? []); load(); };
   const recarregarHist = async () => { if (!sel) return; const { data } = await db.from("JUR_PATRIMONIO_ITENS").select("*").eq("kind", "historico").eq("patrimonio_id", sel.id).order("created_at", { ascending: false }).limit(50); setHist(data ?? []); };
@@ -1333,9 +1339,12 @@ export default function Patrimonios() {
             </div>
 
             <div style={{ display: "flex", gap: 2, padding: "0 16px", borderBottom: "1px solid #e2e8f0", background: "#fff", flexWrap: "wrap" }}>
-              {/* "Parcelas" só aparece em quem tem financiamento: numa casa
-                  quitada a aba estaria sempre vazia. */}
-              {[["obrigacoes", "Contas / Obrigações"], ...(parcelas.length ? [["parcelas", `Parcelas (${parcelas.length})`]] : []), ["acessos", "Acessos"], ["contatos", "Contatos"], ["documentos", "Documentos"], ["historico", "Histórico"], ["comentarios", "Comentários"]].map(([k, l]) => (
+              {/* "Parcelas" aparecia só em quem já tinha parcelas importadas da
+                  planilha. Desde o SIS-2026-0909 (16/11/2026) é ali que se
+                  CADASTRA o financiamento — a CASA DO SENILTON, exemplo do
+                  chamado, não tinha nenhuma parcela importada e ficava sem
+                  porta de entrada. Por isso a aba vale para todo patrimônio. */}
+              {[["obrigacoes", "Contas / Obrigações"], ["parcelas", parcelas.length ? `Parcelas (${parcelas.length})` : "Parcelas"], ["acessos", "Acessos"], ["contatos", "Contatos"], ["documentos", "Documentos"], ["historico", "Histórico"], ["comentarios", "Comentários"]].map(([k, l]) => (
                 <button key={k} className={`jp-tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>{l}</button>
               ))}
             </div>
@@ -1392,70 +1401,41 @@ export default function Patrimonios() {
                 })}
               </>); })()}
 
-              {/* PARCELAS — a posição do financiamento, como veio do contrato */}
-              {tab === "parcelas" && (() => {
+              {/* PARCELAS — o financiamento: resumo, condições, INCC e a
+                  composição de cada parcela (SIS-2026-0909). A conta mora em
+                  patrimonio/financiamento.ts; o desenho, em AbaFinanciamento. */}
+              {tab === "parcelas" && sel && (() => {
                 // A planilha é a foto de 09/2026; o que foi pago depois está
                 // nas Contas / Obrigações (baixa manual ou Malote). A situação
-                // é lida de lá agora — ver baixaParcelas.ts (13/11/2026).
+                // é lida de lá — ver baixaParcelas.ts (13/11/2026).
                 const comBaixa = aplicarBaixaDasContas(parcelas, obrs, c => {
                   const o = c as Obrigacao;
                   if (seloDaConta(o) !== "Pago") return null;
                   return o.status === "Pago" ? "conta" : "malote";
                 });
-                const { pagas, somaPagas, somaAberto } = resumoDasParcelas(comBaixa);
-                const viaContas = comBaixa.filter(x => x.baixa === "malote" || x.baixa === "conta").length;
-                // As colunas extras mudam de contrato para contrato (seguro, taxa,
-                // INCC, juro): mostra as que ESTE contrato tem, na ordem em que
-                // aparecem, em vez de uma tabela fixa cheia de coluna vazia.
-                const extras = [...new Set(parcelas.flatMap(x => Object.keys(x.detalhes ?? {})))].slice(0, 4);
-                return (<>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                    {card("Parcelas", `${pagas} de ${parcelas.length}`, "#0f3171")}
-                    {card("Pago", money(somaPagas), "#15803d")}
-                    {card("Em aberto", money(somaAberto), somaAberto > 0 ? "#b45309" : "#15803d")}
-                  </div>
-                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden" }}>
-                    <div style={{ maxHeight: 420, overflowY: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                        <thead>
-                          <tr style={{ background: "#f8fafc", color: "#94a3b8", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px", position: "sticky", top: 0 }}>
-                            <th style={{ textAlign: "left", padding: "9px 14px" }}>Parcela</th>
-                            <th style={{ textAlign: "left", padding: "9px 14px" }}>Vencimento</th>
-                            <th style={{ textAlign: "right", padding: "9px 14px" }}>Valor</th>
-                            {extras.map(e => <th key={e} style={{ textAlign: "right", padding: "9px 14px" }}>{e}</th>)}
-                            <th style={{ textAlign: "center", padding: "9px 14px" }}>Situação</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {comBaixa.map(x => {
-                            const paga = !!x.baixa;
-                            return (
-                              <tr key={x.id} style={{ borderTop: "1px solid #f1f5f9" }}>
-                                <td style={{ padding: "9px 14px", fontWeight: 700, color: "#0f172a" }}>{x.rotulo || (x.numero != null ? `${x.numero}ª` : "—")}</td>
-                                <td style={{ padding: "9px 14px", color: "#475569" }}>{x.vencimento ? fmtDt(x.vencimento) : "—"}</td>
-                                <td style={{ padding: "9px 14px", textAlign: "right", color: "#0f172a", fontWeight: 700 }}>{x.valor != null ? money(x.valor) : "—"}</td>
-                                {extras.map(e => <td key={e} style={{ padding: "9px 14px", textAlign: "right", color: "#64748b" }}>{x.detalhes?.[e] != null && x.detalhes[e] !== "" ? (typeof x.detalhes[e] === "number" ? money(x.detalhes[e]) : String(x.detalhes[e])) : "—"}</td>)}
-                                <td style={{ padding: "9px 14px", textAlign: "center" }}>
-                                  <span title={x.baixa === "malote" ? "Paga pelo Malote (conta do contrato)" : x.baixa === "conta" ? "Baixa dada na conta do contrato" : undefined}
-                                    style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: paga ? "#dcfce7" : "#fff7ed", color: paga ? "#15803d" : "#c2410c" }}>{x.situacao || "EM ABERTO"}</span>
-                                  {(x.baixa === "malote" || x.baixa === "conta") && (
-                                    <div style={{ fontSize: 9.5, color: "#64748b", marginTop: 2 }}>{x.baixa === "malote" ? "pelo Malote" : "baixa na conta"}</div>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    {parcelas[0]?.origem && (
-                      <div style={{ padding: "8px 14px", borderTop: "1px solid #eef2f7", fontSize: 11, color: "#94a3b8" }}>
-                        Origem: {[...new Set(parcelas.map(x => x.origem).filter(Boolean))].join(" · ")} (planilha ATIVO IMOBILIZADO)
-                        {viaContas > 0 && ` · ${viaContas} paga${viaContas > 1 ? "s" : ""} depois da planilha, pelas Contas / Obrigações`}
-                      </div>
-                    )}
-                  </div>
-                </>);
+                return (
+                  <AbaFinanciamento
+                    key={sel.id}
+                    db={db}
+                    patrimonioId={sel.id}
+                    parcelas={comBaixa as unknown as ParcelaDaAba[]}
+                    autor={autor}
+                    toast={toast}
+                    logHist={async (acao, detalhe) => { await logHist(sel.id, acao, detalhe); recarregarHist(); }}
+                    recarregarParcelas={recarregarParcelas}
+                    abrirArquivo={async path => {
+                      const { data, error } = await supabase.storage.from("juridico-docs").createSignedUrl(path, 3600);
+                      if (error || !data?.signedUrl) { toast("Não foi possível abrir o arquivo.", "err"); return; }
+                      window.open(data.signedUrl, "_blank", "noopener");
+                    }}
+                    subirArquivo={async (file, pasta) => {
+                      const path = `${pasta}/${Date.now()}_${file.name.replace(/[^\w.-]+/g, "_")}`;
+                      const { error } = await supabase.storage.from("juridico-docs").upload(path, file, { upsert: false });
+                      if (error) { toast("Falha no upload: " + error.message, "err"); return null; }
+                      return path;
+                    }}
+                  />
+                );
               })()}
 
               {/* ACESSOS */}
