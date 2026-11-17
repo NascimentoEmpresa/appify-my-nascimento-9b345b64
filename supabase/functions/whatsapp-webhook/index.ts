@@ -22,6 +22,9 @@ import {
   montarPastas, extrairTransferencia, AVISO_TRANSFERIDO_IA,
   type Msg, type MenuOpcao, type PastaBot,
 } from "../_shared/whatsapp-bot.ts";
+// SIS-2026-0929: um número por canal; o canal dos supervisores tem fluxo próprio.
+import { canalDoNumero, obterConversa, type CanalInfo } from "../_shared/whatsapp-canal.ts";
+import { processarAtendimento } from "./atendimento.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -53,8 +56,9 @@ async function assinaturaValida(raw: string, header: string | null): Promise<boo
 }
 
 // ---------- envio ----------
-async function enviarTexto(to: string, body: string): Promise<string | null> {
-  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+// `numero` = phone_number_id do canal (SIS-2026-0929). Padrão: o secret.
+async function enviarTexto(to: string, body: string, numero = PHONE_NUMBER_ID): Promise<string | null> {
+  const res = await fetch(`${GRAPH}/${numero}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body } }),
@@ -134,8 +138,8 @@ async function responderComBot(
 }
 
 // Envia e registra uma mensagem de saída (bot/atendente).
-async function registrarSaida(conversaId: string, contatoId: string, to: string, texto: string, origem: string) {
-  const waId = await enviarTexto(to, texto);
+async function registrarSaida(conversaId: string, contatoId: string, to: string, texto: string, origem: string, numero = PHONE_NUMBER_ID) {
+  const waId = await enviarTexto(to, texto, numero);
   await admin.from("WA_MENSAGEM").insert({
     conversa_id: conversaId, contato_id: contatoId, direcao: "saida", tipo: "text",
     texto, wa_message_id: waId, status: waId ? "enviada" : "erro", origem,
@@ -359,7 +363,7 @@ async function enviarInterativo(to: string, interactive: any): Promise<string | 
 // de 24h (whatsapp-enviar, mig 20261014000015): o contato acabou de escrever,
 // a janela abriu — saem agora, na ordem. Mais de 7 dias esperando: expira
 // ('cancelada'), a conversa já esfriou. Devolve quantas saíram.
-async function enviarPendentes(conversaId: string, to: string): Promise<number> {
+async function enviarPendentes(conversaId: string, to: string, numero = PHONE_NUMBER_ID): Promise<number> {
   const limite = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   await admin.from("WA_MENSAGEM").update({ status: "cancelada" })
     .eq("conversa_id", conversaId).eq("status", "pendente").lt("criada_em", limite);
@@ -377,7 +381,7 @@ async function enviarPendentes(conversaId: string, to: string): Promise<number> 
       ? { messaging_product: "whatsapp", to, type: "interactive", interactive: { type: "button", body: { text: m.texto ?? "" },
           action: { buttons: botoes.slice(0, 3).map((b: any) => ({ type: "reply", reply: { id: String(b.id), title: String(b.titulo).slice(0, 20) } })) } } }
       : { messaging_product: "whatsapp", to, type: "text", text: { body: m.texto ?? "" } };
-    const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+    const res = await fetch(`${GRAPH}/${numero}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify(corpo),
@@ -538,6 +542,12 @@ Deno.serve(async (req) => {
   try { payload = JSON.parse(raw); } catch { return new Response("bad json", { status: 400 }); }
 
   const tarefas: Promise<unknown>[] = [];
+  // Canal por phone_number_id, lido uma vez por número nesta entrega.
+  const canais = new Map<string, Promise<CanalInfo>>();
+  const canalDe = (pid: string) => {
+    if (!canais.has(pid)) canais.set(pid, canalDoNumero(admin, pid));
+    return canais.get(pid)!;
+  };
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -548,6 +558,11 @@ Deno.serve(async (req) => {
       // devolve no webhook — sem este filtro ela seria gravada como se fosse
       // o CONTATO falando (mensagem duplicada na caixa de entrada).
       const numeroProprio = String(value.metadata?.display_phone_number ?? "").replace(/\D/g, "");
+      // SIS-2026-0929: em qual dos nossos números a mensagem chegou. Número que
+      // não está em WA_CANAL é o principal — comportamento de antes.
+      const canal = await canalDe(String(value.metadata?.phone_number_id ?? ""));
+      const numeroCanal = canal.phone_number_id || PHONE_NUMBER_ID;
+      const ehAtendimento = canal.finalidade === "atendimento_supervisores";
 
       // Mensagens recebidas.
       for (const msg of value.messages ?? []) {
@@ -609,12 +624,19 @@ Deno.serve(async (req) => {
         const { data: contato } = await admin.from("WA_CONTATO").select("id").eq("wa_id", from).maybeSingle();
         if (!contato) continue;
 
-        // conversa (upsert por contato)
-        await admin.from("WA_CONVERSA").upsert(
-          { contato_id: contato.id }, { onConflict: "contato_id", ignoreDuplicates: true },
-        );
-        const { data: conversa } = await admin.from("WA_CONVERSA").select("id, bot_ativo").eq("contato_id", contato.id).maybeSingle();
+        // Conversa do contato NESTE canal (SIS-2026-0929: o mesmo número pode
+        // falar com o Recrutamento e com o atendimento dos supervisores, cada um
+        // com o seu histórico). Conversa nova do canal de atendimento nasce na
+        // pasta dele, com o bot conforme a I.A do canal — ANTES de gravar a
+        // mensagem, porque é ao gravar que o banco abre o protocolo.
+        const conversa = await obterConversa(admin, contato.id, canal.codigo);
         if (!conversa) continue;
+        if (ehAtendimento && canal.pasta_padrao) {
+          const { data: nascida } = await admin.from("WA_CONVERSA")
+            .update({ pasta_codigo: canal.pasta_padrao, bot_ativo: canal.ativo && canal.ia_ativa })
+            .eq("id", conversa.id).is("pasta_codigo", null).select("bot_ativo").maybeSingle();
+          if (nascida) conversa.bot_ativo = nascida.bot_ativo;
+        }
 
         // dedupe: só processa se a mensagem é nova. Só inclui `payload` quando
         // há clique de botão, para não depender da coluna antes da migration.
@@ -661,8 +683,19 @@ Deno.serve(async (req) => {
         // alguma, quem conduz é o atendente — o bot não manda o menu por cima.
         const vaiProBot = conversa.bot_ativo && (((msg.type === "text" || msg.type === "button") && texto) || (msg.type === "interactive" && replyId));
         tarefas.push((async () => {
-          const saiu = await enviarPendentes(conversa.id, from).catch((e) => { console.error("pendentes:", e); return 0; });
-          if (saiu === 0 && vaiProBot) await processarBot(conversa.id, contato.id, from, msg.type, texto, replyId);
+          const saiu = await enviarPendentes(conversa.id, from, numeroCanal).catch((e) => { console.error("pendentes:", e); return 0; });
+          if (saiu > 0) return;
+          if (ehAtendimento) {
+            // Canal dos supervisores: protocolo, autorização por número e I.A
+            // com base aprovada (./atendimento.ts). Roda para QUALQUER tipo de
+            // mensagem — arquivo/áudio também ganha protocolo e vai para humano.
+            await processarAtendimento(
+              { admin, enviar: (t) => registrarSaida(conversa.id, contato.id, from, t, "bot", numeroCanal) },
+              { conversaId: conversa.id, waId: from, msgType: msg.type, texto, canal },
+            );
+            return;
+          }
+          if (vaiProBot) await processarBot(conversa.id, contato.id, from, msg.type, texto, replyId);
         })());
       }
 
