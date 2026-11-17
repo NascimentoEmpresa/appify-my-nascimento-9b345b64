@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import SimuladorAtendimento from "./SimuladorAtendimento";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -30,6 +33,7 @@ export default function WhatsAppTestes() {
   const { data: access } = useAccessibleMenus("visualizar");
   const podeTestar = access?.codes.has("whatsapp_testes") ?? false;
   const podeConfig = access?.codes.has("whatsapp_chatbot") ?? false;
+  const { data: podeAtendimento } = useScreenAccess("whatsapp_atd_base", "visualizar");
 
   const [bolhas, setBolhas] = useState<Bolha[]>([]);
   const [texto, setTexto] = useState("");
@@ -140,6 +144,17 @@ export default function WhatsAppTestes() {
         }
       />
 
+      {/* SIS-2026-0929: o atendimento dos supervisores é outro canal, com fluxo
+          próprio — fica numa aba à parte, que só aparece para quem também tem
+          a Base e Regras do atendimento. */}
+      <Tabs defaultValue="principal">
+      {podeAtendimento && (
+        <TabsList className="mb-3">
+          <TabsTrigger value="principal">Bot do número principal</TabsTrigger>
+          <TabsTrigger value="supervisores">Atendimento Supervisores</TabsTrigger>
+        </TabsList>
+      )}
+      <TabsContent value="principal" className="mt-0">
       <div className="mb-3 flex items-center gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-muted-foreground">
         <FlaskConical className="h-4 w-4 shrink-0 text-info" />
         Ambiente de simulação: usa a configuração real do bot (persona, provedor, base de conhecimento, menu e
@@ -310,6 +325,11 @@ export default function WhatsAppTestes() {
           )}
         </div>
       </div>
+      </TabsContent>
+      {podeAtendimento && (
+        <TabsContent value="supervisores" className="mt-0"><SimuladorAtendimento /></TabsContent>
+      )}
+      </Tabs>
     </div>
   );
 }
