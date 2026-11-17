@@ -15,10 +15,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  useCompetenciasFechadas, useFecharCompetencia, usePercentuaisDoAno, useReabrirCompetencia, useSalvarComplementoPago, useSalvarPercentuaisDoMes, useSalvarSocios, useSociosConfig,
+  useCompetenciasFechadas, useFecharCompetencia, usePercentuaisDoAno, useReabrirCompetencia, useReservasDoAno, useSalvarComplementoPago, useSalvarPercentuaisDoMes, useSalvarReservaDoMes,
+  useSalvarSocios, useSociosConfig,
   type SalvarSocioInput,
 } from "@/hooks/useFechamentoSocios";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
+import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { rotuloMes } from "./faturamento/useBaseFaturamento";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
@@ -26,7 +28,7 @@ import { ROTULO_BASE } from "./faturamento/regras";
 import { lancamentosConsumoEmpresa, lancamentosDeRetirada, useDadosFechamentoSocios } from "./fechamento-socios/useDadosFechamentoSocios";
 import { DialogComposicaoLucro, DialogRetiradasSocio } from "./fechamento-socios/Detalhes";
 import {
-  calcularMes, fotoDoFechamento, linhaDoHistorico, pendenciasParaFechar, resultadoDoFechamento, resumoPorSocio, ROTULO_TIPO_LANCAMENTO, somarMeses,
+  calcularMes, calcularReserva, fotoDoFechamento, linhaDoHistorico, pendenciasParaFechar, resultadoDoFechamento, resumoPorSocio, ROTULO_TIPO_LANCAMENTO, somarMeses,
   type ResultadoMes, type SocioConfig, type TipoLancamento,
 } from "./fechamento-socios/regras";
 
@@ -60,6 +62,7 @@ export default function FechamentoSocios() {
   const { data: sociosCadastrados = [], error: erroSocios } = useSociosConfig();
   const { data: pctAno = new Map<string, number>() } = usePercentuaisDoAno(ano);
   const { data: fechadas = new Map() } = useCompetenciasFechadas(ano);
+  const { data: reservas = new Map<string, number>() } = useReservasDoAno(ano); // SIS-2026-0925: Reserva de Investimento (%) por competência aberta
 
   // Sem sócios cadastrados, os das colunas do Fechamento da Empresa entram como provisórios (percentual 0, sem vínculo): as retiradas deles já aparecem.
   const cadastroFeito = sociosCadastrados.some((s) => s.ativo);
@@ -74,10 +77,10 @@ export default function FechamentoSocios() {
       if (f) { m.set(e.mes, resultadoDoFechamento(e.mes, f)); continue; }
       const pcts = new Map<string, number>();
       for (const s of socios) { const v = pctAno.get(`${s.id}|${e.mes}`); if (v !== undefined) pcts.set(s.id, v); }
-      m.set(e.mes, calcularMes(e, socios, pcts, dados.linhasIntegrante));
+      m.set(e.mes, calcularMes(e, socios, pcts, dados.linhasIntegrante, reservas.get(e.mes) ?? 0));
     }
     return m;
-  }, [dados.entradas, dados.linhasIntegrante, socios, pctAno, fechadas]);
+  }, [dados.entradas, dados.linhasIntegrante, socios, pctAno, fechadas, reservas]);
 
   // meses que contam: os já realizados (o projetado do Fechamento da Empresa não é lucro para distribuir)
   const mesesRealizados = useMemo(() => dados.entradas.filter((e) => !dados.projetadoPorMes.get(e.mes) || fechadas.has(e.mes)).map((e) => e.mes), [dados.entradas, dados.projetadoPorMes, fechadas]);
@@ -152,6 +155,8 @@ export default function FechamentoSocios() {
           </CardContent>
         </Card>
 
+        <BannerReserva total={total} mesUnico={mesUnico} fechado={mesUnicoFechado} podeConfigurar={podeConfigurar} />
+
         {dados.erro != null && <Card className="border-destructive/40"><CardContent className="p-4 text-sm text-destructive">Não foi possível carregar os dados: {(dados.erro as { message?: string })?.message ?? "erro desconhecido"}</CardContent></Card>}
         {erroSocios != null && <Card className="border-destructive/40"><CardContent className="p-4 text-sm text-destructive">Não foi possível carregar o cadastro dos sócios: {(erroSocios as { message?: string })?.message || "erro desconhecido"}</CardContent></Card>}
         {dados.carregando && <p className="text-sm text-muted-foreground">Carregando...</p>}
@@ -185,10 +190,11 @@ export default function FechamentoSocios() {
           <summary className="cursor-pointer select-none text-sm font-semibold">Como ler esta tela (de onde vem cada valor)</summary>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
             <li><strong>Resultado do Período</strong> = Resultado após Outras Receitas − Tributos sobre o Resultado, da aba “Resumo Mensal com Sócios” do Fechamento da Empresa. Só meses realizados.</li>
-            <li><strong>(−) Consumo da Empresa</strong> = Investimentos e Obras Adm cujo integrante é “Empresa” (e o que está sem integrante). Sai do lucro antes da divisão.</li>
-            <li><strong>Lucro a Distribuir</strong> = Resultado do Período − Consumo da Empresa. Cada sócio recebe o seu percentual.</li>
+            <li><strong>(−) Reserva de Investimento</strong> = Resultado do Período × o percentual de reserva do mês (campo no topo; 0% se ninguém informou). É o que fica na empresa e sai antes da divisão. Mês sem resultado positivo não reserva.</li>
+            <li><strong>Total a Distribuir (Lucro)</strong> = Resultado do Período − Reserva de Investimento. Cada sócio recebe o seu percentual desse valor.</li>
             <li><strong>Retiradas Antecipadas</strong> de cada sócio = a coluna dele no Fechamento da Empresa (contrato ADMINISTRATIVO SÓCIOS dele) + Investimentos e Obras Adm em que ele é o integrante. Por isso o valor aqui pode ser maior que o da coluna: a diferença é Investimentos/Obras Adm com ele como integrante.</li>
-            <li><strong>Saldo a Retirar (complemento)</strong> = parte do lucro do sócio − retiradas antecipadas. Negativo = já retirou mais do que a parte dele no período.</li>
+            <li><strong>Saldo a Retirar (complemento)</strong> do sócio = parte do lucro dele − retiradas antecipadas. Negativo = já retirou mais do que a parte dele no período.</li>
+            <li><strong>Saldo final</strong> = Total a Distribuir − <strong>Consumo da Empresa</strong> (Investimentos e Obras Adm cujo integrante é “Empresa” ou está sem integrante) − Retiradas antecipadas. Com reserva de 0% é o Resultado Gerencial após Ajustes do Fechamento da Empresa.</li>
             <li>Os valores sublinhados ou clicáveis abrem os lançamentos que os formam. Mês fechado vale o que foi gravado no fechamento; mês aberto, o cálculo de hoje.</li>
           </ol>
         </details>
@@ -199,12 +205,13 @@ export default function FechamentoSocios() {
           <KpiTile label="Percentual Total de Distribuição" valor={somaPercentualKpi === null ? "Revisar" : pct2(somaPercentualKpi)} sub={somaPercentualKpi === 100 ? "Percentual configurado entre os sócios" : "Os percentuais precisam somar 100%"} icon={<Percent />} cor="slate"
             valorClass={somaPercentualKpi === 100 ? undefined : "text-amber-600"}
             info={<><span>Soma dos percentuais de divisão dos sócios ativos. Precisa dar <strong>100%</strong> para fechar uma competência.</span><span className="block">O padrão vale para todos os meses; um mês específico pode ter percentual próprio (aba Distribuição, escolhendo o mês).</span></>} />
-          <KpiTile label="Total a Distribuir (Lucro)" valor={fmtMoney(total.lucroDistribuir)} sub={`Após ${fmtMoney(total.consumoEmpresa)} consumidos pela Empresa · clique`} icon={<HandCoins />} cor="emerald" onClick={() => setComposicaoAberta(true)}
+          <KpiTile label="Total a Distribuir (Lucro)" valor={fmtMoney(total.lucroDistribuir)} sub={`Resultado ${fmtMoney(total.resultadoAntesRetiradas)} − reserva ${fmtMoney(total.reserva)} · clique`} icon={<HandCoins />} cor="emerald" onClick={() => setComposicaoAberta(true)}
             valorClass={total.lucroDistribuir < 0 ? "text-red-600" : "text-emerald-600"}
-            info={<><span><strong>Resultado do Período − o que a Empresa consumiu</strong> em Investimentos e Obras Adm (lançamentos com integrante “Empresa” ou sem integrante). É o que se divide entre os sócios pelo percentual.</span><span className="block">Mês negativo é abatido: o total do período soma tudo.</span></>} />
+            info={<><span><strong>Resultado do Período − Reserva de Investimento.</strong> É o que se divide entre os sócios pelo percentual de cada um. A reserva é o percentual informado no topo da tela, por competência.</span><span className="block">O consumo da Empresa (Investimentos/Obras Adm com integrante “Empresa” ou sem integrante) não reduz esta base: aparece no Resumo do Fechamento, depois da divisão.</span><span className="block">Mês negativo é abatido: o total do período soma tudo.</span><AssinaturaRegra chamado="SIS-2026-0925" /></>} />
           <KpiTile label="Total de Retiradas Antecipadas" valor={fmtMoney(total.totalRetiradas)} sub="Despesas dos sócios + Investimentos e Obras Adm por integrante" icon={<Wallet />} cor="amber" valorClass="text-orange-600" onClick={() => setAba("retiradas")}
             info={<><span>Soma, de cada sócio, de: <strong>(1)</strong> a coluna dele no Fechamento da Empresa (saídas do contrato ADMINISTRATIVO SÓCIOS dele, inclusive distribuição de lucros; transferência, aplicação, empréstimo e financiamento ficam de fora) e <strong>(2)</strong> as saídas de Investimentos e Obras Adm em que ele é o <strong>integrante</strong>.</span><span className="block">Clique para ver os lançamentos.</span></>} />
-          <KpiTile label="Saldo a Retirar (Complemento)" valor={fmtMoney(total.totalSaldo)} sub="Lucro dos sócios menos as retiradas" icon={<Wallet />} cor="sky" valorClass={total.totalSaldo < 0 ? "text-red-600" : "text-blue-700"} />
+          <KpiTile label="Saldo a Retirar (Complemento)" valor={fmtMoney(total.saldoFinal)} sub="Total a distribuir − consumo da Empresa − retiradas" icon={<Wallet />} cor="sky" valorClass={total.saldoFinal < 0 ? "text-red-600" : "text-blue-700"}
+            info={<><span><strong>Total a Distribuir − Consumo da Empresa − Retiradas antecipadas.</strong> Com reserva de 0% é o Resultado Gerencial após Ajustes do Fechamento da Empresa (a mesma conta, aberta por sócio).</span><span className="block">O saldo de cada sócio (valor do lucro − retiradas dele) está na tabela abaixo; a diferença para este valor é o consumo da Empresa.</span><AssinaturaRegra chamado="SIS-2026-0925" /></>} />
         </div>
 
         <Tabs value={aba} onValueChange={setAba}>
@@ -231,10 +238,11 @@ export default function FechamentoSocios() {
               <p className="min-w-[160px] text-base font-bold">Resumo do Fechamento</p>
               {[
                 ["Resultado do Período", total.resultadoAntesRetiradas, ""],
-                ["(−) Consumo da Empresa", total.consumoEmpresa, "text-orange-600"],
+                [mesUnico ? `(−) Reserva de Investimento (${pct2(mesUnico.reservaPercentual)})` : "(−) Reserva de Investimento", total.reserva, "text-amber-600"],
                 ["(=) Lucro a Distribuir", total.lucroDistribuir, "text-emerald-600"],
+                ["(−) Consumo da Empresa", total.consumoEmpresa, "text-orange-600"],
                 ["(−) Retiradas Antecipadas", total.totalRetiradas, "text-red-600"],
-                ["(=) Saldo a Retirar", total.totalSaldo, total.totalSaldo < 0 ? "text-red-600" : "text-emerald-600"],
+                ["(=) Saldo a Retirar", total.saldoFinal, total.saldoFinal < 0 ? "text-red-600" : "text-emerald-600"],
               ].map(([r, v, c]) => (
                 <div key={r as string} className="min-w-[150px]">
                   <p className="text-xs text-muted-foreground">{r as string}</p>
@@ -254,6 +262,60 @@ export default function FechamentoSocios() {
       <DialogComposicaoLucro aberto={composicaoAberta} meses={mesesVisiveis} total={total} resultados={doPeriodo} consumo={lancamentosConsumo} onClose={() => setComposicaoAberta(false)} />
       {configAberta && <ConfigSocios aberto={configAberta} onClose={() => setConfigAberta(false)} nomesDetectados={dados.nomesSocios} socios={sociosCadastrados} />}
     </AcessoGate>
+  );
+}
+
+// ── Reserva de Investimento (SIS-2026-0925) ─────────────────────────────────────────────────────────────────────────────────────────
+// Um mês escolhido: o percentual é editável (quem tem a ação de percentual) e todos os valores se recalculam. "Todos os períodos": só mostra a soma, cada mês tem o seu.
+function BannerReserva({ total, mesUnico, fechado, podeConfigurar }: { total: ReturnType<typeof somarMeses>; mesUnico: ResultadoMes | null; fechado: boolean; podeConfigurar: boolean }) {
+  const salvar = useSalvarReservaDoMes();
+  const [rascunho, setRascunho] = useState<string | null>(null);
+  useEffect(() => { setRascunho(null); }, [mesUnico?.mes]);
+  if (total.resultadoAntesRetiradas === 0 && !mesUnico && total.reserva === 0) return null;
+
+  const editavel = !!mesUnico && !fechado && podeConfigurar;
+  const texto = rascunho ?? String(mesUnico?.reservaPercentual ?? 0).replace(".", ",");
+  const digitado = Math.min(Math.max(Number(texto.replace(",", ".")) || 0, 0), 100);
+  // o valor mostrado acompanha o que está sendo digitado (a gravação vem no botão)
+  const pct = mesUnico ? (rascunho !== null ? digitado : mesUnico.reservaPercentual) : null;
+  const resultado = total.resultadoAntesRetiradas;
+  const reserva = mesUnico ? (rascunho !== null ? calcularReserva(resultado, digitado) : mesUnico.reserva) : total.reserva;
+  const disponivel = Math.round((resultado - reserva) * 100) / 100;
+  const dirty = rascunho !== null && digitado !== mesUnico?.reservaPercentual;
+
+  async function gravar() {
+    if (!mesUnico) return;
+    try {
+      await salvar.mutateAsync({ mes: mesUnico.mes, percentual: digitado });
+      toast.success(`Reserva de ${pct2(digitado)} salva para ${rotuloMes(mesUnico.mes)}.`);
+      setRascunho(null);
+    } catch (e) { toast.error((e as { message?: string })?.message || "Erro ao salvar a reserva."); }
+  }
+  return (
+    <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+      <CardContent className="flex flex-wrap items-center gap-x-5 gap-y-2 p-3 text-sm">
+        <span className="flex items-center gap-2 font-semibold">
+          <Wallet className="h-4 w-4 text-amber-600" />
+          <TituloComFormula alinhar="left" titulo="Reserva de Investimento" formula={<>
+            <span className="block">Percentual do <strong>Resultado do Período</strong> que fica na empresa (investimentos, capitalização ou outras decisões). Sai <strong>antes</strong> da divisão entre os sócios.</span>
+            <span className="block">É definido por competência: escolha um mês no filtro para alterar. Sem registro vale 0%. Mês fechado guarda o percentual e o valor reservado.</span>
+            <span className="block">Resultado − Reserva = Total a Distribuir. Os percentuais dos sócios incidem só sobre o que sobra.</span>
+            <AssinaturaRegra chamado="SIS-2026-0925" />
+          </>} />
+        </span>
+        {mesUnico ? (
+          editavel ? (
+            <span className="inline-flex items-center gap-1">
+              <Input className="h-8 w-20 bg-background text-right" inputMode="decimal" aria-label="Reserva de Investimento (%)" value={texto} onChange={(e) => setRascunho(e.target.value)} />%
+              <Button size="sm" className="ml-1 h-8" onClick={gravar} disabled={!dirty || salvar.isPending}>{salvar.isPending ? "Salvando..." : "Salvar"}</Button>
+            </span>
+          ) : <strong>{pct2(pct ?? 0)}{fechado ? " (fechado)" : ""}</strong>
+        ) : <span className="text-xs text-muted-foreground">Definida por mês: escolha um período para alterar.</span>}
+        <span>Valor da Reserva: <strong>{fmtMoney(reserva)}</strong></span>
+        {mesUnico && <span className="text-xs text-muted-foreground">Cálculo: {fmtMoney(resultado)} × {pct2(pct ?? 0)} = {fmtMoney(reserva)}</span>}
+        <span className="ml-auto">Valor disponível para distribuição aos sócios{mesUnico ? ` (${pct2(100 - (pct ?? 0))})` : ""}: <strong className="text-emerald-700">{fmtMoney(disponivel)}</strong></span>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -343,6 +405,16 @@ function AbaDistribuicao({ total, mesUnico, fechado, podeConfigurar, socios, pct
                   <TableCell className={`${CEL} font-semibold`}>{fmtMoney(total.totalRetiradas)}</TableCell>
                   <TableCell className={`${CEL} font-semibold`}>{fmtMoney(total.totalSaldo)}</TableCell>
                   <TableCell className={CEL}>100,00%</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell colSpan={4} className="text-right text-xs text-muted-foreground">(−) Consumo da Empresa (Investimentos/Obras Adm sem sócio)</TableCell>
+                  <TableCell className={`${CEL} text-orange-600`}>−{fmtMoney(total.consumoEmpresa)}</TableCell>
+                  <TableCell />
+                </TableRow>
+                <TableRow>
+                  <TableCell colSpan={4} className="text-right text-xs font-semibold">(=) Saldo final a retirar</TableCell>
+                  <TableCell className={`${CEL} font-bold ${total.saldoFinal < 0 ? "text-red-600" : "text-emerald-700"}`}>{fmtMoney(total.saldoFinal)}</TableCell>
+                  <TableCell />
                 </TableRow>
               </TableFooter>
             )}
@@ -506,10 +578,10 @@ function AbaHistorico({ ano, entradas, resultados, mesesRealizados, fechadas, po
   const linhas = useMemo(() => entradas.filter((m) => mesesRealizados.has(m) || m <= mesAtual).map((m) => {
     const calc = resultados.get(m)!;
     const f = fechadas.get(m);
-    return linhaDoHistorico(calc, f ? { status: "fechado", dataFechamento: f.dataFechamento, socios: f.socios, resultadoAntesRetiradas: f.resultadoAntesRetiradas, lucroDistribuir: f.lucroDistribuir } : undefined);
+    return linhaDoHistorico(calc, f ? { status: "fechado", dataFechamento: f.dataFechamento, socios: f.socios, resultadoAntesRetiradas: f.resultadoAntesRetiradas, lucroDistribuir: f.lucroDistribuir, reserva: f.reserva } : undefined);
   }), [entradas, mesesRealizados, resultados, fechadas, mesAtual]);
   const totais = useMemo(() => ({
-    resultado: linhas.reduce((s, l) => s + l.resultadoAntesRetiradas, 0), lucro: linhas.reduce((s, l) => s + l.lucroDistribuir, 0), retiradas: linhas.reduce((s, l) => s + l.retiradas, 0),
+    resultado: linhas.reduce((s, l) => s + l.resultadoAntesRetiradas, 0), reserva: linhas.reduce((s, l) => s + l.reserva, 0), lucro: linhas.reduce((s, l) => s + l.lucroDistribuir, 0), retiradas: linhas.reduce((s, l) => s + l.retiradas, 0),
     pago: linhas.reduce((s, l) => s + l.complementoPago, 0), saldo: linhas.reduce((s, l) => s + l.saldoRemanescente, 0), fechadas: linhas.filter((l) => l.status === "fechado").length,
   }), [linhas]);
   const ultimo = linhas.filter((l) => l.dataFechamento).map((l) => l.dataFechamento as string).sort().at(-1) ?? null;
@@ -520,7 +592,7 @@ function AbaHistorico({ ano, entradas, resultados, mesesRealizados, fechadas, po
     const pend = pendenciasParaFechar(calc);
     if (pend.length > 0) { toast.error(pend[0]); return; }
     try {
-      await fechar.mutateAsync({ mes: fechando, resultadoAntesRetiradas: calc.resultadoAntesRetiradas, consumoEmpresa: calc.consumoEmpresa.total, lucroDistribuir: calc.lucroDistribuir, socios: fotoDoFechamento(calc) });
+      await fechar.mutateAsync({ mes: fechando, resultadoAntesRetiradas: calc.resultadoAntesRetiradas, consumoEmpresa: calc.consumoEmpresa.total, lucroDistribuir: calc.lucroDistribuir, reservaPercentual: calc.reservaPercentual, reserva: calc.reserva, socios: fotoDoFechamento(calc) });
       toast.success(`Competência ${rotuloMes(fechando)} fechada.`);
       setFechando(null);
     } catch (e) { toast.error((e as { message?: string })?.message || "Erro ao fechar a competência."); }
@@ -542,7 +614,8 @@ function AbaHistorico({ ano, entradas, resultados, mesesRealizados, fechadas, po
               <TableRow>
                 <TableHead>Competência</TableHead>
                 <TableHead className={CAB}><TituloComFormula titulo="Resultado do Período (R$)" formula={<span>Resultado após Outras Receitas − Tributos do mês (Fechamento da Empresa), antes das retiradas e do consumo da Empresa.</span>} /></TableHead>
-                <TableHead className={CAB}><TituloComFormula titulo="Lucro a Distribuir (R$)" formula={<span>Resultado do Período − o que a Empresa consumiu em Investimentos e Obras Adm. Mês fechado: o valor gravado no fechamento.</span>} /></TableHead>
+                <TableHead className={CAB}><TituloComFormula titulo="Reserva (R$)" formula={<span>Reserva de Investimento do mês: Resultado do Período × o percentual de reserva. Mês fechado: o valor gravado no fechamento.</span>} /></TableHead>
+                <TableHead className={CAB}><TituloComFormula titulo="Lucro a Distribuir (R$)" formula={<span>Resultado do Período − Reserva de Investimento. Mês fechado: o valor gravado no fechamento.</span>} /></TableHead>
                 <TableHead className={CAB}><TituloComFormula titulo="Retiradas Antecipadas (R$)" formula={<span>Soma, dos sócios, da coluna do Fechamento da Empresa + Investimentos e Obras Adm por integrante.</span>} /></TableHead>
                 <TableHead className={CAB}><TituloComFormula titulo="Complemento Pago (R$)" formula={<span>O que já foi pago aos sócios do saldo a retirar do mês. Registrado por quem fecha, em “Complemento” (só mês fechado).</span>} /></TableHead>
                 <TableHead className={CAB}><TituloComFormula titulo="Saldo Remanescente (R$)" formula={<span><strong>Saldo a retirar − Complemento pago.</strong> O que ainda pode ser retirado do mês.</span>} /></TableHead>
@@ -552,11 +625,12 @@ function AbaHistorico({ ano, entradas, resultados, mesesRealizados, fechadas, po
               </TableRow>
             </TableHeader>
             <TableBody>
-              {linhas.length === 0 && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">Nenhuma competência realizada neste ano.</TableCell></TableRow>}
+              {linhas.length === 0 && <TableRow><TableCell colSpan={10} className="py-8 text-center text-muted-foreground">Nenhuma competência realizada neste ano.</TableCell></TableRow>}
               {linhas.map((l) => (
                 <TableRow key={l.mes}>
                   <TableCell className="whitespace-nowrap font-medium">{mesCurto(l.mes)}</TableCell>
                   <TableCell className={CEL}>{fmtMoney(l.resultadoAntesRetiradas)}</TableCell>
+                  <TableCell className={CEL}>{fmtMoney(l.reserva)}</TableCell>
                   <TableCell className={CEL}>{fmtMoney(l.lucroDistribuir)}</TableCell>
                   <TableCell className={CEL}>{fmtMoney(l.retiradas)}</TableCell>
                   <TableCell className={`${CEL} text-emerald-700`}>{fmtMoney(l.complementoPago)}</TableCell>
@@ -580,6 +654,7 @@ function AbaHistorico({ ano, entradas, resultados, mesesRealizados, fechadas, po
                 <TableRow>
                   <TableCell className="font-semibold">Total</TableCell>
                   <TableCell className={`${CEL} font-semibold`}>{fmtMoney(totais.resultado)}</TableCell>
+                  <TableCell className={`${CEL} font-semibold`}>{fmtMoney(totais.reserva)}</TableCell>
                   <TableCell className={`${CEL} font-semibold`}>{fmtMoney(totais.lucro)}</TableCell>
                   <TableCell className={`${CEL} font-semibold`}>{fmtMoney(totais.retiradas)}</TableCell>
                   <TableCell className={`${CEL} font-semibold`}>{fmtMoney(totais.pago)}</TableCell>
@@ -626,7 +701,7 @@ function AbaHistorico({ ano, entradas, resultados, mesesRealizados, fechadas, po
           <DialogHeader>
             <DialogTitle>Fechar {fechando ? rotuloMes(fechando) : ""}?</DialogTitle>
             <DialogDescription>
-              Grava o lucro a distribuir, o percentual e as retiradas de cada sócio como estão hoje. Depois de fechado, o mês não muda quando o Fluxo de Caixa mudar; para mexer, é preciso reabrir.
+              Grava a reserva de investimento, o lucro a distribuir, o percentual e as retiradas de cada sócio como estão hoje. Depois de fechado, o mês não muda quando o Fluxo de Caixa mudar; para mexer, é preciso reabrir.
             </DialogDescription>
           </DialogHeader>
           {fechando && pendenciasParaFechar(resultados.get(fechando)!).map((p) => <p key={p} className="text-sm text-amber-700">⚠ {p}</p>)}

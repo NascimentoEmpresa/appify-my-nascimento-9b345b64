@@ -111,6 +111,20 @@ export function useResgatesCaixa() {
   });
 }
 
+// Ajuste provisório do saldo aplicado por empresa (tabela APLICACAO_FINANCEIRA_AJUSTE_SALDO, migration 20261117190000): somado ao montante
+// disponível para resgate, igual à conta que a RPC faz. Sem a migration (tabela ausente) ou sem ajuste, a lista vem vazia e nada muda.
+export function useAjusteSaldoAplicado() {
+  return useQuery({
+    queryKey: ["aplicacao_financeira_ajuste_saldo"],
+    queryFn: async () => {
+      const cliente = supabase as unknown as { from(t: string): { select(c: string): PromiseLike<{ data: { empresa_id: string; valor: number | string }[] | null; error: unknown }> } };
+      const { data, error } = await cliente.from("APLICACAO_FINANCEIRA_AJUSTE_SALDO").select("empresa_id, valor");
+      if (error) return [] as { empresa_id: string; valor: number }[];
+      return (data ?? []).map((r) => ({ empresa_id: r.empresa_id, valor: Number(r.valor) }));
+    },
+  });
+}
+
 // SIS-2026-0651: histórico da planilha de Fluxo 2026 (importação, até 08/09) nas
 // classificações Aplicação Financeira / Rendimento Aplicação. Só leitura: a correção
 // continua sendo feita no Fluxo de Caixa. Migration 20261014000002 ainda não aplicada

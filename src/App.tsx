@@ -149,6 +149,7 @@ import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import SolicitacoesManutencoes from "./pages/suprimentos/SolicitacoesManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
+import EntregasEpi from "./pages/suprimentos/EntregasEpi";
 import CorreioDeclaracao from "./pages/suprimentos/CorreioDeclaracao";
 import EnxovalAdmissao from "./pages/publico/EnxovalAdmissao";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
@@ -350,6 +351,7 @@ import TreinamentosColaborador from "./pages/colaborador/TreinamentosColaborador
 import CursoColaborador from "./pages/colaborador/CursoColaborador";
 import CertificadoColaborador from "./pages/colaborador/CertificadoColaborador";
 import HistoricoColaborador from "./pages/colaborador/HistoricoColaborador";
+import EpisColaborador from "./pages/colaborador/EpisColaborador";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
@@ -581,6 +583,7 @@ const App = () => (
             <Route path="treinamentos/:cursoId" element={<CursoColaborador />} />
             <Route path="treinamentos/:cursoId/certificado" element={<CertificadoColaborador />} />
             <Route path="historico" element={<HistoricoColaborador />} />
+            <Route path="epis" element={<EpisColaborador />} />
           </Route>
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
@@ -961,6 +964,7 @@ const App = () => (
             <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
             <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
             <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            <Route path="suprimentos/entregas-epi" element={<EntregasEpi />} />
             {/* Destino do QR code da etiqueta térmica (menu sup_retirada_entrega). */}
             <Route path="suprimentos/retirada" element={<RetiradaPedido />} />
             <Route path="suprimentos/retirada/:ref" element={<RetiradaPedido />} />
