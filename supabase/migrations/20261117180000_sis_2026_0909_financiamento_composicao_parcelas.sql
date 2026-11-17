@@ -141,7 +141,12 @@ CREATE TRIGGER trg_jur_pat_parc_updated_at BEFORE UPDATE ON public."JUR_PATRIMON
 -- ── 3. Pagamentos da parcela (mais de um por parcela) ───────────────────
 CREATE TABLE IF NOT EXISTS public."JUR_PATRIMONIO_PARCELA_PAGAMENTOS" (
   id                BIGSERIAL PRIMARY KEY,
-  parcela_id        BIGINT NOT NULL REFERENCES public."JUR_PATRIMONIO_PARCELAS"(id) ON DELETE CASCADE,
+  -- SEM cascata (revisão de 16/11): o importador antigo da planilha faz
+  -- DELETE de todas as parcelas do imóvel; com CASCADE isso levava junto os
+  -- pagamentos registrados. NO ACTION (e não RESTRICT) para que excluir o
+  -- PATRIMÔNIO continue funcionando: a cascata dele apaga pagamentos e
+  -- parcelas no mesmo comando e a checagem só roda no fim.
+  parcela_id        BIGINT NOT NULL REFERENCES public."JUR_PATRIMONIO_PARCELAS"(id) ON DELETE NO ACTION,
   patrimonio_id     BIGINT NOT NULL REFERENCES public."JUR_PATRIMONIOS"(id) ON DELETE CASCADE,
   data_pagamento    DATE NOT NULL,
   valor             NUMERIC(14,2) NOT NULL,
@@ -188,52 +193,50 @@ BEGIN
   END LOOP;
 END $$;
 
-DROP POLICY IF EXISTS jur_pat_financiamentos_gate ON public."JUR_PATRIMONIO_FINANCIAMENTOS";
-CREATE POLICY jur_pat_financiamentos_gate ON public."JUR_PATRIMONIO_FINANCIAMENTOS"
-  FOR ALL TO authenticated
-  USING (
-    public.has_screen_access(auth.uid(), 'patrimonios', 'visualizar'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'visualizar'::app_acao)
-  )
-  WITH CHECK (
-    public.has_screen_access(auth.uid(), 'patrimonios', 'incluir'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'patrimonios', 'alterar'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'incluir'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'alterar'::app_acao)
-  );
-
-DROP POLICY IF EXISTS jur_pat_parcela_pagamentos_gate ON public."JUR_PATRIMONIO_PARCELA_PAGAMENTOS";
-CREATE POLICY jur_pat_parcela_pagamentos_gate ON public."JUR_PATRIMONIO_PARCELA_PAGAMENTOS"
-  FOR ALL TO authenticated
-  USING (
-    public.has_screen_access(auth.uid(), 'patrimonios', 'visualizar'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'visualizar'::app_acao)
-  )
-  WITH CHECK (
-    public.has_screen_access(auth.uid(), 'patrimonios', 'incluir'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'patrimonios', 'alterar'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'incluir'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'alterar'::app_acao)
-  );
-
-DROP POLICY IF EXISTS jur_pat_incc_aplicacoes_gate ON public."JUR_PATRIMONIO_INCC_APLICACOES";
-CREATE POLICY jur_pat_incc_aplicacoes_gate ON public."JUR_PATRIMONIO_INCC_APLICACOES"
-  FOR ALL TO authenticated
-  USING (
-    public.has_screen_access(auth.uid(), 'patrimonios', 'visualizar'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'visualizar'::app_acao)
-  )
-  WITH CHECK (
-    public.has_screen_access(auth.uid(), 'patrimonios', 'incluir'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'patrimonios', 'alterar'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'incluir'::app_acao)
-    OR public.has_screen_access(auth.uid(), 'juridico_patrimonios', 'alterar'::app_acao)
-  );
+-- Uma policy por comando (revisão de 16/11). A primeira versão era
+-- FOR ALL USING (visualizar): como o USING também vale para UPDATE e DELETE,
+-- quem só VISUALIZA a tela conseguia apagar pagamentos e aplicações do INCC.
+-- Agora: ver = visualizar; incluir = incluir; alterar = alterar; apagar =
+-- excluir (a tela tem a ação, ver SISTEMA_COMENTARIOS 20261016000004).
+-- JUR_PATRIMONIO_PARCELAS entra na mesma régua: a aba passou a gravar nela e
+-- a policy antiga (jur_pat_parcelas_gate, FOR ALL) tinha o mesmo furo.
+-- Os dois códigos de menu valem (os dois apontam para a tela, ver 20260909000008).
+-- has_screen_access dentro de (SELECT ...) = calculado uma vez por consulta.
+DO $$
+DECLARE
+  t TEXT;
+  pre TEXT;
+  ok TEXT := '((SELECT public.has_screen_access(auth.uid(), %L, %L::app_acao)) OR (SELECT public.has_screen_access(auth.uid(), %L, %L::app_acao)))';
+  f TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['JUR_PATRIMONIO_FINANCIAMENTOS','JUR_PATRIMONIO_PARCELA_PAGAMENTOS','JUR_PATRIMONIO_INCC_APLICACOES','JUR_PATRIMONIO_PARCELAS'] LOOP
+    pre := CASE t
+      WHEN 'JUR_PATRIMONIO_FINANCIAMENTOS' THEN 'jur_pat_financiamentos'
+      WHEN 'JUR_PATRIMONIO_PARCELA_PAGAMENTOS' THEN 'jur_pat_parcela_pagamentos'
+      WHEN 'JUR_PATRIMONIO_INCC_APLICACOES' THEN 'jur_pat_incc_aplicacoes'
+      ELSE 'jur_pat_parcelas' END;
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pre || '_gate', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pre || '_select', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pre || '_insert', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pre || '_update', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pre || '_delete', t);
+    f := format(ok, 'patrimonios', 'visualizar', 'juridico_patrimonios', 'visualizar');
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING %s', pre || '_select', t, f);
+    f := format(ok, 'patrimonios', 'incluir', 'juridico_patrimonios', 'incluir');
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR INSERT TO authenticated WITH CHECK %s', pre || '_insert', t, f);
+    f := format(ok, 'patrimonios', 'alterar', 'juridico_patrimonios', 'alterar');
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR UPDATE TO authenticated USING %s WITH CHECK %s', pre || '_update', t, f, f);
+    f := format(ok, 'patrimonios', 'excluir', 'juridico_patrimonios', 'excluir');
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR DELETE TO authenticated USING %s', pre || '_delete', t, f);
+  END LOOP;
+END $$;
 
 NOTIFY pgrst, 'reload schema';
 
 -- =========================================================================
 -- ROLLBACK
+--   (policies: DROP das 16 jur_pat_*_select/_insert/_update/_delete e recriar
+--    jur_pat_parcelas_gate como em 20260909000008)
 --   DROP TABLE IF EXISTS public."JUR_PATRIMONIO_INCC_APLICACOES";
 --   DROP TABLE IF EXISTS public."JUR_PATRIMONIO_PARCELA_PAGAMENTOS";
 --   DROP TRIGGER IF EXISTS trg_jur_pat_parc_updated_at ON public."JUR_PATRIMONIO_PARCELAS";

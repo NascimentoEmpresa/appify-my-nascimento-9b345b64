@@ -1419,6 +1419,7 @@ export default function Patrimonios() {
                     db={db}
                     patrimonioId={sel.id}
                     parcelas={comBaixa as unknown as ParcelaDaAba[]}
+                    brutas={parcelas as unknown as ParcelaDaAba[]}
                     autor={autor}
                     toast={toast}
                     logHist={async (acao, detalhe) => { await logHist(sel.id, acao, detalhe); recarregarHist(); }}

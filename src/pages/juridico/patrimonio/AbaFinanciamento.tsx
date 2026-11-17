@@ -18,13 +18,27 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  numeroOuNulo, resolverParcelas, resumoDoPeriodo, saldoDeReferencia, evolucaoDoSaldo, noPeriodo,
+  numeroOuNulo, resolverParcelas, saldoDeReferencia, evolucaoDoSaldo,
   opcoesDePeriodo, rotuloPeriodo, rotuloIndice, corDaSituacao, SITUACOES, historicoIncc, calcularIncc,
   APLICACOES_INCC, MODALIDADES_INCC, BASES_INCC, rotuloAplicacaoIncc, lerImportacao, planejarImportacao,
-  csvDasParcelas, detalheReconhecido, rotuloParcela, CAMPOS_COMPONENTES,
+  csvDasParcelas, detalheReconhecido, rotuloParcela, CAMPOS_COMPONENTES, recortesDaAba, parcelaParaEdicao,
+  pagamentosSemComprovante, tipoDoIndice, permissoesDaAba,
   type ParcelaFinanciamento, type PagamentoParcela, type LinhaResolvida, type Situacao, type EvolucaoSaldo,
 } from "./financiamento";
+
+/**
+ * O que o usuário pode fazer na aba, pela mesma régua da RLS: os dois
+ * códigos de menu da tela ('patrimonios' e 'juridico_patrimonios') e a ação.
+ * Revisão de 16/11: a UI mostrava editar/excluir para quem só visualiza.
+ */
+function usePermissoesDaAba() {
+  const i1 = useScreenAccess("patrimonios", "incluir").data, i2 = useScreenAccess("juridico_patrimonios", "incluir").data;
+  const a1 = useScreenAccess("patrimonios", "alterar").data, a2 = useScreenAccess("juridico_patrimonios", "alterar").data;
+  const e1 = useScreenAccess("patrimonios", "excluir").data, e2 = useScreenAccess("juridico_patrimonios", "excluir").data;
+  return permissoesDaAba({ incluir: !!(i1 || i2), alterar: !!(a1 || a2), excluir: !!(e1 || e2) });
+}
 
 // ── Tipos das tabelas ────────────────────────────────────────────────────
 export interface Financiamento {
@@ -63,6 +77,8 @@ interface Props {
   patrimonioId: number;
   /** Parcelas do patrimônio, já com `baixa` (planilha / Malote / conta). */
   parcelas: ParcelaDaAba[];
+  /** As MESMAS parcelas cruas, como estão no banco — para o formulário de edição. */
+  brutas: ParcelaDaAba[];
   autor: string;
   toast: (msg: string, t?: string) => void;
   logHist: (acao: string, detalhe?: string) => Promise<void>;
@@ -138,7 +154,8 @@ function deForm(f: FormTexto, num: string[], datas: string[], txt: string[]): Re
   return out;
 }
 
-export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, logHist, recarregarParcelas, abrirArquivo, subirArquivo }: Props) {
+export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, toast, logHist, recarregarParcelas, abrirArquivo, subirArquivo }: Props) {
+  const pode = usePermissoesDaAba();
   const [fins, setFins] = useState<Financiamento[]>([]);
   const [finSel, setFinSel] = useState<number | null>(null);
   const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
@@ -194,11 +211,10 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
     return pagas.length ? pagas.sort().pop()!.slice(0, 7) : "";
   }, [resolvidas]);
   const per = periodo ?? periodoPadrao;
-  const noRecorte = resolvidas.filter(l => noPeriodo(l.p.vencimento, per));
-  const filtradas = noRecorte.filter(l => !fSituacao || l.situacao === fSituacao);
-  const resumo = resumoDoPeriodo(filtradas, hoje());
-  const saldo = saldoDeReferencia(doContrato, per, fin);
-  const evolPeriodo = per ? evolucaoDoSaldo(filtradas.map(l => l.p), doContrato) : null;
+  // Tabela = período + situação; resumo e evolução = só o período (ver
+  // recortesDaAba). O saldo nunca passa de hoje (saldoDeReferencia).
+  const { filtradas, resumo, evolucao: evolPeriodo } = recortesDaAba(resolvidas, per, fSituacao, hoje());
+  const saldo = saldoDeReferencia(doContrato, per, fin, hoje());
   const aplicacoes = historicoIncc(incc.filter(a => !fin || a.financiamento_id === fin.id));
   const LIMITE = 120;
   const visiveis = verTodas ? filtradas : filtradas.slice(0, LIMITE);
@@ -259,7 +275,10 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
   };
 
   // ── Gravação: parcela ────────────────────────────────────────────────
-  const abrirParc = (p: ParcelaDaAba | null) => {
+  const abrirParc = (comBaixa: ParcelaDaAba | null) => {
+    // A linha CRUA do banco: a que a tabela desenha traz o valor_pago da conta
+    // paga no Malote, e salvar o formulário gravaria esse valor (revisão 16/11).
+    const p = comBaixa ? parcelaParaEdicao(comBaixa.id, brutas) ?? comBaixa : null;
     setFormParc({ ...paraForm(p as unknown as Record<string, unknown>, CAMPOS_PARC), financiamento_id: p?.financiamento_id != null ? String(p.financiamento_id) : fin ? String(fin.id) : "" });
     setFlagsParc({ encargos_inclusos: p?.encargos_inclusos !== false, seguros_fghab_subtotal: p?.seguros_fghab_subtotal !== false, projetado: !!p?.projetado });
     setModalParc({ id: p?.id ?? null });
@@ -274,7 +293,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
       atualizado_por: autor,
     };
     if (payload.indice_correcao == null) payload.indice_tipo = null;
-    else if (!payload.indice_tipo) payload.indice_tipo = Number(payload.indice_correcao) > 0.5 && Number(payload.indice_correcao) < 2 ? "fator" : "percentual";
+    else if (!payload.indice_tipo) payload.indice_tipo = tipoDoIndice(Number(payload.indice_correcao), formParc.indice_correcao);
     setGravando(true);
     const rot = rotuloParcela({ numero: payload.numero as number | null, rotulo: payload.rotulo as string | null });
     if (modalParc.id) {
@@ -290,7 +309,10 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
     setGravando(false); setModalParc(null); toast("Parcela salva.", "ok"); await recarregarParcelas();
   };
   const excluirParc = async (p: ParcelaDaAba) => {
-    if (!confirm(`Excluir a parcela ${rotuloParcela(p)} (${fmtDt(p.vencimento) ?? "sem vencimento"})? Os pagamentos registrados nela também são excluídos.`)) return;
+    // A FK dos pagamentos não cascateia mais (revisão de 16/11): parcela com
+    // pagamento registrado só sai depois de excluir os pagamentos.
+    if (pagamentos.some(x => String(x.parcela_id) === String(p.id))) { toast("Esta parcela tem pagamentos registrados — exclua os pagamentos antes.", "err"); return; }
+    if (!confirm(`Excluir a parcela ${rotuloParcela(p)} (${fmtDt(p.vencimento) ?? "sem vencimento"})?`)) return;
     const { error } = await db.from("JUR_PATRIMONIO_PARCELAS").delete().eq("id", p.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     await logHist("Parcela do financiamento excluída", `${rotuloParcela(p)} · ${money(numeroOuNulo(p.valor)) ?? "—"}`);
@@ -308,21 +330,40 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
   };
 
   // ── Gravação: pagamento ──────────────────────────────────────────────
-  const abrirPag = (p: ParcelaDaAba) => {
-    const ja = pagamentos.filter(x => String(x.parcela_id) === String(p.id)).reduce((s, x) => s + (numeroOuNulo(x.valor) ?? 0), 0);
+  // `anexar` = veio do "Anexar comprovante": abre já apontando para o último
+  // pagamento SEM comprovante (revisão de 16/11 — antes sempre criava um
+  // pagamento novo, duplicando o valor pago).
+  const abrirPag = (p: ParcelaDaAba, anexar = false) => {
+    const daParcela = pagamentos.filter(x => String(x.parcela_id) === String(p.id));
+    const ja = daParcela.reduce((s, x) => s + (numeroOuNulo(x.valor) ?? 0), 0);
     const falta = Math.max(0, (numeroOuNulo(p.valor) ?? 0) - ja);
-    setFormPag({ data_pagamento: hoje(), valor: falta ? String(falta.toFixed(2)).replace(".", ",") : "", observacao: "" });
+    const semComp = pagamentosSemComprovante(daParcela);
+    const alvo = anexar && semComp.length ? String(semComp[semComp.length - 1].id) : "";
+    setFormPag({ pagamento_id: alvo, data_pagamento: hoje(), valor: falta ? String(falta.toFixed(2)).replace(".", ",") : "", observacao: "" });
     setArqPag(null);
     setModalPag({ parcela: p });
   };
   const salvarPag = async () => {
     if (!modalPag) return;
+    const p = modalPag.parcela;
+    // Anexar a um pagamento que já existe: só sobe o arquivo e liga.
+    if (formPag.pagamento_id) {
+      if (!arqPag) { toast("Escolha o arquivo do comprovante.", "err"); return; }
+      setGravando(true);
+      const path = await subirArquivo(arqPag, `${patrimonioId}/financiamento/comprovantes`);
+      if (!path) { setGravando(false); return; }
+      const { error } = await db.from("JUR_PATRIMONIO_PARCELA_PAGAMENTOS").update({ comprovante_path: path, comprovante_nome: arqPag.name }).eq("id", Number(formPag.pagamento_id));
+      if (error) { setGravando(false); toast("Erro: " + error.message, "err"); return; }
+      await db.from("JUR_PATRIMONIO_ITENS").insert({ patrimonio_id: patrimonioId, kind: "documento", tipo: `Comprovante — parcela ${rotuloParcela(p)}`, nome: arqPag.name, storage_path: path, criado_por: autor });
+      await logHist("Comprovante anexado ao pagamento", `${rotuloParcela(p)} · ${arqPag.name}`);
+      setGravando(false); setModalPag(null); toast("Comprovante anexado.", "ok"); carregar();
+      return;
+    }
     const valor = numeroOuNulo(formPag.valor);
     if (!formPag.data_pagamento || valor == null) { toast("Informe a data e o valor pago.", "err"); return; }
     setGravando(true);
     let path: string | null = null;
     if (arqPag) { path = await subirArquivo(arqPag, `${patrimonioId}/financiamento/comprovantes`); if (!path) { setGravando(false); return; } }
-    const p = modalPag.parcela;
     const { error } = await db.from("JUR_PATRIMONIO_PARCELA_PAGAMENTOS").insert({
       parcela_id: p.id, patrimonio_id: patrimonioId, data_pagamento: formPag.data_pagamento, valor,
       observacao: formPag.observacao?.trim() || null, comprovante_path: path, comprovante_nome: arqPag?.name ?? null, criado_por: autor,
@@ -484,17 +525,20 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
         <div style={caixa}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
             <div style={tituloCaixa}>Pagamentos desta parcela</div>
-            <button className="jp-btn" onClick={() => abrirPag(p)} style={btn("#0f3171", "#fff")}>+ Registrar pagamento</button>
+            {pode.registrarPagamento && <button className="jp-btn" onClick={() => abrirPag(p)} style={btn("#0f3171", "#fff")}>+ Registrar pagamento</button>}
           </div>
           {l.pagamentos.length === 0
-            ? <div style={{ fontSize: 12.5, color: COR.claro }}>{p.baixa === "malote" ? "Paga pelo Malote (conta do contrato)." : p.baixa === "conta" ? "Baixa dada na conta do contrato (Contas / Obrigações)." : p.baixa === "planilha" ? "Paga conforme a planilha ATIVO IMOBILIZADO." : numeroOuNulo(p.valor_pago) != null ? `Valor pago informado: ${money(numeroOuNulo(p.valor_pago))}.` : "Nenhum pagamento registrado."}</div>
+            ? <div style={{ fontSize: 12.5, color: COR.claro }}>{p.baixa === "malote" ? "Paga pelo Malote (conta do contrato)." : p.baixa === "conta" ? "Baixa dada na conta do contrato (Contas / Obrigações)." : p.baixa === "planilha" ? "Paga conforme a planilha ATIVO IMOBILIZADO." : l.pago != null ? `Valor pago informado: ${money(l.pago)}.` : "Nenhum pagamento registrado."}</div>
             : (l.pagamentos as Pagamento[]).map(pg => (
               <div key={pg.id} style={{ display: "flex", gap: 10, alignItems: "center", borderTop: "1px solid #f1f5f9", padding: "7px 0", fontSize: 12.5, flexWrap: "wrap" }}>
                 <b style={{ minWidth: 90 }}>{fmtDt(pg.data_pagamento)}</b>
                 <b style={{ minWidth: 110, color: COR.verde }}>{money(numeroOuNulo(pg.valor))}</b>
                 <span style={{ color: COR.cinza, flex: 1 }}>{pg.observacao}{pg.criado_por ? ` · ${pg.criado_por}` : ""}</span>
-                {pg.comprovante_path && <button className="jp-btn" onClick={() => abrirArquivo(pg.comprovante_path!)} style={btn("#eef4ff", COR.azul, "#dbe4f0")}>📎 Comprovante</button>}
-                <button className="jp-btn" onClick={() => excluirPag(pg, p)} style={{ background: "none", color: "#dc2626", padding: "4px 6px" }}>Excluir</button>
+                {pg.comprovante_path
+                  ? <button className="jp-btn" onClick={() => abrirArquivo(pg.comprovante_path!)} style={btn("#eef4ff", COR.azul, "#dbe4f0")}>📎 Comprovante</button>
+                  : pode.anexarComprovante && <button className="jp-btn" title="Anexar o comprovante a ESTE pagamento"
+                      onClick={() => { abrirPag(p, true); setFormPag(f => ({ ...f, pagamento_id: String(pg.id) })); }} style={btn("#fff", COR.azul, "#cbd5e1")}>⬆ Anexar comprovante</button>}
+                {pode.excluirPagamento && <button className="jp-btn" onClick={() => excluirPag(pg, p)} style={{ background: "none", color: "#dc2626", padding: "4px 6px" }}>Excluir</button>}
               </div>
             ))}
           {l.situacao === "PARCIAL" && <div style={{ fontSize: 12, color: "#a16207", fontWeight: 700, marginTop: 6 }}>Falta {money(Math.max(0, (numeroOuNulo(p.valor) ?? 0) - (l.pago ?? 0)))} para quitar a parcela.</div>}
@@ -522,12 +566,12 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="jp-btn" onClick={() => abrirPag(p)} style={btn("#fff", COR.azul, "#cbd5e1")}>⬆ Anexar comprovante</button>
+          {(pode.anexarComprovante || pode.registrarPagamento) && <button className="jp-btn" onClick={() => abrirPag(p, true)} style={btn("#fff", COR.azul, "#cbd5e1")}>⬆ Anexar comprovante</button>}
           {p.demonstrativo_path
             ? <button className="jp-btn" onClick={() => abrirArquivo(p.demonstrativo_path!)} style={btn("#fff", COR.azul, "#cbd5e1")}>📄 Ver demonstrativo</button>
-            : <label className="jp-btn" style={{ ...btn("#fff", COR.azul, "#cbd5e1"), display: "inline-block" }}>⬆ Anexar demonstrativo
+            : pode.anexarDemonstrativo && <label className="jp-btn" style={{ ...btn("#fff", COR.azul, "#cbd5e1"), display: "inline-block" }}>⬆ Anexar demonstrativo
                 <input type="file" style={{ display: "none" }} onChange={ev => { const f = ev.target.files?.[0]; if (f) anexarDemonstrativo(p, f); ev.target.value = ""; }} /></label>}
-          <button className="jp-btn" onClick={() => abrirParc(p)} style={btn("#f1f5f9", "#475569")}>Editar composição</button>
+          {pode.editarParcela && <button className="jp-btn" onClick={() => abrirParc(p)} style={btn("#f1f5f9", "#475569")}>Editar composição</button>}
         </div>
         <div style={{ fontSize: 11, color: COR.claro, marginTop: 10 }}>
           Origem: {[p.documento_origem ?? fin?.documento_origem ?? p.origem, (p.documento_data ?? fin?.data_referencia) ? `referência ${fmtDt(p.documento_data ?? fin?.data_referencia)}` : null, p.vencimento ? `parcela de ${rotuloPeriodo(String(p.vencimento).slice(0, 7)).toLowerCase()}` : null].filter(Boolean).join(" · ") || "não informada"}
@@ -555,8 +599,8 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
         {SITUACOES.map(s => <option key={s.valor} value={s.valor}>{s.rotulo}</option>)}
       </select>
       <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <button className="jp-btn" onClick={() => abrirParc(null)} style={btn("#fff", COR.azul, "#dbe4f0")}>+ Parcela</button>
-        <button className="jp-btn" onClick={() => { setTextoImp(""); setImpProjetado(false); setModalImp(true); }} style={btn("#fff", COR.azul, "#dbe4f0")}>⬆ Importar composição</button>
+        {pode.novaParcela && <button className="jp-btn" onClick={() => abrirParc(null)} style={btn("#fff", COR.azul, "#dbe4f0")}>+ Parcela</button>}
+        {pode.importar && <button className="jp-btn" onClick={() => { setTextoImp(""); setImpProjetado(false); setModalImp(true); }} style={btn("#fff", COR.azul, "#dbe4f0")}>⬆ Importar composição</button>}
         <button className="jp-btn" onClick={exportarCsv} disabled={!filtradas.length} style={btn("#fff", COR.azul, "#dbe4f0")}>⬇ CSV</button>
       </div>
     </div>
@@ -588,8 +632,8 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <div style={tituloCaixa}>Condições do financiamento</div>
         <div style={{ display: "flex", gap: 6 }}>
-          {fin && <button className="jp-btn" onClick={() => abrirFin("condicoes", true)} style={btn("#fff", COR.cinza, COR.borda)} title="Outro contrato no mesmo imóvel (ex.: duas cotas)">+ Outro contrato</button>}
-          <button className="jp-btn" onClick={() => abrirFin("condicoes")} style={btn("#fff", COR.azul, "#cbd5e1")}>{fin ? "Editar condições" : "Cadastrar financiamento"}</button>
+          {fin && pode.cadastrarContrato && <button className="jp-btn" onClick={() => abrirFin("condicoes", true)} style={btn("#fff", COR.cinza, COR.borda)} title="Outro contrato no mesmo imóvel (ex.: duas cotas)">+ Outro contrato</button>}
+          {(fin ? pode.editarContrato : pode.cadastrarContrato) && <button className="jp-btn" onClick={() => abrirFin("condicoes")} style={btn("#fff", COR.azul, "#cbd5e1")}>{fin ? "Editar condições" : "Cadastrar financiamento"}</button>}
         </div>
       </div>
       <div style={grade(170)}>
@@ -610,7 +654,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
           <div style={{ ...tituloCaixa, fontSize: 17 }}>Correção por INCC</div>
           <div style={{ fontSize: 12, color: COR.cinza }}>Cadastro do índice por contrato e fase da operação</div>
         </div>
-        <button className="jp-btn" onClick={() => abrirFin("incc")} style={btn("#fff", COR.azul, "#cbd5e1")}>Configurar INCC</button>
+        {(fin ? pode.editarContrato : pode.cadastrarContrato) && <button className="jp-btn" onClick={() => abrirFin("incc")} style={btn("#fff", COR.azul, "#cbd5e1")}>Configurar INCC</button>}
       </div>
       {(() => {
         const ult = aplicacoes[aplicacoes.length - 1];
@@ -661,29 +705,32 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
     </div>
 
     {/* Evolução do saldo no período */}
-    {evolPeriodo && filtradas.length > 1 && (
-      <div style={caixa}><div style={{ ...tituloCaixa, marginBottom: 10 }}>Evolução do saldo devedor — {rotuloPeriodo(per).toLowerCase()}</div>{blocoEvolucao(evolPeriodo, "Saldo ao fim do período")}</div>
+    {evolPeriodo && (
+      <div style={caixa}><div style={{ ...tituloCaixa, marginBottom: 10 }}>Evolução do saldo devedor — {rotuloPeriodo(per).toLowerCase()}{per ? "" : " (até hoje)"}</div>{blocoEvolucao(evolPeriodo, per ? "Saldo ao fim do período" : "Saldo atual")}</div>
     )}
 
     {/* Tabela */}
     <div style={{ background: "#fff", border: `1px solid ${COR.borda}`, borderRadius: 14, overflow: "hidden" }}>
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 640 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 900 }}>
           <thead>
             <tr style={{ background: "#f8fafc", color: COR.claro, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px" }}>
               <th style={{ textAlign: "left", padding: "9px 12px" }}>Parcela</th>
               <th style={{ textAlign: "left", padding: "9px 12px" }}>Vencimento</th>
               <th style={{ textAlign: "right", padding: "9px 12px" }}>Valor devido</th>
+              <th style={{ textAlign: "right", padding: "9px 12px" }}>Amortização</th>
+              <th style={{ textAlign: "right", padding: "9px 12px" }}>Juros</th>
               <th style={{ textAlign: "right", padding: "9px 12px" }}>Seguros</th>
               <th style={{ textAlign: "right", padding: "9px 12px" }}>Taxas</th>
               <th style={{ textAlign: "right", padding: "9px 12px" }}>Valor pago</th>
+              <th style={{ textAlign: "right", padding: "9px 12px" }}>Saldo devedor</th>
               <th style={{ textAlign: "center", padding: "9px 12px" }}>Situação</th>
               <th style={{ width: 70 }} />
             </tr>
           </thead>
           <tbody>
             {visiveis.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 22, textAlign: "center", color: COR.claro }}>
+              <tr><td colSpan={11} style={{ padding: 22, textAlign: "center", color: COR.claro }}>
                 {parcelas.length ? "Nenhuma parcela neste filtro." : "Nenhuma parcela cadastrada. Use “+ Parcela” ou “Importar composição” (cole a tabela do demonstrativo)."}
               </td></tr>
             )}
@@ -697,9 +744,14 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
                     <td style={{ padding: "9px 12px", fontWeight: 800, color: COR.texto }}>{rotuloParcela(p)}</td>
                     <td style={{ padding: "9px 12px", color: "#475569" }}>{fmtDt(p.vencimento) ?? "—"}</td>
                     <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 800, color: COR.texto }}>{money(numeroOuNulo(p.valor)) ?? "—"}</td>
+                    {/* Amortização, juros e saldo na própria linha (revisão de
+                        16/11): ver a evolução sem abrir parcela por parcela. */}
+                    <td style={{ padding: "9px 12px", textAlign: "right", color: COR.verde }}>{money(l.comp.amortizacao) ?? "—"}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right", color: COR.cinza }}>{money(l.comp.juros) ?? "—"}</td>
                     <td style={{ padding: "9px 12px", textAlign: "right", color: COR.cinza }}>{money(l.comp.seguros) ?? "—"}</td>
                     <td style={{ padding: "9px 12px", textAlign: "right", color: COR.cinza }}>{money(l.comp.taxas) ?? "—"}</td>
                     <td style={{ padding: "9px 12px", textAlign: "right", color: COR.texto }}>{money(l.pago) ?? "—"}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right", color: COR.laranja, fontWeight: 700 }}>{money(l.comp.saldo_devedor) ?? "—"}</td>
                     <td style={{ padding: "9px 12px", textAlign: "center" }}>
                       <span title={p.baixa === "malote" ? "Paga pelo Malote (conta do contrato)" : p.baixa === "conta" ? "Baixa dada na conta do contrato" : undefined}
                         style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: cor.fundo, color: cor.texto, whiteSpace: "nowrap" }}>{l.situacao}</span>
@@ -712,9 +764,9 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
                     </td>
                   </tr>
                   {ab && p.encargos_inclusos !== false && (l.comp.seguros != null || l.comp.taxas != null) && (
-                    <tr style={{ background: "#f8fafc" }}><td colSpan={8} style={{ padding: "0 12px 8px", fontSize: 11.5, color: COR.cinza }}>Seguros e taxas já estão incluídos no valor devido.</td></tr>
+                    <tr style={{ background: "#f8fafc" }}><td colSpan={11} style={{ padding: "0 12px 8px", fontSize: 11.5, color: COR.cinza }}>Seguros e taxas já estão incluídos no valor devido.</td></tr>
                   )}
-                  {ab && <tr><td colSpan={8} style={{ padding: 0 }}>{detalhe(l)}</td></tr>}
+                  {ab && <tr><td colSpan={11} style={{ padding: 0 }}>{detalhe(l)}</td></tr>}
                 </FragmentoLinha>
               );
             })}
@@ -815,7 +867,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input className="jp-fi" placeholder="Observação" value={formApl.observacao} onChange={e => setFormApl(f => ({ ...f, observacao: e.target.value }))} />
-                <button className="jp-btn" disabled={!modalFin.id} onClick={adicionarAplicacao} style={{ ...btn("#eef4ff", COR.azul, "#dbe4f0"), whiteSpace: "nowrap", opacity: modalFin.id ? 1 : .5 }}>+ Lançar</button>
+                {pode.lancarIncc && <button className="jp-btn" disabled={!modalFin.id} onClick={adicionarAplicacao} style={{ ...btn("#eef4ff", COR.azul, "#dbe4f0"), whiteSpace: "nowrap", opacity: modalFin.id ? 1 : .5 }}>+ Lançar</button>}
               </div>
               {aplicacoes.length > 0 && (
                 <div style={{ marginTop: 10, maxHeight: 160, overflowY: "auto" }}>
@@ -823,7 +875,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
                     <div key={a.id} style={{ display: "flex", gap: 10, fontSize: 12, padding: "5px 0", borderTop: "1px solid #f1f5f9", alignItems: "center" }}>
                       <b style={{ minWidth: 64 }}>{mesAno(a.competencia)}</b>
                       <span style={{ flex: 1, color: COR.cinza }}>{a.modalidade ?? "INCC"} · {money(a.valor_anterior) ?? "—"} → {money(a.valor_corrigido) ?? "—"} · correção {money(a.correcaoValor) ?? "a apurar"}{a.criado_por ? ` · ${a.criado_por}` : ""}</span>
-                      <button className="jp-btn" onClick={() => excluirAplicacao(a)} style={{ background: "none", color: "#dc2626", padding: "2px 6px" }}>Excluir</button>
+                      {pode.excluirIncc && <button className="jp-btn" onClick={() => excluirAplicacao(a)} style={{ background: "none", color: "#dc2626", padding: "2px 6px" }}>Excluir</button>}
                     </div>
                   ))}
                 </div>
@@ -877,7 +929,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
             <div className="jp-fg"><label>Data do documento</label><input className="jp-fi" type="date" value={formParc.documento_data} onChange={e => setFormParc(f => ({ ...f, documento_data: e.target.value }))} /></div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 10 }}>
-            <div>{modalParc.id && <button className="jp-btn" onClick={() => { const p = parcelas.find(x => x.id === modalParc.id); if (p) excluirParc(p); }} style={btn("#fef2f2", "#dc2626", "#fecaca")}>Excluir parcela</button>}</div>
+            <div>{modalParc.id && pode.excluirParcela && <button className="jp-btn" onClick={() => { const p = parcelas.find(x => x.id === modalParc.id); if (p) excluirParc(p); }} style={btn("#fef2f2", "#dc2626", "#fecaca")}>Excluir parcela</button>}</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="jp-btn" onClick={() => setModalParc(null)} style={btn("#fff", "#475569", COR.borda)}>Cancelar</button>
               <button className="jp-btn" disabled={gravando} onClick={salvarParc} style={btn(COR.azul, "#fff")}>{gravando ? "Salvando…" : "Salvar parcela"}</button>
@@ -893,15 +945,26 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, autor, toast, log
         <div className="jp-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: COR.texto, marginBottom: 4 }}>Pagamento da parcela {rotuloParcela(modalPag.parcela)}</div>
           <div style={{ fontSize: 12, color: COR.cinza, marginBottom: 12 }}>Valor devido: {money(numeroOuNulo(modalPag.parcela.valor)) ?? "não informado"}. Pode haver mais de um pagamento na mesma parcela.</div>
-          <div className="jp-grid2">
+          {(() => {
+            const semComp = pagamentosSemComprovante(pagamentos.filter(x => String(x.parcela_id) === String(modalPag.parcela.id)));
+            if (!semComp.length || !pode.anexarComprovante) return null;
+            return (
+              <div className="jp-fg"><label>Anexar a</label>
+                <select className="jp-fi" value={formPag.pagamento_id} onChange={e => setFormPag(f => ({ ...f, pagamento_id: e.target.value }))}>
+                  {pode.registrarPagamento && <option value="">Novo pagamento</option>}
+                  {semComp.map(pg => <option key={pg.id} value={String(pg.id)}>Pagamento de {fmtDt(pg.data_pagamento)} — {money(numeroOuNulo(pg.valor))} (sem comprovante)</option>)}
+                </select></div>
+            );
+          })()}
+          {!formPag.pagamento_id && <div className="jp-grid2">
             <div className="jp-fg"><label>Data</label><input className="jp-fi" type="date" value={formPag.data_pagamento} onChange={e => setFormPag(f => ({ ...f, data_pagamento: e.target.value }))} /></div>
             <div className="jp-fg"><label>Valor pago (R$)</label><input className="jp-fi" inputMode="decimal" value={formPag.valor} onChange={e => setFormPag(f => ({ ...f, valor: e.target.value }))} /></div>
-          </div>
-          <div className="jp-fg"><label>Observação</label><input className="jp-fi" value={formPag.observacao} onChange={e => setFormPag(f => ({ ...f, observacao: e.target.value }))} /></div>
-          <div className="jp-fg"><label>Comprovante (opcional)</label><input type="file" onChange={e => setArqPag(e.target.files?.[0] ?? null)} /></div>
+          </div>}
+          {!formPag.pagamento_id && <div className="jp-fg"><label>Observação</label><input className="jp-fi" value={formPag.observacao} onChange={e => setFormPag(f => ({ ...f, observacao: e.target.value }))} /></div>}
+          <div className="jp-fg"><label>{formPag.pagamento_id ? "Comprovante" : "Comprovante (opcional)"}</label><input type="file" onChange={e => setArqPag(e.target.files?.[0] ?? null)} /></div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
             <button className="jp-btn" onClick={() => setModalPag(null)} style={btn("#fff", "#475569", COR.borda)}>Cancelar</button>
-            <button className="jp-btn" disabled={gravando} onClick={salvarPag} style={btn(COR.azul, "#fff")}>{gravando ? "Salvando…" : "Registrar"}</button>
+            <button className="jp-btn" disabled={gravando} onClick={salvarPag} style={btn(COR.azul, "#fff")}>{gravando ? "Salvando…" : formPag.pagamento_id ? "Anexar" : "Registrar"}</button>
           </div>
         </div>
       </div>

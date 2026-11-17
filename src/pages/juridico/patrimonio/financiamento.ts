@@ -158,6 +158,10 @@ const normal = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpper
  */
 export function campoDoDetalhe(chave: string): CampoComponente | null {
   const k = normal(chave);
+  // Taxa em % ao ano é condição do contrato, não valor da parcela — "Taxa de
+  // juros" caía em juros (R$) e "Taxa" em taxas (revisão de 16/11).
+  // ("INCC (%)" / "Índice %" continuam sendo o índice de correção.)
+  if (!/INCC|INDICE/.test(k) && /TAXA DE JURO|TAXA JURO|JUROS? (ANUA|NOMINA|EFETIV|A\.?A)|%|\bA\.A\b|\bCET\b/.test(k)) return null;
   if (/AMORTIZ/.test(k)) return "amortizacao";
   if (/MORA|IMPONTUAL|ATRASO|MULTA/.test(k)) return "valor_impontualidade";
   if (/^JURO|JUROS/.test(k)) return "juros";
@@ -195,7 +199,7 @@ export function componentesDaParcela(p: ParcelaFinanciamento): Componentes {
     if (campo === "indice_correcao") {
       // Célula de % do Excel chega como fração (0,0058 = 0,58%). Fator
       // (1,0012…) fica fator.
-      if (v > 0.5 && v < 2) { out.indice_correcao = v; indiceTipo = "fator"; }
+      if (tipoDoIndice(v, typeof bruto === "string" ? bruto : null) === "fator") { out.indice_correcao = v; indiceTipo = "fator"; }
       else { out.indice_correcao = Math.abs(v) < 0.5 ? Math.round(v * 100 * 1e8) / 1e8 : v; indiceTipo = "percentual"; }
     } else out[campo] = v;
     daPlanilha = true;
@@ -235,10 +239,17 @@ export function pagamentosPorParcela(pags: PagamentoParcela[]): Map<string, Paga
 export function valorPagoDa(p: ParcelaFinanciamento, pags?: PagamentoParcela[]): number | null {
   if (pags && pags.length) return somaOuNulo(pags.map(x => numeroOuNulo(x.valor)));
   const vp = numeroOuNulo(p.valor_pago);
+  // O importador da planilha grava "VALOR CORRIGIDO" em valor_pago, inclusive
+  // em parcela "NAO PAGA" (revisão de 16/11). Sem baixa e sem pagamento
+  // registrado, a planilha dizendo que NÃO foi paga manda: não há pago.
+  if (vp != null && !p.baixa && naoPagaNaPlanilha(p)) return null;
   if (vp != null) return vp;
   if (p.baixa) return numeroOuNulo(p.valor);
   return null;
 }
+
+/** A planilha diz explicitamente que a parcela NÃO foi paga ("NAO PAGA", "NÃO PAGO"). */
+export const naoPagaNaPlanilha = (p: { situacao?: string | null }) => /^NAO\b/.test(normal(String(p.situacao ?? "")));
 
 /** Data do (último) pagamento. */
 export function dataPagamentoDa(p: ParcelaFinanciamento, pags?: PagamentoParcela[]): string | null {
@@ -277,7 +288,16 @@ export function situacaoDa(p: ParcelaFinanciamento, pags: PagamentoParcela[] | u
   if (comp.diferenca_valor != null && Math.abs(comp.diferenca_valor) >= TOL) return "A CONFERIR";
   if (pago != null && pago > 0) {
     if (devido == null) return "PAGA";
-    if (pago - devido > TOL) return "A CONFERIR";
+    // Pagamento em atraso leva multa/juros de mora: o teto é devido +
+    // impontualidade (revisão de 16/11: 2.370,11 + 15,20 = 2.385,31 é PAGA).
+    const teto = devido + (impontualidadeDe(comp) ?? 0);
+    if (pago - teto > TOL) {
+      // Baixa pelo Malote/conta sem pagamento detalhado: a conta costuma vir
+      // com o valor corrigido (INCC/TR) e a planilha com o original — a
+      // diferença é a correção, não erro de pagamento.
+      if ((p.baixa === "malote" || p.baixa === "conta") && !temPagamentoDetalhado) return "PAGA";
+      return "A CONFERIR";
+    }
     if (devido - pago <= TOL) return "PAGA";
     // Parcela quitada pela planilha/contas sem pagamento detalhado: o valor
     // pago da planilha às vezes é a prestação sem encargos — não é parcial.
@@ -289,6 +309,11 @@ export function situacaoDa(p: ParcelaFinanciamento, pags: PagamentoParcela[] | u
   const v = String(p.vencimento ?? "").slice(0, 10);
   if (v && v < hoje) return "VENCIDA";
   return "EM ABERTO";
+}
+
+/** Impontualidade da parcela: o total, ou multa + juros de atraso quando só eles vieram. */
+export function impontualidadeDe(c: Pick<Componentes, "valor_impontualidade" | "multa_atraso" | "juros_atraso">): number | null {
+  return c.valor_impontualidade != null ? c.valor_impontualidade : somaOuNulo([c.multa_atraso, c.juros_atraso]);
 }
 
 export const corDaSituacao = (s: Situacao): { fundo: string; texto: string } => ({
@@ -393,8 +418,10 @@ export function resumoDoPeriodo(linhas: LinhaResolvida[], hoje: string): ResumoP
     // A correção do saldo acontece mesmo sem pagamento: soma do período todo.
     correcao: somaOuNulo(linhas.map(l => l.comp.atualizacao_monetaria)),
     devido: somaOuNulo(linhas.map(l => numeroOuNulo(l.p.valor))),
-    vencidoEmAberto: arred(abertas.filter(l => String(l.p.vencimento ?? "") < hoje).reduce((s, l) => s + restante(l), 0)),
-    futuro: arred(abertas.filter(l => String(l.p.vencimento ?? "") >= hoje).reduce((s, l) => s + restante(l), 0)),
+    // Sem vencimento não é "vencida" nem "futura"; projetada não é dívida
+    // vencida (é simulação) — revisão de 16/11.
+    vencidoEmAberto: arred(abertas.filter(l => l.p.vencimento && !l.p.projetado && String(l.p.vencimento) < hoje).reduce((s, l) => s + restante(l), 0)),
+    futuro: arred(abertas.filter(l => l.p.vencimento && String(l.p.vencimento) >= hoje).reduce((s, l) => s + restante(l), 0)),
     projetadas: linhas.filter(l => l.p.projetado).length,
   };
 }
@@ -422,10 +449,14 @@ export const rotuloParcela = (p: Pick<ParcelaFinanciamento, "rotulo" | "numero">
 export function saldoDeReferencia(
   todas: ParcelaFinanciamento[], periodo: string,
   contrato?: { saldo_devedor_informado?: number | string | null; saldo_devedor_data?: string | null } | null,
+  hoje: string = new Date().toISOString().slice(0, 10),
 ): SaldoReferencia | null {
-  const fim = fimDoPeriodo(periodo);
+  const fimPer = fimDoPeriodo(periodo);
+  // Nunca além de hoje: em "Contrato inteiro" pegava o saldo da última
+  // parcela da tabela — futura, projetada (revisão de 16/11).
+  const fim = !fimPer || fimPer > hoje ? hoje : fimPer;
   const comSaldo = todas
-    .filter(p => (!fim || String(p.vencimento ?? "") <= fim))
+    .filter(p => p.vencimento && !p.projetado && String(p.vencimento) <= fim)
     .map(p => ({ p, s: componentesDaParcela(p).saldo_devedor }))
     .filter(x => x.s != null)
     .sort((a, b) => ordemVenc(a.p, b.p));
@@ -576,7 +607,24 @@ export const rotuloAplicacaoIncc = (v?: string | null) =>
 // ── Importação (colar do Excel / CSV do demonstrativo) ───────────────────
 
 /** Campos que a importação sabe preencher, além dos componentes. */
-export type CampoImportacao = CampoComponente | "numero" | "rotulo" | "vencimento" | "valor" | "valor_pago" | "data_pagamento";
+export type CampoImportacao = CampoComponente | "numero" | "rotulo" | "vencimento" | "valor" | "valor_pago" | "data_pagamento" | "indice_tipo";
+
+/**
+ * Percentual ou fator. "0,58%" é percentual. Fator é o multiplicador do
+ * demonstrativo: perto de 1 (0,9 a 1,1) E com 5+ casas decimais
+ * (1,00122401). Sem isso, percentual — o INCC do mês costuma vir 0,58 ou
+ * 1,05, que NÃO são fator. Mesma regra no formulário, na importação e na
+ * leitura da planilha (revisão de 16/11: a importação gravava sem tipo e
+ * 1,00122401 saía "1,0012%").
+ */
+export function tipoDoIndice(valor: number | null, bruto?: string | null): TipoIndice | null {
+  if (valor == null) return null;
+  if (bruto && /%/.test(bruto)) return "percentual";
+  const casas = bruto != null && String(bruto).trim()
+    ? (String(bruto).trim().split(/[.,]/).pop() ?? "").length * (/[.,]/.test(String(bruto)) ? 1 : 0)
+    : (String(valor).split(".")[1] ?? "").length;
+  return valor >= 0.9 && valor <= 1.1 && casas >= 5 ? "fator" : "percentual";
+}
 
 /** Cabeçalho da planilha → campo. Mesma régua tolerante do importador antigo. */
 export function campoDoCabecalho(cab: string): CampoImportacao | null {
@@ -584,7 +632,8 @@ export function campoDoCabecalho(cab: string): CampoImportacao | null {
   if (!k) return null;
   if (/^(N|NO|N\.|Nº|NUMERO|PARCELA|PARC|PARC\.|PRESTACAO N|N PARCELA|Nº PARCELA)$/.test(k)) return "numero";
   if (/^(ROTULO|TIPO|DESCRICAO)$/.test(k)) return "rotulo";
-  if (/^(DATA DE )?PAGAMENTO$|^DATA PAGAMENTO$|^DT\.? PAGAMENTO$|^PAGO EM$/.test(k)) return "data_pagamento";
+  // "Data do pagamento" é o nome que o próprio CSV exportado usa (revisão de 16/11).
+  if (/^(DATA (DE |DO |DA )?)?PAGAMENTO$|^DT\.? (DE |DO )?PAGAMENTO$|^PAGO EM$/.test(k)) return "data_pagamento";
   if (/VENC/.test(k) || /^DATA$/.test(k)) return "vencimento";
   if (/^VALOR PAGO$|^PAGO$|^VL\.? PAGO$/.test(k)) return "valor_pago";
   if (/^(VALOR DEVIDO|PRESTACAO|VALOR DA PRESTACAO|VALOR PARCELA|VALOR DA PARCELA|VALOR|TOTAL|ENCARGO TOTAL)$/.test(k)) return "valor";
@@ -668,12 +717,14 @@ export function lerImportacao(texto: string): ResultadoImportacao {
         const d = dataOuNulo(bruto);
         if (d) { l[campo] = d; algum = true; } else res.erros.push(`Linha ${i + 1}: data inválida "${bruto}" em ${cab[j]}.`);
       } else if (campo === "numero") {
-        const n = numeroOuNulo(bruto);
+        // "83ª" é como o CSV exportado escreve a parcela.
+        const n = numeroOuNulo(bruto.replace(/[ªº°.]$/, ""));
         if (n != null && Number.isInteger(n)) l.numero = n; else l.rotulo = bruto;
         algum = true;
       } else if (campo === "rotulo") { l.rotulo = bruto; algum = true; }
       else {
         const n = numeroOuNulo(bruto);
+        if (n != null && campo === "indice_correcao") l.indice_tipo = tipoDoIndice(n, bruto);
         if (n != null) { l[campo] = n; algum = true; } else res.erros.push(`Linha ${i + 1}: número inválido "${bruto}" em ${cab[j]}.`);
       }
     });
@@ -755,3 +806,77 @@ export function csvDasParcelas(linhas: LinhaResolvida[]): string {
   };
   return [COLS_EXPORT.map(c => c[0]).join(";"), ...linhas.map(l => COLS_EXPORT.map(c => cel(c[1](l))).join(";"))].join("\n");
 }
+
+// ── Recortes da aba (revisão de 16/11) ───────────────────────────────────
+
+/**
+ * O que a aba desenha para um período + filtro de situação.
+ *   • A TABELA respeita os dois filtros.
+ *   • O RESUMO (cartões e faixa) e a EVOLUÇÃO do saldo são do PERÍODO: com
+ *     "Situação = Vencidas", "Pago no período" dava zero e a amortização
+ *     sumia — o filtro de situação recorta a lista, não a contabilidade.
+ *   • A evolução usa só o que já aconteceu (vencimento até hoje, não
+ *     projetado) e vale também para "Contrato inteiro" e para um mês só.
+ */
+export function recortesDaAba(resolvidas: LinhaResolvida[], periodo: string, situacao: "" | Situacao, hoje: string) {
+  const noRecorte = resolvidas.filter(l => noPeriodo(l.p.vencimento, periodo));
+  const filtradas = situacao ? noRecorte.filter(l => l.situacao === situacao) : noRecorte;
+  const fatos = noRecorte.filter(l => l.p.vencimento && !l.p.projetado && String(l.p.vencimento) <= hoje).map(l => l.p);
+  return {
+    noRecorte,
+    filtradas,
+    resumo: resumoDoPeriodo(noRecorte, hoje),
+    evolucao: fatos.length ? evolucaoDoSaldo(fatos, resolvidas.map(l => l.p)) : null,
+  };
+}
+
+/**
+ * A linha CRUA do banco para o formulário "Editar composição". A aba recebe
+ * as parcelas já com a baixa das contas (aplicarBaixaDasContas), que põe em
+ * valor_pago o valor da conta paga no Malote; abrir o formulário com ela e
+ * salvar gravava esse valor na tabela como se fosse digitado.
+ */
+export function parcelaParaEdicao<P extends { id: number | string }>(id: number | string, brutas: P[]): P | null {
+  return brutas.find(b => String(b.id) === String(id)) ?? null;
+}
+
+/** Pagamentos da parcela que ainda não têm comprovante (para anexar a um existente). */
+export const pagamentosSemComprovante = <T extends { comprovante_path?: string | null }>(pags: T[]) =>
+  pags.filter(p => !p.comprovante_path);
+
+/**
+ * Linhas do relatório exportado com a MESMA leitura da aba: valor pago
+ * (pagamentos registrados → valor_pago → baixa), situação (situacaoDa) e
+ * data do pagamento. Antes o relatório mostrava a situação crua da planilha.
+ */
+export function linhasDoRelatorio<P extends ParcelaFinanciamento>(parcelas: P[], pagamentos: PagamentoParcela[], hoje: string) {
+  return resolverParcelas(parcelas, pagamentos, hoje).map(l => ({
+    ...(l.p as P),
+    valor_pago: l.pago,
+    data_pagamento: l.dataPagamento,
+    situacao: l.situacao,
+  }));
+}
+
+/**
+ * Botões da aba por ação — a mesma divisão das policies da migration
+ * (SELECT visualizar / INSERT incluir / UPDATE alterar / DELETE excluir).
+ * Importar pode criar E atualizar parcelas: exige as duas.
+ */
+export function permissoesDaAba(tem: { incluir: boolean; alterar: boolean; excluir: boolean }) {
+  return {
+    novaParcela: tem.incluir,
+    importar: tem.incluir && tem.alterar,
+    editarParcela: tem.alterar,
+    anexarDemonstrativo: tem.alterar,
+    excluirParcela: tem.excluir,
+    cadastrarContrato: tem.incluir,
+    editarContrato: tem.alterar,
+    lancarIncc: tem.incluir,
+    excluirIncc: tem.excluir,
+    registrarPagamento: tem.incluir,
+    anexarComprovante: tem.alterar,   // ligar arquivo a pagamento existente = UPDATE
+    excluirPagamento: tem.excluir,
+  };
+}
+export type PermissoesDaAba = ReturnType<typeof permissoesDaAba>;

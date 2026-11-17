@@ -17,7 +17,7 @@ import {
 } from "@/lib/exportarRelatorio";
 import { rotuloTipoLancamento, ehContratoParcelado, mapaValorQueFalta } from "./parcelas";
 import { aplicarBaixaDasContas, type ParcelaPlanilha, type ContaDoContrato } from "./baixaParcelas";
-import { componentesDaParcela, rotuloIndice, type ParcelaFinanciamento } from "./financiamento";
+import { componentesDaParcela, rotuloIndice, linhasDoRelatorio, type ParcelaFinanciamento, type PagamentoParcela } from "./financiamento";
 
 export { baixar };
 export type { Linha };
@@ -28,6 +28,8 @@ export interface DadosExportacao {
   parcelas: Linha[];
   itens: Linha[];        // JUR_PATRIMONIO_ITENS: acesso/contato/documento/historico
   comentarios: Linha[];  // SISTEMA_COMENTARIOS (modulo = 'patrimonio')
+  /** JUR_PATRIMONIO_PARCELA_PAGAMENTOS — vários por parcela (SIS-2026-0909). */
+  pagamentos?: Linha[];
 }
 
 export interface OpcoesExportacao {
@@ -58,7 +60,7 @@ async function todas(db: SupabaseClient, tabela: string, filtro: (q: any) => any
 /** `patrimonioId` null = todos. */
 export async function carregarDadosExportacao(db: SupabaseClient, patrimonioId: number | null): Promise<DadosExportacao> {
   const doPat = (q: any) => (patrimonioId == null ? q : q.eq("patrimonio_id", patrimonioId));
-  const [patrimonios, obrigacoes, parcelas, itens, comentarios] = await Promise.all([
+  const [patrimonios, obrigacoes, parcelas, itens, comentarios, pagamentos] = await Promise.all([
     todas(db, "JUR_PATRIMONIOS", q => (patrimonioId == null ? q : q.eq("id", patrimonioId))),
     todas(db, "JUR_PATRIMONIO_OBRIGACOES", doPat),
     todas(db, "JUR_PATRIMONIO_PARCELAS", doPat),
@@ -67,10 +69,11 @@ export async function carregarDadosExportacao(db: SupabaseClient, patrimonioId: 
       const base = q.eq("modulo", "patrimonio");
       return patrimonioId == null ? base : base.eq("entidade_id", String(patrimonioId));
     }),
+    todas(db, "JUR_PATRIMONIO_PARCELA_PAGAMENTOS", doPat),
   ]);
   // Mesma ordem da lista da tela: código numérico crescente.
   patrimonios.sort((a, b) => ordemCodigo(a) - ordemCodigo(b) || txt(a.descricao).localeCompare(txt(b.descricao), "pt-BR"));
-  return { patrimonios, obrigacoes, parcelas, itens, comentarios };
+  return { patrimonios, obrigacoes, parcelas, itens, comentarios, pagamentos };
 }
 
 const ordemCodigo = (p: Linha) => {
@@ -173,6 +176,7 @@ const COLUNAS_PARCELAS: Coluna[] = [
   { rotulo: "Taxas", tipo: "moeda", valor: p => comp(p).taxas },
   { rotulo: "Impontualidade", tipo: "moeda", valor: p => comp(p).valor_impontualidade },
   { rotulo: "Valor pago", tipo: "moeda", valor: p => p.valor_pago },
+  { rotulo: "Data do pagamento", tipo: "data", valor: p => p.data_pagamento },
   { rotulo: "Diferença de valor", tipo: "moeda", valor: p => comp(p).diferenca_valor },
   { rotulo: "Atualização monetária", tipo: "moeda", valor: p => comp(p).atualizacao_monetaria },
   { rotulo: "Saldo devedor", tipo: "moeda", valor: p => comp(p).saldo_devedor },
@@ -231,20 +235,27 @@ function montarBlocos(d: DadosExportacao, o: OpcoesExportacao): Bloco<Linha>[] {
   const doKind = (k: string) => d.itens.filter(i => i.kind === k);
   const contas = porPat(d.obrigacoes), parcelas = porPat(d.parcelas), acessos = porPat(doKind("acesso")),
     contatos = porPat(doKind("contato")), documentos = porPat(doKind("documento")),
-    historico = porPat(doKind("historico")), comentarios = porPat(d.comentarios, "entidade_id");
+    historico = porPat(doKind("historico")), comentarios = porPat(d.comentarios, "entidade_id"),
+    pagsDaParcela = porPat(d.pagamentos ?? []);
   return [
     { titulo: "Contas e obrigações", aba: "Contas e obrigações", colunas: colunasContas(o.seloDaConta),
       linhas: p => [...contas(p)].sort(porData("vencimento")), resumoHtml: totaisContas(o.seloDaConta) },
     { titulo: "Parcelas do contrato", aba: "Parcelas", colunas: COLUNAS_PARCELAS,
       // Mesma baixa da aba da tela: a planilha + o que foi pago depois pelas
       // contas (Malote ou baixa manual) — ver baixaParcelas.ts.
-      linhas: p => aplicarBaixaDasContas(
-        [...parcelas(p)].sort((a, b) => (num(a.ordem) ?? 0) - (num(b.ordem) ?? 0)) as unknown as ParcelaPlanilha[],
-        contas(p) as unknown as ContaDoContrato[],
-        c => {
-          const l = c as unknown as Linha;
-          return o.seloDaConta(l) !== "Pago" ? null : l.status === "Pago" ? "conta" : "malote";
-        },
+      // Revisão de 16/11: valor pago e situação com a MESMA leitura da aba
+      // (pagamentos registrados + situacaoDa), senão o relatório discordava.
+      linhas: p => linhasDoRelatorio(
+        aplicarBaixaDasContas(
+          [...parcelas(p)].sort((a, b) => (num(a.ordem) ?? 0) - (num(b.ordem) ?? 0)) as unknown as ParcelaPlanilha[],
+          contas(p) as unknown as ContaDoContrato[],
+          c => {
+            const l = c as unknown as Linha;
+            return o.seloDaConta(l) !== "Pago" ? null : l.status === "Pago" ? "conta" : "malote";
+          },
+        ) as unknown as ParcelaFinanciamento[],
+        pagsDaParcela(p) as unknown as PagamentoParcela[],
+        new Date().toISOString().slice(0, 10),
       ) as unknown as Linha[] },
     { titulo: "Acessos (portais)", aba: "Acessos", colunas: COLUNAS_ACESSOS, linhas: acessos },
     { titulo: "Contatos", aba: "Contatos", colunas: COLUNAS_CONTATOS, linhas: contatos },
