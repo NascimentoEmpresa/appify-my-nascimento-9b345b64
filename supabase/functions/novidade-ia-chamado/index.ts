@@ -22,7 +22,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  decidir, extrairJson, montarPrompt, descartePrevio,
+  decidir, extrairJson, montarPrompt, descartePrevio, fonteSaibaMais,
   GROQ_URL, MODELO_PADRAO, SYSTEM_PROMPT,
   type ChamadoParaNovidade,
 } from "../_shared/novidade-ia.ts";
@@ -164,11 +164,19 @@ Deno.serve(async (req) => {
 
   // 6) A rota do "Saiba mais →" NÃO vem da IA: sai de app_menu, pelo módulo
   // que o chamado indica. Rota inventada por modelo levaria a tela em branco.
+  // SIS-2026-0921: chamado novo guarda a ROTA da tela em modulo_sistema —
+  // usa ela direto, desde que exista ativa em app_menu (fonteSaibaMais).
   let rota: string | null = null;
-  const mod = chamado.modulo_sistema;
-  if (mod && mod !== "outro") {
+  const fonte = fonteSaibaMais(chamado.modulo_sistema);
+  if (fonte?.tipo === "rota") {
+    for (const candidata of fonte.candidatas) {
+      const { data: menu } = await admin
+        .from("app_menu").select("rota").eq("rota", candidata).eq("ativo", true).limit(1).maybeSingle();
+      if ((menu as { rota?: string } | null)?.rota) { rota = candidata; break; }
+    }
+  } else if (fonte?.tipo === "modulo") {
     const { data: modulo } = await admin
-      .from("app_modulo").select("id").eq("codigo", mod).maybeSingle();
+      .from("app_modulo").select("id").eq("codigo", fonte.codigo).maybeSingle();
     if (modulo?.id) {
       const { data: menu } = await admin
         .from("app_menu")

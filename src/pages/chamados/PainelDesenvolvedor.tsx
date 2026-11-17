@@ -48,6 +48,7 @@ import {
   StatCard, PRIORIDADES, Estrelas, iniciais, fmtData, moduloLabel,
   chamadoAtivo, podeReabrirChamado, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
 } from "./types";
+import { useIndiceDasTelas } from "./impacto/catalogoTelas";
 
 // =====================================================================
 // PAINEL DO DESENVOLVEDOR — layout do mockup do chamado SIS-2026-0763
@@ -128,6 +129,8 @@ const numeroDaMetrica = (valor: unknown) =>
   typeof valor === "number" && Number.isSafeInteger(valor) && valor >= 0 ? valor : null;
 
 export default function PainelDesenvolvedor() {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const nav = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
