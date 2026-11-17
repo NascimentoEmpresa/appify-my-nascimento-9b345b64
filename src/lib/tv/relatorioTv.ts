@@ -110,11 +110,68 @@ export type DadosRelTv =
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
+// ---- Visão geral — todos os setores (18/11/2026, mig 20261118140000) --------
+// Pablo, com o print do Relatório Geral: "A tv tem que aparecer tipo isso,
+// mas mais bonito, completo e detalhado" — a tela que abre a playlist da
+// Presidência. Os 8 sistemas de solicitação vêm no formato padrão (kpis:
+// total, em andamento, concluídas, recusadas, tempo médio); o Turn-over vem
+// à parte (outros kpis) e não entra nas somas. Colaboradores saiu do sistema
+// em 11/11/2026 — fica na lista só para nunca ser somado se voltar.
+
+export const SLUGS_FORA_DA_SOMA = ["turnover", "colaboradores"];
+const num = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+
+export interface ResumoGeralTv {
+  solicitacoes: SistemaGeral[]; turnover: SistemaGeral | null;
+  total: number; andamento: number; concluidas: number; recusadas: number;
+  /** Concluídas ÷ total, em % (null sem solicitação). */
+  taxaConclusao: number | null;
+  /** Média dos tempos até concluir, pesada pelas concluídas de cada sistema. */
+  tempoMedio: number | null;
+}
+
+export function resumoGeralTv(sistemas: SistemaGeral[]): ResumoGeralTv {
+  const solicitacoes = sistemas.filter((s) => !SLUGS_FORA_DA_SOMA.includes(s.slug));
+  const soma = (i: number) => solicitacoes.reduce((t, s) => t + (num(s.kpis[i]?.valor) ?? 0), 0);
+  const total = soma(0), andamento = soma(1), concluidas = soma(2), recusadas = soma(3);
+  let peso = 0, acumulado = 0;
+  for (const s of solicitacoes) {
+    const tempo = num(s.kpis[4]?.valor), conc = num(s.kpis[2]?.valor) ?? 0;
+    if (tempo != null && conc > 0) { peso += conc; acumulado += tempo * conc; }
+  }
+  return {
+    solicitacoes, turnover: sistemas.find((s) => s.slug === "turnover") ?? null,
+    total, andamento, concluidas, recusadas,
+    taxaConclusao: total ? Math.round((concluidas * 1000) / total) / 10 : null,
+    tempoMedio: peso ? Math.round((acumulado / peso) * 10) / 10 : null,
+  };
+}
+
+/** Comparativo entre sistemas: maior volume primeiro, com a fatia de cada situação. */
+export function comparativoGeralTv(solicitacoes: SistemaGeral[]) {
+  return solicitacoes
+    .map((s) => {
+      const total = num(s.kpis[0]?.valor) ?? 0, andamento = num(s.kpis[1]?.valor) ?? 0, concluidas = num(s.kpis[2]?.valor) ?? 0, recusadas = num(s.kpis[3]?.valor) ?? 0;
+      return { slug: s.slug, titulo: s.titulo, total, andamento, concluidas, recusadas, tempo: num(s.kpis[4]?.valor),
+               pctConcluidas: total ? Math.round((concluidas * 100) / total) : null };
+    })
+    .sort((a, b) => b.total - a.total);
+}
+
+/** A série do mini-gráfico do quadro: a 1ª série do sistema, mês a mês (taxa do turn-over quando houver). */
+export function serieDoQuadro(s: SistemaGeral): { mes: string; v: number }[] {
+  const chave = s.slug === "turnover" && s.mensal.series.some((x) => x.chave === "taxa") ? "taxa" : s.mensal.series[0]?.chave ?? "total";
+  return s.mensal.dados.map((m) => ({ mes: m.mes, v: num(m[chave]) ?? 0 }));
+}
+
 /** As páginas de cada relatório — só as que têm o que mostrar. */
 export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: string }[] {
   switch (d.tipo) {
     case "geral":
-      return [{ chave: "geral", titulo: "Todos os sistemas" }];
+      return [
+        { chave: "geral", titulo: "Todos os setores" },
+        ...(d.sistemas.some((s) => !SLUGS_FORA_DA_SOMA.includes(s.slug)) ? [{ chave: "geral-comparativo", titulo: "Comparativo" }] : []),
+      ];
     case "vagas":
       return [
         { chave: "vagas-resumo", titulo: "Resumo" },

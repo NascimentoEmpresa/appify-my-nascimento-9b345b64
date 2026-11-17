@@ -24,7 +24,7 @@ import {
   useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, agoraServidor, aoVivoFresco, corAviso, duracaoTotal, fimDoAviso, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, agoraServidor, aoVivoFresco, corAviso, duracaoTotal, expandirPlaylist, fimDoAviso, haQuanto, itensAlcancaveis, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type LayoutAviso, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
@@ -53,10 +53,15 @@ import { PAINEIS_DO_DOCUMENTO, VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
 // marcado como NOVO, tocando com os mesmos tempos). As duas telas são o
 // próprio player (/tv/previa) num iframe Full HD reduzido. Também há "Ao
 // vivo" em cada TV da aba TVs.
+// 18/11/2026 (mig 20261118140000) — "uma playlist pra PRESIDÊNCIA onde fique
+// passando informações de todas TVs": item "Outra playlist", que passa os
+// itens de outra playlist (um nível só, tempo do item = teto de cada um). A
+// "Presidência — Todos os setores" inclui as dos setores; PRÉVIA e AO VIVO
+// abrem as inclusões como o tv_estado (expandirPlaylist em src/lib/tv/tv.ts).
 // Liberação: sistemas_tvs (Acesso por Usuário). Regras em src/lib/tv/tv.ts.
 // =====================================================================
 
-const ICONE: Record<TipoItem, typeof ImageIcon> = { imagem: ImageIcon, video: Video, aviso: Type, youtube: Clapperboard, url: Globe, relatorio: BarChart3 };
+const ICONE: Record<TipoItem, typeof ImageIcon> = { imagem: ImageIcon, video: Video, aviso: Type, youtube: Clapperboard, url: Globe, relatorio: BarChart3, playlist: ListVideo };
 const fmtDataHora = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
 const urlPlayer = () => `${window.location.origin}/tv`;
 
@@ -339,6 +344,9 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
   const excluirItem = useExcluirItem();
   const mover = useMoverItem();
   const ativos = p.itens.filter((i) => i.ativo);
+  // Com "Outra playlist" (mig 20261118140000), a volta conta os itens das incluídas.
+  const tocados = useMemo(() => expandirPlaylist(p.itens, playlists), [p.itens, playlists]);
+  const nomePlaylist = (id: string | null | undefined) => playlists.find((x) => x.id === id)?.nome ?? "playlist excluída";
   // O item que está sendo montado no formulário — entra na PRÉVIA como NOVO.
   const [rascunho, setRascunho] = useState<ItemTv | null>(null);
 
@@ -347,7 +355,7 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
       <Card className="flex flex-wrap items-center gap-2 p-3">
         <div className="mr-auto">
           <p className="font-semibold">{p.nome}</p>
-          <p className="text-xs text-muted-foreground">{ativos.length} itens ativos · uma volta leva cerca de {duracaoTotal(ativos)}</p>
+          <p className="text-xs text-muted-foreground">{ativos.length} itens ativos{tocados.length !== ativos.length ? ` (${tocados.length} na TV, com as playlists incluídas)` : ""} · uma volta leva cerca de {duracaoTotal(tocados)}</p>
         </div>
         <AcessoGate menu={MENU_TVS} acao="alterar"><Button size="sm" variant="ghost" onClick={onRenomear}>Renomear</Button></AcessoGate>
         <AcessoGate menu={MENU_TVS} acao="excluir"><Button size="sm" variant="ghost" className="text-destructive" onClick={onExcluir}><Trash2 className="mr-1 h-3.5 w-3.5" /> Excluir</Button></AcessoGate>
@@ -365,9 +373,11 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
                 <li key={i.id} className={`flex items-center gap-3 border-t px-3 py-2 first:border-t-0 ${i.ativo && !fora ? "" : "opacity-50"}`}>
                   <Miniatura item={i} />
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.tipo === "playlist" ? `Playlist: ${nomePlaylist(i.inclui_playlist_id)}` : i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
                     <p className="text-[11px] text-muted-foreground">
-                      {i.tipo === "video" ? "toca até o fim" : `${i.duracao_seg} s`}
+                      {i.tipo === "video" ? "toca até o fim" : i.tipo === "playlist"
+                        ? `${playlists.find((x) => x.id === i.inclui_playlist_id)?.itens.filter((j) => j.ativo && j.tipo !== "playlist").length ?? 0} itens · até ${i.duracao_seg} s cada`
+                        : `${i.duracao_seg} s`}
                       {(i.valido_de || i.valido_ate) && <> · {i.valido_de ? `de ${fmtDataHora(i.valido_de)}` : ""} {i.valido_ate ? `até ${fmtDataHora(i.valido_ate)}` : ""}</>}
                       {fora && <b className="text-warning"> · fora da validade</b>}
                     </p>
@@ -399,13 +409,13 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
         )}
       </Card>
 
-      <AcessoGate menu={MENU_TVS} acao="incluir"><NovoItem playlistId={p.id} proximaOrdem={(p.itens.at(-1)?.ordem ?? 0) + 10} onRascunho={setRascunho} /></AcessoGate>
+      <AcessoGate menu={MENU_TVS} acao="incluir"><NovoItem playlistId={p.id} playlists={playlists} proximaOrdem={(p.itens.at(-1)?.ordem ?? 0) + 10} onRascunho={setRascunho} /></AcessoGate>
       </div>
 
       {/* AO VIVO × PRÉVIA (08/10/2026): fixas ao lado enquanto a playlist é editada. */}
       <div className="h-fit space-y-3 xl:sticky xl:top-4">
         <Card className="p-3"><PainelAoVivo tvs={tvs} playlists={playlists} playlistId={p.id} /></Card>
-        <Card className="p-3"><PainelPrevia p={p} rascunho={rascunho} /></Card>
+        <Card className="p-3"><PainelPrevia p={p} playlists={playlists} rascunho={rascunho} /></Card>
       </div>
       </div>
     </div>
@@ -436,9 +446,9 @@ function Miniatura({ item }: { item: TvItem }) {
 
 const SEM_CONTRATOS: { id: string; nome: string; encerrado: boolean }[] = [];
 const SEM_ALERTAS: TvAlerta[] = [];
-const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "dashboard" };
+const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "dashboard", inclui: "" };
 
-function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string; proximaOrdem: number; onRascunho: (item: ItemTv | null) => void }) {
+function NovoItem({ playlistId, playlists, proximaOrdem, onRascunho }: { playlistId: string; playlists: TvPlaylist[]; proximaOrdem: number; onRascunho: (item: ItemTv | null) => void }) {
   const salvar = useSalvarItem();
   // Constante estável: `= []` criaria um array novo a cada render e o rascunho
   // da prévia (que depende dele) mudaria sem parar.
@@ -504,7 +514,8 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
   // Vai para a PRÉVIA (como NOVO) quando foi mexido e já dá para desenhar —
   // imagem sem arquivo ou link inválido apareceriam quebrados.
   const mexido = !!arquivo || JSON.stringify(f) !== JSON.stringify(base);
-  const desenhavel = f.tipo === "imagem" || f.tipo === "video" ? !!urlLocal
+  // "Outra playlist" não vira rascunho: a PRÉVIA mostra os itens dela depois de adicionar.
+  const desenhavel = f.tipo === "playlist" ? false : f.tipo === "imagem" || f.tipo === "video" ? !!urlLocal
     : f.tipo === "url" ? urlValida(f.url) : f.tipo === "youtube" ? !!youtubeEmbed(f.url) : f.tipo === "aviso" ? !!f.texto.trim() : true;
   const rascunho = mexido && desenhavel ? itemPrevia : null;
   useEffect(() => { onRascunho(rascunho); }, [rascunho, onRascunho]);
@@ -515,6 +526,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
     if (f.tipo === "url" && !urlValida(f.url)) return "Informe um endereço começando com http:// ou https://";
     if (f.tipo === "youtube" && !youtubeEmbed(f.url)) return "Cole o link de um vídeo do YouTube.";
     if (f.tipo === "aviso" && !f.texto.trim()) return "Escreva o texto do aviso.";
+    if (f.tipo === "playlist" && !f.inclui) return "Escolha a playlist.";
     const d = Number(f.duracao);
     if (f.tipo !== "video" && (!Number.isInteger(d) || d < 3 || d > 3600)) return "Duração entre 3 e 3600 segundos.";
     if (f.de && f.ate && new Date(f.ate) <= new Date(f.de)) return "A validade termina antes de começar.";
@@ -536,6 +548,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         // Item novo de uma das 10 TVs do documento nasce nos cards (o seletor segue valendo depois, na lista).
         rel_visual: f.tipo === "relatorio" && f.relatorio.startsWith("ger-") ? (f.visual === VAZIO.visual && PAINEIS_DO_DOCUMENTO.includes(f.relatorio) ? "documento" : f.visual) : null,
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
+        ...(f.tipo === "playlist" ? { inclui_playlist_id: f.inclui } : {}),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });
       toast.success("Item adicionado — as TVs pegam na próxima consulta (até 20 min). Acompanhe no AO VIVO.");
@@ -551,7 +564,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         {TIPOS_ITEM.map((t) => {
           const Ic = ICONE[t.valor];
           return (
-            <button key={t.valor} type="button" onClick={() => { setF({ ...f, tipo: t.valor }); setArquivo(null); }}
+            <button key={t.valor} type="button" onClick={() => { setF({ ...f, tipo: t.valor, ...(t.valor === "playlist" && f.tipo !== "playlist" ? { duracao: "60" } : {}) }); setArquivo(null); }}
               className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${f.tipo === t.valor ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"}`}>
               <Ic className="h-3.5 w-3.5" /> {t.rotulo}
             </button>
@@ -562,12 +575,28 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
       <div className="grid gap-3 sm:grid-cols-2">
         <div><Label className="text-xs">Título (opcional)</Label><Input value={f.titulo} onChange={(e) => setF({ ...f, titulo: e.target.value })} placeholder="Só para identificar na lista" /></div>
         {f.tipo !== "video" && (
-          <div><Label className="text-xs">Tempo na tela (segundos)</Label><Input type="number" min={3} max={3600} value={f.duracao} onChange={(e) => setF({ ...f, duracao: e.target.value })} /></div>
+          <div><Label className="text-xs">{f.tipo === "playlist" ? "Tempo máximo de cada item (segundos)" : "Tempo na tela (segundos)"}</Label><Input type="number" min={3} max={3600} value={f.duracao} onChange={(e) => setF({ ...f, duracao: e.target.value })} /></div>
         )}
         {precisaArquivo && (
           <div className="sm:col-span-2"><Label className="text-xs">Arquivo *</Label>
             <Input ref={inputRef} type="file" accept={f.tipo === "imagem" ? "image/jpeg,image/png,image/webp,image/gif" : "video/mp4,video/webm"} onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} />
             <p className="mt-1 text-[11px] text-muted-foreground">Fica num armazenamento público (a TV não tem login) — não suba nada sigiloso. Até 200 MB.</p></div>
+        )}
+        {f.tipo === "playlist" && (
+          <div className="sm:col-span-2"><Label className="text-xs">Playlist *</Label>
+            <Select value={f.inclui || "__"} onValueChange={(v) => setF({ ...f, inclui: v === "__" ? "" : v })}>
+              <SelectTrigger><SelectValue placeholder="Escolha a playlist" /></SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value="__" disabled>Escolha a playlist</SelectItem>
+                {playlists.filter((x) => x.id !== playlistId).map((x) => (
+                  <SelectItem key={x.id} value={x.id}>{x.nome} · {x.itens.filter((j) => j.ativo && j.tipo !== "playlist").length} itens</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Passa os itens no ar dessa playlist, na ordem dela, cada um por no máximo o tempo acima (vídeo toca até o fim). Se o setor mudar a playlist dele, esta acompanha sozinha.
+              Playlist incluída dentro da incluída não entra (um nível só).
+            </p></div>
         )}
         {(f.tipo === "url" || f.tipo === "youtube") && (
           <div className="sm:col-span-2"><Label className="text-xs">{f.tipo === "youtube" ? "Link do vídeo *" : "Endereço *"}</Label>
@@ -780,11 +809,12 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
   const simulacaoDesde = useRef(Date.now());
 
   const playlistDaTv = playlists.find((x) => x.id === tv?.playlist_id) ?? null;
-  const itens = useMemo(() => (playlistDaTv ? itensNoAr(playlistDaTv.itens, agora).map((i) => paraItemTv(i, contratos)) : []),
+  // "Outra playlist" aberta como a TV recebe do tv_estado (mig 20261118140000).
+  const itens = useMemo(() => (playlistDaTv ? expandirPlaylist(playlistDaTv.itens, playlists, agora).map((i) => paraItemTv(i, contratos)) : []),
     // agora só importa quando um item entra/sai da validade: o minuto basta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [playlistDaTv, contratos, Math.floor(agora.getTime() / 60_000)]);
-  const itensTodos = useMemo(() => (playlistDaTv ? playlistDaTv.itens.map((i) => paraItemTv(i, contratos)) : []), [playlistDaTv, contratos]);
+    [playlistDaTv, playlists, contratos, Math.floor(agora.getTime() / 60_000)]);
+  const itensTodos = useMemo(() => (playlistDaTv ? itensAlcancaveis(playlistDaTv.itens, playlists).map((i) => paraItemTv(i, contratos)) : []), [playlistDaTv, playlists, contratos]);
   const recarregar = useRecarregarTv();
 
   if (!tvs.length) return <p className="text-xs text-muted-foreground"><Radio className="mr-1 inline h-3.5 w-3.5" /> Nenhuma TV conectada ainda — o AO VIVO aparece quando houver uma.</p>;
@@ -856,12 +886,12 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
  * tocando com os mesmos tempos da TV. Mexeu no formulário, ela pula para o
  * NOVO. ◀ ▶ e pausa para conferir item a item.
  */
-function PainelPrevia({ p, rascunho }: { p: TvPlaylist; rascunho: ItemTv | null }) {
+function PainelPrevia({ p, playlists, rascunho }: { p: TvPlaylist; playlists: TvPlaylist[]; rascunho: ItemTv | null }) {
   const contratos = useContratosRelatorio().data ?? SEM_CONTRATOS;
   const itens = useMemo<(ItemTv & { novo?: boolean })[]>(() => [
-    ...itensNoAr(p.itens).map((i) => paraItemTv(i, contratos)),
+    ...expandirPlaylist(p.itens, playlists).map((i) => paraItemTv(i, contratos)),
     ...(rascunho ? [{ ...rascunho, id: "novo", novo: true }] : []),
-  ], [p.itens, contratos, rascunho]);
+  ], [p.itens, playlists, contratos, rascunho]);
   const [idx, setIdx] = useState(0);
   const [tocando, setTocando] = useState(true);
   // Remonta o mesmo item quando a volta passa por ele de novo (playlist de 1 item, vídeo que acabou…).
@@ -908,7 +938,7 @@ function PainelPrevia({ p, rascunho }: { p: TvPlaylist; rascunho: ItemTv | null 
       {itens.length > 0 ? (
         <div className="flex flex-wrap gap-1">
           {itens.map((i, n) => (
-            <button key={i.id} type="button" onClick={() => ir(n)} title={nomeDoItem(i)}
+            <button key={`${i.id}-${n}`} type="button" onClick={() => ir(n)} title={nomeDoItem(i)}
               className={`max-w-[150px] truncate rounded border px-1.5 py-0.5 text-[10px] transition ${n === Math.min(idx, itens.length - 1) ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"} ${i.novo ? "border-dashed border-success text-success" : ""}`}>
               {n + 1}. {i.novo ? "NOVO · " : ""}{nomeDoItem(i)} · {i.tipo === "video" ? "vídeo" : `${i.duracao_seg}s`}
             </button>
