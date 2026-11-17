@@ -28,7 +28,7 @@ import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDe
 import { linkFluxoDoRecorte } from "./fechamento/linkFluxo";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheReceitasExtras, receitasExtrasPorMes, receitasForaDaColunaComCatalogo, detalheAdmForaDaColuna, despesaAdmPorContrato, ligacoesDoFechamento, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, catalogoDeEntradas, detalheReceitasExtras, receitasExtrasPorMes, receitasForaDaColunaComCatalogo, detalheAdmForaDaColuna, despesaAdmPorContrato, ligacoesDoFechamento, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   ROTULO_SEM_CLASSIFICACAO, type ItemDetalheClassificacao, type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -99,6 +99,8 @@ export default function FechamentoEmpresa() {
   const { data: ajustesReceita } = useAjustesReceitaExtra();
   // SIS-2026-0836: catálogo de classificações, para a lista de baixo das Receitas Extras trazer também as que ainda não tiveram entrada no período.
   const { data: catalogoClassificacoes = [] } = useClassificacoesOrcamentoAdmin();
+  // SIS-2026-0932: o Fluxo de Caixa é a referência — toda classificação que aparece numa entrada do ano (qualquer contrato) pode ser adicionada.
+  const catalogoReceitas = useMemo(() => catalogoDeEntradas(catalogoClassificacoes, entradasAno), [catalogoClassificacoes, entradasAno]);
   // Ajustes do Total Desp. Adm que valem só aqui (migration 20261103005200): a ligação do Fechamento se sobrepõe à global só na despesa administrativa.
   const { data: ajustesAdmClassificacao } = useAjustesAdmClassificacao();
   const { data: contratosAdmTirados } = useContratosAdmTirados();
@@ -291,7 +293,7 @@ export default function FechamentoEmpresa() {
         receitaExtra: {
           podeAlterar: !!podeAjustarAdm,
           ajustes: ajustesReceita,
-          foraDaColuna: receitasForaDaColunaComCatalogo(entradasAdm, mesesSet, ligacoes, ajustesReceita, empresaAdm, catalogoClassificacoes),
+          foraDaColuna: receitasForaDaColunaComCatalogo(entradasAdm, mesesSet, ligacoes, ajustesReceita, empresaAdm, catalogoReceitas),
         },
       };
     }
