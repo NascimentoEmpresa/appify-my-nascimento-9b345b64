@@ -29,6 +29,8 @@ import { useJustificativas } from "@/hooks/useJustificativasValor";
 import { useConsumoEstoqueContrato } from "./faturamento/useConsumoEstoqueContrato";
 import { resumoPorContratoPeriodo } from "./justificativas/regras";
 import { SolicitarJustificativaDialog, type AlvoJustificativa } from "./justificativas/SolicitarJustificativaDialog";
+// SIS-2026-0915: custo lançado fora da vigência do CONTRATO = Irregularidade (só sinaliza, não mexe no lançamento).
+import { fimDoContrato, inicioDoContrato, irregularidadesDeVigencia, type IrregularidadeVigencia } from "./vigenciaContrato";
 
 // SIS-2026-0556: Lucratividade de Contratos (Controladoria). Faturamento vem
 // das NFs Código N (competência); custo realizado vem das SAÍDAS do Fluxo de
@@ -41,6 +43,9 @@ const num2 = (n: number) => new Intl.NumberFormat("pt-BR", { minimumFractionDigi
 const CAB = "h-auto px-1.5 py-1.5 text-right align-bottom whitespace-normal leading-tight";
 const CEL = "px-1.5 py-1.5 align-middle";
 const CEL_NUM = `${CEL} text-right whitespace-nowrap`;
+const dataBR = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "não informado");
+const TXT_IRREGULAR = (irr: IrregularidadeVigencia) =>
+  `Custo lançado fora da vigência do contrato em ${irr.meses.map((m) => `${rotuloMes(m.mes)} (${m.posicao === "antes" ? "antes do início" : "depois do fim"})`).join(", ")}. Provavelmente pertence a outro contrato: revise o centro de custo no Fluxo de Caixa.`;
 const corMargem = (m: number | null) => (m === null ? "" : m < 0 ? "text-red-600 font-medium" : m < 0.15 ? "text-orange-600 font-medium" : "text-emerald-600 font-medium");
 
 interface Linha {
@@ -56,6 +61,11 @@ interface Linha {
   totalCusto: number;
   lucro: number;
   margem: number | null;
+  // SIS-2026-0915
+  inicioVigencia: string | null;
+  fimVigencia: string | null;
+  vigenciaPlanilha: string | null;
+  irregularidade: IrregularidadeVigencia | null;
 }
 
 // SIS-2026-0769 (11/11/2026): o mapa de custos continua sendo por contrato|mes
@@ -76,7 +86,7 @@ export default function LucratividadeContratos() {
   // SIS-2026-0721: base, código e empresa vêm da leitura compartilhada com o Faturamento e o Fechamento.
   const { base, setBase, codigo, setCodigo, empresaId, setEmpresaId } = useLeituraCompartilhada();
   const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
-  const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
+  const { contratos, nfs, empresas, executavelDoContrato, vigenciaDaPlanilha, carregando } = useBaseFaturamento(codigos);
   const hoje = new Date();
   // SIS-2026-0769 (11/11/2026): intervalo de meses, pedido da Controladoria para
   // olhar trimestre/semestre sem somar planilha na mao. Os dois nascem no mes
@@ -144,10 +154,16 @@ export default function LucratividadeContratos() {
       // Contrato sem nada no período não polui a tabela.
       if (!exec && !f.notas && !totalCusto) continue;
       const { lucro, margem } = lucroBruto(f.liquido, totalCusto);
-      out.push({ id: c.id, contrato: c.nome, cliente: c.cliente, status: c.status, exec, bruto: f.bruto, liquido: f.liquido, descontos: f.descontos, custos: cu, totalCusto, lucro, margem });
+      // SIS-2026-0915: cada mês do período contra a vigência do contrato (cadastro de Licitações/Contratos, lido a cada carga).
+      const irregularidade = irregularidadesDeVigencia(c, meses, (m) => custos.get(`${c.id}|${m}`));
+      out.push({
+        id: c.id, contrato: c.nome, cliente: c.cliente, status: c.status, exec, bruto: f.bruto, liquido: f.liquido, descontos: f.descontos, custos: cu, totalCusto, lucro, margem,
+        inicioVigencia: inicioDoContrato(c), fimVigencia: fimDoContrato(c), vigenciaPlanilha: vigenciaDaPlanilha(c.id, meses[meses.length - 1]), irregularidade,
+      });
     }
     return out.sort((a, b) => a.contrato.localeCompare(b.contrato, "pt-BR"));
-  }, [contratos, idsAdministrativos, empresaId, cliente, situacao, busca, fat, custos, meses, executavelDoContrato]);
+  }, [contratos, idsAdministrativos, empresaId, cliente, situacao, busca, fat, custos, meses, executavelDoContrato, vigenciaDaPlanilha]);
+  const irregulares = useMemo(() => linhas.filter((l) => l.irregularidade), [linhas]);
 
   const total = useMemo(() => {
     const t = { exec: 0, bruto: 0, liquido: 0, descontos: 0, totalCusto: 0, custos: custosVazios() };
@@ -176,9 +192,9 @@ export default function LucratividadeContratos() {
   const negativos = linhas.filter((l) => l.lucro < 0).length;
 
   function exportarCsv() {
-    const cab = ["Período", "Contrato", "Cliente", "Valor Exec.", "Valor Bruto", "Valor Líquido", "Desc. Contrato", ...RUBRICAS.map((r) => r.label), "Total de Custos", "Lucro Bruto", "Margem %", "Consumo de Estoque (R$) - nao somado", "Situação"];
+    const cab = ["Período", "Contrato", "Cliente", "Valor Exec.", "Valor Bruto", "Valor Líquido", "Desc. Contrato", ...RUBRICAS.map((r) => r.label), "Total de Custos", "Lucro Bruto", "Margem %", "Consumo de Estoque (R$) - nao somado", "Situação", "Início da vigência", "Final da vigência", "Vigência da planilha (desde)", "Irregularidade"];
     const num = (v: number) => v.toFixed(2).replace(".", ",");
-    const corpo = linhas.map((l) => [periodo, l.contrato, l.cliente, num(l.exec), num(l.bruto), num(l.liquido), num(l.descontos), ...RUBRICAS.map((r) => num(l.custos[r.id])), num(l.totalCusto), num(l.lucro), l.margem === null ? "" : (l.margem * 100).toFixed(2).replace(".", ","), num(consumoEstoque?.porContrato.get(l.id)?.valor ?? 0), l.status]);
+    const corpo = linhas.map((l) => [periodo, l.contrato, l.cliente, num(l.exec), num(l.bruto), num(l.liquido), num(l.descontos), ...RUBRICAS.map((r) => num(l.custos[r.id])), num(l.totalCusto), num(l.lucro), l.margem === null ? "" : (l.margem * 100).toFixed(2).replace(".", ","), num(consumoEstoque?.porContrato.get(l.id)?.valor ?? 0), l.status, dataBR(l.inicioVigencia), dataBR(l.fimVigencia), l.vigenciaPlanilha ? dataBR(l.vigenciaPlanilha) : "", l.irregularidade ? TXT_IRREGULAR(l.irregularidade) : ""]);
     const csv = [cab, ...corpo].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
@@ -324,7 +340,7 @@ export default function LucratividadeContratos() {
                     />
                   </TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Consumo de Estoque (R$)" formula="Material que saiu do estoque para o contrato no período filtrado, a preço de custo. NÃO entra no Total de Custos nem no Lucro Bruto: hoje a compra do material já é lançada direto no contrato (a maior parte das compras de material, uniforme e EPI do malote desde setembro/2026), então somar a saída por cima cobraria o mesmo material duas vezes. Serve para a análise de contratos ver quanto cada contrato consumiu e sinalizar excesso. É o mesmo valor do quadro por contrato em Suprimentos → Saídas por Contrato, no mesmo período." /></TableHead>
-                  <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." /></TableHead>
+                  <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula={<><p>Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade.</p><p className="pt-1">Abaixo, a vigência do <strong>contrato</strong> (cadastro de Licitações/Contratos, com prorrogações: início mais antigo e fim mais tardio dos campos do cadastro) e, à parte, a da <strong>planilha de custos</strong> (desde quando valem os valores da planilha no mês final do filtro).</p><p className="pt-1 font-medium text-red-700">Irregularidade: há custo lançado num mês antes do início ou depois do fim da vigência do contrato. O lançamento não muda: revise o centro de custo no Fluxo de Caixa.</p></>} /></TableHead>
                   {podeVerJustificativas && (
                     <TableHead className={`${CAB} text-center print:hidden`}><TituloComFormula alinhar="center" titulo="Justificativa de valor" formula="A Controladoria pede a um gerente que justifique um valor de qualquer coluna desta linha. Mostra quantas cobranças estão aguardando resposta, respondidas ou encerradas nos meses filtrados; clique para ver todas. A cobrança nova nasce no mês final do filtro." /></TableHead>
                   )}
@@ -341,7 +357,15 @@ export default function LucratividadeContratos() {
                     <TableCell className={CEL_NUM}>{l.bruto ? num2(l.bruto) : "—"}</TableCell>
                     <TableCell className={CEL_NUM}>{l.liquido ? num2(l.liquido) : "—"}</TableCell>
                     <TableCell className={CEL_NUM}>{l.descontos ? num2(l.descontos) : "—"}</TableCell>
-                    {detalhar && RUBRICAS.map((r) => <TableCell key={r.id} className={CEL_NUM}>{l.custos[r.id] ? num2(l.custos[r.id]) : "—"}</TableCell>)}
+                    {detalhar && RUBRICAS.map((r) => {
+                      const fora = l.irregularidade?.rubricas.get(r.id);
+                      return (
+                        <TableCell key={r.id} className={CEL_NUM}>
+                          {l.custos[r.id] ? num2(l.custos[r.id]) : "—"}
+                          {fora ? <span className="mt-0.5 ml-auto block w-fit rounded bg-yellow-300 px-1 py-px text-[9px] font-semibold text-yellow-950" title={`${num2(fora)} lançados fora da vigência do contrato. ${TXT_IRREGULAR(l.irregularidade!)}`}>Irregularidade</span> : null}
+                        </TableCell>
+                      );
+                    })}
                     <TableCell className={CEL_NUM}>{num2(l.totalCusto)}</TableCell>
                     <TableCell className={`${CEL_NUM} ${l.lucro < 0 ? "text-red-600" : ""}`}>{num2(l.lucro)}</TableCell>
                     <TableCell className={`${CEL} text-right`}>
@@ -349,7 +373,13 @@ export default function LucratividadeContratos() {
                     </TableCell>
                     <TableCell className={`${CEL_NUM} text-muted-foreground`} title="Informativo: não entra no Total de Custos nem no Lucro Bruto.">{consumoEstoque?.porContrato.get(l.id)?.valor ? num2(consumoEstoque.porContrato.get(l.id)!.valor) : "—"}</TableCell>
                     <TableCell className={`${CEL} text-center`}>
-                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${l.status === "ativo" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{l.status}</span>
+                      <span className="flex flex-wrap items-center justify-center gap-1">
+                        <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${l.status === "ativo" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{l.status}</span>
+                        {l.irregularidade && <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold bg-yellow-300 text-yellow-950" title={TXT_IRREGULAR(l.irregularidade)}>Irregularidade</span>}
+                      </span>
+                      <span className="mt-0.5 block whitespace-nowrap text-[9px] leading-tight text-muted-foreground">Início da vigência: {dataBR(l.inicioVigencia)}</span>
+                      <span className="block whitespace-nowrap text-[9px] leading-tight text-muted-foreground">Final da vigência: {dataBR(l.fimVigencia)}</span>
+                      <span className="block whitespace-nowrap text-[9px] leading-tight text-muted-foreground/80" title="Vigência da planilha de custos (informativa): desde quando valem os valores da planilha no mês final do filtro. Não é usada no alerta.">Planilha de custos: {l.vigenciaPlanilha ? `desde ${dataBR(l.vigenciaPlanilha)}` : "sem planilha vigente"}</span>
                     </TableCell>
                     {podeVerJustificativas && (
                       <TableCell className={`${CEL} text-center print:hidden`}>
@@ -401,6 +431,11 @@ export default function LucratividadeContratos() {
           <p className="text-[11px] text-muted-foreground">
             Custos {base === "pagamento" ? "pela data de pagamento: saídas do Fluxo de Caixa pagas em" : "pela competência: saídas do Fluxo de Caixa com competência em"} {periodo} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
           </p>
+          {irregulares.length > 0 && (
+            <p className="text-[11px] font-medium text-red-700 dark:text-red-400">
+              {irregulares.length} contrato(s) com custo lançado fora da vigência do contrato em {periodo} (marcados “Irregularidade” na Situação e na rubrica): {irregulares.slice(0, 5).map((l) => l.contrato).join("; ")}{irregulares.length > 5 ? "…" : ""}. Provavelmente o lançamento é de outro contrato: revise o centro de custo no Fluxo de Caixa. Nada foi alterado automaticamente.
+            </p>
+          )}
           {semClass.linhas > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
               {semClass.linhas} lançamento(s) de contrato sem classificação ({fmtMoney(semClass.valor)}) em {periodo} ficam fora das colunas de custo. Classifique-os no Fluxo de Caixa para entrarem na conta.
