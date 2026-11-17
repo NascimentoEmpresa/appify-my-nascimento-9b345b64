@@ -38,6 +38,8 @@ import { abrirPrGithub } from "./abrirPrGithub";
 import { conclusaoAguardandoConfirmacao } from "./validacaoPresidencia";
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
+import { useChamadoEtiquetas } from "@/hooks/useChamadoEtiquetas";
+import { EtiquetasChamado } from "./EtiquetasChamado";
 import {
   STATUS_PAINEL, mudouNaFila, rotuloPrazo, diasUteisAte, podeDefinirPrazo, podeIniciarDesenvolvimento, projetarPrevisoes,
   situacaoPrazo, statusPainel, variacaoPercentual, type SituacaoPrazo, type StatusPainel,
@@ -165,6 +167,9 @@ export default function PainelDesenvolvedor() {
 
   // Parecer da I.A (mig 20261029000900): valor médio + complexidade na linha.
   const pareceresIa = useResumosParecerIa(!!user?.id && dev);
+  // Etiquetas pessoais (mig 20261117170000): só as minhas, ao lado do número.
+  const etiquetasCtx = useChamadoEtiquetas(dev);
+  const [filtroEtiqueta, setFiltroEtiqueta] = useState<string>("todas");
 
   // A conclusão automática registra as métricas da PR como meta do evento
   // (SIS-2026-0765). A consulta fica separada da lista de chamados para não
@@ -317,6 +322,9 @@ export default function PainelDesenvolvedor() {
       .filter((c) => !soDesceram || mudouNaFila(c))
       .filter((c) => filtroStatus === "todos" || statusPainel(c) === filtroStatus)
       .filter((c) => filtroPrioridade === "todas" || c.prioridade === filtroPrioridade)
+      .filter((c) => filtroEtiqueta === "todas"
+        || (filtroEtiqueta === "sem" ? !etiquetasCtx.porChamado[c.id]?.length
+          : !!etiquetasCtx.porChamado[c.id]?.some((e) => e.id === filtroEtiqueta)))
       .filter((c) => !termo || [c.numero, c.assunto, c.solicitante_nome, c.setor].some((v) => (v ?? "").toLowerCase().includes(termo)))
       .sort((a, b) => {
         const pa = posicaoMinhaFila[a.id], pb = posicaoMinhaFila[b.id];
@@ -325,9 +333,13 @@ export default function PainelDesenvolvedor() {
         if (pb) return 1;
         return +new Date(b.concluido_em ?? b.updated_at) - +new Date(a.concluido_em ?? a.updated_at);
       });
-  }, [chamados, soParticipante, visao, soDesceram, filtroStatus, filtroPrioridade, busca, posicaoMinhaFila]);
+  }, [chamados, soParticipante, visao, soDesceram, filtroStatus, filtroPrioridade, filtroEtiqueta, etiquetasCtx.porChamado, busca, posicaoMinhaFila]);
 
-  useEffect(() => { setPagina(1); }, [visao, soDesceram, filtroStatus, filtroPrioridade, busca, porPagina]);
+  useEffect(() => { setPagina(1); }, [visao, soDesceram, filtroStatus, filtroPrioridade, filtroEtiqueta, busca, porPagina]);
+  // Etiqueta filtrada foi apagada → volta para "todas".
+  useEffect(() => {
+    if (!["todas", "sem"].includes(filtroEtiqueta) && !etiquetasCtx.etiquetas.some((e) => e.id === filtroEtiqueta)) setFiltroEtiqueta("todas");
+  }, [filtroEtiqueta, etiquetasCtx.etiquetas]);
   const totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = lista.slice((paginaAtual - 1) * porPagina, paginaAtual * porPagina);
@@ -528,7 +540,7 @@ export default function PainelDesenvolvedor() {
               <PopoverTrigger asChild>
                 <Button size="sm" variant="outline" className="h-8 gap-1.5">
                   <Filter className="h-3.5 w-3.5" /> Filtros
-                  {(visao !== VISAO_PADRAO || filtroStatus !== "todos" || filtroPrioridade !== "todas") && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                  {(visao !== VISAO_PADRAO || filtroStatus !== "todos" || filtroPrioridade !== "todas" || filtroEtiqueta !== "todas") && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-64 space-y-3">
@@ -561,8 +573,23 @@ export default function PainelDesenvolvedor() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Minha etiqueta</p>
+                  <Select value={filtroEtiqueta} onValueChange={setFiltroEtiqueta}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todas">Todas</SelectItem>
+                      <SelectItem value="sem">Sem etiqueta</SelectItem>
+                      {etiquetasCtx.etiquetas.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: e.cor }} />{e.nome}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button size="sm" variant="ghost" className="h-7 w-full text-xs"
-                  onClick={() => { setVisao(VISAO_PADRAO); setFiltroStatus("todos"); setFiltroPrioridade("todas"); setSoDesceram(false); }}>
+                  onClick={() => { setVisao(VISAO_PADRAO); setFiltroStatus("todos"); setFiltroPrioridade("todas"); setFiltroEtiqueta("todas"); setSoDesceram(false); }}>
                   Limpar filtros
                 </Button>
               </PopoverContent>
@@ -625,7 +652,10 @@ export default function PainelDesenvolvedor() {
                     return (
                       <TableRow key={c.id} className={`cursor-pointer ${desceu ? "bg-destructive/5 hover:bg-destructive/10" : ""}`}
                         onClick={() => nav(hrefNaLista(c.id, idsLista))}>
-                        <TableCell className="whitespace-nowrap font-mono text-[11px] font-semibold" title={c.numero}>#{numeroCurto(c.numero)}</TableCell>
+                        <TableCell className="font-mono text-[11px] font-semibold">
+                          <span className="whitespace-nowrap" title={c.numero}>#{numeroCurto(c.numero)}</span>
+                          {dev && <EtiquetasChamado chamadoId={c.id} ctx={etiquetasCtx} />}
+                        </TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}><PrioridadePill c={c} /></TableCell>
                         <TableCell className="min-w-[150px] max-w-[260px]">
                           <p className="line-clamp-3 text-xs" title={c.assunto}>{c.assunto}</p>
