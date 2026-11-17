@@ -105,6 +105,20 @@ Deno.serve(async (req) => {
         }));
       case "historico":
         return json(await rpc("col_historico", { p_emp: emp }));
+      case "epi_entregas":
+        return json(await rpc("col_epi_entregas", { p_emp: emp, p_pagina: Math.max(0, Math.min(10000, int(body.pagina) ?? 0)) }));
+      case "epi_confirmar":
+        return json(await rpc("col_epi_confirmar", {
+          p_emp: emp, p_entrega: uuid(body.entrega_id), p_senha: str(body.senha, 200) ?? "",
+          p_ip: ip, p_ua: ua,
+        }));
+      case "epi_documento": {
+        const path = await rpc("col_epi_documento_path", { p_emp: emp, p_documento: uuid(body.documento_id) });
+        if (!path || typeof path !== "string") return json({ error: "Ficha não encontrada." }, 404);
+        const { data, error } = await sb.storage.from("epi-entregas").createSignedUrl(path, 60);
+        if (error || !data?.signedUrl) throw new Error(error?.message ?? "Não foi possível abrir a ficha.");
+        return json({ url: data.signedUrl });
+      }
       case "cursos":
         return json(await rpc("col_cursos", { p_emp: emp }));
       case "curso":

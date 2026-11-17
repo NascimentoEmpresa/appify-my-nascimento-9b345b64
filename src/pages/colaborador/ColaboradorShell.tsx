@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Clock3, GraduationCap, History, Home, LogOut, UserRound, Wallet } from "lucide-react";
+import { Clock3, GraduationCap, HardHat, History, Home, LogOut, UserRound, Wallet } from "lucide-react";
 import logoGN from "@/assets/logo-nascimento-icon.png";
 import { cn } from "@/lib/utils";
 import {
@@ -41,6 +41,7 @@ const ITENS = [
   { para: "/colaborador", rotulo: "Início", icone: Home, exato: true },
   { para: "/colaborador/ponto", rotulo: "Ponto", icone: Clock3 },
   { para: "/colaborador/treinamentos", rotulo: "Cursos", icone: GraduationCap },
+  { para: "/colaborador/epis", rotulo: "EPIs", icone: HardHat },
   { para: "/colaborador/salario", rotulo: "Salário", icone: Wallet },
   { para: "/colaborador/perfil", rotulo: "Perfil", icone: UserRound },
 ];
@@ -148,7 +149,7 @@ function ShellAutenticado() {
 
       {/* Barra inferior — só no celular */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 backdrop-blur md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className="mx-auto grid max-w-3xl grid-cols-5">
+        <div className="mx-auto grid max-w-3xl grid-cols-6">
           {ITENS.map((it) => (
             <NavLink
               key={it.para}
