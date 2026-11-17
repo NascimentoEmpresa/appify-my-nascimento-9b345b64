@@ -9,6 +9,11 @@ const ASSINATURAS: Record<string, Assinatura> = {
     resumo: "orçamento de contratos pelo EXECUTADO (faturado nas NFs do mês) a partir de 70% do executável da Planilha de Custo; antes disso, ou sem NF no mês corrente e nos futuros, pelo executável (previsto); mês passado sem NF = 0",
     onde: "LIMIAR_EXECUTADO / baseDoOrcamento / computarGruposContrato (src/hooks/useOrcamentoContratos.ts)",
   },
+  "SIS-2026-0925": {
+    chamado: "SIS-2026-0925", desde: "17/11/2026",
+    resumo: "Reserva de Investimento (%) por competência no Fechamento dos Sócios: Total a Distribuir = Resultado do Período − Reserva; consumo da Empresa e retiradas saem depois da divisão",
+    onde: "calcularMes / calcularReserva (src/pages/controladoria/fechamento-socios/regras.ts) e BannerReserva (FechamentoSocios.tsx)",
+  },
 };
 
 export function AssinaturaRegra({ chamado }: { chamado: keyof typeof ASSINATURAS | string }) {
