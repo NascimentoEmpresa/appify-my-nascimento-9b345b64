@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS public."WA_CANAL" (
   updated_at       timestamptz NOT NULL DEFAULT now(),
   updated_by       uuid
 );
+-- Toda FK com índice (regra M2 do guardião): JOIN e DELETE na tabela
+-- referenciada não podem varrer esta inteira.
+CREATE INDEX IF NOT EXISTS wa_canal_pasta_padrao_idx ON public."WA_CANAL" (pasta_padrao);
 
 -- Pasta da Caixa de Entrada para o canal novo (mesmo padrão da 20260819000003:
 -- pasta + o app_menu que a governa).
@@ -184,6 +187,8 @@ BEGIN
       ADD CONSTRAINT wa_conversa_contato_canal_key UNIQUE (contato_id, canal_codigo);
   END IF;
 END $$;
+-- A UNIQUE acima começa por contato_id: não serve para filtrar/juntar por canal.
+CREATE INDEX IF NOT EXISTS wa_conversa_canal_codigo_idx ON public."WA_CONVERSA" (canal_codigo);
 
 -- As três RPCs que criam conversa — corpo IGUAL ao da 20260906000003, só
 -- com o canal 'principal' explícito no SELECT e no ON CONFLICT. Sem isto o
@@ -431,6 +436,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_wa_atendimento_aberto
 CREATE INDEX IF NOT EXISTS idx_wa_atendimento_status ON public."WA_ATENDIMENTO"(status, aguardando_desde);
 CREATE INDEX IF NOT EXISTS idx_wa_atendimento_aberto_em ON public."WA_ATENDIMENTO"(aberto_em DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_atendimento_responsavel ON public."WA_ATENDIMENTO"(responsavel_id) WHERE status <> 'concluido';
+CREATE INDEX IF NOT EXISTS wa_atendimento_canal_codigo_idx ON public."WA_ATENDIMENTO" (canal_codigo);
+CREATE INDEX IF NOT EXISTS wa_atendimento_assumido_por_idx ON public."WA_ATENDIMENTO" (assumido_por);
+CREATE INDEX IF NOT EXISTS wa_atendimento_concluido_por_idx ON public."WA_ATENDIMENTO" (concluido_por);
 
 DROP TRIGGER IF EXISTS trg_wa_atendimento_updated ON public."WA_ATENDIMENTO";
 CREATE TRIGGER trg_wa_atendimento_updated BEFORE UPDATE ON public."WA_ATENDIMENTO"
@@ -645,6 +653,9 @@ CREATE TABLE IF NOT EXISTS public."WA_ATD_BASE" (
   atualizado_por    uuid REFERENCES auth.users(id),
   updated_at        timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS wa_atd_base_aprovado_por_idx ON public."WA_ATD_BASE" (aprovado_por);
+CREATE INDEX IF NOT EXISTS wa_atd_base_criado_por_idx ON public."WA_ATD_BASE" (criado_por);
+CREATE INDEX IF NOT EXISTS wa_atd_base_atualizado_por_idx ON public."WA_ATD_BASE" (atualizado_por);
 
 CREATE TABLE IF NOT EXISTS public."WA_ATD_BASE_HIST" (
   id          bigserial PRIMARY KEY,
@@ -680,6 +691,9 @@ CREATE TABLE IF NOT EXISTS public."WA_ATD_REVISAO" (
   revisor_id      uuid REFERENCES auth.users(id),
   revisado_em     timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS wa_atd_revisao_atendimento_id_idx ON public."WA_ATD_REVISAO" (atendimento_id);
+CREATE INDEX IF NOT EXISTS wa_atd_revisao_base_id_idx ON public."WA_ATD_REVISAO" (base_id);
+CREATE INDEX IF NOT EXISTS wa_atd_revisao_revisor_id_idx ON public."WA_ATD_REVISAO" (revisor_id);
 
 CREATE TABLE IF NOT EXISTS public."WA_ATD_CONSULTA_LOG" (
   id                        bigserial PRIMARY KEY,
