@@ -14,7 +14,7 @@ import {
   useResponderSolicitacaoManutencao, useSolicitacoesManutencao,
   type SolicitacaoManutencao, type StatusSolicitacaoManutencao,
 } from "@/hooks/useSolicitacoesManutencao";
-import { Boxes, ExternalLink, Image, Search, Wrench } from "lucide-react";
+import { Boxes, ExternalLink, FileText, Image, Search, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS: Record<StatusSolicitacaoManutencao, string> = {
@@ -53,6 +53,10 @@ function DialogResposta({ solicitacao, onFechar }: { solicitacao: SolicitacaoMan
   const [motivo, setMotivo] = useState("");
   if (!solicitacao) return null;
   const aberta = solicitacao.status === "aberta";
+  // Anexos anteriores à SIS-2026-0843 ficaram como foto_equipamento (DEFAULT da coluna).
+  const fotos = anexos.filter((a) => a.categoria !== "orcamento");
+  const orcamentos = anexos.filter((a) => a.categoria === "orcamento");
+  const abrir = (caminho: string) => abrirAnexoSolicitacaoManutencao(caminho).catch((e) => toast.error(e.message));
   const opcoes = solicitacao.tipo === "peca"
     ? [["peca_disponivel", "Peça disponível"], ["solicitar_compra", "Solicitar compra interna (Malote)"]]
     : [["autorizar_manutencao", "Autorizar manutenção"], ["reprovar_manutencao", "Não autorizar manutenção"]];
@@ -65,7 +69,10 @@ function DialogResposta({ solicitacao, onFechar }: { solicitacao: SolicitacaoMan
   return <Dialog open onOpenChange={(o) => !o && onFechar()}><DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>{solicitacao.maquinario}</DialogTitle></DialogHeader>
     <div className="grid gap-3 text-sm sm:grid-cols-2"><Campo label="Contrato" valor={solicitacao.contrato?.nome ?? "—"} /><Campo label="Número de série" valor={solicitacao.numero_serie} /><Campo label="Solicitado por" valor={solicitacao.solicitante_nome ?? "Supervisor"} /><Campo label="Tipo" valor={solicitacao.tipo === "peca" ? "Solicitação de peças" : "Manutenção"} /></div>
     <div><Label>Descrição</Label><p className="mt-1 rounded-md bg-muted/50 p-3 text-sm whitespace-pre-wrap">{solicitacao.descricao || "Não informada."}</p></div>
-    <div><Label>Foto da máquina</Label>{anexos.length ? <div className="mt-2 flex flex-wrap gap-2">{anexos.map((a) => <Button key={a.id} type="button" variant="outline" size="sm" onClick={() => abrirAnexoSolicitacaoManutencao(a.caminho).catch((e) => toast.error(e.message))}><Image className="mr-2 h-4 w-4" /> Abrir foto</Button>)}</div> : <p className="mt-1 text-sm text-muted-foreground">Sem foto anexada.</p>}</div>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div><Label>Foto do equipamento</Label>{fotos.length ? <div className="mt-2 flex flex-wrap gap-2">{fotos.map((a) => <Button key={a.id} type="button" variant="outline" size="sm" onClick={() => abrir(a.caminho)}><Image className="mr-2 h-4 w-4" /> Abrir foto</Button>)}</div> : <p className="mt-1 text-sm text-muted-foreground">Sem foto anexada.</p>}</div>
+      <div><Label>Orçamento</Label>{orcamentos.length ? <div className="mt-2 flex flex-wrap gap-2">{orcamentos.map((a) => <Button key={a.id} type="button" variant="outline" size="sm" onClick={() => abrir(a.caminho)}>{a.tipo_mime === "application/pdf" ? <FileText className="mr-2 h-4 w-4" /> : <Image className="mr-2 h-4 w-4" />} Abrir orçamento</Button>)}</div> : <p className="mt-1 text-sm text-muted-foreground">Nenhum orçamento anexado.</p>}</div>
+    </div>
     {!aberta ? <div className="space-y-2 rounded-lg border bg-muted/30 p-3"><Badge variant="outline">{STATUS[solicitacao.status]}</Badge><p className="text-sm">{solicitacao.decisao_motivo || "Resposta registrada sem observação."}</p>{solicitacao.malote_despesa_id && <Button asChild variant="link" className="h-auto px-0"><Link to={`/app/malote/solicitacao/${solicitacao.malote_despesa_id}`}><ExternalLink className="mr-1 h-3.5 w-3.5" /> Abrir compra no Malote</Link></Button>}</div> : <><div><Label>Decisão do Almoxarifado *</Label><Select value={decisao} onValueChange={setDecisao}><SelectTrigger><SelectValue placeholder="Selecione a decisão" /></SelectTrigger><SelectContent>{opcoes.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent></Select></div><div><Label>Motivo {solicitacao.tipo === "manutencao" ? "*" : "(opcional)"}</Label><Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} placeholder="Registre a justificativa ou orientação para o supervisor." /></div></>}
     <DialogFooter>{aberta && <Button onClick={confirmar} disabled={responder.isPending}>{responder.isPending ? "Salvando..." : "Registrar decisão"}</Button>}<Button variant="outline" onClick={onFechar}>Fechar</Button></DialogFooter>
   </DialogContent></Dialog>;
