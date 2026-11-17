@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  abrangencia, analisarImpacto, emAberto, incluirPosicao, normalizarLista, pendenciasImpacto, separarModulos, trocarPosicao,
+  abrangencia, analisarImpacto, emAberto, incluirPosicao, modulosDoChamado, normalizarLista, pendenciasImpacto, separarModulos, trocarPosicao,
   type ChamadoImpacto,
 } from "@/lib/chamados/impactoSistemico";
 
@@ -33,6 +33,9 @@ describe("Impacto sistêmico — formulário", () => {
       .toEqual(["Qual sistema (Outro)"]);
     expect(pendenciasImpacto({ modulos: ["rh"], setores: ["RH"], posicao: "rh", posicaoOutro: "" })).toEqual([]);
     expect(pendenciasImpacto({ modulos: [" "], setores: ["RH"], posicao: "rh", posicaoOutro: "" })[0].id).toBe("campo-modulos-impactados");
+    // Posição "Outro" (sistema fora do catálogo): módulo impactado não é exigido.
+    expect(pendenciasImpacto({ modulos: [], setores: ["RH"], posicao: "outro", posicaoOutro: "Portal X" })).toEqual([]);
+    expect(pendenciasImpacto({ modulos: [], setores: [], posicao: "outro", posicaoOutro: "Portal X" }).map((p) => p.label)).toEqual(["Setores impactados"]);
   });
 
   it("separa o módulo diretamente ajustado dos demais impactados", () => {
@@ -44,6 +47,12 @@ describe("Impacto sistêmico — formulário", () => {
 });
 
 describe("Impacto sistêmico — análises do Monitoramento", () => {
+  it("modulosDoChamado: o que painel, filtro e opções leem (com a posição)", () => {
+    expect(modulosDoChamado({ modulo_sistema: "rh", modulos_impactados: ["sst"] })).toEqual(["rh", "sst"]);
+    expect(modulosDoChamado({ modulo_sistema: "rh", modulos_impactados: [] })).toEqual([]);
+    expect(modulosDoChamado({ modulo_sistema: "outro", modulos_impactados: ["sst"] })).toEqual(["sst"]);
+  });
+
   // O exemplo do chamado: melhoria no Fluxo de Caixa (financeiro) que mexe em
   // Lucratividade de Contratos e Fechamento (controladoria) e Auditoria (contabil).
   const chamados: ChamadoImpacto[] = [
@@ -53,11 +62,13 @@ describe("Impacto sistêmico — análises do Monitoramento", () => {
     { id: "3", status: "aberto", modulo_sistema: "rh", modulos_impactados: ["sst"], setores_impactados: ["RH", "SST"] },
     // Aberto antes do formulário: fica de fora das contas.
     { id: "4", status: "concluido", modulo_sistema: "financeiro", modulos_impactados: [], setores_impactados: null },
+    // Sistema fora do catálogo: tem impacto (setor), mas não entra na abrangência.
+    { id: "5", status: "concluido", modulo_sistema: "outro", modulos_impactados: [], setores_impactados: ["Jurídico"] },
   ];
   const a = analisarImpacto(chamados);
 
   it("separa quem tem impacto informado", () => {
-    expect(a.comImpacto).toBe(3);
+    expect(a.comImpacto).toBe(4);
     expect(a.semImpacto).toBe(1);
   });
 
@@ -78,6 +89,7 @@ describe("Impacto sistêmico — análises do Monitoramento", () => {
     expect(abrangencia(chamados[0])).toBe(3);
     expect(abrangencia(chamados[2])).toBe(2);
     expect(abrangencia(chamados[3])).toBeNull();
+    expect(abrangencia(chamados[4])).toBeNull();
     expect(a.abrangenciaMedia).toBe(2);
     expect(a.abrangenciaMaxima).toBe(3);
     expect(a.faixas.map((f) => f.qtd)).toEqual([1, 2, 0, 0]);

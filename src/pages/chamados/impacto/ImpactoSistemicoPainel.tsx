@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { Building2, ClipboardCheck, Crosshair, FolderTree, Layers, Network } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { analisarImpacto, incluirPosicao, normalizarLista, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
+import { analisarImpacto, modulosDoChamado, normalizarLista, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
 import { contarPorSetor, rotuloModulo } from "@/lib/chamados/arvoreModulos";
 import { rotuloModuloLegado } from "../impactados";
 import { useArvoreModulos } from "./catalogoTelas";
@@ -74,10 +74,12 @@ export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSet
   // Índice do hook (organização salva aplicada), não o global.
   const rotuloModuloImpactado = useCallback((v: string) => rotuloModulo(v, indice, rotuloModuloLegado), [indice]);
   const porSetorErp = useMemo(() => {
-    // Mesma base do analisarImpacto: só chamado com impacto informado, posição inclusa.
+    // Mesma base do analisarImpacto: chamado com setor informado e módulos com a
+    // posição incluída (modulosDoChamado). "Outro" sem módulo não soma setor do ERP.
     const listas = chamados
-      .filter((c) => normalizarLista(c.modulos_impactados).length && normalizarLista(c.setores_impactados).length)
-      .map((c) => incluirPosicao(c.modulos_impactados, c.modulo_sistema));
+      .filter((c) => normalizarLista(c.setores_impactados).length)
+      .map((c) => modulosDoChamado(c))
+      .filter((m) => m.length);
     const contagem = contarPorSetor(listas, indice, rotuloModuloLegado);
     return {
       itens: contagem.map((c): ContagemImpacto => ({ valor: c.valor, qtd: c.qtd, comoPosicao: 0, emAberto: 0 })),
