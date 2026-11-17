@@ -44,7 +44,26 @@ export interface FiltrosConciliacao {
   codigo: string;
   /** "" = todas */
   situacao: StatusNota | "";
+  // SIS-2026-0903 (todos opcionais; sem eles vale o comportamento anterior)
+  /** Competência de/até ("YYYY-MM", inclusive): vários meses de uma vez. */
+  competenciaDe?: string;
+  competenciaAte?: string;
+  /** Período de emissão da NF ("YYYY-MM-DD", inclusive). NF sem data de emissão fica fora quando o filtro está ligado. */
+  emissaoDe?: string;
+  emissaoAte?: string;
+  /** Período de pagamento da NF ("YYYY-MM-DD", inclusive). NF sem pagamento fica fora quando o filtro está ligado. */
+  pagamentoDe?: string;
+  pagamentoAte?: string;
 }
+
+/** SIS-2026-0903: de onde vem a divergência (classificação do chamado: erro de lançamento, cálculo, registro ausente, critério). */
+export type TipoDivergencia = "registro_ausente" | "criterio_diferente" | "erro_lancamento" | "divergencia_calculo";
+export const ROTULO_TIPO_DIVERGENCIA: Record<TipoDivergencia, string> = {
+  registro_ausente: "Registro ausente",
+  criterio_diferente: "Critério diferente entre as fontes",
+  erro_lancamento: "Erro de lançamento",
+  divergencia_calculo: "Divergência de cálculo",
+};
 
 export interface ContratoParaConciliacao {
   id: string;
@@ -82,6 +101,8 @@ export interface NotaConciliacao {
   difTotal: number;
   divergente: boolean;
   motivos: string[];
+  /** Um tipo por motivo (mesma ordem de `motivos`). */
+  tipos: TipoDivergencia[];
 }
 
 export interface LinhaIndicador {
@@ -107,6 +128,9 @@ export interface GrupoConciliacao {
 }
 
 export interface ResultadoConciliacao {
+  /** SIS-2026-0903: as NFs que cada tela considera (para os indicadores ampliados e o detalhamento). */
+  linhasRelatorio: NfEmissaoRow[];
+  linhasFaturamento: NfEmissaoRow[];
   indicadores: LinhaIndicador[];
   notas: NotaConciliacao[];
   porCompetencia: GrupoConciliacao[];
@@ -132,6 +156,18 @@ function recorteComum(n: NfEmissaoRow, f: FiltrosConciliacao): boolean {
   if (f.contratoId && n.contrato_id !== f.contratoId) return false;
   if (f.codigo && n.tipo_nota !== f.codigo) return false;
   if (f.situacao && statusDaNota(n) !== f.situacao) return false;
+  // SIS-2026-0903: vários meses, período de emissão e período de pagamento
+  const comp = n.competencia.slice(0, 7);
+  if (f.competenciaDe && comp < f.competenciaDe) return false;
+  if (f.competenciaAte && comp > f.competenciaAte) return false;
+  const emissao = (n.data_emissao ?? "").slice(0, 10);
+  if ((f.emissaoDe || f.emissaoAte) && !emissao) return false;
+  if (f.emissaoDe && emissao < f.emissaoDe) return false;
+  if (f.emissaoAte && emissao > f.emissaoAte) return false;
+  const pagamento = (n.data_pagamento ?? "").slice(0, 10);
+  if ((f.pagamentoDe || f.pagamentoAte) && !pagamento) return false;
+  if (f.pagamentoDe && pagamento < f.pagamentoDe) return false;
+  if (f.pagamentoAte && pagamento > f.pagamentoAte) return false;
   return true;
 }
 
@@ -169,39 +205,41 @@ function motivosDaNota(
   itens: NfEmissaoItemRow[],
   contratoPorId: Map<string, ContratoParaConciliacao>,
   f: FiltrosConciliacao,
-): string[] {
+): { motivos: string[]; tipos: TipoDivergencia[] } {
   const motivos: string[] = [];
+  const tipos: TipoDivergencia[] = [];
+  const add = (texto: string, tipo: TipoDivergencia) => { motivos.push(texto); tipos.push(tipo); };
   const { geral, dashboard, faturamento } = fontes;
   const fmt = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   if (geral.incluida && !faturamento.incluida) {
     const c = contratoPorId.get(n.contrato_id);
-    if (!c) motivos.push("Contrato da NF não existe no cadastro de contratos: fica fora do Faturamento da Empresa.");
-    else if (f.empresaId && c.empresa_id !== f.empresaId && n.empresa_id === f.empresaId) motivos.push("A empresa da NF difere da empresa do contrato: o Faturamento da Empresa usa a do contrato.");
-    else if (f.empresaId && c.empresa_id === f.empresaId && n.empresa_id !== f.empresaId) motivos.push("A empresa da NF difere da empresa do contrato: o Relatório usa a da NF.");
-    else motivos.push("A NF não entra no Faturamento da Empresa (recorte diferente).");
+    if (!c) add("Contrato da NF não existe no cadastro de contratos: fica fora do Faturamento da Empresa.", "registro_ausente");
+    else if (f.empresaId && c.empresa_id !== f.empresaId && n.empresa_id === f.empresaId) add("A empresa da NF difere da empresa do contrato: o Faturamento da Empresa usa a do contrato.", "criterio_diferente");
+    else if (f.empresaId && c.empresa_id === f.empresaId && n.empresa_id !== f.empresaId) add("A empresa da NF difere da empresa do contrato: o Relatório usa a da NF.", "criterio_diferente");
+    else add("A NF não entra no Faturamento da Empresa (recorte diferente).", "criterio_diferente");
   } else if (!geral.incluida && faturamento.incluida) {
-    motivos.push("A NF entra no Faturamento da Empresa mas não no Relatório de Serviços (empresa/cliente da NF diferem do contrato).");
+    add("A NF entra no Faturamento da Empresa mas não no Relatório de Serviços (empresa/cliente da NF diferem do contrato).", "criterio_diferente");
   }
 
   if (geral.incluida && faturamento.incluida && Math.abs(geral.pendente - faturamento.pendente) > TOLERANCIA) {
     const pos = somaDescontosPosEmissao(itens);
     const posCab = Number(n.descontos_pos_emissao_total) || 0;
     if (statusDaNota(n) === "pago" && geral.pendente > faturamento.pendente) {
-      motivos.push(`NF paga (com data de pagamento) mas com valor pago menor que o devido: Relatório/Dashboard ainda mostram saldo de ${fmt(geral.pendente)}; o Faturamento da Empresa zera. Confira o valor pago ou a data de pagamento.`);
+      add(`NF paga (com data de pagamento) mas com valor pago menor que o devido: Relatório/Dashboard ainda mostram saldo de ${fmt(geral.pendente)}; o Faturamento da Empresa zera. Confira o valor pago ou a data de pagamento.`, "erro_lancamento");
     } else if (Math.abs(pos - posCab) > TOLERANCIA) {
-      motivos.push(`Descontos pós-emissão no cabeçalho da NF (${fmt(posCab)}) diferem da soma dos itens (${fmt(pos)}).`);
+      add(`Descontos pós-emissão no cabeçalho da NF (${fmt(posCab)}) diferem da soma dos itens (${fmt(pos)}).`, "erro_lancamento");
     } else {
-      motivos.push("O saldo a receber é calculado de forma diferente entre as telas para esta NF.");
+      add("O saldo a receber é calculado de forma diferente entre as telas para esta NF.", "divergencia_calculo");
     }
   }
 
   if (geral.incluida && dashboard.incluida && (Math.abs(geral.pendente - dashboard.pendente) > TOLERANCIA || Math.abs(geral.bruto - dashboard.bruto) > TOLERANCIA)) {
-    motivos.push("Relatório Geral e Dashboard calculam valores diferentes para esta NF.");
+    add("Relatório Geral e Dashboard calculam valores diferentes para esta NF.", "divergencia_calculo");
   }
 
-  if (motivos.length === 0 && Object.values(dif).some((d) => d > TOLERANCIA)) motivos.push("Valores diferentes entre as telas.");
-  return motivos;
+  if (motivos.length === 0 && Object.values(dif).some((d) => d > TOLERANCIA)) add("Valores diferentes entre as telas.", "divergencia_calculo");
+  return { motivos, tipos };
 }
 
 function agrupar(notas: NotaConciliacao[], chaveDe: (n: NotaConciliacao) => string, rotuloDe: (n: NotaConciliacao) => string): GrupoConciliacao[] {
@@ -294,15 +332,18 @@ export function conciliar({ nfs, itensPorNf, contratoPorId, filtros }: EntradaCo
       difTotal,
       divergente: difTotal >= TOLERANCIA,
       motivos: [],
+      tipos: [],
     });
     const nota = notas[notas.length - 1];
-    if (nota.divergente) nota.motivos = motivosDaNota(n, fontes, dif, itens, contratoPorId, filtros);
+    if (nota.divergente) { const m = motivosDaNota(n, fontes, dif, itens, contratoPorId, filtros); nota.motivos = m.motivos; nota.tipos = m.tipos; }
   }
   notas.sort((a, b) => b.difTotal - a.difTotal);
 
   const divergentes = notas.filter((n) => n.divergente).length;
   const indicadoresDivergentes = indicadores.filter((i) => !i.conciliado).length;
   return {
+    linhasRelatorio,
+    linhasFaturamento,
     indicadores,
     notas,
     porCompetencia: agrupar(notas, (n) => n.competencia, (n) => n.competencia).sort((a, b) => a.chave.localeCompare(b.chave)),
