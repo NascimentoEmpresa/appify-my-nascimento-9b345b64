@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { TipoDivergencia } from "@/pages/financeiro/conciliacao-servicos/regras";
 import type { HistoricoTratativa, StatusTratativa, Tratativa } from "@/pages/financeiro/conciliacao-servicos/tratativas";
 
-// SIS-2026-0903 (Fase 2): tratativas das divergências da Conciliação (migration 20261117220000). As tabelas ainda não estão nos tipos gerados do
+// SIS-2026-0903 (Fase 2): tratativas das divergências da Conciliação (migration 20261117230000). As tabelas ainda não estão nos tipos gerados do
 // Supabase, por isso o cliente sem tipos. Quem lê/escreve é decidido pela RLS (relatorio-servicos-conciliacao: visualizar / alterar).
 const db = supabase as unknown as SupabaseClient;
 const KEY = "conciliacao_servicos_tratativas";
