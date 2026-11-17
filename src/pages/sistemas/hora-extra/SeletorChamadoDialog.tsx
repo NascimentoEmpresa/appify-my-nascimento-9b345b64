@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useChamadosDisponiveisHoraExtra } from "@/hooks/useHoraExtra";
-import { labelDe, MODULOS_ERP, PRIORIDADES, STATUS_CHAMADO, TIPOS } from "@/pages/chamados/types";
+import { labelDe, moduloLabel, PRIORIDADES, STATUS_CHAMADO, TIPOS } from "@/pages/chamados/types";
 import type { ChamadoDisponivel } from "./types";
+import { useIndiceDasTelas } from "@/pages/chamados/impacto/catalogoTelas";
 
 // 26/10/2026 (mig 20261026000070): "na hora de adicionar o chamado deixa ver
 // mais informações como quem solicitou". Cada chamado mostra quem abriu,
@@ -43,6 +44,8 @@ export default function SeletorChamadoDialog({
   permiteSemChamado?: boolean;
   aoSelecionarSemChamado?: () => void;
 }) {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const [busca, setBusca] = useState("");
   const { data = [], isLoading } = useChamadosDisponiveisHoraExtra(colaboradorId, concluidosDesde);
   const itens = useMemo(
@@ -156,7 +159,7 @@ export default function SeletorChamadoDialog({
                           Solicitante: <b className="font-medium text-slate-800">{item.solicitante_nome || "—"}</b>
                           {item.setor ? <span className="text-slate-400"> · {item.setor}</span> : null}
                         </span>
-                        {item.modulo_sistema && <span>Módulo: <b className="font-medium text-slate-800">{labelDe(MODULOS_ERP, item.modulo_sistema)}</b></span>}
+                        {item.modulo_sistema && <span>Módulo: <b className="font-medium text-slate-800">{moduloLabel({ modulo_sistema: item.modulo_sistema, modulo_sistema_outro: null })}</b></span>}
                         {item.aberto_em && <span>Aberto em {dataBR(item.aberto_em)}</span>}
                         {item.prazo_previsto && (
                           <span className={cn("inline-flex items-center gap-1", atrasado && "font-semibold text-red-600")}>

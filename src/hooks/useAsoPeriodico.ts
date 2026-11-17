@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { erroDoAnexo, nomeSeguro } from "@/lib/solicitacoes/anexos";
-import type { ItemPeriodico } from "@/lib/sst/asoPeriodico";
+import type { ConfigAsoPeriodico, ItemPeriodico } from "@/lib/sst/asoPeriodico";
 
 // =====================================================================
 // SST › ASO Periódico (mig 20261114100000). Tudo pelas RPCs sst_aso_per_*;
@@ -22,6 +22,17 @@ export const useListaAsoPeriodico = () => useQuery({
     const { data, error } = await sb.rpc("sst_aso_per_lista");
     erro(error);
     return (data ?? []) as ItemPeriodico[];
+  },
+});
+
+// SIS-2026-0918 (mig 20261117020000): dias de aviso, periodicidade padrão e
+// a periodicidade de cada contrato.
+export const useConfigAsoPeriodico = () => useQuery({
+  queryKey: [K, "config"],
+  queryFn: async (): Promise<ConfigAsoPeriodico> => {
+    const { data, error } = await sb.rpc("sst_aso_per_config_ler");
+    erro(error);
+    return data as ConfigAsoPeriodico;
   },
 });
 
@@ -52,6 +63,22 @@ export const useSalvarCiclo = () => useMutacao(async (p: DadosCiclo) => {
   const { data, error } = await sb.rpc("sst_aso_per_salvar", { p });
   erro(error);
   return Number(data);
+});
+
+// Mudar a configuração muda vencimentos e status: invalida a lista junto (prefixo K).
+export const useSalvarConfigPeriodico = () => useMutacao(async (p: { dias_aviso: number; periodicidade_padrao_meses: number }) => {
+  const { error } = await sb.rpc("sst_aso_per_config_salvar", {
+    p_dias_aviso: p.dias_aviso, p_periodicidade_padrao_meses: p.periodicidade_padrao_meses,
+  });
+  erro(error);
+});
+
+/** meses null = o contrato volta para o padrão. */
+export const useSalvarPeriodicidadeContrato = () => useMutacao(async (p: { contrato_id: string; meses: number | null; motivo?: string | null }) => {
+  const { error } = await sb.rpc("sst_aso_per_contrato_salvar", {
+    p_contrato_id: p.contrato_id, p_meses: p.meses, p_motivo: p.motivo ?? null,
+  });
+  erro(error);
 });
 
 export const useAnexarAso = () => useMutacao(async (p: { id: number; arquivo: File }) => {

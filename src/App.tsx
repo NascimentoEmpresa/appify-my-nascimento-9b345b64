@@ -94,6 +94,7 @@ import ControleFaturamento from "./pages/controladoria/ControleFaturamento";
 import FaturamentoEmpresa from "./pages/controladoria/FaturamentoEmpresa";
 import FechamentoEmpresa from "./pages/controladoria/FechamentoEmpresa";
 import LucratividadeContratos from "./pages/controladoria/LucratividadeContratos";
+import ConciliacaoEstoque from "./pages/controladoria/ConciliacaoEstoque";
 import JustificativasValor from "./pages/controladoria/JustificativasValor";
 import AuditoriaControladoria from "./pages/controladoria/AuditoriaControladoria";
 import CentrosCusto from "./pages/controladoria/CentrosCusto";
@@ -148,6 +149,7 @@ import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
 import SolicitacoesManutencoes from "./pages/suprimentos/SolicitacoesManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
+import EntregasEpi from "./pages/suprimentos/EntregasEpi";
 import CorreioDeclaracao from "./pages/suprimentos/CorreioDeclaracao";
 import EnxovalAdmissao from "./pages/publico/EnxovalAdmissao";
 import SolicitarMateriais from "./pages/encarregados/SolicitarMateriais";
@@ -176,6 +178,8 @@ import ExtratorBeneficios from "./pages/rh/ExtratorBeneficios";
 import ChecklistFaturamento from "./pages/financeiro/ChecklistFaturamento";
 import SolicitacoesAjuste from "./pages/financeiro/SolicitacoesAjuste";
 import DocCanaa from "./pages/financeiro/DocCanaa";
+// SIS-2026-0922: OSC Canaã — gestão financeira da escola (recharts + xlsx: lazy).
+const OscCanaa = lazy(() => import("./pages/financeiro/OscCanaa"));
 import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
@@ -241,6 +245,8 @@ import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistema
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
 // 20260930000190_treinamentos_plataforma.sql.
 import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
+// Participação nos vídeos (SIS-2026-0914, mig 20261117091400): pessoas × vídeos, situação até uma data.
+import TrnParticipacaoVideos from "./pages/treinamentos/plataforma/ParticipacaoVideos";
 // Solicitação de Treinamento (mig 20261026000910): o encarregado pede, Treinamentos decide.
 import SolicitarTreinamento from "./pages/encarregados/SolicitarTreinamento";
 import SolicitacoesTreinamento from "./pages/treinamentos/SolicitacoesTreinamento";
@@ -314,6 +320,8 @@ import ControleCa from "./pages/sst/ControleCa";
 import SstAfastamentos from "./pages/sst/Afastamentos";
 // Controle de Afastamentos (mig 20261105030000): acompanhamento até o retorno.
 import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
+import SstExamesToxicologicos from "./pages/sst/ExamesToxicologicos";
+import SstAcidentes from "./pages/sst/Acidentes";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -344,6 +352,7 @@ import TreinamentosColaborador from "./pages/colaborador/TreinamentosColaborador
 import CursoColaborador from "./pages/colaborador/CursoColaborador";
 import CertificadoColaborador from "./pages/colaborador/CertificadoColaborador";
 import HistoricoColaborador from "./pages/colaborador/HistoricoColaborador";
+import EpisColaborador from "./pages/colaborador/EpisColaborador";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
@@ -575,6 +584,7 @@ const App = () => (
             <Route path="treinamentos/:cursoId" element={<CursoColaborador />} />
             <Route path="treinamentos/:cursoId/certificado" element={<CertificadoColaborador />} />
             <Route path="historico" element={<HistoricoColaborador />} />
+            <Route path="epis" element={<EpisColaborador />} />
           </Route>
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
@@ -848,6 +858,8 @@ const App = () => (
             <Route path="controladoria/fechamento-empresa" element={<FechamentoEmpresa />} />
             <Route path="controladoria/fechamento-socios" element={<FechamentoSocios />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
+            {/* SIS-2026-0908: precisa existir aqui E em app_menu (mig 20261117160000). */}
+            <Route path="controladoria/conciliacao-estoque" element={<ConciliacaoEstoque />} />
             <Route path="controladoria/auditoria" element={<AuditoriaControladoria />} />
             {/* SIS-2026-0807: Justificativas de Valor — gestão (Controladoria) e caixa do responsável. */}
             <Route path="controladoria/justificativas" element={<JustificativasValor modo="gestao" />} />
@@ -953,6 +965,7 @@ const App = () => (
             <Route path="suprimentos/catalogo/aprovacoes" element={<CatalogoAprovacoes />} />
             <Route path="suprimentos/catalogo" element={<CatalogoMateriais />} />
             <Route path="suprimentos/pedidos-materiais" element={<PedidosMateriais />} />
+            <Route path="suprimentos/entregas-epi" element={<EntregasEpi />} />
             {/* Destino do QR code da etiqueta térmica (menu sup_retirada_entrega). */}
             <Route path="suprimentos/retirada" element={<RetiradaPedido />} />
             <Route path="suprimentos/retirada/:ref" element={<RetiradaPedido />} />
@@ -1005,6 +1018,7 @@ const App = () => (
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
+            <Route path="financeiro/osc-canaa" element={<OscCanaa />} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
             <Route path="financeiro/gestao-financeira/cartao-credito/classificar" element={<ClassificarLancamentos />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
@@ -1132,6 +1146,7 @@ const App = () => (
                 (matchMenuCode); "novo"/"importar"/"tags"/"comentarios"/
                 "categorias"/"certificados" têm menu próprio, como no membox. */}
             <Route path="treinamentos" element={<TreinamentosDashboard />} />
+            <Route path="treinamentos/participacao" element={<TrnParticipacaoVideos />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
             <Route path="treinamentos/solicitacoes" element={<SolicitacoesTreinamento />} />
             <Route path="treinamentos/contratos" element={<TreinamentosContratos />} />
@@ -1192,6 +1207,9 @@ const App = () => (
             <Route path="sst/controle-ca" element={<ControleCa />} />
             <Route path="sst/afastamentos" element={<SstAfastamentos />} />
             <Route path="sst/controle-afastamentos" element={<SstControleAfastamentos />} />
+            <Route path="sst/exames-toxicologicos" element={<SstExamesToxicologicos />} />
+            {/* SST — Acidentes de Trabalho: registro, CAT e controle (SIS-2026-0889, mig 20261117220000). */}
+            <Route path="sst/acidentes" element={<SstAcidentes />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />

@@ -21,13 +21,14 @@ import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, St
 import { prazoSolicitanteValido, sugestaoPrazoSolicitante } from "@/lib/chamados/prazoDesenvolvimento";
 import { abrirChamadoTravado, descreverPendencias, LIMITE_AVALIACOES_PENDENTES, type PendenciaSolicitante } from "./validacaoPresidencia";
 import {
-  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS, STATUS_CHAMADO,
+  CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS, STATUS_CHAMADO,
 } from "./types";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { afetaUsuariosParaBanco, somenteDigitos } from "./afetaUsuarios";
-import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
-import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
-import { opcoesModulosImpactados, opcoesSetoresImpactados, semColunasImpactados } from "./impactados";
+import { ImpactoSistemicoCampos } from "./impacto/ImpactoSistemicoCampos";
+import { AcessoModuloCampo } from "./AcessoModuloUsuarios";
+import { acessoModuloPendente, normalizarPessoasAcesso, type PessoaAcesso } from "@/lib/chamados/acessoModulo";
+import { incluirPosicao, normalizarLista, pendenciasImpacto, POSICAO_OUTRO } from "@/lib/chamados/impactoSistemico";
 import {
   filtrarChamadosParaVincular, formularioBaseadoEm, lerBaseado, MIN_COMPLEMENTO, proximaParte, rotuloParte,
   type ChamadoBase, type ParteSerie,
@@ -114,15 +115,19 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   // `prazoManual` impede a urgência de sobrescrever a data que a pessoa digitou.
   const [prazoSolicitante, setPrazoSolicitante] = useState("");
   const [prazoManual, setPrazoManual] = useState(false);
+  // Posição do novo módulo ou módulo diretamente ajustado (SIS-2026-0910):
+  // é o antigo "Módulo / Sistema" — mesma coluna, modulo_sistema.
   const [modulo, setModulo] = useState("");
   const [moduloOutro, setModuloOutro] = useState("");
   const [ambiente, setAmbiente] = useState("producao");
   const [afetaUsuarios, setAfetaUsuarios] = useState("");
-  // Alcance da mudança (13/11/2026, mig 20261115001000): opcionais, vários.
+  // Impacto sistêmico (mig 20261115001000; obrigatórios desde o
+  // SIS-2026-0910): vários setores e vários módulos, a posição entre eles.
   const [setoresImpactados, setSetoresImpactados] = useState<string[]>([]);
   const [modulosImpactados, setModulosImpactados] = useState<string[]>([]);
-  const { data: setoresEmpresa = [] } = useSetoresEmpresa();
-  const opcoesSetores = useMemo(() => opcoesSetoresImpactados(setoresEmpresa), [setoresEmpresa]);
+  // "Quais pessoas devem ter acesso ao módulo?" (SIS-2026-0934): obrigatório
+  // com Novo módulo / tela ou Acesso / Permissão (lib/chamados/acessoModulo.ts).
+  const [acessoUsuarios, setAcessoUsuarios] = useState<PessoaAcesso[]>([]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
@@ -138,7 +143,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     enabled: !!baseadoId,
     queryFn: async () => {
       const { data, error } = await dbVinculo.from("CHAMADO_SISTEMA")
-        .select("id, numero, assunto, categorias, tipo_solicitacao, prioridade, descricao, observacoes_solicitante, impacto_trabalho, urgencia, prazo_solicitante, modulo_sistema, modulo_sistema_outro, ambiente, afeta_usuarios")
+        .select("id, numero, assunto, categorias, tipo_solicitacao, prioridade, descricao, observacoes_solicitante, impacto_trabalho, urgencia, prazo_solicitante, modulo_sistema, modulo_sistema_outro, ambiente, afeta_usuarios, setores_impactados, modulos_impactados, acesso_modulo_usuarios")
         .eq("id", baseadoId as string).maybeSingle();
       if (error) throw error;
       if (!data) return null;
@@ -158,6 +163,8 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     setDescricao(f.descricao); setObservacoes(f.observacoes); setImpacto(f.impacto); setUrgencia(f.urgencia);
     setPrazoSolicitante(f.prazoSolicitante || (sugestaoPrazoSolicitante(f.urgencia) ?? "")); setPrazoManual(!!f.prazoSolicitante);
     setModulo(f.modulo); setModuloOutro(f.moduloOutro); setAmbiente(f.ambiente); setAfetaUsuarios(f.afetaUsuarios);
+    setSetoresImpactados(f.setoresImpactados); setModulosImpactados(f.modulosImpactados);
+    setAcessoUsuarios(f.acessoUsuarios);
     setVinculadoA(chamadoBase.id);
     setPreenchidoDe(chamadoBase.id);
   }, [chamadoBase, parteNova, preenchidoDe]);
@@ -225,8 +232,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       { id: "campo-assunto",     label: "Título",               ok: !!assunto.trim() },
       { id: "campo-categorias",  label: "Categorias",           ok: categorias.length > 0 },
       { id: "campo-tipo",        label: "Tipo de solicitação",  ok: !!tipo },
-      { id: "campo-modulo",      label: "Módulo / Sistema",     ok: !!modulo },
-      { id: "campo-modulo",      label: "Qual sistema (Outro)", ok: modulo !== "outro" || !!moduloOutro.trim() },
+      ...pendenciasImpacto({ modulos: modulosImpactados, setores: setoresImpactados, posicao: modulo, posicaoOutro: moduloOutro })
+        .map((p) => ({ ...p, ok: false })),
+      { id: "campo-acesso-modulo", label: "Pessoas com acesso ao módulo", ok: !acessoModuloPendente(categorias, acessoUsuarios) },
       { id: "campo-prioridade",  label: "Prioridade",           ok: !!prioridade },
       { id: "campo-descricao",   label: "Descrição",            ok: !!descricao.trim() && descricao.trim() !== ROTEIRO_DESCRICAO.trim() },
       { id: "campo-impacto",     label: "Impacto no trabalho",  ok: !!impacto },
@@ -234,7 +242,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       { id: "campo-prazo",       label: "Prazo esperado",       ok: prazoSolicitanteValido(prazoSolicitante) },
     ];
     return req.filter((c) => !c.ok);
-  }, [assunto, categorias, tipo, modulo, moduloOutro, prioridade, descricao, impacto, urgencia, prazoSolicitante, baseadoId, complemento]);
+  }, [assunto, categorias, tipo, modulo, moduloOutro, modulosImpactados, setoresImpactados, prioridade, descricao, impacto, urgencia, prazoSolicitante, baseadoId, complemento, acessoUsuarios]);
   const podeEnviar = faltando.length === 0;
 
   const irParaCampo = (campoId: string) =>
@@ -243,7 +251,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const limpar = () => {
     setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao(""); setObservacoes("");
     setImpacto(""); setUrgencia(""); setPrazoSolicitante(""); setPrazoManual(false); setModulo(""); setModuloOutro(""); setAmbiente("producao");
-    setAfetaUsuarios(""); setArquivos([]);
+    setAfetaUsuarios(""); setArquivos([]); setSetoresImpactados([]); setModulosImpactados([]); setAcessoUsuarios([]);
     // O vínculo do "baseado nesse" fica: limpar é recomeçar o texto, não desfazer a origem.
     if (!baseadoId) { setVincular(false); setVinculadoA(null); setBuscaVinculo(""); }
     setComplemento("");
@@ -273,25 +281,22 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       urgencia,
       prazo_solicitante: prazoSolicitante,
       modulo_sistema: modulo,
-      modulo_sistema_outro: modulo === "outro" ? moduloOutro.trim() || null : null,
+      modulo_sistema_outro: modulo === POSICAO_OUTRO ? moduloOutro.trim() || null : null,
       ambiente,
       afeta_usuarios: afetaUsuariosParaBanco(afetaUsuarios),
       solicitante_nome: nome !== "—" ? nome : null,
       setor: setor !== "—" ? setor : null,
       vinculado_a: baseadoId ? baseadoId : vincular ? vinculadoA : null,
       complemento: baseadoId ? complemento.trim() : null,
-      setores_impactados: setoresImpactados,
-      modulos_impactados: modulosImpactados,
+      // SIS-2026-0910: obrigatórios. Saiu o "abre sem as colunas" de 13/11 —
+      // a mig 20261115001000 já está no banco, e cair nele agora perderia em
+      // silêncio o que a pessoa preencheu.
+      setores_impactados: normalizarLista(setoresImpactados),
+      modulos_impactados: incluirPosicao(modulosImpactados, modulo),
+      // SIS-2026-0934: o gatilho da mig 20261118100000 confere os ids e grava o nome de profiles.
+      acesso_modulo_usuarios: normalizarPessoasAcesso(acessoUsuarios),
     };
-    const inserir = (l: Record<string, unknown>) =>
-      (supabase as any).from("CHAMADO_SISTEMA").insert(l).select("id, numero, parte").single();
-    let { data, error } = await inserir(linha);
-    // Até a mig 20261115001000 entrar, as colunas não existem: abre sem elas
-    // em vez de travar a abertura de chamado.
-    if (error && semColunasImpactados(error.message)) {
-      const { setores_impactados: _s, modulos_impactados: _m, ...semImpactados } = linha;
-      ({ data, error } = await inserir(semImpactados));
-    }
+    const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").insert(linha).select("id, numero, parte").single();
 
     if (error) { setSalvando(false); toast({ title: "Erro ao abrir chamado", description: error.message, variant: "destructive" }); return; }
 
@@ -579,19 +584,19 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                   ))}
                 </div>
               </div>
-              <div id="campo-modulo" className="scroll-mt-24">
-                <Label className="mb-1.5 block text-xs font-semibold">Módulo / Sistema <span className="text-destructive">*</span></Label>
-                <Select value={modulo} onValueChange={setModulo}>
-                  <SelectTrigger><SelectValue placeholder="Selecione o sistema…" /></SelectTrigger>
-                  <SelectContent>
-                    {MODULOS_ERP.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {modulo === "outro" && (
-                  <Input className="mt-2" placeholder="Qual sistema?" value={moduloOutro} onChange={(e) => setModuloOutro(e.target.value)} />
-                )}
-              </div>
             </div>
+
+            {/* SIS-2026-0910: o "Módulo / Sistema" virou três campos —
+                módulos impactados, setores impactados e posição. */}
+            <ImpactoSistemicoCampos
+              modulos={modulosImpactados} onModulos={setModulosImpactados}
+              setores={setoresImpactados} onSetores={setSetoresImpactados}
+              posicao={modulo} onPosicao={setModulo}
+              posicaoOutro={moduloOutro} onPosicaoOutro={setModuloOutro}
+            />
+
+            {/* SIS-2026-0934: logo depois de onde o módulo é apontado. */}
+            <AcessoModuloCampo categorias={categorias} value={acessoUsuarios} onChange={setAcessoUsuarios} />
 
             <div id="campo-prioridade" className="scroll-mt-24">
               <Label className="mb-1.5 block text-xs font-semibold">Prioridade <span className="text-destructive">*</span></Label>
@@ -674,21 +679,6 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               <div>
                 <Label className="mb-1.5 block text-xs font-semibold">Afeta quantos usuários?</Label>
                 <Input inputMode="numeric" placeholder="Opcional" value={afetaUsuarios} onChange={(e) => setAfetaUsuarios(somenteDigitos(e.target.value))} />
-              </div>
-            </div>
-
-            {/* Alcance da mudança: ajuda Sistemas a ver, antes de começar,
-                quais áreas e telas testar (mig 20261115001000). */}
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Setores impactados</Label>
-                <SearchableMultiSelect value={setoresImpactados} onChange={setSetoresImpactados} options={opcoesSetores}
-                  placeholder="Selecionar setores" searchPlaceholder="Buscar setor..." emptyLabel="Nenhum setor encontrado" />
-              </div>
-              <div>
-                <Label className="mb-1.5 block text-xs font-semibold">Módulos impactados</Label>
-                <SearchableMultiSelect value={modulosImpactados} onChange={setModulosImpactados} options={opcoesModulosImpactados}
-                  placeholder="Selecionar módulos" searchPlaceholder="Buscar módulo..." emptyLabel="Nenhum módulo encontrado" />
               </div>
             </div>
           </Card>

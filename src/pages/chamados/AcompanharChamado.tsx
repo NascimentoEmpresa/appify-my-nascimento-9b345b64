@@ -23,10 +23,11 @@ import { avaliacaoLiberada, conclusaoAguardandoConfirmacao, podeConfirmarConclus
 import {
   StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado, conversaChamadoFechada,
+  labelDe, fmtData, fmtDataHora, chamadoEncerrado, conversaChamadoFechada,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
-import { listaImpactados, rotuloModuloImpactado } from "./impactados";
+import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
+import { AcessoModuloResumo } from "./AcessoModuloUsuarios";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
@@ -185,11 +186,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Tipo de solicitação">{labelDe(TIPOS, chamado.tipo_solicitacao)}</Campo>
               <Campo label="Prioridade"><PrioridadeBadge prioridade={chamado.prioridade} /></Campo>
               <Campo label="Ambiente">{labelDe(AMBIENTES, chamado.ambiente)}</Campo>
-              <Campo label="Módulo / Sistema">{moduloLabel(chamado)}</Campo>
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
-              {/* Alcance informado na abertura (mig 20261115001000). */}
-              <Campo label="Setores impactados">{listaImpactados(chamado.setores_impactados)}</Campo>
-              <Campo label="Módulos impactados">{listaImpactados(chamado.modulos_impactados, rotuloModuloImpactado)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
               <Campo label="Responsável">{nomeDe(chamado.responsavel_id)}</Campo>
               {/* Prazo informado pelo dev ao iniciar o desenvolvimento (mig 20261028001400). */}
@@ -203,6 +200,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               {/* Prazo esperado informado ao abrir (mig 20261028001420). */}
               <Campo label="Prazo esperado">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
+            {/* SIS-2026-0910: módulo diretamente ajustado separado dos demais impactados. */}
+            <ImpactoSistemicoResumo chamado={chamado} />
+            {/* SIS-2026-0934: a quem liberar o módulo. */}
+            <AcessoModuloResumo chamado={chamado} />
           </Card>
 
           {/* CHAMADO REABERTO (mig 20261112190000): o solicitante acompanha

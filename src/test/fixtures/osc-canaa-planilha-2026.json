@@ -1,0 +1,1495 @@
+{
+ "fonte": "Canaa_Previsao_Investimentos.xlsx (SIS-2026-0922) — mesma carga da migration 20261117092200",
+ "repasseMensal": 91883.96,
+ "rubricas": [
+  {
+   "nome": "Salários",
+   "grupo": "pessoal",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 10
+  },
+  {
+   "nome": "FGTS mensal",
+   "grupo": "encargos",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 20
+  },
+  {
+   "nome": "INSS mensal",
+   "grupo": "encargos",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 30
+  },
+  {
+   "nome": "Vale-transporte",
+   "grupo": "pessoal",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 40
+  },
+  {
+   "nome": "Aluguel",
+   "grupo": "ocupacao",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 50
+  },
+  {
+   "nome": "Internet",
+   "grupo": "consumo",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 60
+  },
+  {
+   "nome": "Água",
+   "grupo": "consumo",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 70
+  },
+  {
+   "nome": "Luz",
+   "grupo": "consumo",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 80
+  },
+  {
+   "nome": "Seguro de vida",
+   "grupo": "pessoal",
+   "tipo": "despesa",
+   "recorrente": true,
+   "ordem": 90
+  },
+  {
+   "nome": "Manutenção",
+   "grupo": "ocupacao",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 100
+  },
+  {
+   "nome": "Marketing",
+   "grupo": "outros",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 110
+  },
+  {
+   "nome": "Tarifas bancárias",
+   "grupo": "tarifas",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 120
+  },
+  {
+   "nome": "Tarifa Pix",
+   "grupo": "tarifas",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 130
+  },
+  {
+   "nome": "Gás",
+   "grupo": "consumo",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 140
+  },
+  {
+   "nome": "FGTS rescisão",
+   "grupo": "encargos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 150
+  },
+  {
+   "nome": "Material administrativo",
+   "grupo": "materiais",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 160
+  },
+  {
+   "nome": "Avante",
+   "grupo": "outros",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 170
+  },
+  {
+   "nome": "Material pedagógico",
+   "grupo": "materiais",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 180
+  },
+  {
+   "nome": "Móveis",
+   "grupo": "materiais",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 190
+  },
+  {
+   "nome": "Rescisão",
+   "grupo": "pessoal",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 200
+  },
+  {
+   "nome": "Saúde ocupacional",
+   "grupo": "servicos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 210
+  },
+  {
+   "nome": "Seguro residencial",
+   "grupo": "ocupacao",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 220
+  },
+  {
+   "nome": "Serviço de nutrição",
+   "grupo": "servicos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 230
+  },
+  {
+   "nome": "Serviço pedagógico",
+   "grupo": "servicos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 240
+  },
+  {
+   "nome": "Alimentação",
+   "grupo": "consumo",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 250
+  },
+  {
+   "nome": "Despesas diretas",
+   "grupo": "outros",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 260
+  },
+  {
+   "nome": "Diárias",
+   "grupo": "servicos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 270
+  },
+  {
+   "nome": "Férias",
+   "grupo": "pessoal",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 280
+  },
+  {
+   "nome": "Recolhimento de débito",
+   "grupo": "impostos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 290
+  },
+  {
+   "nome": "IPTU",
+   "grupo": "impostos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 300
+  },
+  {
+   "nome": "Frete",
+   "grupo": "outros",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 310
+  },
+  {
+   "nome": "Jovem aprendiz",
+   "grupo": "pessoal",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 320
+  },
+  {
+   "nome": "Impostos",
+   "grupo": "impostos",
+   "tipo": "despesa",
+   "recorrente": false,
+   "ordem": 330
+  },
+  {
+   "nome": "Aplicação para férias e 13º",
+   "grupo": "reserva",
+   "tipo": "reserva",
+   "recorrente": false,
+   "ordem": 340
+  }
+ ],
+ "previsoes": [
+  {
+   "nome": "Salários",
+   "criterio": "ultimo_realizado",
+   "base": 37087.6
+  },
+  {
+   "nome": "FGTS mensal",
+   "criterio": "ultimo_realizado",
+   "base": 4248.05
+  },
+  {
+   "nome": "INSS mensal",
+   "criterio": "ultimo_realizado",
+   "base": 10886.36
+  },
+  {
+   "nome": "Vale-transporte",
+   "criterio": "ultimo_realizado",
+   "base": 3528
+  },
+  {
+   "nome": "Aluguel",
+   "criterio": "ultimo_realizado",
+   "base": 5113.73
+  },
+  {
+   "nome": "Internet",
+   "criterio": "ultimo_realizado",
+   "base": 149.9
+  },
+  {
+   "nome": "Água",
+   "criterio": "media_realizado",
+   "base": 410.92
+  },
+  {
+   "nome": "Luz",
+   "criterio": "media_realizado",
+   "base": 1055.74
+  },
+  {
+   "nome": "Seguro de vida",
+   "criterio": "ultimo_realizado",
+   "base": 167.7
+  },
+  {
+   "nome": "Manutenção",
+   "criterio": "media_realizado",
+   "base": 1646.63
+  },
+  {
+   "nome": "Marketing",
+   "criterio": "media_realizado",
+   "base": 40.71
+  },
+  {
+   "nome": "Tarifas bancárias",
+   "criterio": "media_realizado",
+   "base": 98.55
+  },
+  {
+   "nome": "Tarifa Pix",
+   "criterio": "media_realizado",
+   "base": 21.7
+  },
+  {
+   "nome": "Gás",
+   "criterio": "media_realizado",
+   "base": 180.71
+  },
+  {
+   "nome": "FGTS rescisão",
+   "criterio": "media_realizado",
+   "base": 668.08
+  },
+  {
+   "nome": "Material administrativo",
+   "criterio": "media_realizado",
+   "base": 21.43
+  },
+  {
+   "nome": "Avante",
+   "criterio": "media_realizado",
+   "base": 835.5
+  },
+  {
+   "nome": "Material pedagógico",
+   "criterio": "media_realizado",
+   "base": 1154.34
+  },
+  {
+   "nome": "Móveis",
+   "criterio": "media_realizado",
+   "base": 68.57
+  },
+  {
+   "nome": "Rescisão",
+   "criterio": "media_realizado",
+   "base": 1736.62
+  },
+  {
+   "nome": "Saúde ocupacional",
+   "criterio": "media_realizado",
+   "base": 70.29
+  },
+  {
+   "nome": "Seguro residencial",
+   "criterio": "media_realizado",
+   "base": 793.47
+  },
+  {
+   "nome": "Serviço de nutrição",
+   "criterio": "media_realizado",
+   "base": 618.3
+  },
+  {
+   "nome": "Serviço pedagógico",
+   "criterio": "media_realizado",
+   "base": 200.83
+  },
+  {
+   "nome": "Alimentação",
+   "criterio": "media_realizado",
+   "base": 262.03
+  },
+  {
+   "nome": "Despesas diretas",
+   "criterio": "media_realizado",
+   "base": 3672.47
+  },
+  {
+   "nome": "Diárias",
+   "criterio": "media_realizado",
+   "base": 564.29
+  },
+  {
+   "nome": "Férias",
+   "criterio": "media_realizado",
+   "base": 1063.32
+  },
+  {
+   "nome": "Recolhimento de débito",
+   "criterio": "media_realizado",
+   "base": 96.89
+  },
+  {
+   "nome": "IPTU",
+   "criterio": "media_realizado",
+   "base": 285.97
+  },
+  {
+   "nome": "Frete",
+   "criterio": "media_realizado",
+   "base": 9.85
+  },
+  {
+   "nome": "Jovem aprendiz",
+   "criterio": "manual",
+   "base": 0
+  },
+  {
+   "nome": "Impostos",
+   "criterio": "media_realizado",
+   "base": 589.09
+  },
+  {
+   "nome": "Aplicação para férias e 13º",
+   "criterio": "ultimo_realizado",
+   "base": 14300
+  }
+ ],
+ "previsoesMes": [
+  {
+   "nome": "Salários",
+   "mes": 8,
+   "valor": 33686.19
+  },
+  {
+   "nome": "Salários",
+   "mes": 9,
+   "valor": 39092.5
+  },
+  {
+   "nome": "FGTS mensal",
+   "mes": 8,
+   "valor": 4181.62
+  },
+  {
+   "nome": "FGTS mensal",
+   "mes": 9,
+   "valor": 4094.23
+  },
+  {
+   "nome": "INSS mensal",
+   "mes": 8,
+   "valor": 11583.73
+  },
+  {
+   "nome": "INSS mensal",
+   "mes": 9,
+   "valor": 12000
+  },
+  {
+   "nome": "Vale-transporte",
+   "mes": 8,
+   "valor": 3225.2
+  },
+  {
+   "nome": "Vale-transporte",
+   "mes": 9,
+   "valor": 3312
+  },
+  {
+   "nome": "Aluguel",
+   "mes": 11,
+   "valor": 6045
+  },
+  {
+   "nome": "Aluguel",
+   "mes": 12,
+   "valor": 6045
+  },
+  {
+   "nome": "Água",
+   "mes": 8,
+   "valor": 475.32
+  },
+  {
+   "nome": "Água",
+   "mes": 9,
+   "valor": 390.85
+  },
+  {
+   "nome": "Luz",
+   "mes": 8,
+   "valor": 849.27
+  },
+  {
+   "nome": "Luz",
+   "mes": 9,
+   "valor": 980.18
+  },
+  {
+   "nome": "Luz",
+   "mes": 10,
+   "valor": 754.5
+  },
+  {
+   "nome": "Seguro de vida",
+   "mes": 8,
+   "valor": 380.12
+  },
+  {
+   "nome": "Seguro de vida",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Manutenção",
+   "mes": 8,
+   "valor": 550
+  },
+  {
+   "nome": "Manutenção",
+   "mes": 9,
+   "valor": 270
+  },
+  {
+   "nome": "Manutenção",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Manutenção",
+   "mes": 11,
+   "valor": 480
+  },
+  {
+   "nome": "Manutenção",
+   "mes": 12,
+   "valor": 0
+  },
+  {
+   "nome": "Marketing",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Marketing",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Marketing",
+   "mes": 10,
+   "valor": 1040
+  },
+  {
+   "nome": "Tarifas bancárias",
+   "mes": 8,
+   "valor": 192.84
+  },
+  {
+   "nome": "Tarifas bancárias",
+   "mes": 9,
+   "valor": 363.89
+  },
+  {
+   "nome": "Tarifa Pix",
+   "mes": 8,
+   "valor": 401.8
+  },
+  {
+   "nome": "Tarifa Pix",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Gás",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Gás",
+   "mes": 9,
+   "valor": 470
+  },
+  {
+   "nome": "Gás",
+   "mes": 10,
+   "valor": 960
+  },
+  {
+   "nome": "FGTS rescisão",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "FGTS rescisão",
+   "mes": 9,
+   "valor": 3108.05
+  },
+  {
+   "nome": "FGTS rescisão",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Material administrativo",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Material administrativo",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Material administrativo",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Avante",
+   "mes": 8,
+   "valor": 884.98
+  },
+  {
+   "nome": "Avante",
+   "mes": 9,
+   "valor": 1965.49
+  },
+  {
+   "nome": "Material pedagógico",
+   "mes": 8,
+   "valor": 4332.11
+  },
+  {
+   "nome": "Material pedagógico",
+   "mes": 9,
+   "valor": 435.58
+  },
+  {
+   "nome": "Material pedagógico",
+   "mes": 11,
+   "valor": 500
+  },
+  {
+   "nome": "Material pedagógico",
+   "mes": 12,
+   "valor": 500
+  },
+  {
+   "nome": "Móveis",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Móveis",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Móveis",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Rescisão",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Rescisão",
+   "mes": 9,
+   "valor": 12245.19
+  },
+  {
+   "nome": "Rescisão",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Saúde ocupacional",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Saúde ocupacional",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Seguro residencial",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Seguro residencial",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Serviço de nutrição",
+   "mes": 8,
+   "valor": 1442.5
+  },
+  {
+   "nome": "Serviço de nutrição",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Serviço pedagógico",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Serviço pedagógico",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Serviço pedagógico",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Alimentação",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Alimentação",
+   "mes": 9,
+   "valor": 679.04
+  },
+  {
+   "nome": "Alimentação",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Despesas diretas",
+   "mes": 8,
+   "valor": 2725.48
+  },
+  {
+   "nome": "Despesas diretas",
+   "mes": 9,
+   "valor": 7965.53
+  },
+  {
+   "nome": "Despesas diretas",
+   "mes": 11,
+   "valor": 2055.9
+  },
+  {
+   "nome": "Despesas diretas",
+   "mes": 12,
+   "valor": 1000
+  },
+  {
+   "nome": "Diárias",
+   "mes": 8,
+   "valor": 2330
+  },
+  {
+   "nome": "Diárias",
+   "mes": 9,
+   "valor": 1200
+  },
+  {
+   "nome": "Diárias",
+   "mes": 11,
+   "valor": 100
+  },
+  {
+   "nome": "Diárias",
+   "mes": 12,
+   "valor": 200
+  },
+  {
+   "nome": "Férias",
+   "mes": 9,
+   "valor": 4096.05
+  },
+  {
+   "nome": "Férias",
+   "mes": 10,
+   "valor": 0
+  },
+  {
+   "nome": "Recolhimento de débito",
+   "mes": 8,
+   "valor": 1316.94
+  },
+  {
+   "nome": "Recolhimento de débito",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "IPTU",
+   "mes": 8,
+   "valor": 19.74
+  },
+  {
+   "nome": "IPTU",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Frete",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Frete",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Jovem aprendiz",
+   "mes": 10,
+   "valor": 6618.33
+  },
+  {
+   "nome": "Jovem aprendiz",
+   "mes": 11,
+   "valor": 9927.49
+  },
+  {
+   "nome": "Jovem aprendiz",
+   "mes": 12,
+   "valor": 9927.49
+  },
+  {
+   "nome": "Impostos",
+   "mes": 8,
+   "valor": 0
+  },
+  {
+   "nome": "Impostos",
+   "mes": 9,
+   "valor": 0
+  },
+  {
+   "nome": "Impostos",
+   "mes": 12,
+   "valor": 20000
+  }
+ ],
+ "historico": [
+  {
+   "mes": 1,
+   "nome": "Água",
+   "valor": 303.66
+  },
+  {
+   "mes": 1,
+   "nome": "Aluguel",
+   "valor": 4427.46
+  },
+  {
+   "mes": 1,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 1,
+   "nome": "Luz",
+   "valor": 821.12
+  },
+  {
+   "mes": 1,
+   "nome": "Manutenção",
+   "valor": 330
+  },
+  {
+   "mes": 1,
+   "nome": "Marketing",
+   "valor": 285
+  },
+  {
+   "mes": 1,
+   "nome": "Salários",
+   "valor": 28070.74
+  },
+  {
+   "mes": 1,
+   "nome": "Tarifas bancárias",
+   "valor": 135.2
+  },
+  {
+   "mes": 1,
+   "nome": "Tarifa Pix",
+   "valor": 18.03
+  },
+  {
+   "mes": 1,
+   "nome": "Vale-transporte",
+   "valor": 2464
+  },
+  {
+   "mes": 1,
+   "nome": "Gás",
+   "valor": 520
+  },
+  {
+   "mes": 2,
+   "nome": "Água",
+   "valor": 394.98
+  },
+  {
+   "mes": 2,
+   "nome": "Aluguel",
+   "valor": 5113.73
+  },
+  {
+   "mes": 2,
+   "nome": "Aplicação para férias e 13º",
+   "valor": 15941.2
+  },
+  {
+   "mes": 2,
+   "nome": "FGTS mensal",
+   "valor": 3057.04
+  },
+  {
+   "mes": 2,
+   "nome": "FGTS rescisão",
+   "valor": 3225.3
+  },
+  {
+   "mes": 2,
+   "nome": "INSS mensal",
+   "valor": 11966.62
+  },
+  {
+   "mes": 2,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 2,
+   "nome": "Luz",
+   "valor": 1298.2
+  },
+  {
+   "mes": 2,
+   "nome": "Manutenção",
+   "valor": 1070
+  },
+  {
+   "mes": 2,
+   "nome": "Material administrativo",
+   "valor": 150
+  },
+  {
+   "mes": 2,
+   "nome": "Avante",
+   "valor": 1048.55
+  },
+  {
+   "mes": 2,
+   "nome": "Material pedagógico",
+   "valor": 605.64
+  },
+  {
+   "mes": 2,
+   "nome": "Móveis",
+   "valor": 480
+  },
+  {
+   "mes": 2,
+   "nome": "Rescisão",
+   "valor": 3746.7
+  },
+  {
+   "mes": 2,
+   "nome": "Salários",
+   "valor": 30384
+  },
+  {
+   "mes": 2,
+   "nome": "Saúde ocupacional",
+   "valor": 492
+  },
+  {
+   "mes": 2,
+   "nome": "Seguro de vida",
+   "valor": 156.52
+  },
+  {
+   "mes": 2,
+   "nome": "Seguro residencial",
+   "valor": 1388.56
+  },
+  {
+   "mes": 2,
+   "nome": "Serviço de nutrição",
+   "valor": 1442.7
+  },
+  {
+   "mes": 2,
+   "nome": "Serviço pedagógico",
+   "valor": 1405.78
+  },
+  {
+   "mes": 2,
+   "nome": "Tarifas bancárias",
+   "valor": 67.6
+  },
+  {
+   "mes": 2,
+   "nome": "Tarifa Pix",
+   "valor": 37.77
+  },
+  {
+   "mes": 2,
+   "nome": "Vale-transporte",
+   "valor": 2380.4
+  },
+  {
+   "mes": 3,
+   "nome": "Água",
+   "valor": 323.34
+  },
+  {
+   "mes": 3,
+   "nome": "Aluguel",
+   "valor": 5113.73
+  },
+  {
+   "mes": 3,
+   "nome": "Alimentação",
+   "valor": 1412.45
+  },
+  {
+   "mes": 3,
+   "nome": "FGTS mensal",
+   "valor": 3432.16
+  },
+  {
+   "mes": 3,
+   "nome": "FGTS rescisão",
+   "valor": 1149.46
+  },
+  {
+   "mes": 3,
+   "nome": "INSS mensal",
+   "valor": 12951.47
+  },
+  {
+   "mes": 3,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 3,
+   "nome": "Aplicação para férias e 13º",
+   "valor": 28600
+  },
+  {
+   "mes": 3,
+   "nome": "Despesas diretas",
+   "valor": 4263.73
+  },
+  {
+   "mes": 3,
+   "nome": "Diárias",
+   "valor": 2000
+  },
+  {
+   "mes": 3,
+   "nome": "Luz",
+   "valor": 1230.9
+  },
+  {
+   "mes": 3,
+   "nome": "Férias",
+   "valor": 3347.19
+  },
+  {
+   "mes": 3,
+   "nome": "Manutenção",
+   "valor": 3230
+  },
+  {
+   "mes": 3,
+   "nome": "Recolhimento de débito",
+   "valor": 678.23
+  },
+  {
+   "mes": 3,
+   "nome": "Avante",
+   "valor": 1199.95
+  },
+  {
+   "mes": 3,
+   "nome": "Material pedagógico",
+   "valor": 370
+  },
+  {
+   "mes": 3,
+   "nome": "Rescisão",
+   "valor": 7386.26
+  },
+  {
+   "mes": 3,
+   "nome": "Salários",
+   "valor": 28573.73
+  },
+  {
+   "mes": 3,
+   "nome": "Seguro residencial",
+   "valor": 1388.56
+  },
+  {
+   "mes": 3,
+   "nome": "Tarifas bancárias",
+   "valor": 67.6
+  },
+  {
+   "mes": 3,
+   "nome": "Tarifa Pix",
+   "valor": 89.66
+  },
+  {
+   "mes": 3,
+   "nome": "Vale-transporte",
+   "valor": 2844.4
+  },
+  {
+   "mes": 4,
+   "nome": "Água",
+   "valor": 456.41
+  },
+  {
+   "mes": 4,
+   "nome": "Aluguel",
+   "valor": 5113.73
+  },
+  {
+   "mes": 4,
+   "nome": "FGTS mensal",
+   "valor": 3200.95
+  },
+  {
+   "mes": 4,
+   "nome": "FGTS rescisão",
+   "valor": 301.81
+  },
+  {
+   "mes": 4,
+   "nome": "INSS mensal",
+   "valor": 13327.52
+  },
+  {
+   "mes": 4,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 4,
+   "nome": "Aplicação para férias e 13º",
+   "valor": 14300
+  },
+  {
+   "mes": 4,
+   "nome": "Despesas diretas",
+   "valor": 2386.46
+  },
+  {
+   "mes": 4,
+   "nome": "Diárias",
+   "valor": 100
+  },
+  {
+   "mes": 4,
+   "nome": "Luz",
+   "valor": 1410.5
+  },
+  {
+   "mes": 4,
+   "nome": "Manutenção",
+   "valor": 780
+  },
+  {
+   "mes": 4,
+   "nome": "Avante",
+   "valor": 1200
+  },
+  {
+   "mes": 4,
+   "nome": "Material pedagógico",
+   "valor": 2085.07
+  },
+  {
+   "mes": 4,
+   "nome": "Serviço de nutrição",
+   "valor": 1442.7
+  },
+  {
+   "mes": 4,
+   "nome": "Rescisão",
+   "valor": 1023.39
+  },
+  {
+   "mes": 4,
+   "nome": "Salários",
+   "valor": 32023.49
+  },
+  {
+   "mes": 4,
+   "nome": "Seguro residencial",
+   "valor": 1388.56
+  },
+  {
+   "mes": 4,
+   "nome": "Tarifas bancárias",
+   "valor": 67.6
+  },
+  {
+   "mes": 4,
+   "nome": "Tarifa Pix",
+   "valor": 6.42
+  },
+  {
+   "mes": 4,
+   "nome": "Vale-transporte",
+   "valor": 2690
+  },
+  {
+   "mes": 5,
+   "nome": "Água",
+   "valor": 476.82
+  },
+  {
+   "mes": 5,
+   "nome": "Aluguel",
+   "valor": 5113.73
+  },
+  {
+   "mes": 5,
+   "nome": "FGTS mensal",
+   "valor": 3429.27
+  },
+  {
+   "mes": 5,
+   "nome": "IPTU",
+   "valor": 1343.3
+  },
+  {
+   "mes": 5,
+   "nome": "INSS mensal",
+   "valor": 12932.33
+  },
+  {
+   "mes": 5,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 5,
+   "nome": "Aplicação para férias e 13º",
+   "valor": 14300
+  },
+  {
+   "mes": 5,
+   "nome": "Despesas diretas",
+   "valor": 8125.37
+  },
+  {
+   "mes": 5,
+   "nome": "Diárias",
+   "valor": 500
+  },
+  {
+   "mes": 5,
+   "nome": "Luz",
+   "valor": 934.62
+  },
+  {
+   "mes": 5,
+   "nome": "Manutenção",
+   "valor": 5916.44
+  },
+  {
+   "mes": 5,
+   "nome": "Avante",
+   "valor": 1200
+  },
+  {
+   "mes": 5,
+   "nome": "Material pedagógico",
+   "valor": 301.39
+  },
+  {
+   "mes": 5,
+   "nome": "Serviço de nutrição",
+   "valor": 721.35
+  },
+  {
+   "mes": 5,
+   "nome": "Seguro de vida",
+   "valor": 178.88
+  },
+  {
+   "mes": 5,
+   "nome": "Salários",
+   "valor": 32360.66
+  },
+  {
+   "mes": 5,
+   "nome": "Seguro residencial",
+   "valor": 1388.61
+  },
+  {
+   "mes": 5,
+   "nome": "Tarifas bancárias",
+   "valor": 182.84
+  },
+  {
+   "mes": 5,
+   "nome": "Vale-transporte",
+   "valor": 2788
+  },
+  {
+   "mes": 6,
+   "nome": "Água",
+   "valor": 496.14
+  },
+  {
+   "mes": 6,
+   "nome": "Aluguel",
+   "valor": 5113.73
+  },
+  {
+   "mes": 6,
+   "nome": "Alimentação",
+   "valor": 421.75
+  },
+  {
+   "mes": 6,
+   "nome": "FGTS mensal",
+   "valor": 3465.52
+  },
+  {
+   "mes": 6,
+   "nome": "INSS mensal",
+   "valor": 12345.11
+  },
+  {
+   "mes": 6,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 6,
+   "nome": "IPTU",
+   "valor": 658.47
+  },
+  {
+   "mes": 6,
+   "nome": "Aplicação para férias e 13º",
+   "valor": 14300
+  },
+  {
+   "mes": 6,
+   "nome": "Despesas diretas",
+   "valor": 5882.26
+  },
+  {
+   "mes": 6,
+   "nome": "Diárias",
+   "valor": 150
+  },
+  {
+   "mes": 6,
+   "nome": "Luz",
+   "valor": 659.13
+  },
+  {
+   "mes": 6,
+   "nome": "Avante",
+   "valor": 1200
+  },
+  {
+   "mes": 6,
+   "nome": "Material pedagógico",
+   "valor": 321.84
+  },
+  {
+   "mes": 6,
+   "nome": "Serviço de nutrição",
+   "valor": 721.35
+  },
+  {
+   "mes": 6,
+   "nome": "Salários",
+   "valor": 36907.57
+  },
+  {
+   "mes": 6,
+   "nome": "Seguro de vida",
+   "valor": 167.7
+  },
+  {
+   "mes": 6,
+   "nome": "Tarifas bancárias",
+   "valor": 169
+  },
+  {
+   "mes": 6,
+   "nome": "Frete",
+   "valor": 68.95
+  },
+  {
+   "mes": 6,
+   "nome": "Vale-transporte",
+   "valor": 3510.8
+  },
+  {
+   "mes": 7,
+   "nome": "Água",
+   "valor": 425.09
+  },
+  {
+   "mes": 7,
+   "nome": "Aluguel",
+   "valor": 5113.73
+  },
+  {
+   "mes": 7,
+   "nome": "FGTS mensal",
+   "valor": 4248.05
+  },
+  {
+   "mes": 7,
+   "nome": "INSS mensal",
+   "valor": 10886.36
+  },
+  {
+   "mes": 7,
+   "nome": "Internet",
+   "valor": 149.9
+  },
+  {
+   "mes": 7,
+   "nome": "Aplicação para férias e 13º",
+   "valor": 14300
+  },
+  {
+   "mes": 7,
+   "nome": "Despesas diretas",
+   "valor": 5049.45
+  },
+  {
+   "mes": 7,
+   "nome": "Diárias",
+   "valor": 1200
+  },
+  {
+   "mes": 7,
+   "nome": "Luz",
+   "valor": 1035.74
+  },
+  {
+   "mes": 7,
+   "nome": "Manutenção",
+   "valor": 200
+  },
+  {
+   "mes": 7,
+   "nome": "Material pedagógico",
+   "valor": 4396.43
+  },
+  {
+   "mes": 7,
+   "nome": "Seguro de vida",
+   "valor": 167.7
+  },
+  {
+   "mes": 7,
+   "nome": "Férias",
+   "valor": 4096.05
+  },
+  {
+   "mes": 7,
+   "nome": "Salários",
+   "valor": 37087.6
+  },
+  {
+   "mes": 7,
+   "nome": "Impostos",
+   "valor": 4123.63
+  },
+  {
+   "mes": 7,
+   "nome": "Gás",
+   "valor": 745
+  },
+  {
+   "mes": 7,
+   "nome": "Vale-transporte",
+   "valor": 3528
+  }
+ ]
+}

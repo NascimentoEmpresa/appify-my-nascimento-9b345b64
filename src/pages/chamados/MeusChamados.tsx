@@ -34,6 +34,7 @@ import {
   chamadoComPendencia, motivoNaListaPadrao, passaNosFiltros, filtrosAtivos, rankingDevs, mediaSimples, FILTROS_VAZIOS,
   type ConversaSolicitante, type FiltrosMeusChamados, type MotivoNaLista,
 } from "./listaSolicitante";
+import { useIndiceDasTelas } from "./impacto/catalogoTelas";
 
 // RPC/tabela fora do types.ts gerado: um ponto sem tipo, em vez de mais
 // "(supabase as any)" — a catraca do lint não deixa o arquivo subir de erro.
@@ -53,6 +54,8 @@ const POR_PAGINA = 8;
 interface Stats { meus: number; concluidos: number; em_atendimento: number; aguardando_acao: number; tempo_medio: number | null; }
 
 export default function MeusChamados({ base = "/app/central-servicos/chamados" }: { base?: string }) {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const nav = useNavigate();
   const { user } = useAuth();
   const { canAbrir } = useChamadoPerms();
@@ -194,14 +197,14 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
 
   const opcoesResponsavel = [...new Set(chamados.map((c) => c.responsavel_id).filter(Boolean) as string[])]
     .map((id) => ({ id, nome: nomeDe(id) })).sort((a, b) => a.nome.localeCompare(b.nome));
-  const opcoesModulo = useMemo(() => [...new Set(chamados.map((c) => moduloLabel(c)))].sort(), [chamados]);
+  const opcoesModulo = useMemo(() => [...new Set(chamados.map((c) => moduloLabel(c)))].sort(), [chamados, indiceTelas]);
 
   const filtrados = useMemo(() => chamados.filter((c) => {
     const naLista = !!motivos[c.id];
     if (visao === "pendentes" && !naLista) return false;
     if (visao === "historico" && naLista) return false;
     return passaNosFiltros(c, moduloLabel(c), filtros);
-  }), [chamados, motivos, visao, filtros]);
+  }), [chamados, motivos, visao, filtros, indiceTelas]);
 
   const marcarVisto = async (c: Chamado) => {
     let { error } = await rpcSemTipo("chamado_marcar_visto", { p_chamado_id: c.id });
@@ -499,7 +502,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                   <TableHead className="w-16 text-center leading-tight">Posição<br />na fila</TableHead>
                   <TableHead>Nº do chamado</TableHead>
                   <TableHead>Assunto</TableHead>
-                  <TableHead>Módulo / Sistema</TableHead>
+                  <TableHead>Módulo ajustado</TableHead>
                   <TableHead>Prioridade</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Responsável</TableHead>

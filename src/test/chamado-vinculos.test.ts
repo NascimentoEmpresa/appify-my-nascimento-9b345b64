@@ -41,6 +41,11 @@ describe("Reabrir chamado baseado nesse", () => {
       descricao: "Falta a coluna", modulo: "outro", moduloOutro: "Power BI", afetaUsuarios: "12", prazoSolicitante: "",
     });
     expect(formularioBaseadoEm({ ...base, prazo_solicitante: "2026-12-01" }, 2, "2026-11-12").prazoSolicitante).toBe("2026-12-01");
+    // SIS-2026-0910: o impacto sistêmico vem junto, com a posição entre os módulos.
+    expect(f.setoresImpactados).toEqual([]);
+    const g = formularioBaseadoEm({ ...base, modulo_sistema: "financeiro", setores_impactados: ["Financeiro", " "], modulos_impactados: ["controladoria"] }, 2, "2026-11-12");
+    expect(g.setoresImpactados).toEqual(["Financeiro"]);
+    expect(g.modulosImpactados).toEqual(["financeiro", "controladoria"]);
   });
 
   it("título da parte: não repete o sufixo e cabe em 120", () => {

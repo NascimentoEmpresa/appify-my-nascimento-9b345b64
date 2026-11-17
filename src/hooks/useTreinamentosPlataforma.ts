@@ -8,6 +8,9 @@ import {
   type Historico, type Matricula, type Modulo, type Notificacao, type ProgressoLinha, type Publico,
   type StatusComentario, type Tag,
 } from "@/pages/treinamentos/plataforma/tipos";
+import type {
+  FiltrosParticipacao, LinhaIndividual, PaginaIndividual, ResumoParticipacao, SituacaoParticipacao,
+} from "@/lib/treinamentos/participacaoVideos";
 
 // =====================================================================
 // Dados da plataforma de Treinamentos (tabelas TRN_*).
@@ -110,6 +113,59 @@ export function useTrnDashboard(cursoId?: string | null, de?: string | null, ate
       return data as Dashboard;
     },
   });
+}
+
+// ── Participação nos vídeos (SIS-2026-0914, mig 20261117091400) ──────
+const paramsParticipacao = (f: FiltrosParticipacao) => ({
+  _data: f.data, _curso: f.curso || null, _aula: f.aula || null,
+  _empresa: f.empresa ?? null, _contrato: f.contrato || null, _cargo: f.cargo || null,
+});
+
+export function useTrnParticipacaoResumo(f: FiltrosParticipacao) {
+  return useQuery({
+    queryKey: ["trn-participacao-resumo", f],
+    queryFn: async (): Promise<ResumoParticipacao> => {
+      const { data, error } = await sb.rpc("trn_participacao_resumo", paramsParticipacao(f));
+      if (error) throw error;
+      return data as ResumoParticipacao;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export interface FiltrosIndividual { situacao: SituacaoParticipacao | null; busca: string; limite: number; offset: number }
+
+export async function buscarTrnParticipacaoIndividual(f: FiltrosParticipacao, x: FiltrosIndividual): Promise<PaginaIndividual> {
+  const { data, error } = await sb.rpc("trn_participacao_individual", {
+    ...paramsParticipacao(f), _situacao: x.situacao, _busca: x.busca.trim() || null, _limite: x.limite, _offset: x.offset,
+  });
+  if (error) throw error;
+  return data as PaginaIndividual;
+}
+
+export function useTrnParticipacaoIndividual(f: FiltrosParticipacao, x: FiltrosIndividual) {
+  return useQuery({
+    queryKey: ["trn-participacao-individual", f, x],
+    queryFn: () => buscarTrnParticipacaoIndividual(f, x),
+    staleTime: 60_000,
+    placeholderData: (anterior) => anterior,
+  });
+}
+
+/**
+ * Todas as linhas do filtro, em lotes (para exportar). Cada chamada refaz a
+ * base inteira (~4 s no pior caso medido), então o lote é grande: 25 mil
+ * linhas ≈ 4,6 MB de JSON.
+ */
+export async function buscarTodaParticipacaoIndividual(f: FiltrosParticipacao, x: Omit<FiltrosIndividual, "limite" | "offset">) {
+  const LOTE = 25000;
+  const linhas: LinhaIndividual[] = [];
+  for (let offset = 0; ; offset += LOTE) {
+    const p = await buscarTrnParticipacaoIndividual(f, { ...x, limite: LOTE, offset });
+    linhas.push(...p.linhas);
+    if (p.linhas.length < LOTE || linhas.length >= p.total) break;
+  }
+  return linhas;
 }
 
 // ── Tags ─────────────────────────────────────────────────────────────

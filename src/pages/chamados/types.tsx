@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Star, type LucideIcon } from "lucide-react";
 import { prazoVencido, situacaoDesenvolvimento } from "@/lib/chamados/prazoDesenvolvimento";
+import { ehTela, indiceDasTelas, rotuloModulo } from "@/lib/chamados/arvoreModulos";
 
 // ---- Opções (options de select / checkbox) --------------------------
 export const CATEGORIAS = [
@@ -17,6 +18,9 @@ export const CATEGORIAS = [
   { value: "integracoes", label: "Integrações" },
   { value: "dados_informacao", label: "Dados / Informação" },
   { value: "acesso_permissao", label: "Acesso / Permissão" },
+  // SIS-2026-0934: com "Novo módulo / tela" ou "Acesso / Permissão" o chamado
+  // exige "Quais pessoas devem ter acesso ao módulo?" (lib/chamados/acessoModulo.ts).
+  { value: "novo_modulo", label: "Novo módulo / tela" },
   { value: "outros", label: "Outros" },
 ] as const;
 
@@ -107,9 +111,11 @@ export interface Chamado {
   modulo_sistema_outro: string | null;
   ambiente: string;
   afeta_usuarios: number | null;
-  /** Alcance informado na abertura (mig 20261115001000): setores e módulos (value de MODULOS_ERP). */
+  /** Alcance informado na abertura (mig 20261115001000): setores e módulos (rota da tela — SIS-2026-0921 — ou value de MODULOS_ERP nos antigos). */
   setores_impactados?: string[] | null;
   modulos_impactados?: string[] | null;
+  /** Quem deve ter acesso ao módulo (SIS-2026-0934, mig 20261118100000): [{id, nome}], id = profiles.id. */
+  acesso_modulo_usuarios?: { id: string; nome: string }[] | null;
   observacoes_solicitante: string | null;
   solicitante_id: string;
   solicitante_nome: string | null;
@@ -386,11 +392,18 @@ export const fmtDataHora = (s?: string | null) => {
 export const iniciais = (nome?: string | null) =>
   (nome ?? "?").trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";
 
-/** Label do módulo/sistema (usa o texto livre quando "outro"). */
+/**
+ * Label do módulo/sistema (usa o texto livre quando "outro"). Desde o
+ * SIS-2026-0921 a posição pode ser uma tela da barra lateral (rota) — vira
+ * "Setor › Tela" pelo índice registrado em lib/chamados/arvoreModulos.ts;
+ * valor amplo antigo continua vindo de MODULOS_ERP.
+ */
 export const moduloLabel = (c: Pick<Chamado, "modulo_sistema" | "modulo_sistema_outro">) =>
   c.modulo_sistema === "outro"
     ? (c.modulo_sistema_outro || "Outro")
-    : labelDe(MODULOS_ERP, c.modulo_sistema);
+    : ehTela(c.modulo_sistema)
+      ? rotuloModulo(c.modulo_sistema as string, indiceDasTelas())
+      : labelDe(MODULOS_ERP, c.modulo_sistema);
 
 // ---- Componentes visuais compartilhados -----------------------------
 export function StatCard({
