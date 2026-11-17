@@ -19,11 +19,21 @@
 -- O status não muda no merge, então Dashboard, Painel do Dev, TV de TI, hora
 -- extra, parecer da I.A etc. continuam contando a conclusão pelo clique.
 --
+-- O DEV CONCLUINDO NA TELA TAMBÉM SÓ ENTREGA (17/11/2026, Pablo, olhando o
+-- SIS-2026-0934: "quando eu marcar como concluído, ainda tem que ficar
+-- pendente de conclusão do gestor, antes de ficar como concluído pro
+-- solicitante"). O "Concluir chamado" do responsável chama a RPC
+-- chamado_entregar_ao_gestor — mesma marca do merge. Concluir de vez com o
+-- chamado pendente do gestor continua possível para quem age no chamado
+-- (Pablo: "tem que dar pra concluir o chamado mesmo pendente de conclusão do
+-- gestor, mas aí tem que confirmar"): a tela pede a confirmação; o banco não
+-- trava (src/pages/chamados/validacaoPresidencia.ts, acaoAoConcluir).
+--
 -- REGRAS DA COLUNA
 --   1. Toda troca de status zera a entrega (o gestor concluiu, o chamado foi
 --      reaberto, cancelado...): a marca vale só até a próxima mudança.
---   2. Marcar a entrega: só automação de servidor (service_role, a Edge) —
---      ninguém marca à mão pela tela.
+--   2. Marcar a entrega: a Edge do merge (service_role) ou a RPC
+--      chamado_entregar_ao_gestor — ninguém marca com UPDATE direto.
 --
 -- Idempotente. ROLLBACK no fim.
 -- =========================================================================
@@ -49,7 +59,8 @@ CREATE OR REPLACE FUNCTION public.chamado_sistema_entrega_merge()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_auto boolean := COALESCE(auth.role() = 'service_role', false);
+  v_auto boolean := COALESCE(auth.role() = 'service_role', false)
+                    OR COALESCE(current_setting('app.chamado_entrega', true) = 'on', false);
 BEGIN
   IF TG_OP = 'INSERT' THEN
     NEW.desenvolvimento_entregue_em := NULL;
@@ -63,11 +74,12 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Limpar (NULL) não é travado; marcar, só a Edge chamado-concluir-pr.
+  -- Limpar (NULL) não é travado; marcar, só a Edge chamado-concluir-pr ou a
+  -- RPC chamado_entregar_ao_gestor (marca app.chamado_entrega).
   IF NOT v_auto AND (
        (NEW.desenvolvimento_entregue_em IS NOT NULL AND NEW.desenvolvimento_entregue_em IS DISTINCT FROM OLD.desenvolvimento_entregue_em)
     OR (NEW.desenvolvimento_entregue_pr IS NOT NULL AND NEW.desenvolvimento_entregue_pr IS DISTINCT FROM OLD.desenvolvimento_entregue_pr)) THEN
-    RAISE EXCEPTION 'A entrega do desenvolvimento é marcada só pelo merge da PR.';
+    RAISE EXCEPTION 'A entrega do desenvolvimento é marcada só pelo merge da PR ou pelo botão Concluir chamado.';
   END IF;
   RETURN NEW;
 END;
@@ -112,11 +124,56 @@ CREATE TRIGGER trg_chamado_entregue_avisa_gestao
   WHEN (NEW.desenvolvimento_entregue_em IS NOT NULL AND OLD.desenvolvimento_entregue_em IS NULL)
   EXECUTE FUNCTION public.chamado_entregue_avisa_gestao();
 
+-- ── 4. RPC: o dev conclui = entrega ao Gestor de Sistemas ────────────────
+-- Mesmo público do card de Ações rápidas (ExecutarChamado: podeAgir =
+-- gestão || dev responsável). Não muda o status: o gestor conclui depois.
+CREATE OR REPLACE FUNCTION public.chamado_entregar_ao_gestor(p_chamado_id uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v record;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Faça login.' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT status, responsavel_id, desenvolvimento_entregue_em INTO v
+    FROM public."CHAMADO_SISTEMA" WHERE id = p_chamado_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Chamado não encontrado.' USING ERRCODE = 'P0002';
+  END IF;
+  IF v.responsavel_id IS DISTINCT FROM auth.uid() AND NOT public.chamado_sistema_gestor() THEN
+    RAISE EXCEPTION 'Só o responsável pelo chamado (ou a gestão) conclui o desenvolvimento.' USING ERRCODE = '42501';
+  END IF;
+  IF v.status IN ('concluido', 'cancelado', 'reprovado') THEN
+    RAISE EXCEPTION 'O chamado já está encerrado.' USING ERRCODE = '22023';
+  END IF;
+  IF v.desenvolvimento_entregue_em IS NOT NULL THEN
+    RETURN;  -- já entregue (merge da PR, duplo clique)
+  END IF;
+
+  PERFORM set_config('app.chamado_entrega', 'on', true);
+  UPDATE public."CHAMADO_SISTEMA"
+     SET desenvolvimento_entregue_em = now(), desenvolvimento_entregue_pr = NULL
+   WHERE id = p_chamado_id;
+  PERFORM set_config('app.chamado_entrega', 'off', true);
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto, meta)
+  VALUES (p_chamado_id, auth.uid(), 'evento',
+          'Desenvolvimento concluído — falta o Gestor de Sistemas concluir o chamado',
+          jsonb_build_object('acao', 'desenvolvimento_entregue', 'origem', 'tela'));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_entregar_ao_gestor(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_entregar_ao_gestor(uuid) TO authenticated;
+
 NOTIFY pgrst, 'reload schema';
 
 -- =========================================================================
 -- ROLLBACK
 -- =========================================================================
+-- DROP FUNCTION IF EXISTS public.chamado_entregar_ao_gestor(uuid);
 -- DROP TRIGGER IF EXISTS trg_chamado_entregue_avisa_gestao ON public."CHAMADO_SISTEMA";
 -- DROP FUNCTION IF EXISTS public.chamado_entregue_avisa_gestao();
 -- DROP TRIGGER IF EXISTS trg_chamado_sistema_entrega_merge ON public."CHAMADO_SISTEMA";
