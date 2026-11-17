@@ -559,8 +559,8 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
 // 70% histórica ajustada + 30% média dos últimos 20 (rankingSolicitantes na
 // lib), e a tela mostra as peças separadas, como no modelo anexado ao
 // chamado: nota do ranking, média histórica ajustada, média dos últimos 20,
-// chamados avaliados e tendência (recente − histórica; "—" com até 20
-// chamados, quando não há "antes" para comparar). Layout no desenho do
+// chamados avaliados e tendência (recente − histórica, sempre com número,
+// como no modelo — 17/11/2026, Pablo). Layout no desenho do
 // "modelo proposto" anexado: pódio com a nota em destaque e os 4 números ao
 // lado, colunas na ordem do modelo com (i) explicando cada conta, posição
 // "1º/2º" e rodapé "Como é calculada a nota do ranking?". Média simples,
@@ -575,7 +575,7 @@ const CAIXA_NOTA_PODIO = ["bg-amber-100/80 dark:bg-amber-500/20", "bg-slate-100/
 const DICA_NOTA = `${RANKING_PESO_HISTORICO * 100}% da média histórica ajustada + ${RANKING_PESO_RECENTE * 100}% da média dos últimos ${RANKING_RECENTES} chamados — é o que ordena o ranking.`;
 const DICA_HISTORICA = "Média de todos os chamados válidos da pessoa no período, puxada para a média geral quando há poucos chamados (ajuste pelo volume).";
 const DICA_RECENTE = `Média dos ${RANKING_RECENTES} chamados válidos abertos mais recentemente; com menos de ${RANKING_RECENTES}, usa os que houver.`;
-const DICA_TENDENCIA = `Média dos últimos ${RANKING_RECENTES} − média histórica ajustada. "—" quando a pessoa tem até ${RANKING_RECENTES} chamados: os últimos são todos, não há "antes" para comparar.`;
+const DICA_TENDENCIA = `Média dos últimos ${RANKING_RECENTES} − média histórica ajustada. Com até ${RANKING_RECENTES} chamados, os últimos são todos e a diferença mostra só o ajuste pelo volume.`;
 
 function TituloDica({ children, dica, className }: { children: React.ReactNode; dica: string; className?: string }) {
   return (
@@ -760,7 +760,7 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
             <p className="flex gap-1.5 lg:pl-3"><TrendingUp className="mt-0.5 h-3 w-3 shrink-0" /><span>
               <b className="text-foreground">Tendência:</b> variação entre a média dos últimos {RANKING_RECENTES} e a média histórica
               (ex.: <span className="font-semibold text-success">↑ +2,2</span> = evolução de 2,2 pontos;{" "}
-              <span className="font-semibold text-destructive">↓</span> = queda; — = até {RANKING_RECENTES} chamados, sem base para comparar).
+              <span className="font-semibold text-destructive">↓</span> = queda).
             </span></p>
           </div>
         </>
@@ -772,16 +772,9 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
 const normalizarBusca = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 /**
- * Tendência do ranking (recente − histórica): ↑ verde, ↓ vermelho, → estável;
- * "—" quando os últimos 20 já são todos os chamados (sem base para comparar).
+ * Tendência do ranking (recente − histórica): ↑ verde, ↓ vermelho, → estável.
  */
-function Tendencia({ valor, pilula }: { valor: number | null; pilula?: boolean }) {
-  if (valor == null) {
-    return (
-      <span className="cursor-help text-muted-foreground"
-        title={`Sem base para comparar: os últimos ${RANKING_RECENTES} já são todos os chamados desta pessoa no período.`}>—</span>
-    );
-  }
+function Tendencia({ valor, pilula }: { valor: number; pilula?: boolean }) {
   const sobe = valor > 0;
   const cai = valor < 0;
   const Icone = sobe ? ArrowUpRight : cai ? ArrowDownRight : ArrowRight;
