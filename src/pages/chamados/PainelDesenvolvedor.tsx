@@ -37,6 +37,7 @@ import { IniciarDesenvolvimentoDialog, type ModoPrazo } from "./IniciarDesenvolv
 import { abrirPrGithub } from "./abrirPrGithub";
 import { conclusaoAguardandoConfirmacao } from "./validacaoPresidencia";
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
+import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import {
   STATUS_PAINEL, mudouNaFila, rotuloPrazo, diasUteisAte, podeDefinirPrazo, podeIniciarDesenvolvimento, projetarPrevisoes,
   situacaoPrazo, statusPainel, variacaoPercentual, type SituacaoPrazo, type StatusPainel,
@@ -332,6 +333,9 @@ export default function PainelDesenvolvedor() {
   const visiveis = lista.slice((paginaAtual - 1) * porPagina, paginaAtual * porPagina);
   const de = lista.length === 0 ? 0 : (paginaAtual - 1) * porPagina + 1;
   const ate = Math.min(paginaAtual * porPagina, lista.length);
+  // Setas do chamado (16/11/2026): o detalhe anda pela lista INTEIRA que o painel
+  // mostra (filtros, busca e ordem atuais), não só pela página — ver navegacaoLista.ts.
+  const idsLista = useMemo(() => lista.map((c) => c.id), [lista]);
 
   // ---- KPIs --------------------------------------------------------------
   const stats = useMemo(() => {
@@ -388,6 +392,8 @@ export default function PainelDesenvolvedor() {
       .sort((a, b) => (posicaoMinhaFila[a.id] ?? 999) - (posicaoMinhaFila[b.id] ?? 999));
     return (["alta", "media", "baixa"] as const).map((p) => ({ p, itens: ativos.filter((c) => c.prioridade === p) }));
   }, [chamados, posicaoMinhaFila]);
+  const idsFilaPrioridade = useMemo(() => filaPorPrioridade.flatMap((g) => g.itens.map((c) => c.id)), [filaPorPrioridade]);
+  const idsTreinamento = useMemo(() => treinamentosPendentes.map((t) => t.chamado_id), [treinamentosPendentes]);
 
   const mudarPrioridade = async (id: string, prioridade: string, numero: string) => {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prioridade }).eq("id", id);
@@ -461,7 +467,7 @@ export default function PainelDesenvolvedor() {
           </p>
           <div className="flex flex-wrap gap-1.5">
             {treinamentosPendentes.map((t) => (
-              <button key={t.chamado_id} onClick={() => nav(`/app/sistemas/chamados/${t.chamado_id}`)} title={t.CHAMADO_SISTEMA?.assunto}
+              <button key={t.chamado_id} onClick={() => nav(hrefNaLista(t.chamado_id, idsTreinamento))} title={t.CHAMADO_SISTEMA?.assunto}
                 className="flex items-center gap-1 rounded border border-primary/40 bg-background px-2 py-1 text-xs transition-transform hover:border-primary hover:bg-primary/5 active:scale-90">
                 <GraduationCap className="h-3 w-3 text-primary" /> <span className="font-mono font-semibold">#{t.CHAMADO_SISTEMA?.numero}</span> enviar
               </button>
@@ -618,7 +624,7 @@ export default function PainelDesenvolvedor() {
                     const metricas = metricasGithub[c.id];
                     return (
                       <TableRow key={c.id} className={`cursor-pointer ${desceu ? "bg-destructive/5 hover:bg-destructive/10" : ""}`}
-                        onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
+                        onClick={() => nav(hrefNaLista(c.id, idsLista))}>
                         <TableCell className="whitespace-nowrap font-mono text-[11px] font-semibold" title={c.numero}>#{numeroCurto(c.numero)}</TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}><PrioridadePill c={c} /></TableCell>
                         <TableCell className="min-w-[150px] max-w-[260px]">
@@ -704,7 +710,7 @@ export default function PainelDesenvolvedor() {
                                 Ajustar prazo
                               </Button>
                             ) : (
-                              <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-[11px]" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
+                              <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-[11px]" onClick={() => nav(hrefNaLista(c.id, idsLista))}>
                                 <FileText className="h-3.5 w-3.5" /> Abrir
                               </Button>
                             )}
@@ -716,14 +722,14 @@ export default function PainelDesenvolvedor() {
                                 </button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}><FileText className="mr-2 h-4 w-4" /> Abrir chamado</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => nav(hrefNaLista(c.id, idsLista))}><FileText className="mr-2 h-4 w-4" /> Abrir chamado</DropdownMenuItem>
                                 {iniciar && (
                                   <DropdownMenuItem onClick={() => setPrazoAlvo({ chamado: c, modo: "iniciar" })}><PlayCircle className="mr-2 h-4 w-4" /> Iniciar desenvolvimento</DropdownMenuItem>
                                 )}
                                 {ehMeu && podeDefinirPrazo(c) && c.prazo_dias != null && (
                                   <DropdownMenuItem onClick={() => setPrazoAlvo({ chamado: c, modo: "definir" })}><CalendarDays className="mr-2 h-4 w-4" /> Ajustar prazo</DropdownMenuItem>
                                 )}
-                                <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
+                                <DropdownMenuItem onClick={() => nav(hrefNaLista(c.id, idsLista))}>
                                   <MessageSquare className="mr-2 h-4 w-4" /> Conversa{(naoLidos[c.id] ?? 0) > 0 ? ` (${naoLidos[c.id]} nova(s))` : ""}
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
@@ -977,7 +983,7 @@ export default function PainelDesenvolvedor() {
                     {itens.map((c) => {
                       const sit = paraTela(situacoes[c.id]);
                       return (
-                        <button key={c.id} onClick={() => { setFilaPrioridadeAberta(false); nav(`/app/sistemas/chamados/${c.id}`); }}
+                        <button key={c.id} onClick={() => { setFilaPrioridadeAberta(false); nav(hrefNaLista(c.id, idsFilaPrioridade)); }}
                           className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                           <span className="w-8 font-semibold">{posicaoMinhaFila[c.id] ? `${posicaoMinhaFila[c.id]}º` : "—"}</span>
                           <span className="font-mono text-[11px] font-semibold">#{numeroCurto(c.numero)}</span>
