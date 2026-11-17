@@ -28,6 +28,8 @@ import { ModalEtiquetaTermica } from "@/components/suprimentos/ModalEtiquetaTerm
 import { ModalRomaneio } from "@/components/suprimentos/ModalRomaneio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote } from "@/hooks/useSupEstoque";
+import { abrirLaudo, useCalcadosDosPedidos, type CalcadoDoPedido } from "@/hooks/useCalcadosOrtopedicos";
+import { ESTILO_STATUS_CALCADO, STATUS_CALCADO } from "@/lib/sst/calcadosOrtopedicos";
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
@@ -464,6 +466,15 @@ export default function PedidosMateriais() {
   useEffect(() => { setCardsVisiveis(PAGINA_CARDS); }, [buscaAtrasada, filtroStatus, filtroItem]);
   const naTela = useMemo(() => filtrados.slice(0, cardsVisiveis), [filtrados, cardsVisiveis]);
 
+  // SIS-2026-0888: calçado ortopédico tem laudo e status do SST. Uma consulta
+  // só para os cards da tela; sem acesso, a RPC devolve vazio e nada aparece.
+  const { data: calcadosNaTela = [] } = useCalcadosDosPedidos(naTela.map((p) => p.id));
+  const calcadosPorPedido = useMemo(() => {
+    const mapa = new Map<string, CalcadoDoPedido[]>();
+    for (const c of calcadosNaTela) mapa.set(c.pedido_id, [...(mapa.get(c.pedido_id) ?? []), c]);
+    return mapa;
+  }, [calcadosNaTela]);
+
   /**
    * Situação dos objetos nos Correios, para os pedidos que estão na tela.
    *
@@ -706,6 +717,7 @@ export default function PedidosMateriais() {
               onExcluir={() => setExcluindo(p)}
               onEtiqueta={() => setEtiquetaDe(p)}
               onFichaEpi={() => setFichaDe(p)}
+              calcados={calcadosPorPedido.get(p.id)}
               selecionadoRomaneio={selecionadosRomaneio.has(p.id)}
               onSelecionarRomaneio={() => alternarPedidoRomaneio(p.id)}
               rastreio={p.envio_rastreio ? situacoesCorreio[p.envio_rastreio.trim().toUpperCase()] : undefined}
@@ -1042,9 +1054,29 @@ function CardKpi({
   );
 }
 
+/** SIS-2026-0888: o Compras vê o laudo e o status do SST sem sair do pedido. */
+function SeloCalcado({ calcado }: { calcado: CalcadoDoPedido }) {
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 pl-2">
+      <Badge variant="outline" className="h-5 border-violet-300 px-1.5 text-[10px] text-violet-800 dark:text-violet-200">Ortopédico</Badge>
+      <Badge variant="outline" className={cn("h-5 px-1.5 text-[10px]", ESTILO_STATUS_CALCADO[calcado.status])}>
+        SST: {STATUS_CALCADO[calcado.status]}
+      </Badge>
+      {calcado.laudo_path ? (
+        <button type="button" className="text-[11px] text-primary hover:underline"
+          onClick={() => abrirLaudo(calcado).catch((e) => toast.error((e as Error).message))}>
+          Ver laudo
+        </button>
+      ) : calcado.status !== "cancelado" && (
+        <span className="text-[11px] font-medium text-destructive">Laudo pendente</span>
+      )}
+    </div>
+  );
+}
+
 function CardPedido({
   pedido: p, situacao, onStatus, onPrePedido, onLiberar, onEditar, onHistorico, onExcluir, onEtiqueta, onFichaEpi,
-  rastreio, rastreioCarregando, selecionadoRomaneio, onSelecionarRomaneio,
+  rastreio, rastreioCarregando, selecionadoRomaneio, onSelecionarRomaneio, calcados,
 }: {
   pedido: Pedido;
   situacao: SituacaoPedido | null;
@@ -1054,6 +1086,7 @@ function CardPedido({
   rastreioCarregando: boolean;
   selecionadoRomaneio: boolean;
   onSelecionarRomaneio: () => void;
+  calcados?: CalcadoDoPedido[];
 }) {
   const apresentacoesStatus = apresentacoesStatusPedido(p, situacao);
   const statusVisivel = apresentacoesStatus[0].status;
@@ -1271,12 +1304,18 @@ function CardPedido({
                 <p className="py-1 text-xs text-emerald-600">Tudo separado — nada a comprar.</p>
               )}
               <ul className="space-y-0.5">
-                {itens.map((i) => (
-                  <li key={i.id} className="flex justify-between gap-2 text-xs">
-                    <span className="truncate">{i.nome_item}</span>
-                    <span className="shrink-0 text-muted-foreground">{detalheItem(i, String(i.quantidade))}</span>
-                  </li>
-                ))}
+                {itens.map((i) => {
+                  const calcado = calcados?.find((c) => c.pedido_item_id === i.id);
+                  return (
+                    <li key={i.id} className="text-xs">
+                      <div className="flex justify-between gap-2">
+                        <span className="truncate">{i.nome_item}</span>
+                        <span className="shrink-0 text-muted-foreground">{detalheItem(i, String(i.quantidade))}</span>
+                      </div>
+                      {calcado && <SeloCalcado calcado={calcado} />}
+                    </li>
+                  );
+                })}
               </ul>
             </>
           ) : carregandoTags ? (

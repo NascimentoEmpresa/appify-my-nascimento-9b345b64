@@ -32,7 +32,8 @@ export const LIMITE_POR_BUCKET_MB: Record<string, number> = {
   "ponto-encarregados": 20, "pre-titulos-fiscal": 25, "Recrutamento": 10,
   "reembolsos": 20, "reunioes": 25, "rh-documentos": 20, "rh-rateio": 20,
   "sistema-solicitacoes": 25, "solicitacoes-ajuste-anexos": 25,
-  "solicitacoes-anexos": 25, "sup-comprovacoes": 10, "sup-crachas": 10,
+  "solicitacoes-anexos": 25, "sst-calcados-laudos": 10, "sst-incidentes": 25,
+  "sup-comprovacoes": 10, "sup-crachas": 10,
   "sup-patrimonio": 10, "sup-solicitacoes-manutencao": 5, "sup-veiculo-foto": 10,
   "ti-ativos": 20, "whatsapp-midia": 25,
   // Vídeo de treinamento/TV: fora da regra de 10/25 MB até decisão do
