@@ -108,11 +108,15 @@ export default function LucratividadeContratos() {
   const [porPagina, setPorPagina] = useState(10);
 
   // Meses com nota emitida (mais os dois escolhidos, para o seletor nunca ficar sem o valor atual).
+  // SIS-2026-0915: todos os meses em sequência (antes só os com nota): mês sem faturamento e com custo — ex. nov/25 no Bento
+  // Gonçalves AUX ADM, custo fora da vigência — precisa poder ser aberto. Vai da nota mais antiga (ou 24 meses atrás) até o mês corrente.
   const mesesDisponiveis = useMemo(() => {
-    const s = new Set<string>([mesInicio, mesFim, mesCorrente]);
-    for (const n of nfs) s.add(n.competencia.slice(0, 7));
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - 24, 1);
+    let primeiro = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    for (const n of nfs) { const m = n.competencia.slice(0, 7); if (m < primeiro) primeiro = m; }
+    const s = new Set<string>([mesInicio, mesFim, ...mesesNoIntervalo(primeiro, mesCorrente)]);
     return [...s].sort().reverse();
-  }, [nfs, mesInicio, mesFim, mesCorrente]);
+  }, [nfs, mesInicio, mesFim, mesCorrente]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Painel "Rubricas de custo": ligações manuais Classificação × coluna de custo.
   const { data: ligacoes } = useLigacoesRubrica();
