@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS public."FLUXO_UNIFICACAO" (
   motivo_desfeita text
 );
 
+-- índices das chaves estrangeiras (guardião de desempenho: JOIN/DELETE nas tabelas referenciadas não varrem a tabela inteira)
+CREATE INDEX IF NOT EXISTS fluxo_unificacao_empresa_id_idx ON public."FLUXO_UNIFICACAO" (empresa_id);
+CREATE INDEX IF NOT EXISTS fluxo_unificacao_banco_id_idx ON public."FLUXO_UNIFICACAO" (banco_id);
+
 CREATE TABLE IF NOT EXISTS public."FLUXO_UNIFICACAO_ORIGEM" (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   unificacao_id uuid NOT NULL REFERENCES public."FLUXO_UNIFICACAO"(id) ON DELETE CASCADE,
@@ -103,6 +107,8 @@ CREATE TABLE IF NOT EXISTS public."FLUXO_UNIFICACAO_COTA" (
   ordem integer NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS fluxo_unificacao_cota_unif_idx ON public."FLUXO_UNIFICACAO_COTA" (unificacao_id);
+CREATE INDEX IF NOT EXISTS fluxo_unificacao_cota_classificacao_id_idx ON public."FLUXO_UNIFICACAO_COTA" (classificacao_id);
+CREATE INDEX IF NOT EXISTS fluxo_unificacao_cota_contrato_id_idx ON public."FLUXO_UNIFICACAO_COTA" (contrato_id);
 
 CREATE TABLE IF NOT EXISTS public."FLUXO_UNIFICACAO_EVENTO" (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
