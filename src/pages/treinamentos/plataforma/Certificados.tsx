@@ -29,7 +29,7 @@ const NOVO: Omit<CertificadoModelo, "id" | "created_at" | "updated_at"> = {
   texto_inferior: "Concluiu o curso de ${curso} no dia ${data}",
   exibir_nome_negocio: true, exibir_logo: false, exibir_cnpj: false, exibir_carga_horaria: true, exibir_qr: true,
   exibir_documento: true, frente_verso: false, verso_somente_modulos: false, verso_titulo: "Conteúdo programático",
-  layout: "esquerda", fundo_path: `${PREFIXO_PRESET}nascimento`, fundo_verso_path: null,
+  layout: "esquerda", fundo_path: `${PREFIXO_PRESET}empresa`, fundo_verso_path: null,
 };
 
 export default function Certificados() {
@@ -131,8 +131,11 @@ export default function Certificados() {
                 <div className="campo"><label>Imagem de fundo (frente) *</label>
                   <GaleriaFundos valor={editando.fundo_path ?? null} lado="frente" enviando={subindo === "fundo_path"}
                                  onEscolher={(v) => set({ fundo_path: v })}
-                                 onEnviar={(f) => subir(f, "fundo_path")} onRemover={() => set({ fundo_path: `${PREFIXO_PRESET}nascimento` })} />
-                  <div className="ajuda">Escolha um fundo pronto ou envie o seu (JPG/PNG, A4 paisagem — 297 × 210 mm).</div></div>
+                                 onEnviar={(f) => subir(f, "fundo_path")} onRemover={() => set({ fundo_path: `${PREFIXO_PRESET}empresa` })} />
+                  <div className="ajuda">Escolha um fundo pronto ou envie o seu (JPG/PNG, A4 paisagem — 297 × 210 mm).</div>
+                  {resolverFundo(editando.fundo_path).preset === "empresa" && (
+                    <div className="ajuda">Modelo da empresa (padrão desde 13/11/2026): a arte sai pela empresa do colaborador — SN com a da SN, NH com a da NH, as demais com a da Nascimento —, com o texto do modelo oficial e as assinaturas da técnica e do colaborador. Título e textos acima não entram nele.</div>
+                  )}</div>
               </div>
               <div className="flex gap-2">
                 <AcessoGate menu={MENU.certificados} acao={editando.id ? "alterar" : "incluir"} fallback={<p className="text-xs text-muted-foreground">Você pode ver, mas não tem a ação de salvar.</p>}>
@@ -166,7 +169,7 @@ function GaleriaFundos({ valor, lado, enviando, onEscolher, onEnviar, onRemover 
   const propria = !!atual.url;
   return (
     <div className="grid grid-cols-3 gap-3">
-      {FUNDOS_PRONTOS.map((f) => (
+      {FUNDOS_PRONTOS.filter((f) => lado === "frente" || f.id !== "empresa").map((f) => (
         <button key={f.id} type="button" title={f.nome} onClick={() => onEscolher(`${PREFIXO_PRESET}${f.id}`)}
                 className={`overflow-hidden rounded-lg border-2 transition ${atual.preset === f.id ? "border-orange-500 ring-2 ring-orange-200" : "border-slate-200 hover:border-slate-400"}`}>
           <FundoMiniatura path={`${PREFIXO_PRESET}${f.id}`} />

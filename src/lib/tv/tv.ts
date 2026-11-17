@@ -5,7 +5,7 @@
 
 import { PAINEIS_GERENCIAIS } from "./gerencial";
 
-export type TipoItem = "imagem" | "video" | "url" | "youtube" | "aviso" | "relatorio";
+export type TipoItem = "imagem" | "video" | "url" | "youtube" | "aviso" | "relatorio" | "playlist";
 
 export const TIPOS_ITEM: { valor: TipoItem; rotulo: string; dica: string }[] = [
   { valor: "relatorio", rotulo: "Relatório do ERP", dica: "Números do ERP em tela cheia, atualizados sozinhos — sem rolar nem mexer" },
@@ -14,6 +14,8 @@ export const TIPOS_ITEM: { valor: TipoItem; rotulo: string; dica: string }[] = [
   { valor: "aviso", rotulo: "Aviso em texto", dica: "Texto grande sobre uma cor de fundo" },
   { valor: "youtube", rotulo: "YouTube", dica: "Link do vídeo — toca sem som" },
   { valor: "url", rotulo: "Página web", dica: "Endereço de um site (alguns sites não deixam abrir dentro de outra página)" },
+  // 18/11/2026 (mig 20261118140000): a playlist da Presidência passa as dos setores.
+  { valor: "playlist", rotulo: "Outra playlist", dica: "Passa os itens de outra playlist, na ordem dela — mudou lá, muda aqui sozinho" },
 ];
 
 export interface ItemTv {
@@ -42,7 +44,8 @@ export interface ItemTv {
  * abrem sem período nem contrato — o item também não pede.
  */
 export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; semFiltros?: boolean; grupo?: string }[] = [
-  { slug: "geral", titulo: "Visão geral — todos os sistemas", paginas: 1 },
+  // 18/11/2026: + Turn-over e a página Comparativo (abre a playlist da Presidência).
+  { slug: "geral", titulo: "Visão geral — todos os setores", paginas: 2 },
   { slug: "vagas", titulo: "Vagas — Dashboard", paginas: 3 },
   { slug: "recrutamento", titulo: "Gestão Recrutamento", paginas: 2 },
   { slug: "demissoes", titulo: "Demissões", paginas: 2 },
@@ -241,6 +244,39 @@ export function itensNoAr<T extends ItemNoAr>(itens: T[], agora: Date = new Date
   return itens
     .filter((i) => i.ativo && (!i.valido_de || new Date(i.valido_de).getTime() <= t) && (!i.valido_ate || new Date(i.valido_ate).getTime() > t))
     .sort((a, b) => a.ordem - b.ordem);
+}
+
+/**
+ * Item "Outra playlist" (18/11/2026, mig 20261118140000) — Pablo: "uma
+ * playlist pra PRESIDÊNCIA onde fique passando informações de todas TVs".
+ * No lugar do item de inclusão, os itens no ar da playlist incluída, na
+ * ordem dela. A MESMA regra de tv_itens_no_ar no banco (o que a TV toca):
+ *   · um nível só — inclusão dentro da incluída é ignorada (sem laço);
+ *   · o tempo do item de inclusão é o TETO de cada item incluído (os painéis
+ *     dos setores têm 3600 s numa TV só deles); vídeo toca até o fim;
+ *   · ativo e validade valem nos dois lados.
+ */
+export interface ItemExpansivel extends ItemNoAr { tipo: TipoItem; duracao_seg: number; inclui_playlist_id?: string | null }
+
+export function expandirPlaylist<T extends ItemExpansivel>(itens: T[], playlists: { id: string; itens: T[] }[], agora: Date = new Date()): T[] {
+  const porId = new Map(playlists.map((p) => [p.id, p]));
+  return itensNoAr(itens, agora).flatMap((i) => {
+    if (i.tipo !== "playlist") return [i];
+    const incluida = i.inclui_playlist_id ? porId.get(i.inclui_playlist_id) : undefined;
+    if (!incluida) return [];
+    return itensNoAr(incluida.itens, agora)
+      .filter((j) => j.tipo !== "playlist")
+      .map((j) => (j.tipo === "video" ? j : { ...j, duracao_seg: Math.min(j.duracao_seg, i.duracao_seg) }));
+  });
+}
+
+/** Os itens que a playlist pode tocar (os dela e os das incluídas, no ar ou não) — o AO VIVO procura aqui o item que a TV informou. */
+export function itensAlcancaveis<T extends ItemExpansivel>(itens: T[], playlists: { id: string; itens: T[] }[]): T[] {
+  const incluidas = new Set(itens.filter((i) => i.tipo === "playlist").map((i) => i.inclui_playlist_id));
+  return [
+    ...itens.filter((i) => i.tipo !== "playlist"),
+    ...playlists.filter((p) => incluidas.has(p.id)).flatMap((p) => p.itens.filter((j) => j.tipo !== "playlist")),
+  ];
 }
 
 export interface AlertaTv {

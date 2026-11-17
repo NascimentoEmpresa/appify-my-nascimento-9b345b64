@@ -172,6 +172,30 @@ export const aguardandoGestorConcluir = (
   c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
 ) => !ENCERRADOS.has(c.status) && !!c.desenvolvimento_entregue_em;
 
+/**
+ * O que o botão "Concluir chamado" faz para este usuário (17/11/2026, Pablo):
+ *   · "entregar" — ainda não entregue: o responsável (mesmo sendo Gestor de
+ *     Sistemas) entrega ao gestor; o chamado fica pendente, não concluído;
+ *   · "concluir" — o Gestor de Sistemas conclui (o solicitante vê);
+ *   · "concluir_confirmando" — já pendente do gestor e quem clica não é o
+ *     gestor: dá para concluir assim mesmo, depois de confirmar.
+ */
+export type AcaoConcluir = "entregar" | "concluir" | "concluir_confirmando";
+export function acaoAoConcluir(
+  c: Pick<Chamado, "responsavel_id"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  ehGestorSistemas: boolean,
+  userId: string | null | undefined,
+): AcaoConcluir {
+  if (!c.desenvolvimento_entregue_em) {
+    return ehGestorSistemas && c.responsavel_id !== userId ? "concluir" : "entregar";
+  }
+  return ehGestorSistemas ? "concluir" : "concluir_confirmando";
+}
+
+/** Texto da confirmação de "concluir_confirmando". */
+export const CONFIRMA_CONCLUIR_PENDENTE_GESTOR =
+  "O chamado está pendente de conclusão do Gestor de Sistemas. Tem certeza que deseja concluir?";
+
 /** Passo "o Gestor de Sistemas finalizou" na linha do tempo. */
 function passoFinalizacaoGestao(c: ChamadoStatus): PassoStatus {
   const feito = !!c.gestao_finalizada_em;
@@ -371,7 +395,7 @@ export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_e
   if (v && v.etapa !== "desenvolvimento") return ETAPAS_VALIDACAO[v.etapa].label;
   if (c.status === "concluido") return "Concluído";
   // PR mergeada, falta o Gestor de Sistemas concluir (mig 20261117235500).
-  if (aguardandoGestorConcluir(c)) return "Entregue — aguardando o Gestor de Sistemas concluir";
+  if (aguardandoGestorConcluir(c)) return "Pendente de conclusão do Gestor de Sistemas";
   if (c.status === "aguardando_retorno") return "Aguardando retorno";
   // Direcionado ao dev, mas ele ainda não clicou em Iniciar (mig 20261028001400).
   if (c.status === "em_andamento") return c.desenvolvimento_iniciado_em ? "Em desenvolvimento" : "Na fila do desenvolvedor";
