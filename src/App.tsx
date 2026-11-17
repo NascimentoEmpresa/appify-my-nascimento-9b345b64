@@ -322,6 +322,7 @@ import SstAfastamentos from "./pages/sst/Afastamentos";
 import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
 import SstExamesToxicologicos from "./pages/sst/ExamesToxicologicos";
 import SstAcidentes from "./pages/sst/Acidentes";
+import SstIncidentes from "./pages/sst/Incidentes";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -1210,6 +1211,7 @@ const App = () => (
             <Route path="sst/exames-toxicologicos" element={<SstExamesToxicologicos />} />
             {/* SST — Acidentes de Trabalho: registro, CAT e controle (SIS-2026-0889, mig 20261117220000). */}
             <Route path="sst/acidentes" element={<SstAcidentes />} />
+            <Route path="sst/incidentes" element={<SstIncidentes />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />
