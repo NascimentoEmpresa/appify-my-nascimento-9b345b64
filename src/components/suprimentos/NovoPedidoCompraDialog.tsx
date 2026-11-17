@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,10 @@ import {
 } from "@/hooks/useCompraPedido";
 import { converterQuantidadeDigitada } from "@/lib/suprimentos/compra";
 import {
+  filtrarItensCatalogoCompra,
+  modeloDoMaterial,
+} from "@/lib/suprimentos/catalogoPedidoCompra";
+import {
   localizarItemPreparado,
   type PreparacaoPedidoCompra,
 } from "@/lib/suprimentos/pedidoCompraDireto";
@@ -24,6 +29,7 @@ import { toast } from "sonner";
 interface LinhaPedido {
   chave: string;
   supItemId: string;
+  codigo: string | null;
   nome: string;
   tamanho: string | null;
   quantidade: string;
@@ -50,6 +56,7 @@ function linhaDoCatalogo(item: ItemCatalogoCompra, quantidade = 1, valorUnitario
   return {
     chave: `${item.id}-${crypto.randomUUID()}`,
     supItemId: item.id,
+    codigo: item.codigo,
     nome: item.nome,
     tamanho: item.tamanho,
     quantidade: numeroTexto(quantidade),
@@ -113,13 +120,14 @@ export function NovoPedidoCompraDialog({
   }, [aberto, catalogo, preparacao, preparacaoAplicada]);
 
   const candidatos = useMemo(() => {
-    const termo = busca.trim().toLocaleLowerCase("pt-BR");
-    if (termo.length < 2) return [];
     const jaUsados = new Set(linhas.map((linha) => linha.supItemId));
-    return catalogo.filter((item) => !jaUsados.has(item.id) &&
-      `${item.nome} ${item.tamanho ?? ""}`.toLocaleLowerCase("pt-BR").includes(termo)
-    ).slice(0, 12);
+    return filtrarItensCatalogoCompra(catalogo, busca, jaUsados);
   }, [busca, catalogo, linhas]);
+
+  const adicionarItem = (item: ItemCatalogoCompra) => {
+    setLinhas((atuais) => [...atuais, linhaDoCatalogo(item)]);
+    setBusca("");
+  };
 
   const total = linhas.reduce((soma, linha) => {
     const quantidade = converterQuantidadeDigitada(linha.quantidade);
@@ -197,29 +205,95 @@ export function NovoPedidoCompraDialog({
         </div>
 
         <div className="space-y-2 rounded-lg border p-3">
-          <Label>Adicionar item do cadastro</Label>
+          <Label>Adicionar item do estoque e catálogo</Label>
           <div className="relative">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input value={busca} onChange={(e) => setBusca(e.target.value)} className="pl-9" placeholder="Digite ao menos 2 letras do item ou tamanho" />
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} className="pl-9"
+              placeholder="Buscar código, material, tamanho ou almoxarifado…" />
           </div>
           {carregandoCatalogo && <p className="text-xs text-muted-foreground">Carregando catálogo…</p>}
-          {!!candidatos.length && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
-            {candidatos.map((item) => (
-              <Button key={item.id} type="button" variant="outline" size="sm" className="h-auto justify-start py-2 text-left"
-                onClick={() => { setLinhas((atuais) => [...atuais, linhaDoCatalogo(item)]); setBusca(""); }}>
-                <Plus className="mr-2 h-4 w-4 shrink-0" /><span className="truncate">{item.nome}{item.tamanho ? ` · ${item.tamanho}` : ""}</span>
-              </Button>
-            ))}
-          </div>}
+          {busca.trim().length >= 2 && (
+            candidatos.length ? (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  {candidatos.length} {candidatos.length === 1 ? "item encontrado" : "itens encontrados"} — clique na linha para adicionar.
+                </p>
+                <div className="max-h-80 overflow-auto rounded-md border">
+                  <Table>
+                    <TableHeader className="sticky top-0 z-10 bg-background">
+                      <TableRow>
+                        <TableHead className="w-28">Código</TableHead>
+                        <TableHead className="min-w-72">Material</TableHead>
+                        <TableHead className="min-w-40">Almoxarifado</TableHead>
+                        <TableHead className="w-24">Tamanho</TableHead>
+                        <TableHead className="w-24 text-right">Disponível</TableHead>
+                        <TableHead className="w-20" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {candidatos.map((item) => {
+                        const modelo = modeloDoMaterial(item.nome);
+                        return (
+                          <TableRow key={item.id} className="cursor-pointer" onClick={() => adicionarItem(item)}>
+                            <TableCell className="font-mono text-xs text-muted-foreground">
+                              {item.codigo ?? "—"}
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-medium">{item.nome}</span>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {item.tipo.replace(/_/g, " ")}
+                                </Badge>
+                                {modelo && <Badge variant="outline" className="text-[10px]">{modelo}</Badge>}
+                                {item.situacaoEstoque === "historico" && (
+                                  <Badge variant="outline" className="border-slate-300 text-[10px] text-slate-600">
+                                    Histórico encerrado
+                                  </Badge>
+                                )}
+                                {item.situacaoEstoque === "sem_ficha" && (
+                                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                    Sem ficha no estoque
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {item.almoxarifados.length ? item.almoxarifados.join(", ") : "—"}
+                            </TableCell>
+                            <TableCell>{item.tamanho ?? "—"}</TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {item.situacaoEstoque === "ativo" ? item.disponivel : "—"}
+                            </TableCell>
+                            <TableCell>
+                              <Button type="button" variant="ghost" size="sm" aria-label={`Adicionar ${item.nome}`}
+                                onClick={(e) => { e.stopPropagation(); adicionarItem(item); }}>
+                                <Plus className="mr-1 h-4 w-4" />Adicionar
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            ) : !carregandoCatalogo && (
+              <p className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
+                Nenhum material encontrado. Tente pelo código, nome, modelo, tamanho ou almoxarifado.
+              </p>
+            )
+          )}
         </div>
 
         <div className="overflow-x-auto rounded-lg border">
           <Table>
-            <TableHeader><TableRow><TableHead className="min-w-56">Descrição</TableHead><TableHead className="w-28">Quantidade</TableHead><TableHead className="w-36">Unidade</TableHead><TableHead className="w-36">Preço unitário</TableHead><TableHead className="min-w-44">Observação</TableHead><TableHead className="w-12" /></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead className="w-28">Código</TableHead><TableHead className="min-w-56">Material</TableHead><TableHead className="w-20">Tamanho</TableHead><TableHead className="w-28">Quantidade</TableHead><TableHead className="w-36">Unidade</TableHead><TableHead className="w-36">Preço unitário</TableHead><TableHead className="min-w-44">Observação</TableHead><TableHead className="w-12" /></TableRow></TableHeader>
             <TableBody>
-              {!linhas.length && <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">Nenhum item incluído.</TableCell></TableRow>}
+              {!linhas.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">Nenhum item incluído.</TableCell></TableRow>}
               {linhas.map((linha) => <TableRow key={linha.chave}>
-                <TableCell><span className="font-medium">{linha.nome}</span>{linha.tamanho && <span className="ml-1 text-muted-foreground">· {linha.tamanho}</span>}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{linha.codigo ?? "—"}</TableCell>
+                <TableCell><span className="font-medium">{linha.nome}</span></TableCell>
+                <TableCell>{linha.tamanho ?? "—"}</TableCell>
                 <TableCell><Input inputMode="decimal" value={linha.quantidade} onChange={(e) => alterarLinha(linha.chave, "quantidade", e.target.value.replace(/[^\d.,]/g, ""))} /></TableCell>
                 <TableCell><Select value={linha.unidade} onValueChange={(valor) => alterarLinha(linha.chave, "unidade", valor)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{UNIDADES.map(([codigo, nome]) => <SelectItem key={codigo} value={codigo}>{codigo} · {nome}</SelectItem>)}</SelectContent></Select></TableCell>
                 <TableCell><Input inputMode="decimal" placeholder="0,00" value={linha.valorUnitario} onChange={(e) => alterarLinha(linha.chave, "valorUnitario", e.target.value.replace(/[^\d.,]/g, ""))} /></TableCell>
