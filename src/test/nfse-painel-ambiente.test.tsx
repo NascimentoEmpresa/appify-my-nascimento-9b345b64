@@ -34,6 +34,16 @@ afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; es
   estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.salvarPercentuais.mockReset(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("permite acompanhar várias notas em segundo plano sem apresentar fila como autorização", () => {
+    estado.solicitacoes = [{ id: "em-fila", ambiente: "homologacao", estado: "pendente", serie: 1041, numero_dps: 13,
+      atualizado_em: "2026-11-16T20:00:00Z", envio_iniciado_em: null, dados: { parametros: parametrosNfse() } } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    expect(screen.getByText("Na fila")).toBeInTheDocument();
+    expect(screen.getByText(/Você pode fechar esta janela e preparar outra nota/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Atualizar" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "PDF oficial" })).not.toBeInTheDocument();
+    expect(estado.enviar).not.toHaveBeenCalled();
+  });
   it("prevê e salva percentuais sem emitir, bloqueia envio durante edição e exige nova revisão fiscal", async () => {
     estado.habilitado = true;
     const atual = { ...nota, pis_total: 0, cofins_total: 0, pis_pct: 0, cofins_pct: 0, updated_at: "2026-11-16T15:00:00Z" };

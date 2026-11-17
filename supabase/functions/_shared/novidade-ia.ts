@@ -122,6 +122,32 @@ FORMATO — responda APENAS com este JSON, sem texto antes ou depois:
 - Se relevante = false, devolva titulo e descricao como "".`;
 
 /** O chamado, do jeito que a IA lê. Sem id, sem número, sem nome de gente. */
+/**
+ * De onde sai a rota do "Saiba mais →" (SIS-2026-0921). Desde então a
+ * posição do chamado (modulo_sistema) é a ROTA da tela escolhida na árvore
+ * Setor → telas da barra lateral ("/app/controladoria/lucratividade-contratos");
+ * chamados antigos guardam o código amplo do módulo ("controladoria").
+ *   · rota → conferir em app_menu.rota (ativo): primeiro a rota exata, depois
+ *     sem a query (?tab=...), para tela de abas;
+ *   · código → a busca de antes, app_modulo.codigo → 1ª tela do módulo;
+ *   · vazio/"outro"/endereço estranho → sem "Saiba mais".
+ */
+export type FonteSaibaMais =
+  | { tipo: "rota"; candidatas: string[] }
+  | { tipo: "modulo"; codigo: string }
+  | null;
+
+export function fonteSaibaMais(modulo: string | null | undefined): FonteSaibaMais {
+  const m = (modulo ?? "").trim();
+  if (!m || m === "outro") return null;
+  if (m.startsWith("/")) {
+    if (!/^\/app(\/|\?|#|$)/.test(m)) return null;
+    const base = m.split(/[?#]/)[0];
+    return { tipo: "rota", candidatas: base !== m ? [m, base] : [m] };
+  }
+  return { tipo: "modulo", codigo: m };
+}
+
 export function montarPrompt(c: ChamadoParaNovidade, prTitulo?: string | null): string {
   const linhas: string[] = [
     `Assunto: ${c.assunto}`,
@@ -150,7 +176,8 @@ export function montarPrompt(c: ChamadoParaNovidade, prTitulo?: string | null): 
  */
 export function limparVazamentos(texto: string, c: ChamadoParaNovidade): string {
   let t = texto;
-  if (c.numero) t = t.replaceAll(c.numero, "").replace(/\s{2,}/g, " ");
+  // split/join em vez de replaceAll: a lib do type-check (CI "tipos") é anterior ao ES2021.
+  if (c.numero) t = t.split(c.numero).join("").replace(/\s{2,}/g, " ");
   t = t.replace(/\bSIS-\d{4}-\d+\b/g, "").replace(/\s{2,}/g, " ");
   // Nome do solicitante, inteiro ou só o primeiro nome (a IA costuma abreviar).
   const nome = (c.solicitante_nome ?? "").trim();

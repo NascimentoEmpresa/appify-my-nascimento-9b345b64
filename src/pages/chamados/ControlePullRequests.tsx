@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, GitPullRequest, Loader2, Search, ShieldAlert } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, ExternalLink, GitPullRequest, Loader2, Search, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -12,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useDebounce } from "@/hooks/useDebounce";
 import { buscarTudoParaCsv, useControlePullRequests } from "@/hooks/useControlePullRequests";
 import {
-  FILTRO_CONTROLE_PR_PADRAO, csvControlePr, filtroVazio, fmtDataHoraBrasilia, linhasAlteradas, totalPaginas,
+  FILTRO_CONTROLE_PR_PADRAO, csvControlePr, filtroVazio, fmtDataHoraBrasilia, linhasAlteradas, totalPaginas, urlApiCommitsPr, urlCommitNaPr,
   type FiltroChamado, type FiltroControlePr, type PrControle,
 } from "@/lib/sistemas/controlePullRequests";
 
@@ -179,6 +180,7 @@ function Conteudo() {
 
 function Linha({ p }: { p: PrControle }) {
   const [semFoto, setSemFoto] = useState(false);
+  const [verCommits, setVerCommits] = useState(false);
   return (
     <TableRow>
       <TableCell className="pl-4">
@@ -205,7 +207,17 @@ function Linha({ p }: { p: PrControle }) {
             : <span className="text-muted-foreground">Sem chamado</span>}
         <div className="truncate text-xs text-muted-foreground" title={p.titulo}>{p.titulo}</div>
       </TableCell>
-      <TableCell><span className="rounded bg-muted px-2 py-1 font-medium">{fmtN(p.commits)}</span></TableCell>
+      <TableCell className="align-top">
+        <div className="flex items-center gap-1">
+          <span className="rounded bg-muted px-2 py-1 font-medium">{fmtN(p.commits)}</span>
+          {p.url && !!p.commits && (
+            <Button variant="ghost" size="icon" className="h-6 w-6" title="Ver commits" onClick={() => setVerCommits((v) => !v)}>
+              <ChevronDown className={`h-4 w-4 transition-transform ${verCommits ? "rotate-180" : ""}`} />
+            </Button>
+          )}
+        </div>
+        {verCommits && p.url && <CommitsDaPr urlPr={p.url} />}
+      </TableCell>
       <TableCell>
         {p.adicoes == null && p.remocoes == null ? "—" : (
           <>
@@ -218,5 +230,32 @@ function Linha({ p }: { p: PrControle }) {
       <TableCell><span className="rounded bg-muted px-2 py-1 font-medium">{fmtN(p.arquivos)}</span></TableCell>
       <TableCell className="whitespace-nowrap">{fmtDataHoraBrasilia(p.mergeado_em)}</TableCell>
     </TableRow>
+  );
+}
+
+type CommitGithub = { sha: string; commit: { committer: { date: string } } };
+
+function CommitsDaPr({ urlPr }: { urlPr: string }) {
+  const q = useQuery({
+    queryKey: ["github-commits-pr", urlPr],
+    staleTime: Infinity, // PR mergeada não ganha commit novo
+    queryFn: async () => {
+      const resp = await fetch(urlApiCommitsPr(urlPr), { headers: { Accept: "application/vnd.github+json" } });
+      if (!resp.ok) throw new Error(resp.status === 403 ? "Limite de consultas do GitHub atingido — tente em alguns minutos." : `GitHub respondeu ${resp.status}.`);
+      return (await resp.json()) as CommitGithub[];
+    },
+  });
+  if (q.isLoading) return <Loader2 className="mt-2 h-4 w-4 animate-spin text-muted-foreground" />;
+  if (q.error) return <div className="mt-2 max-w-[200px] text-xs text-destructive">{(q.error as Error).message}</div>;
+  return (
+    <div className="mt-2 space-y-0.5 text-xs">
+      <div className="text-muted-foreground">ID do commit - horário</div>
+      {q.data?.map((c) => (
+        <div key={c.sha} className="whitespace-nowrap">
+          <a href={urlCommitNaPr(urlPr, c.sha)} target="_blank" rel="noreferrer" className="font-mono text-primary hover:underline">{c.sha.slice(0, 7)}</a>
+          {" - "}{fmtDataHoraBrasilia(c.commit.committer.date)}
+        </div>
+      ))}
+    </div>
   );
 }

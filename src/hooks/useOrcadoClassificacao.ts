@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useClassificacoesOrcamentoAdmin, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
-import { useOrcamentoContratos, computarGruposContrato } from "@/hooks/useOrcamentoContratos";
+import { useOrcamentoContratos, computarGruposContrato, useExecutadoContratos } from "@/hooks/useOrcamentoContratos";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useLigacoesLicitacaoClassificacao } from "@/hooks/useMaloteLicitacaoClassificacaoLink";
@@ -115,7 +115,9 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
   // TODOS os contratos é o mesmo pra resolver 1 ou N classificações daquele
   // mês, então vale a pena guardar o resultado inteiro do mês na 1ª vez que
   // ele é pedido, em vez de recalcular a cada parcela que cai no mesmo mês.
-  const cacheGruposPorMes = useMemo(() => new Map<string, ReturnType<typeof computarGruposContrato>>(), [contratos, planilha, maloteIdPorCampo]);
+  // SIS-2026-0828: o orçado de contrato sai pelo executado (NFs do mês).
+  const { data: executado, isLoading: carregandoNfs } = useExecutadoContratos();
+  const cacheGruposPorMes = useMemo(() => new Map<string, ReturnType<typeof computarGruposContrato>>(), [contratos, planilha, maloteIdPorCampo, executado]);
 
   function resolver(classificacaoIdBruto: string | null | undefined, contratoId: string | null | undefined, anoMes: string): number | null {
     // SIS-2026-0374: mesma resolução origem→destino do useOrcadoClassificacao.
@@ -128,7 +130,7 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
       if (!contratoId) return null;
       let grupos = cacheGruposPorMes.get(anoMes);
       if (!grupos) {
-        grupos = computarGruposContrato(contratos, planilha, maloteIdPorCampo, anoMes);
+        grupos = computarGruposContrato(contratos, planilha, maloteIdPorCampo, anoMes, executado);
         cacheGruposPorMes.set(anoMes, grupos);
       }
       const grupo = grupos.find((g) => g.contrato.id === contratoId);
@@ -154,6 +156,7 @@ export function useOrcadoClassificacaoMultiMes(empresaId: string | null | undefi
       carregandoLigacoes ||
       carregandoContratos ||
       carregandoPlanilha ||
+      carregandoNfs ||
       carregandoLigacoesLicitacao ||
       carregandoLigacoesClassMalote,
   };

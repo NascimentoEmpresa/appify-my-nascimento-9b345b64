@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
+import type { RemuneracaoPosto } from "@/lib/licitacoes/quadroPostos";
 
 // `CONTRATO_QUADRO_POSTO` e as RPCs do quadro não estão no types.ts gerado
 // pelo Lovable — mesmo escape de useContratosERP.ts e useSupCatalogo.ts.
@@ -41,6 +42,32 @@ export interface LinhaQuadro {
   vagas_vivas: number;
   /** O posto existe na Planilha de Custo vigente do contrato? */
   na_planilha: boolean;
+  /** Proventos fora do convencional (SIS-2026-0884). Banco sem a mig: ausente. */
+  outros_proventos?: { descricao: string; valor: number }[] | null;
+}
+
+/**
+ * Remuneração de TODOS os postos vigentes da Planilha de Custo do contrato,
+ * numa chamada só (SIS-2026-0884, mig 20261117120000) — com 750 postos, uma
+ * RPC por linha seria inviável. Erro (banco sem a migration, sem permissão)
+ * vira lista vazia: o quadro continua funcionando, só sem o automático.
+ */
+export function useRemuneracaoDoContrato(contratoId: string | null) {
+  return useQuery({
+    queryKey: ["contrato_quadro_remuneracao", contratoId],
+    enabled: !!contratoId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<RemuneracaoPosto[]> => {
+      const { data, error } = await sb.rpc("lic_quadro_remuneracao_do_contrato", {
+        p_contrato_id: contratoId,
+      });
+      if (error) {
+        console.warn("[lic_quadro_remuneracao_do_contrato]", error.message);
+        return [];
+      }
+      return (data ?? []) as RemuneracaoPosto[];
+    },
+  });
 }
 
 /** O que a geração de vagas devolve, por posto. */

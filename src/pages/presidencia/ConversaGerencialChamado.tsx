@@ -21,6 +21,7 @@ import {
 } from "@/pages/chamados/types";
 import { rpcGerencial } from "@/pages/chamados/acoesGestaoApi";
 import type { ChamadoGerencial } from "@/lib/chamados/painelGerencial";
+import { useIndiceDasTelas } from "@/pages/chamados/impacto/catalogoTelas";
 
 interface EventoGerencial extends Evento { autor_nome: string | null }
 interface AnexoGerencial { id: string; evento_id: string | null; nome_arquivo: string; created_at: string }
@@ -33,6 +34,8 @@ export function ConversaGerencialChamado({
   podePedir: boolean;
   onSolicitarAcao: (c: ChamadoGerencial) => void;
 }) {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const id = chamado?.id ?? "";
   const { data: eventos = [], isLoading, error } = useQuery({
     queryKey: ["chamado-gerencial-conversa", id],

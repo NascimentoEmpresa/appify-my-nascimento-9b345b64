@@ -186,7 +186,22 @@ for (const p of resumo) {
   const abas = p.aba_origem.split(/\s+e\s+|,\s*/).map((s) => s.trim()).filter(Boolean);
   const parcelas = abas.flatMap((aba) => lerParcelas(wb, aba));
   if (!parcelas.length) { console.log(`  aviso: aba "${p.aba_origem}" não rendeu parcelas`); continue; }
-  // Regrava: a planilha é a fonte da verdade dessa lista.
+  // SIS-2026-0909 (16/11/2026): desde que a aba Parcelas passou a guardar a
+  // composição (amortização, juros, saldo…), pagamentos registrados e o
+  // vínculo com o contrato, regravar a lista apagaria esse trabalho — e a FK
+  // dos pagamentos agora BARRA o DELETE. Imóvel que já tem parcela mexida
+  // pela tela (updated_at preenchido pelo trigger, financiamento_id ou
+  // pagamento) NÃO é regravado: avisa e segue para o próximo.
+  const [mexidas, pagas] = await Promise.all([
+    api(`JUR_PATRIMONIO_PARCELAS?patrimonio_id=eq.${id}&or=(updated_at.not.is.null,financiamento_id.not.is.null)&select=id&limit=1`),
+    api(`JUR_PATRIMONIO_PARCELA_PAGAMENTOS?patrimonio_id=eq.${id}&select=id&limit=1`),
+  ]);
+  if ((mexidas ?? []).length || (pagas ?? []).length) {
+    console.log(`  aviso: ${p.localizacao.slice(0, 44)} tem parcelas com composição/pagamento cadastrados na tela — não regravado`);
+    continue;
+  }
+  // Regrava: a planilha é a fonte da verdade dessa lista (enquanto ninguém
+  // mexeu nela pela tela — ver acima).
   await api(`JUR_PATRIMONIO_PARCELAS?patrimonio_id=eq.${id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   for (let i = 0; i < parcelas.length; i += 500) {
     // O PostgREST exige que TODAS as linhas do lote tenham as mesmas chaves

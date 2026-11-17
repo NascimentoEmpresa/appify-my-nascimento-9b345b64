@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { custosVazios, type LigacoesRubrica, type LinhaFluxoCusto } from "@/pages/controladoria/faturamento/regras";
-import { detalheReceitasExtras, montarFechamento, receitaExtraConta, receitasExtrasPorMes, receitasForaDaColuna, receitasForaDaColunaComCatalogo, totalDoFechamento } from "@/pages/controladoria/fechamento/regras";
+import { catalogoDeEntradas, detalheReceitasExtras, montarFechamento, receitaExtraConta, receitasExtrasPorMes, receitasForaDaColuna, receitasForaDaColunaComCatalogo, totalDoFechamento } from "@/pages/controladoria/fechamento/regras";
 import { linkFluxoDoRecorte } from "@/pages/controladoria/fechamento/linkFluxo";
 
 // SIS-2026-0793: Receitas Extras = entradas dos administrativos; Resultado após Outras Receitas = Resultado Operacional + Receitas Extras.
@@ -132,17 +132,62 @@ describe("entradas fora da coluna com o catálogo", () => {
 
   it("o que tem entrada no período vem com valor e o resto do catálogo vem zerado, para poder adicionar", () => {
     const r = receitasForaDaColunaComCatalogo(linhas, JAN, lig, undefined, undefined, catalogo);
-    expect(r.map((i) => [i.classificacao, i.valor])).toEqual([["TRANSFERÊNCIA ENTRE CONTAS", 9000], ["CASHBACK", 0]]);
-    expect(r[1].classificacaoIds).toEqual(["c-cash"]);
+    // SIS-2026-0932: ALUGUEL (sem lançamento) agora aparece, marcado como já contando pelo padrão.
+    expect(r.map((i) => [i.classificacao, i.valor, i.contaSemMovimento])).toEqual([["TRANSFERÊNCIA ENTRE CONTAS", 9000, undefined], ["ALUGUEL", 0, "padrao"], ["CASHBACK", 0, undefined]]);
+    expect(r[2].classificacaoIds).toEqual(["c-cash"]);
   });
-  it("não repete a que já aparece com movimento, nem traz inativa, nem a que já conta", () => {
+  it("não repete a que já aparece com movimento, nem traz inativa, nem a que já está na coluna em cima", () => {
     const r = receitasForaDaColunaComCatalogo(linhas, JAN, lig, undefined, undefined, catalogo);
     expect(r.filter((i) => i.classificacao === "TRANSFERÊNCIA ENTRE CONTAS")).toHaveLength(1);
     expect(r.some((i) => i.classificacao === "RESGATE ANTIGO")).toBe(false);
-    expect(r.some((i) => i.classificacao === "ALUGUEL")).toBe(false);
+    const comAluguel = [...linhas, e({})];   // ALUGUEL com lançamento: está na coluna, não se repete embaixo
+    expect(receitasForaDaColunaComCatalogo(comAluguel, JAN, lig, undefined, undefined, catalogo).some((i) => i.classificacao === "ALUGUEL")).toBe(false);
   });
-  it("depois de adicionada (ajuste = conta), a classificação sai da lista de baixo", () => {
+  it("depois de adicionada (ajuste = conta), sem lançamento no período, continua na lista marcada como ajustada", () => {
     const r = receitasForaDaColunaComCatalogo(linhas, JAN, lig, new Map([["c-cash", true]]), undefined, catalogo);
-    expect(r.some((i) => i.classificacao === "CASHBACK")).toBe(false);
+    expect(r.find((i) => i.classificacao === "CASHBACK")?.contaSemMovimento).toBe("ajuste");
+  });
+});
+
+// SIS-2026-0932: a lista "Entradas fora desta coluna" usa o Fluxo de Caixa como referência (toda classificação de entrada), sem incluir nada sozinha.
+describe("catálogo das entradas pelo Fluxo de Caixa", () => {
+  const cadastro = [
+    { id: "c-cash", nome: "CASHBACK", ativo: true },
+    { id: "c-velha", nome: "RESGATE ANTIGO", ativo: false },
+  ];
+  // entradas do ano em qualquer contrato (não só os administrativos), como o filtro do Fluxo com Tipo = Entrada
+  const entradasDoFluxo = [
+    e({ contrato_id: "ct-cliente", classificacao_id: "c-acao", classificacao_nome: "AÇÃO TRABALHISTA" }),
+    e({ contrato_id: "ct-cliente", classificacao_id: "c-acao", classificacao_nome: "AÇÃO TRABALHISTA" }),
+    e({ classificacao_id: "c-cash", classificacao_nome: "CASHBACK" }),
+    e({ tipo: "saida", classificacao_id: "c-so-saida", classificacao_nome: "SÓ SAÍDA" }),
+    e({ classificacao_id: null, classificacao_nome: null }),
+  ];
+
+  it("traz toda classificação que aparece numa entrada do Fluxo, mais o cadastro ativo, sem repetir", () => {
+    const cat = catalogoDeEntradas(cadastro, entradasDoFluxo);
+    expect(cat.map((c) => c.nome).sort()).toEqual(["AÇÃO TRABALHISTA", "CASHBACK"]);
+  });
+  it("classificação só de saída, inativa sem lançamento e entrada sem classificação não entram", () => {
+    const nomes = catalogoDeEntradas(cadastro, entradasDoFluxo).map((c) => c.nome);
+    expect(nomes).not.toContain("SÓ SAÍDA");
+    expect(nomes).not.toContain("RESGATE ANTIGO");
+  });
+  it("classificação de entrada que só existe no Fluxo (fora do cadastro) pode ser adicionada, mas não conta sozinha", () => {
+    const cat = catalogoDeEntradas([], [e({ contrato_id: "ct-cliente", classificacao_id: "c-apl", classificacao_nome: "Aplicação Financeira" })]);
+    const fora = receitasForaDaColunaComCatalogo([], JAN, undefined, undefined, undefined, cat);
+    expect(fora.map((i) => [i.classificacao, i.classificacaoIds, i.valor])).toEqual([["Aplicação Financeira", ["c-apl"], 0]]);
+    expect(receitasExtrasPorMes([], undefined, undefined).size).toBe(0);
+  });
+  it("o mesmo nome com dois ids vira uma linha só, e adicionar pega os dois", () => {
+    const cat = catalogoDeEntradas([{ id: "c-tr1", nome: "TRANSFERÊNCIA ENTRE CONTAS", ativo: true }], [e({ classificacao_id: "c-tr2", classificacao_nome: "Transferência entre contas" })]);
+    const fora = receitasForaDaColunaComCatalogo([], JAN, undefined, undefined, undefined, cat);
+    expect(fora).toHaveLength(1);
+    expect(fora[0].classificacaoIds.sort()).toEqual(["c-tr1", "c-tr2"]);
+  });
+  it("estar na lista não muda a coluna: só o ajuste salvo traz a classificação", () => {
+    const linhas = [e({ classificacao_id: "c-apl", classificacao_nome: "APLICAÇÃO FINANCEIRA", valor: 500 })];
+    expect(receitasExtrasPorMes(linhas).get("2026-01") ?? 0).toBe(0);
+    expect(receitasExtrasPorMes(linhas, undefined, new Map([["c-apl", true]])).get("2026-01")).toBe(500);
   });
 });

@@ -371,6 +371,9 @@ export interface ItemDetalheClassificacao {
   // SIS-2026-0781: todos os ids que caem neste nome (duas classificações com o mesmo nome somam numa linha só) e os lançamentos, por data.
   classificacaoIds: string[];
   itens: LancamentoDoDetalhe[];
+  // SIS-2026-0932: só na lista "Entradas fora desta coluna" — classificação SEM lançamento no período que já conta como Receita Extra
+  // (pelo critério padrão ou por ajuste do Fechamento). Sem isto = não conta (a Controladoria pode adicionar).
+  contaSemMovimento?: "padrao" | "ajuste";
 }
 
 // Nome do grupo dos lançamentos sem classificação (o link para o Fluxo usa a opção "Sem classificação" do filtro).
@@ -533,14 +536,49 @@ export function receitasForaDaColunaComCatalogo(
   catalogo: { id: string; nome: string; ativo: boolean }[],
 ): ItemDetalheClassificacao[] {
   const comMovimento = receitasForaDaColuna(linhas, meses, ligacoes, ajustes, empresaId);
-  const ids = new Set(comMovimento.flatMap((i) => i.classificacaoIds));
-  const nomes = new Set(comMovimento.map((i) => i.classificacao.trim().toLowerCase()));
-  const semMovimento: ItemDetalheClassificacao[] = catalogo
-    .filter((c) => c.ativo && !!c.nome.trim() && !ids.has(c.id) && !nomes.has(c.nome.trim().toLowerCase())
-      && !receitaExtraConta({ tipo: "entrada", classificacao_id: c.id, classificacao_nome: c.nome }, ligacoes, ajustes))
-    .map((c) => ({ classificacaoId: c.id, classificacao: c.nome.trim(), valor: 0, lancamentos: 0, classificacaoIds: [c.id], itens: [] }))
-    .sort((a, b) => a.classificacao.localeCompare(b.classificacao, "pt-BR"));
+  // As que aparecem em cima (com lançamento, contando) ou já aqui com valor não se repetem.
+  const naTela = [...comMovimento, ...detalheReceitasExtras(linhas, meses, ligacoes, ajustes, empresaId)];
+  const ids = new Set(naTela.flatMap((i) => i.classificacaoIds));
+  const nomes = new Set(naTela.map((i) => i.classificacao.trim().toLowerCase()));
+  // SIS-2026-0932: sem lançamento no período, entram TODAS — também as que já contam (padrão ou ajuste), marcadas, para nenhuma classificação
+  // de entrada sumir da tela (antes ALUGUEL, CASHBACK… sem lançamento no mês não apareciam nem em cima nem aqui). Nada muda de valor.
+  // O mesmo nome com mais de um id (cadastros de origens diferentes) vira UMA linha; "Adicionar" grava o ajuste em todos os ids.
+  const porNome = new Map<string, ItemDetalheClassificacao>();
+  for (const c of catalogo) {
+    const nome = c.nome.trim();
+    if (!c.ativo || !nome || ids.has(c.id) || nomes.has(nome.toLowerCase())) continue;
+    const conta = receitaExtraConta({ tipo: "entrada", classificacao_id: c.id, classificacao_nome: c.nome }, ligacoes, ajustes);
+    const status: ItemDetalheClassificacao["contaSemMovimento"] = !conta ? undefined : ajustes?.get(c.id) === true ? "ajuste" : "padrao";
+    const chave = nome.toLowerCase();
+    const atual = porNome.get(chave);
+    if (atual) {
+      if (!atual.classificacaoIds.includes(c.id)) atual.classificacaoIds.push(c.id);
+      if (atual.contaSemMovimento !== status) atual.contaSemMovimento = undefined; // ids do mesmo nome divergem: deixa adicionar (grava em todos)
+    } else {
+      porNome.set(chave, { classificacaoId: c.id, classificacao: nome, valor: 0, lancamentos: 0, classificacaoIds: [c.id], itens: [], ...(status ? { contaSemMovimento: status } : {}) });
+    }
+  }
+  const semMovimento = [...porNome.values()].sort((a, b) => a.classificacao.localeCompare(b.classificacao, "pt-BR"));
   return [...comMovimento, ...semMovimento];
+}
+
+/**
+ * SIS-2026-0932: catálogo da lista "Entradas fora desta coluna" com o Fluxo de Caixa como referência. O filtro Classificação do Fluxo com
+ * Tipo = Entrada lista as classificações que aparecem nos lançamentos de entrada (de QUALQUER contrato, não só dos administrativos) —
+ * entram todas elas, mais as do cadastro ativo (as novas, ainda sem lançamento). É só a lista do que PODE ser adicionado: nada passa a
+ * contar sem a Controladoria adicionar (receitaExtraConta continua decidindo).
+ */
+export function catalogoDeEntradas(
+  cadastro: { id: string; nome: string; ativo: boolean }[],
+  entradasDoFluxo: Pick<LinhaFluxoCusto, "tipo" | "classificacao_id" | "classificacao_nome">[],
+): { id: string; nome: string; ativo: boolean }[] {
+  const porId = new Map<string, { id: string; nome: string; ativo: boolean }>();
+  for (const c of cadastro) if (c.ativo) porId.set(c.id, c);
+  for (const l of entradasDoFluxo) {
+    const nome = (l.classificacao_nome ?? "").trim();
+    if (l.tipo === "entrada" && l.classificacao_id && nome && !porId.has(l.classificacao_id)) porId.set(l.classificacao_id, { id: l.classificacao_id, nome, ativo: true });
+  }
+  return [...porId.values()];
 }
 
 /** IRPJ/CSLL lançados nos meses, por classificação (mesma seleção de tributosPorMes). */

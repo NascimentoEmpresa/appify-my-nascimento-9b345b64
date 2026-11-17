@@ -115,17 +115,21 @@ export function DialogComposicaoLucro({ aberto, meses, total, resultados, consum
               {linha("Resultado após Outras Receitas", (r) => r.resultadoAposOutrasReceitas, total.resultadoAposOutrasReceitas)}
               {linha("(−) Tributos sobre o Resultado", (r) => r.tributos, total.tributos, false, true)}
               {linha("(=) Resultado do Período", (r) => r.resultadoAntesRetiradas, total.resultadoAntesRetiradas, true)}
+              {linha("(−) Reserva de Investimento", (r) => r.reserva, total.reserva, false, true)}
+              {linha("(=) Lucro a Distribuir (Total a Distribuir aos sócios)", (r) => r.lucroDistribuir, total.lucroDistribuir, true)}
               {linha("(−) Empresa em Investimentos", (r) => r.consumoEmpresa.investimentos, total.consumoDetalhe.investimentos, false, true)}
               {linha("(−) Empresa em Obras Adm", (r) => r.consumoEmpresa.obras, total.consumoDetalhe.obras, false, true)}
               {linha("(−) Sem integrante (conta como Empresa)", (r) => r.consumoEmpresa.semIntegrante, total.consumoDetalhe.semIntegrante, false, true)}
-              {linha("(=) Lucro a Distribuir", (r) => r.lucroDistribuir, total.lucroDistribuir, true)}
+              {linha("(−) Retiradas antecipadas dos sócios", (r) => r.totalRetiradas, total.totalRetiradas, false, true)}
+              {linha("(=) Saldo final a retirar", (r) => r.saldoFinal, total.saldoFinal, true)}
             </TableBody>
           </Table>
         </div>
         <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
           <li><strong>Resultado após Outras Receitas</strong> e <strong>Tributos</strong> são os da aba “Resumo Mensal com Sócios” do Fechamento da Empresa. O Resultado do Período é antes das colunas dos sócios, de Investimentos e de Obras Adm
             (no Fechamento da Empresa elas já foram descontadas no Resultado Gerencial Líquido; aqui elas são as retiradas de cada sócio, por isso não se desconta duas vezes).</li>
-          <li><strong>Empresa em Investimentos / Obras Adm</strong>: saídas desses contratos em que o integrante do lançamento é “Empresa”. São gasto da empresa e saem do lucro <em>antes</em> da divisão entre os sócios.</li>
+          <li><strong>Reserva de Investimento</strong>: percentual do Resultado do Período que fica na empresa (campo no topo da tela, por competência). Sai antes da divisão; os percentuais dos sócios incidem só sobre o Lucro a Distribuir.</li>
+          <li><strong>Empresa em Investimentos / Obras Adm</strong>: saídas desses contratos em que o integrante do lançamento é “Empresa”. São gasto da empresa: não reduzem a base da divisão e entram no saldo final, depois das retiradas dos sócios.</li>
           <li><strong>Sem integrante</strong>: lançamento de Investimentos/Obras Adm sem integrante (ou com um colaborador que não é sócio). Conta como gasto da Empresa; corrija o integrante no Fluxo de Caixa para atribuir a um sócio.</li>
           <li>Mês negativo é abatido: o Lucro a Distribuir do mês pode ser negativo e o total do período soma tudo.</li>
           <li>A parte de cada sócio é o <strong>percentual × Lucro a Distribuir</strong>; do que ele recebe saem as retiradas antecipadas dele, e o que sobra é o saldo a retirar (complemento).</li>

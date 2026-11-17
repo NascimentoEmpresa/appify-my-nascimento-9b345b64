@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, X, Clock, CheckCircle2, Wallet, PieChart } from "lucide-react";
+import { ArrowLeft, X, Clock, CheckCircle2, Wallet, PieChart, PiggyBank } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useClassificacoesOrcamentoAdmin, usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
@@ -31,6 +31,7 @@ const MESES = [
 const KPI_TILE_ICONE: Record<string, string> = {
   sky: "text-sky-300 dark:text-sky-800",
   emerald: "text-emerald-300 dark:text-emerald-800",
+  red: "text-red-300 dark:text-red-800",
   slate: "text-slate-300 dark:text-slate-700",
   violet: "text-violet-300 dark:text-violet-800",
 };
@@ -229,6 +230,7 @@ export default function DetalheOrcamento() {
   }, [utilizadoLinhas, filtro.anoMes, filtro.contratoId, classificacaoIdEfetivo, filtroEmpresaId]);
 
   const utilizado = useMemo(() => itens.reduce((s, l) => s + (Number(l.valor) || 0), 0), [itens]);
+  const saldoDisponivel = orcado != null ? orcado - utilizado : null;
   const qtdAguardando = useMemo(() => itens.filter((l) => l.status === "aguardando_pagamento").length, [itens]);
   const qtdPaga = useMemo(() => itens.filter((l) => l.status === "despesa_paga").length, [itens]);
 
@@ -317,7 +319,7 @@ export default function DetalheOrcamento() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiTile label="Aguardando Pagamento" valor={String(qtdAguardando)} icon={<Clock />} cor="sky" />
         <KpiTile label="Despesa Paga" valor={String(qtdPaga)} icon={<CheckCircle2 />} cor="emerald" />
         <KpiTile label="Total Orçamento" valor={orcado != null ? fmtMoney(orcado) : "—"} icon={<Wallet />} cor="slate" />
@@ -327,6 +329,13 @@ export default function DetalheOrcamento() {
           icon={<PieChart />}
           cor="violet"
           extra={orcado != null && orcado > 0 ? <BarraUtilizado orcado={orcado} utilizado={utilizado} /> : undefined}
+        />
+        <KpiTile
+          label="Saldo disponível"
+          valor={saldoDisponivel != null ? fmtMoney(saldoDisponivel) : "—"}
+          icon={<PiggyBank />}
+          cor={saldoDisponivel != null && saldoDisponivel < 0 ? "red" : "emerald"}
+          valorClass={saldoDisponivel != null && saldoDisponivel < 0 ? "text-red-600 dark:text-red-400" : undefined}
         />
       </div>
 
