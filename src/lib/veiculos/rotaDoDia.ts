@@ -59,7 +59,10 @@ export interface ViagemDoDia {
  * "Houve abastecimento?": sem resposta → responder; Sim → nota; Não → nada.
  */
 export function faltandoPrestacao(
-  a: Pick<ViagemDoDia, "km_inicial" | "km_final" | "sem_abastecimento" | "houve_abastecimento">,
+  a: Pick<ViagemDoDia, "km_inicial" | "km_final" | "sem_abastecimento" | "houve_abastecimento"> & {
+    /** "Houve avaria?" respondida no modal da viagem (mig 20261117000600): vale quando o checklist de chegada não responde. */
+    avaria?: boolean | null; avaria_descricao?: string | null;
+  },
   chegada: Pick<ChecklistVeiculo, "avaria" | "avaria_descricao"> | null | undefined,
   temNotaCombustivel: boolean,
 ): string[] {
@@ -69,8 +72,12 @@ export function faltandoPrestacao(
   if (!temNotaCombustivel && a.houve_abastecimento !== false && !a.sem_abastecimento) {
     f.push(a.houve_abastecimento ? "Foto da nota do combustível" : "Responder se houve abastecimento");
   }
-  if (chegada?.avaria == null) f.push("Informar se há avaria");
-  else if (chegada.avaria && !(chegada.avaria_descricao ?? "").trim()) f.push("Descrição da avaria");
+  // 17/11/2026: vale a do checklist de chegada; sem ela, a resposta dada no modal da viagem.
+  const temChegada = chegada?.avaria != null;
+  const avaria = temChegada ? chegada!.avaria : a.avaria ?? null;
+  const desc = temChegada ? chegada!.avaria_descricao : a.avaria_descricao;
+  if (avaria == null) f.push("Informar se há avaria");
+  else if (avaria && !(desc ?? "").trim()) f.push("Descrição da avaria");
   return f;
 }
 

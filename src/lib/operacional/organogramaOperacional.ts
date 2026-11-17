@@ -26,6 +26,8 @@ export interface ContratoOrg {
   id: string;
   nome: string;
   status: string;
+  /** Código da empresa do grupo (distingue o mesmo cliente em duas empresas). */
+  empresa?: string | null;
   encarregado_id: number | null;
   supervisor_id: number | null;
   colaboradores: number;
@@ -46,7 +48,7 @@ export interface HistoricoOrg {
 export interface PainelOrg {
   contratos: ContratoOrg[];
   pessoas: PessoaOrg[];
-  papeis: { empregado_id: number; papel: "gerente" | "supervisor" }[];
+  papeis: { empregado_id: number; papel: "diretor" | "gerente" | "supervisor" }[];
   historico: HistoricoOrg[];
   pode_alterar: boolean;
 }
@@ -68,11 +70,19 @@ export interface RamoEncarregado { pessoa: PessoaOrg; contratos: ContratoOrg[] }
 export interface RamoSupervisor {
   /** null = a caixa "Sem supervisor". */
   pessoa: PessoaOrg | null;
+  /**
+   * 17/11/2026 (Pablo): "ao clicar nos supervisores vai abrir os contratos e,
+   * ao abrir o contrato, aparece no topo o ENCARREGADO DESSE CONTRATO". É a
+   * lista que a tela abre; `encarregados` fica para as contagens e ações.
+   */
+  contratos: ContratoOrg[];
   encarregados: RamoEncarregado[];
   /** Contratos deste supervisor ainda sem encarregado definido no organograma. */
   semEncarregado: ContratoOrg[];
 }
 export interface ArvoreOrg {
+  /** Topo: DIRETOR OPERACIONAL › GERENTE OPERACIONAL › SUPERVISORES › ENCARREGADOS. */
+  diretor: PessoaOrg | null;
   gerente: PessoaOrg | null;
   supervisores: RamoSupervisor[];
   semSupervisor: RamoSupervisor;
@@ -93,7 +103,7 @@ function agrupar(pessoa: PessoaOrg | null, contratos: ContratoOrg[], pessoas: Ma
   const encarregados = [...enc.entries()]
     .map(([id, cs]) => ({ pessoa: pessoas.get(id) ?? pessoaFantasma(id), contratos: cs.sort(porNome) }))
     .sort((a, b) => porNome(a.pessoa, b.pessoa));
-  return { pessoa, encarregados, semEncarregado: sem.sort(porNome) };
+  return { pessoa, contratos: [...contratos].sort(porNome), encarregados, semEncarregado: sem.sort(porNome) };
 }
 
 /**
@@ -103,9 +113,15 @@ function agrupar(pessoa: PessoaOrg | null, contratos: ContratoOrg[], pessoas: Ma
  */
 export function montarArvore(p: PainelOrg): ArvoreOrg {
   const pessoas = new Map(p.pessoas.map((x) => [x.id, x]));
+  const diretorId = p.papeis.find((x) => x.papel === "diretor")?.empregado_id ?? null;
   const gerenteId = p.papeis.find((x) => x.papel === "gerente")?.empregado_id ?? null;
   const supIds = new Set<number>(p.papeis.filter((x) => x.papel === "supervisor").map((x) => x.empregado_id));
   for (const c of p.contratos) if (c.supervisor_id != null) supIds.add(c.supervisor_id);
+  // Diretor e gerente ficam no topo; só ganham caixa de supervisão se tiverem
+  // contrato direto com eles (senão o contrato sumiria da tela).
+  for (const id of [diretorId, gerenteId]) {
+    if (id != null && !p.contratos.some((c) => c.supervisor_id === id)) supIds.delete(id);
+  }
 
   const porSup = new Map<number, ContratoOrg[]>();
   const semSup: ContratoOrg[] = [];
@@ -117,6 +133,7 @@ export function montarArvore(p: PainelOrg): ArvoreOrg {
     .map((id) => agrupar(pessoas.get(id) ?? pessoaFantasma(id), porSup.get(id) ?? [], pessoas))
     .sort((a, b) => porNome(a.pessoa!, b.pessoa!));
   return {
+    diretor: diretorId != null ? pessoas.get(diretorId) ?? pessoaFantasma(diretorId) : null,
     gerente: gerenteId != null ? pessoas.get(gerenteId) ?? pessoaFantasma(gerenteId) : null,
     supervisores,
     semSupervisor: agrupar(null, semSup, pessoas),
@@ -138,14 +155,17 @@ export function contratosDoSupervisor(contratos: ContratoOrg[], supervisorId: nu
 // ── Menu de contexto ──────────────────────────────────────────────────
 
 export type AlvoMenu =
+  | { tipo: "diretor"; pessoa: PessoaOrg | null }
   | { tipo: "gerente"; pessoa: PessoaOrg | null }
   | { tipo: "supervisor"; pessoa: PessoaOrg }
   | { tipo: "encarregado"; pessoa: PessoaOrg; supervisorId: number | null }
   | { tipo: "contrato"; contrato: ContratoOrg }
-  | { tipo: "colaborador"; pessoa: PessoaOrg; contrato: ContratoOrg };
+  | { tipo: "colaborador"; pessoa: PessoaOrg; contrato: ContratoOrg }
+  /** O encarregado no topo do contrato aberto. */
+  | { tipo: "encarregado_contrato"; pessoa: PessoaOrg; contrato: ContratoOrg };
 
 export type AcaoMenu =
-  | "definir_gerente" | "incluir_supervisor" | "remover_supervisor"
+  | "definir_diretor" | "definir_gerente" | "incluir_supervisor" | "remover_supervisor"
   | "mover_contrato_encarregado" | "mover_contrato_supervisor"
   | "definir_encarregado" | "trocar_supervisor" | "remover_encarregado" | "remover_supervisor_contrato"
   | "trocar_supervisor_encarregado" | "tirar_encarregado_de_todos"
@@ -155,6 +175,7 @@ export type AcaoMenu =
 export function acoesDoMenu(alvo: AlvoMenu, podeAlterar: boolean): AcaoMenu[] {
   if (!podeAlterar) return alvo.tipo === "contrato" ? ["historico_contrato"] : [];
   switch (alvo.tipo) {
+    case "diretor": return ["definir_diretor"];
     case "gerente": return ["definir_gerente", "incluir_supervisor"];
     case "supervisor": return ["incluir_supervisor", "remover_supervisor"];
     case "encarregado": return ["trocar_supervisor_encarregado", "tirar_encarregado_de_todos"];
@@ -166,6 +187,7 @@ export function acoesDoMenu(alvo: AlvoMenu, podeAlterar: boolean): AcaoMenu[] {
       return base;
     }
     case "colaborador": return ["tornar_encarregado"];
+    case "encarregado_contrato": return ["definir_encarregado", "remover_encarregado", "trocar_supervisor_encarregado"];
   }
 }
 

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Star, type LucideIcon } from "lucide-react";
 import { prazoVencido, situacaoDesenvolvimento } from "@/lib/chamados/prazoDesenvolvimento";
+import { ehTela, indiceDasTelas, rotuloModulo } from "@/lib/chamados/arvoreModulos";
 
 // ---- Opções (options de select / checkbox) --------------------------
 export const CATEGORIAS = [
@@ -107,7 +108,7 @@ export interface Chamado {
   modulo_sistema_outro: string | null;
   ambiente: string;
   afeta_usuarios: number | null;
-  /** Alcance informado na abertura (mig 20261115001000): setores e módulos (value de MODULOS_ERP). */
+  /** Alcance informado na abertura (mig 20261115001000): setores e módulos (rota da tela — SIS-2026-0921 — ou value de MODULOS_ERP nos antigos). */
   setores_impactados?: string[] | null;
   modulos_impactados?: string[] | null;
   observacoes_solicitante: string | null;
@@ -382,11 +383,18 @@ export const fmtDataHora = (s?: string | null) => {
 export const iniciais = (nome?: string | null) =>
   (nome ?? "?").trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";
 
-/** Label do módulo/sistema (usa o texto livre quando "outro"). */
+/**
+ * Label do módulo/sistema (usa o texto livre quando "outro"). Desde o
+ * SIS-2026-0921 a posição pode ser uma tela da barra lateral (rota) — vira
+ * "Setor › Tela" pelo índice registrado em lib/chamados/arvoreModulos.ts;
+ * valor amplo antigo continua vindo de MODULOS_ERP.
+ */
 export const moduloLabel = (c: Pick<Chamado, "modulo_sistema" | "modulo_sistema_outro">) =>
   c.modulo_sistema === "outro"
     ? (c.modulo_sistema_outro || "Outro")
-    : labelDe(MODULOS_ERP, c.modulo_sistema);
+    : ehTela(c.modulo_sistema)
+      ? rotuloModulo(c.modulo_sistema as string, indiceDasTelas())
+      : labelDe(MODULOS_ERP, c.modulo_sistema);
 
 // ---- Componentes visuais compartilhados -----------------------------
 export function StatCard({

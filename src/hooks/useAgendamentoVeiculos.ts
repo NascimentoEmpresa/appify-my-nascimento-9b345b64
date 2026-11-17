@@ -523,6 +523,9 @@ export interface Viagem {
   km_sugerido?: { km: number; numero: number; condutor: string | null; em: string | null } | null;
   /** "Houve abastecimento?": true/false; null = sem resposta. Nota anexada vale Sim. */
   houve_abastecimento?: boolean | null;
+  /** "Houve avaria?" (mig 20261117000600): a do checklist de chegada; sem ela, a dada no modal. null = sem resposta. */
+  avaria?: boolean | null;
+  avaria_descricao?: string | null;
   /** false = viagem anterior a 10/11/2026 (prestação/KM obrigatório não cobrados). */
   prestacao_exigida?: boolean;
   /** O que falta para concluir (mesma régua de faltandoPrestacao). */
@@ -751,6 +754,26 @@ export function useRegistrarAbastecimento() {
 // =====================================================================
 
 /** Responde "Houve abastecimento?". Sim → a nota passa a ser cobrada; Não com nota anexada o banco recusa. */
+/**
+ * "Houve avaria?" no modal da viagem (17/11/2026, mig 20261117000600). Antes
+ * a avaria só existia no checklist de chegada: quem não o fez ficava sem onde
+ * responder e a viagem não concluía. Sim exige a descrição (o banco cobra).
+ */
+export function useResponderAvaria() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; avaria: boolean; descricao?: string | null }) => {
+      const { error } = await sb.rpc("cs_veiculo_avaria_responder", { p_agendamento: v.id, p_avaria: v.avaria, p_descricao: v.descricao ?? null });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => {
+      invalidar(v.id);
+      toast.success(v.avaria ? "Avaria registrada." : "Registrado: não houve avaria.");
+    },
+    onError: (e: unknown) => toast.error(mensagemDeErro(e)),
+  });
+}
+
 export function useResponderAbastecimento() {
   const invalidar = useInvalidarViagem();
   return useMutation({

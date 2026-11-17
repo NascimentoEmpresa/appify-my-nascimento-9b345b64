@@ -39,3 +39,39 @@ export function posicaoNaLista(lista: string[], id: string | undefined): Posicao
     proximo: i < lista.length - 1 ? lista[i + 1] : null,
   };
 }
+
+// 16/11/2026, Pablo ("adiciona esses botões no painel do desenvolvedor, pra
+// facilitar a visualização dos chamados"): o Painel do Desenvolvedor, a Fila
+// por prioridade e o Painel de Distribuição passam a levar ?lista= com a
+// ordem que estão mostrando (filtros e ordenação inclusos). Quem chega ao
+// chamado SEM lista (link direto, notificação, chat) cai na fila do
+// responsável do chamado — a mesma ordem do "Nº na fila" do painel.
+
+export interface ItemFila {
+  id: string;
+  status: string;
+  responsavel_id: string | null;
+  posicao_dev: number | null;
+  created_at: string;
+}
+
+/**
+ * Ordem padrão, sem lista de origem: os chamados ATIVOS do mesmo responsável,
+ * pela posição na fila dele (posicao_dev; empate/sem posição → mais antigo
+ * primeiro). Mesmo critério de posicoesFilaDev em pages/chamados/types.tsx.
+ * `ativo` vem de fora para esta lógica não depender da camada de tela.
+ */
+export function ordemFilaResponsavel(
+  itens: ItemFila[],
+  responsavelId: string | null | undefined,
+  ativo: (status: string) => boolean,
+): string[] {
+  if (!responsavelId) return [];
+  return itens
+    .filter((c) => c.responsavel_id === responsavelId && ativo(c.status))
+    .sort((a, b) =>
+      (a.posicao_dev ?? Number.MAX_SAFE_INTEGER) - (b.posicao_dev ?? Number.MAX_SAFE_INTEGER)
+      || +new Date(a.created_at) - +new Date(b.created_at))
+    .map((c) => c.id)
+    .slice(0, MAX_LISTA);
+}

@@ -102,6 +102,7 @@ import { Award, CalendarDays, FolderTree, PenLine, QrCode, Users } from "lucide-
 import { CreditCard, ListTree } from "lucide-react";
 import { Network, Cpu } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
+import { montarArvoreModulos, registrarArvoreModulos } from "@/lib/chamados/arvoreModulos";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
@@ -326,6 +327,8 @@ const controladoriaOrcModule: ModuleDef = {
         // SIS-2026-0872: precisa existir AQUI e em app_menu (mig 20261114220000). Nasce sem ninguém liberado.
         { label: "Fechamento dos Sócios", to: "/app/controladoria/fechamento-socios", icon: HandCoins, badge: "Novo" },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
+        // SIS-2026-0908: precisa existir AQUI e em app_menu (mig 20261117160000). Nasce sem ninguém liberado.
+        { label: "Conciliação de Estoque", to: "/app/controladoria/conciliacao-estoque", icon: TrendingUp, badge: "Novo" },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
         // SIS-2026-0807: precisa existir AQUI e em app_menu (mig 20261105001000).
@@ -487,6 +490,8 @@ const financeiroModule: ModuleDef = {
         // reexposto só no Gerenciamento de Acesso (dc0d7389) — a tela
         // continuou viva e acessível só por URL. Volta aqui, na rota atual.
         { label: "Conta Garantida", to: "/app/financeiro/conta-garantida", icon: ShieldCheck },
+        // SIS-2026-0922: repasse, despesas do Malote, reservas e projeção da OSC Canaã (escola). Menu financeiro-osc-canaa.
+        { label: "OSC Canaã — Gestão da Escola", to: "/app/financeiro/osc-canaa", icon: GraduationCap },
       ],
     },
     {
@@ -1483,6 +1488,7 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
         { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
+        { label: "Exames Toxicológicos", to: "/app/sst/exames-toxicologicos", icon: FlaskConical },
       ],
     },
   ],
@@ -1630,6 +1636,36 @@ export const NAV_MODULOS: ModuleDef[] = NAV_MODULOS_ORIGEM;
 export type { ModuleDef as NavModuleDef, NavItem as NavItemDef };
 
 /**
+ * Itens FIXOS da barra (fora dos módulos): Início, Novidades e Aguardando
+ * Aprovação no topo; Configurações do ERP no rodapé. A Sidebar desenha estes
+ * itens a partir daqui (rota e nome), e o chamado (SIS-2026-0921, módulos
+ * impactados em Setor → telas) usa a mesma lista — para a árvore ser
+ * "exatamente como é a barra lateral". Item fixo novo: entre aqui e no JSX.
+ */
+export const NAV_FIXOS = {
+  inicio: { label: "Início", to: "/app" },
+  novidades: { label: "Novidades do Sistema", to: "/app/novidades" },
+  aprovacoes: { label: "Aguardando Aprovação", to: "/app/aprovacoes/inbox" },
+  configuracoes: { label: "Configurações do ERP", to: "/app/administracao" },
+} as const;
+
+/**
+ * Os módulos da barra com os itens fixos como dois "setores" a mais, na
+ * posição em que aparecem (topo e rodapé). Usado pela árvore do chamado.
+ */
+export function modulosComFixos<M extends ModuleDef>(modulos: M[]): ModuleDef[] {
+  const fixo = (id: string, label: string, itens: { label: string; to: string }[], icon: LucideIcon = Home): ModuleDef => ({
+    id, label, description: label, icon, basePath: "/app", status: "active",
+    groups: [{ label, items: itens.map((i) => ({ label: i.label, to: i.to, icon: Home })) }],
+  });
+  return [
+    fixo("fixos-topo", "Início e atalhos", [NAV_FIXOS.inicio, NAV_FIXOS.novidades, NAV_FIXOS.aprovacoes]),
+    ...modulos,
+    fixo("fixos-rodape", NAV_FIXOS.configuracoes.label, [{ label: "Administração", to: NAV_FIXOS.configuracoes.to }], Settings),
+  ];
+}
+
+/**
  * Ícone de cada módulo NA BARRA LATERAL (06/11/2026, pedido do Pablo: "ícones
  * empresariais bonitos em cada módulo"). O modelo 2 do Iury (SIS-2026-0772)
  * tinha tirado o ícone da barra expandida; ele volta, num quadradinho.
@@ -1668,7 +1704,8 @@ const ICONE_DO_MODULO: Record<string, LucideIcon> = {
   organograma: Network,
   "plano-acoes": Target,
 };
-const iconeDoModulo = (mod: ModuleDef): LucideIcon => ICONE_DO_MODULO[mod.id] ?? mod.icon;
+/** Exportado para a árvore Setor → telas dos chamados (SIS-2026-0921) usar o mesmo ícone da barra. */
+export const iconeDoModulo = (mod: ModuleDef): LucideIcon => ICONE_DO_MODULO[mod.id] ?? mod.icon;
 
 /** Quadradinho do ícone de um item de primeiro nível. `on`: "ativo" (rota
  *  atual, laranja cheio), "aberto" (só o painel aberto nele) ou nada. */
@@ -1713,6 +1750,10 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   // Organização salva (ou o padrão). Entradas originais seguem a permissão
   // da rota; cópias carregam um menuCodigo independente (SIS-2026-0837).
   const allModules = useMenuLateral<NavItem, ModuleDef>(NAV_MODULOS);
+  // SIS-2026-0921: rótulos "Setor › Tela" dos chamados (moduloLabel e afins,
+  // fora de componente) seguem a barra de agora — inclusive a organização
+  // salva, que chega depois do catálogo.
+  useEffect(() => { registrarArvoreModulos(montarArvoreModulos(modulosComFixos(allModules))); }, [allModules]);
 
   // Sidebar filtra itens com base nos menus acessíveis do usuário (perfil de
   // acesso, ver list_accessible_menus). Cargo/role não concede bypass. Plano de
@@ -1930,7 +1971,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
       {/* Início global */}
       <div className="relative z-10 px-2 pt-3">
         <NavLink
-          to="/app"
+          to={NAV_FIXOS.inicio.to}
           end
           className={({ isActive }) =>
             cn(
@@ -1946,7 +1987,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             <>
               {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
               <Tile icon={Home} on={isActive && "ativo"} />
-              {!collapsed && <span>Início</span>}
+              {!collapsed && <span>{NAV_FIXOS.inicio.label}</span>}
             </>
           )}
         </NavLink>
@@ -1955,7 +1996,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             ERP, não sobre um módulo. A rota não está em app_menu, então é
             visível para todo mundo (publicar é que depende do flag). */}
         <NavLink
-          to="/app/novidades"
+          to={NAV_FIXOS.novidades.to}
           className={({ isActive }) =>
             cn(
               "sb-item mt-0.5 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
@@ -1965,13 +2006,13 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
               collapsed && "justify-center px-2",
             )
           }
-          title={collapsed ? "Novidades do Sistema" : undefined}
+          title={collapsed ? NAV_FIXOS.novidades.label : undefined}
         >
           {({ isActive }) => (
             <>
               {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
               <Tile icon={Megaphone} on={isActive && "ativo"} />
-              {!collapsed && <span className="flex-1">Novidades do Sistema</span>}
+              {!collapsed && <span className="flex-1">{NAV_FIXOS.novidades.label}</span>}
               {novidadesNaoLidas > 0 && (
                 collapsed
                   ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-accent" />
@@ -1988,7 +2029,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
 
         {temAlcada && (
           <NavLink
-            to="/app/aprovacoes/inbox"
+            to={NAV_FIXOS.aprovacoes.to}
             className={({ isActive }) =>
               cn(
                 "sb-item mt-0.5 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
@@ -2005,7 +2046,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
                 <Tile icon={Inbox} on={isActive && "ativo"} />
                 {!collapsed && (
                   <>
-                    <span className="flex-1">Aguardando Aprovação</span>
+                    <span className="flex-1">{NAV_FIXOS.aprovacoes.label}</span>
                     {pendentes > 0 && (
                       <span className="animate-pop rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
                         {pendentes}
@@ -2075,9 +2116,9 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           // encarregados cai direto na tela enxuta, que é TUDO o que ele vê
           // em Configurações. Quem enxerga a Administração segue para ela.
           // 11/11/2026: idem para quem só tem "PODE CRIAR LOGIN (Encarregados)" (mig 20261111260000).
-          to={canSee("/app/administracao") ? "/app/administracao"
+          to={canSee(NAV_FIXOS.configuracoes.to) ? NAV_FIXOS.configuracoes.to
             : canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados"
-            : canSee("/app/logins-encarregados") ? "/app/logins-encarregados" : "/app/administracao"}
+            : canSee("/app/logins-encarregados") ? "/app/logins-encarregados" : NAV_FIXOS.configuracoes.to}
           className={({ isActive }) =>
             cn(
               "sb-item flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-semibold",
@@ -2092,7 +2133,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             <>
               {isActive && <span className="sb-bar absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent" />}
               <Tile icon={Settings} on={isActive && "ativo"} />
-              {!collapsed && <span>Configurações do ERP</span>}
+              {!collapsed && <span>{NAV_FIXOS.configuracoes.label}</span>}
             </>
           )}
         </NavLink>
