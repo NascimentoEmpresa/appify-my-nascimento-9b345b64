@@ -2,13 +2,11 @@ import { useMemo, useState } from "react";
 import { Crosshair, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { POSICAO_OUTRO, trocarPosicao } from "@/lib/chamados/impactoSistemico";
-import { MODULOS_ERP } from "../types";
 import { opcoesSetoresImpactados } from "../impactados";
-import { ModulosImpactadosSelect } from "./ModulosImpactadosSelect";
+import { ModulosImpactadosSelect, PosicaoModuloSelect } from "./ModulosImpactadosSelect";
 
 // =====================================================================
 // FORMULÁRIO DE IMPACTO SISTÊMICO (SIS-2026-0910) — Abrir Novo Chamado.
@@ -83,12 +81,8 @@ export function ImpactoSistemicoCampos({
           <Crosshair className="h-3.5 w-3.5 text-primary" />
           Posição do novo módulo ou módulo diretamente ajustado {obrigatorio}
         </Label>
-        <Select value={posicao} onValueChange={mudarPosicao}>
-          <SelectTrigger className="bg-background"><SelectValue placeholder="Selecionar posição do módulo…" /></SelectTrigger>
-          <SelectContent>
-            {MODULOS_ERP.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        {/* SIS-2026-0921: mesma árvore Setor → telas da barra lateral (uma tela, ou "Outro"). */}
+        <PosicaoModuloSelect value={posicao} onChange={mudarPosicao} />
         {posicao === POSICAO_OUTRO && (
           <Input className="mt-2 bg-background" placeholder="Qual sistema?" value={posicaoOutro} onChange={(e) => onPosicaoOutro(e.target.value)} />
         )}

@@ -24,6 +24,8 @@ import { atinge, listaImpactados, rotuloModuloImpactado } from "./impactados";
 import { ImpactoSistemicoPainel } from "./impacto/ImpactoSistemicoPainel";
 import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
 import { abrangencia } from "@/lib/chamados/impactoSistemico";
+import { atingeModulo, PREFIXO_FILTRO_SETOR, setorDoModulo } from "@/lib/chamados/arvoreModulos";
+import { useArvoreModulos } from "./impacto/catalogoTelas";
 import {
   ADERENCIA_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
   analiseQualidade, avaliarChamado, calcularKpis, entraNoMonitoramento, leituraControladoria, rankingSolicitantes, resumoTemas,
@@ -116,6 +118,8 @@ export default function MonitoramentoChamados() {
   const aplicarTema = (tema: string) => { setRascunho((r) => ({ ...r, tema })); setF((x) => ({ ...x, tema })); setPagina(1); };
 
   const [pagina, setPagina] = useState(1);
+  // SIS-2026-0921: setores/telas da barra lateral, para rótulo e filtro por setor.
+  const { indice: indiceTelas } = useArvoreModulos();
   const [detalhe, setDetalhe] = useState<{ id: string; foco: Foco } | null>(null);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
@@ -151,26 +155,35 @@ export default function MonitoramentoChamados() {
       (c.setores_impactados ?? []).forEach((s) => setoresImp.add(s));
       (c.modulos_impactados ?? []).forEach((m) => modulosImp.add(m));
     }
+    // SIS-2026-0921: além de cada tela, o setor inteiro ("Controladoria ·
+    // todas as telas") — valor setor:<id>, resolvido em atingeModulo.
+    const setoresErp = new Map<string, string>();
+    modulosImp.forEach((m) => {
+      const t = setorDoModulo(m, indiceTelas);
+      if (t) setoresErp.set(`${PREFIXO_FILTRO_SETOR}${t.setorId}`, `${t.setor} · todas as telas`);
+    });
     return {
       setoresImpactados: [...setoresImp].sort((a, b) => a.localeCompare(b, "pt-BR")).map((s) => ({ value: s, label: s })),
-      modulosImpactados: [...modulosImp].map((m) => ({ value: m, label: rotuloModuloImpactado(m) }))
-        .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
+      modulosImpactados: [
+        ...[...setoresErp.entries()].map(([value, label]) => ({ value, label })),
+        ...[...modulosImp].map((m) => ({ value: m, label: rotuloModuloImpactado(m) })),
+      ].sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       solicitantes: [...solic.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       setores: [...setores].sort((a, b) => a.localeCompare(b, "pt-BR")),
       modulos: [...modulos.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
     };
-  }, [todas]);
+  }, [todas, indiceTelas]);
 
   const filtradas = useMemo(() => todas.filter(({ c, a }) =>
     (f.solic === TODOS || c.solicitante_id === f.solic)
     && (f.setor === TODOS || (c.setor?.trim() ?? "") === f.setor)
     && (f.modulo === TODOS || c.modulo_sistema === f.modulo)
     && atinge(c.setores_impactados, f.setorImpactado, TODOS)
-    && atinge(c.modulos_impactados, f.moduloImpactado, TODOS)
+    && atingeModulo(c.modulos_impactados, f.moduloImpactado, TODOS, indiceTelas)
     && (f.tema === TODOS || a.tema === f.tema)
     && (f.prioridade === TODOS || c.prioridade === f.prioridade)
     && (f.status === TODOS || c.status === f.status),
-  ), [todas, f]);
+  ), [todas, f, indiceTelas]);
 
   useEffect(() => { setSelecionados(new Set()); }, [filtradas]);
 

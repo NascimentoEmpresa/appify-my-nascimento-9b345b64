@@ -16,9 +16,9 @@
 //   · SETORES IMPACTADOS — setores cujos processos/informações mudam
 //     (CHAMADO_SISTEMA.setores_impactados).
 //
-// Os módulos são TEXTO (hoje o `value` de MODULOS_ERP). O SIS-2026-0921 vai
-// trocar a seleção por setor → telas do menu lateral (códigos de app_menu):
-// nada aqui supõe o catálogo — o rótulo vem de fora (`rotulo`) e valor
+// Os módulos são TEXTO: o `value` de MODULOS_ERP nos chamados antigos e, desde
+// o SIS-2026-0921, a ROTA da tela escolhida em Setor → telas da barra lateral
+// (lib/chamados/arvoreModulos.ts). Nada aqui supõe o catálogo — o rótulo vem de fora (`rotulo`) e valor
 // desconhecido aparece como está, então valores novos e antigos convivem.
 //
 // As análises (Monitoramento de Chamados) contam só chamados que trazem o

@@ -37,6 +37,7 @@ import {
   CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
 } from "./types";
 import { listaImpactados, rotuloModuloImpactado } from "./impactados";
+import { PosicaoModuloSelect } from "./impacto/ModulosImpactadosSelect";
 import { separarModulos } from "@/lib/chamados/impactoSistemico";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { ParecerIaChamado } from "./ParecerIaChamado";
@@ -535,12 +536,8 @@ export default function CoordenarChamado() {
         <div className="grid gap-3 border-b border-border px-5 py-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <div className="space-y-1">
             <p className="text-xs font-medium" title="Posição do novo módulo ou módulo diretamente ajustado">Módulo ajustado (posição)</p>
-            <Select value={modulo} onValueChange={setModulo} disabled={!canCoordenar}>
-              <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                {MODULOS_ERP.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            {/* SIS-2026-0921: mesma árvore Setor → telas da abertura. */}
+            <PosicaoModuloSelect value={modulo} onChange={setModulo} disabled={!canCoordenar} className="text-xs" />
           </div>
           <div className="space-y-1">
             <p className="text-xs font-medium">Categoria</p>

@@ -1,8 +1,10 @@
 import { useMemo } from "react";
-import { Building2, ClipboardCheck, Crosshair, Layers, Network } from "lucide-react";
+import { Building2, ClipboardCheck, Crosshair, FolderTree, Layers, Network } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { analisarImpacto, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
-import { rotuloModuloImpactado } from "../impactados";
+import { analisarImpacto, incluirPosicao, normalizarLista, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
+import { contarPorSetor } from "@/lib/chamados/arvoreModulos";
+import { rotuloModuloImpactado, rotuloModuloLegado } from "../impactados";
+import { useArvoreModulos } from "./catalogoTelas";
 import { cn } from "@/lib/utils";
 
 // =====================================================================
@@ -14,6 +16,12 @@ import { cn } from "@/lib/utils";
 // por chamado) e as áreas que vão precisar homologar (setores com chamados
 // ainda não encerrados). Clicar num módulo/setor aplica o filtro de
 // "impactado" da tela. As contas moram em lib/chamados/impactoSistemico.ts.
+//
+// SIS-2026-0921: os módulos agora são telas da barra lateral ("Controladoria ›
+// Lucratividade de Contratos"); entra a coluna "Setores do ERP mais
+// impactados" (cada chamado conta uma vez por setor do menu em que marcou
+// tela) — clicar filtra o setor inteiro. Valores amplos de chamados antigos
+// aparecem como o próprio setor, com o rótulo de antes.
 // =====================================================================
 
 const LIMITE = 8;
@@ -62,6 +70,18 @@ export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSet
   setorAtivo: string | null;
 }) {
   const a = useMemo(() => analisarImpacto(chamados), [chamados]);
+  const { indice } = useArvoreModulos();
+  const porSetorErp = useMemo(() => {
+    // Mesma base do analisarImpacto: só chamado com impacto informado, posição inclusa.
+    const listas = chamados
+      .filter((c) => normalizarLista(c.modulos_impactados).length && normalizarLista(c.setores_impactados).length)
+      .map((c) => incluirPosicao(c.modulos_impactados, c.modulo_sistema));
+    const contagem = contarPorSetor(listas, indice, rotuloModuloLegado);
+    return {
+      itens: contagem.map((c): ContagemImpacto => ({ valor: c.valor, qtd: c.qtd, comoPosicao: 0, emAberto: 0 })),
+      rotulos: new Map(contagem.map((c) => [c.valor, c.rotulo])),
+    };
+  }, [chamados, indice]);
   const maxFaixa = Math.max(1, ...a.faixas.map((f) => f.qtd));
 
   return (
@@ -74,8 +94,11 @@ export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSet
         </p>
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-        <Barras titulo="Módulos com mais alterações" icone={Layers} itens={a.modulos} rotulo={rotuloModuloImpactado}
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+        <Barras titulo="Setores do ERP mais impactados" icone={FolderTree} itens={porSetorErp.itens}
+          rotulo={(v) => porSetorErp.rotulos.get(v) ?? rotuloModuloImpactado(v)}
+          onClicar={onFiltrarModulo} ativo={moduloAtivo} />
+        <Barras titulo="Telas com mais alterações" icone={Layers} itens={a.modulos} rotulo={rotuloModuloImpactado}
           onClicar={onFiltrarModulo} ativo={moduloAtivo} mostrarPosicao />
         <Barras titulo="Setores mais impactados" icone={Building2} itens={a.setores} rotulo={(v) => v}
           onClicar={onFiltrarSetor} ativo={setorAtivo} />
