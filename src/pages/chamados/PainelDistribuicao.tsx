@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import { AvisoPendenciasGestao } from "./ReaberturaTransferenciaChamado";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
 import { aguardandoGestorSistemas, desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
@@ -368,6 +369,9 @@ export default function PainelDistribuicao() {
   );
   const de = filtrados.length === 0 ? 0 : (paginaAtual - 1) * porPagina + 1;
   const ate = Math.min(paginaAtual * porPagina, filtrados.length);
+  // Setas do chamado (16/11/2026): "Ver detalhe" leva a ordem da aba/filtros
+  // atuais, inteira (não só a página) — ver src/lib/chamados/navegacaoLista.ts.
+  const idsFiltrados = useMemo(() => filtrados.map((c) => c.id), [filtrados]);
 
   const sensores = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   /**
@@ -698,7 +702,7 @@ export default function PainelDistribuicao() {
                               <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
                                 <UserCog className="mr-2 h-4 w-4" /> Coordenar / atribuir
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
+                              <DropdownMenuItem onClick={() => nav(hrefNaLista(c.id, idsFiltrados))}>
                                 <Eye className="mr-2 h-4 w-4" /> Ver detalhe
                               </DropdownMenuItem>
                               {podeReabrirChamado(c, { canCoordenar, canAprovar, canDev, userId: user?.id }) && (
