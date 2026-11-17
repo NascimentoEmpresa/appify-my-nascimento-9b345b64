@@ -86,12 +86,48 @@ export function montarArvoreModulos(modulos: readonly ModuloMenu[]): SetorArvore
   return saida;
 }
 
-/** Rota → tela/setor. Tela que aparece em mais de um setor fica com o primeiro. */
+/**
+ * Valor amplo antigo (MODULOS_ERP) → id do setor da barra lateral em que ele
+ * mora hoje. Serve SÓ para juntar chamado antigo com novo no Monitoramento
+ * ("financeiro" e "/app/financeiro/..." são o mesmo setor Financeiro) — não é
+ * catálogo: o nome do setor continua vindo da barra. "integracao" e "outro"
+ * não têm setor e ficam à parte. Valor sem setor na árvore atual também.
+ */
+export const SETOR_DO_MODULO_ANTIGO: Readonly<Record<string, string>> = {
+  power_bi: "bi",
+  bi: "bi",
+  licitacoes: "licitacoes",
+  controladoria: "controladoria_orc",
+  suprimentos: "suprimentos",
+  financeiro: "financeiro",
+  fiscal: "fiscal",
+  contabil: "contabil",
+  rh: "rh",
+  recrutamento: "recrutamento",
+  juridico: "juridico",
+  sst: "sst",
+  encarregados: "encarregados",
+  central_servicos: "central_servicos",
+  sistemas: "sistemas",
+  plano_acoes: "plano-acoes",
+  malote: "malote",
+};
+
+/**
+ * Valor gravado → tela/setor: as rotas da árvore (tela que aparece em mais de
+ * um setor fica com o primeiro) e os valores amplos antigos que têm setor na
+ * árvore (SETOR_DO_MODULO_ANTIGO; aí `rotulo` é o nome do setor).
+ */
 export function indexarArvore(arvore: readonly SetorArvore[]): Map<string, InfoTela> {
   const idx = new Map<string, InfoTela>();
   for (const s of arvore)
     for (const t of s.telas)
       if (!idx.has(t.rota)) idx.set(t.rota, { rota: t.rota, rotulo: t.rotulo, setorId: s.id, setor: s.rotulo });
+  const setores = new Map(arvore.map((s) => [s.id, s.rotulo]));
+  for (const [antigo, setorId] of Object.entries(SETOR_DO_MODULO_ANTIGO)) {
+    const setor = setores.get(setorId);
+    if (setor && !idx.has(antigo)) idx.set(antigo, { rota: antigo, rotulo: setor, setorId, setor });
+  }
   return idx;
 }
 
@@ -112,12 +148,18 @@ export function rotuloModulo(
     const t = idx.get(valor);
     return t ? `${t.setor}${SEPARADOR_SETOR}${t.rotulo}` : rotuloTelaForaDoMenu(valor);
   }
-  return rotuloLegado(valor) ?? valor;
+  // Valor antigo: o rótulo de antes (ele dizia o setor inteiro), senão o
+  // nome do setor da barra, senão o valor cru.
+  return rotuloLegado(valor) ?? idx.get(valor)?.setor ?? valor;
 }
 
-/** Setor (da barra lateral) de um valor gravado; null para valor antigo ou tela fora do menu. */
+/**
+ * Setor (da barra lateral) de um valor gravado — tela ou valor amplo antigo
+ * que tem setor (SETOR_DO_MODULO_ANTIGO). null para tela fora do menu e
+ * valor antigo sem setor ("integracao").
+ */
 export const setorDoModulo = (v: string, idx: ReadonlyMap<string, InfoTela>) =>
-  ehTela(v) ? idx.get(v.trim()) ?? null : null;
+  idx.get(v.trim()) ?? null;
 
 // ---- Seleção -----------------------------------------------------------
 
@@ -219,10 +261,28 @@ export function contarPorSetor(
 // salva (nomes e setores como o usuário vê). Sem registro, a rota aparece
 // como "Tela fora do menu (...)" — nunca some.
 
+// A Sidebar registra de novo quando a organização salva chega; quem
+// desenha rótulo com o índice global e precisa acompanhar usa
+// `assinarIndiceDasTelas` (useIndiceDasTelas, em catalogoTelas.ts).
+
 let indiceRegistrado: ReadonlyMap<string, InfoTela> = new Map();
+let assinaturaRegistrada = "";
+const ouvintes = new Set<() => void>();
+
+const assinaturaDe = (arvore: readonly SetorArvore[]) =>
+  arvore.map((s) => `${s.id}=${s.rotulo}:${s.telas.map((t) => `${t.rota}|${t.rotulo}`).join(",")}`).join(";");
 
 export function registrarArvoreModulos(arvore: readonly SetorArvore[]) {
+  const assinatura = assinaturaDe(arvore);
+  if (assinatura === assinaturaRegistrada) return; // mesma árvore: não acorda ninguém
+  assinaturaRegistrada = assinatura;
   indiceRegistrado = indexarArvore(arvore);
+  ouvintes.forEach((f) => f());
 }
 
 export const indiceDasTelas = () => indiceRegistrado;
+
+export function assinarIndiceDasTelas(f: () => void) {
+  ouvintes.add(f);
+  return () => { ouvintes.delete(f); };
+}

@@ -45,6 +45,7 @@ import { ChamadosVinculados } from "./ChamadosVinculados";
 import { CardReaberturaChamado, CardTransferenciaChamado } from "./ReaberturaTransferenciaChamado";
 import { CardAcoesGestaoChamado } from "./AcoesGestaoChamado";
 import { podeDecidir } from "@/lib/chamados/reabertura";
+import { useIndiceDasTelas } from "./impacto/catalogoTelas";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
 const DESCRICAO_LONGA_CHARS = 700;
@@ -86,6 +87,8 @@ function TarefaRow({ c, indice, podeArrastar, atual }: { c: Chamado; indice: num
 }
 
 export default function CoordenarChamado() {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const { id } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();

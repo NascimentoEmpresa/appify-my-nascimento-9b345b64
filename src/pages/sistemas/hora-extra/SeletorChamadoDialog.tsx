@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useChamadosDisponiveisHoraExtra } from "@/hooks/useHoraExtra";
 import { labelDe, moduloLabel, PRIORIDADES, STATUS_CHAMADO, TIPOS } from "@/pages/chamados/types";
 import type { ChamadoDisponivel } from "./types";
+import { useIndiceDasTelas } from "@/pages/chamados/impacto/catalogoTelas";
 
 // 26/10/2026 (mig 20261026000070): "na hora de adicionar o chamado deixa ver
 // mais informações como quem solicitou". Cada chamado mostra quem abriu,
@@ -43,6 +44,8 @@ export default function SeletorChamadoDialog({
   permiteSemChamado?: boolean;
   aoSelecionarSemChamado?: () => void;
 }) {
+  // SIS-2026-0921: re-renderiza quando a barra lateral muda os rótulos "Setor › Tela" (moduloLabel).
+  const indiceTelas = useIndiceDasTelas();
   const [busca, setBusca] = useState("");
   const { data = [], isLoading } = useChamadosDisponiveisHoraExtra(colaboradorId, concluidosDesde);
   const itens = useMemo(

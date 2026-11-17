@@ -1,9 +1,9 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Building2, ClipboardCheck, Crosshair, FolderTree, Layers, Network } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { analisarImpacto, incluirPosicao, normalizarLista, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
-import { contarPorSetor } from "@/lib/chamados/arvoreModulos";
-import { rotuloModuloImpactado, rotuloModuloLegado } from "../impactados";
+import { contarPorSetor, rotuloModulo } from "@/lib/chamados/arvoreModulos";
+import { rotuloModuloLegado } from "../impactados";
 import { useArvoreModulos } from "./catalogoTelas";
 import { cn } from "@/lib/utils";
 
@@ -71,6 +71,8 @@ export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSet
 }) {
   const a = useMemo(() => analisarImpacto(chamados), [chamados]);
   const { indice } = useArvoreModulos();
+  // Índice do hook (organização salva aplicada), não o global.
+  const rotuloModuloImpactado = useCallback((v: string) => rotuloModulo(v, indice, rotuloModuloLegado), [indice]);
   const porSetorErp = useMemo(() => {
     // Mesma base do analisarImpacto: só chamado com impacto informado, posição inclusa.
     const listas = chamados

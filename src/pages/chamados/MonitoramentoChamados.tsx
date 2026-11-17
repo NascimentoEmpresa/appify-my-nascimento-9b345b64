@@ -20,11 +20,11 @@ import {
 import {
   PRIORIDADES, STATUS_CHAMADO, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
 } from "./types";
-import { atinge, listaImpactados, rotuloModuloImpactado } from "./impactados";
+import { atinge, listaImpactados, rotuloModuloImpactado, rotuloModuloLegado } from "./impactados";
 import { ImpactoSistemicoPainel } from "./impacto/ImpactoSistemicoPainel";
 import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
 import { abrangencia } from "@/lib/chamados/impactoSistemico";
-import { atingeModulo, PREFIXO_FILTRO_SETOR, setorDoModulo } from "@/lib/chamados/arvoreModulos";
+import { atingeModulo, ehTela, PREFIXO_FILTRO_SETOR, rotuloModulo, setorDoModulo } from "@/lib/chamados/arvoreModulos";
 import { useArvoreModulos } from "./impacto/catalogoTelas";
 import {
   ADERENCIA_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
@@ -120,6 +120,14 @@ export default function MonitoramentoChamados() {
   const [pagina, setPagina] = useState(1);
   // SIS-2026-0921: setores/telas da barra lateral, para rótulo e filtro por setor.
   const { indice: indiceTelas } = useArvoreModulos();
+  // Rótulos com o índice do hook (organização salva já aplicada), e não o
+  // global — o global pode ainda estar com o catálogo puro neste render.
+  const { rotuloMod, rotuloPosicao } = useMemo(() => {
+    const rotuloMod = (v: string) => rotuloModulo(v, indiceTelas, rotuloModuloLegado);
+    const rotuloPosicao = (c: { modulo_sistema: string | null; modulo_sistema_outro: string | null }) =>
+      ehTela(c.modulo_sistema) ? rotuloMod(c.modulo_sistema as string) : moduloLabel(c);
+    return { rotuloMod, rotuloPosicao };
+  }, [indiceTelas]);
   const [detalhe, setDetalhe] = useState<{ id: string; foco: Foco } | null>(null);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
@@ -151,7 +159,7 @@ export default function MonitoramentoChamados() {
       solic.set(c.solicitante_id, c.solicitante_nome ?? "—");
       if (c.setor?.trim()) setores.add(c.setor.trim());
       const mk = c.modulo_sistema ?? "";
-      if (mk) modulos.set(mk, moduloLabel(c));
+      if (mk) modulos.set(mk, rotuloPosicao(c));
       (c.setores_impactados ?? []).forEach((s) => setoresImp.add(s));
       (c.modulos_impactados ?? []).forEach((m) => modulosImp.add(m));
     }
@@ -166,13 +174,13 @@ export default function MonitoramentoChamados() {
       setoresImpactados: [...setoresImp].sort((a, b) => a.localeCompare(b, "pt-BR")).map((s) => ({ value: s, label: s })),
       modulosImpactados: [
         ...[...setoresErp.entries()].map(([value, label]) => ({ value, label })),
-        ...[...modulosImp].map((m) => ({ value: m, label: rotuloModuloImpactado(m) })),
+        ...[...modulosImp].map((m) => ({ value: m, label: rotuloMod(m) })),
       ].sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       solicitantes: [...solic.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       setores: [...setores].sort((a, b) => a.localeCompare(b, "pt-BR")),
       modulos: [...modulos.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
     };
-  }, [todas, indiceTelas]);
+  }, [todas, indiceTelas, rotuloMod, rotuloPosicao]);
 
   const filtradas = useMemo(() => todas.filter(({ c, a }) =>
     (f.solic === TODOS || c.solicitante_id === f.solic)
@@ -207,8 +215,8 @@ export default function MonitoramentoChamados() {
     const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo ajustado (posição)", "Setores impactados", "Módulos impactados", "Abrangência (nº de módulos)", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const corpo = linhas.map(({ c, a }) => [
-      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c),
-      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloModuloImpactado), abrangencia(c) ?? "",
+      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), rotuloPosicao(c),
+      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloMod), abrangencia(c) ?? "",
       PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
       a.efetividade ?? "", fmt1(a.indice), STATUS_CHAMADO[c.status]?.label ?? c.status, fmt1(a.prazoDias),
       fmtData(c.created_at), c.status === "concluido" ? fmtData(c.concluido_em) : "",
@@ -422,11 +430,11 @@ export default function MonitoramentoChamados() {
                         </span>
                       </td>
                       <td className="py-2 pr-2">
-                        <span className="whitespace-nowrap">{moduloLabel(c)}</span>
+                        <span className="whitespace-nowrap">{rotuloPosicao(c)}</span>
                         {/* Alcance informado na abertura (mig 20261115001000). */}
                         {(c.setores_impactados?.length || c.modulos_impactados?.length) ? (
                           <span className="mt-0.5 block max-w-[170px] truncate text-[10px] text-muted-foreground"
-                            title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}`}>
+                            title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(c.modulos_impactados, rotuloMod)}`}>
                             {/* SIS-2026-0910: abrangência = nº de módulos impactados. */}
                             Impacta {abrangencia(c) ?? 0} módulo(s) · {(c.setores_impactados ?? []).length} setor(es)
                           </span>

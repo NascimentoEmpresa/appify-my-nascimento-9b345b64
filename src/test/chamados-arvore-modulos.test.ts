@@ -85,9 +85,9 @@ describe("Árvore Setor → telas", () => {
     expect(atingeModulo(["/app/financeiro/fluxo-caixa"], `${PREFIXO_FILTRO_SETOR}controladoria_orc`, "__t__", idx)).toBe(false);
     expect(atingeModulo(null, "__t__", "__t__", idx)).toBe(true);
     const c = contarPorSetor([[LUCRO, AUDITORIA], ["/app/financeiro/fluxo-caixa", LUCRO], ["controladoria"]], idx, rotuloModuloLegado);
+    // O antigo "controladoria" cai no mesmo setor da barra (revisão do 8d9f1671).
     expect(c).toEqual([
-      { valor: `${PREFIXO_FILTRO_SETOR}controladoria_orc`, rotulo: "Controladoria", qtd: 2 },
-      { valor: "controladoria", rotulo: "Controladoria & Orçamento", qtd: 1 },
+      { valor: `${PREFIXO_FILTRO_SETOR}controladoria_orc`, rotulo: "Controladoria", qtd: 3 },
       { valor: `${PREFIXO_FILTRO_SETOR}financeiro`, rotulo: "Financeiro", qtd: 1 },
     ]);
   });
@@ -156,5 +156,84 @@ describe("Amarrado à barra lateral de verdade (NAV_MODULOS)", () => {
     const idx = indexarArvore(montarArvoreModulos(montarMenu(NAV_MODULOS, salva)));
     expect(rotuloModulo(LUCRO, idx)).toBe(`${fin.rotulo} › Lucro por Contrato`);
     expect(idx.get(AUDITORIA)?.setor).toBe("Controladoria (renomeada)");
+  });
+});
+
+// ---- Revisão do 8d9f1671 -------------------------------------------------
+
+import { NAV_FIXOS, modulosComFixos } from "@/components/layout/Sidebar";
+import { assinarIndiceDasTelas, indiceDasTelas, registrarArvoreModulos, SETOR_DO_MODULO_ANTIGO } from "@/lib/chamados/arvoreModulos";
+import { fonteSaibaMais } from "../../supabase/functions/_shared/novidade-ia.ts";
+
+describe("Antigo (amplo) e novo (tela) do mesmo setor juntos", () => {
+  const arvore = montarArvoreModulos([
+    { id: "financeiro", label: "Financeiro", groups: [{ label: "T", items: [{ label: "Fluxo de Caixa", to: "/app/financeiro/fluxo-caixa" }] }] },
+    { id: "controladoria_orc", label: "Controladoria", groups: [{ label: "F", items: [{ label: "Lucratividade", to: LUCRO }] }] },
+    { id: "plano-acoes", label: "Plano de Ações", groups: [{ label: "P", items: [{ label: "Lista", to: "/app/plano-acoes" }] }] },
+    { id: "bi", label: "BI", groups: [{ label: "B", items: [{ label: "Painéis", to: "/app/bi" }] }] },
+  ]);
+  const idx = indexarArvore(arvore);
+
+  it("valor antigo cai no setor da barra (controladoria→controladoria_orc, plano_acoes→plano-acoes, power_bi→bi); integracao fica sem", () => {
+    expect(setorDoModulo("financeiro", idx)?.setorId).toBe("financeiro");
+    expect(setorDoModulo("controladoria", idx)?.setorId).toBe("controladoria_orc");
+    expect(setorDoModulo("plano_acoes", idx)?.setorId).toBe("plano-acoes");
+    expect(setorDoModulo("power_bi", idx)?.setorId).toBe("bi");
+    expect(setorDoModulo("integracao", idx)).toBeNull();
+    expect(SETOR_DO_MODULO_ANTIGO.integracao).toBeUndefined();
+    // Rótulo do antigo continua o de antes.
+    expect(rotuloModulo("controladoria", idx, rotuloModuloLegado)).toBe("Controladoria & Orçamento");
+  });
+
+  it("filtro setor:financeiro pega chamado antigo e novo", () => {
+    expect(atingeModulo(["financeiro"], `${PREFIXO_FILTRO_SETOR}financeiro`, "__t__", idx)).toBe(true);
+    expect(atingeModulo(["/app/financeiro/fluxo-caixa"], `${PREFIXO_FILTRO_SETOR}financeiro`, "__t__", idx)).toBe(true);
+    expect(atingeModulo(["integracao"], `${PREFIXO_FILTRO_SETOR}financeiro`, "__t__", idx)).toBe(false);
+  });
+
+  it("contagem por setor: uma barra Financeiro só; chamado com antigo + tela do mesmo setor conta uma vez", () => {
+    const c = contarPorSetor([["financeiro"], ["/app/financeiro/fluxo-caixa"], ["financeiro", "/app/financeiro/fluxo-caixa"], ["integracao"]],
+      idx, rotuloModuloLegado);
+    expect(c).toEqual([
+      { valor: `${PREFIXO_FILTRO_SETOR}financeiro`, rotulo: "Financeiro", qtd: 3 },
+      { valor: "integracao", rotulo: "Integração & Migração", qtd: 1 },
+    ]);
+  });
+});
+
+describe("Itens fixos da barra entram na árvore", () => {
+  it("Início/Novidades/Aguardando Aprovação no topo e Configurações do ERP no rodapé", () => {
+    const arvore = montarArvoreModulos(modulosComFixos(montarMenu(NAV_MODULOS, null)));
+    expect(arvore[0].telas.map((t) => t.rota)).toEqual([NAV_FIXOS.inicio.to, NAV_FIXOS.novidades.to, NAV_FIXOS.aprovacoes.to]);
+    expect(arvore[arvore.length - 1].rotulo).toBe(NAV_FIXOS.configuracoes.label);
+    expect(arvore[arvore.length - 1].telas[0].rota).toBe("/app/administracao");
+    expect(rotuloModuloImpactado("/app/novidades")).toBe("Início e atalhos › Novidades do Sistema");
+  });
+});
+
+describe("Índice global acompanha a organização salva", () => {
+  it("registrar de novo avisa quem assina e muda o rótulo; mesma árvore não avisa", () => {
+    const antes = indiceDasTelas();
+    let avisos = 0;
+    const sair = assinarIndiceDasTelas(() => { avisos += 1; });
+    const arvore = [{ id: "x", rotulo: "Setor X", telas: [{ rota: "/app/x", rotulo: "Tela X", categoria: "c" }] }];
+    registrarArvoreModulos(arvore);
+    registrarArvoreModulos(structuredClone(arvore));
+    expect(avisos).toBe(1);
+    expect(moduloLabel({ modulo_sistema: "/app/x", modulo_sistema_outro: null })).toBe("Setor X › Tela X");
+    sair();
+    // Devolve o índice do catálogo para os demais testes.
+    registrarArvoreModulos([...antes.values()].length ? montarArvoreModulos(modulosComFixos(montarMenu(NAV_MODULOS, null))) : []);
+  });
+});
+
+describe("Novidade IA — 'Saiba mais' com a posição em rota", () => {
+  it("rota usa a própria rota (e sem a query); código antigo busca o módulo; outro/vazio/endereço estranho não", () => {
+    expect(fonteSaibaMais(LUCRO)).toEqual({ tipo: "rota", candidatas: [LUCRO] });
+    expect(fonteSaibaMais("/app/administracao?tab=modulos")).toEqual({ tipo: "rota", candidatas: ["/app/administracao?tab=modulos", "/app/administracao"] });
+    expect(fonteSaibaMais("controladoria")).toEqual({ tipo: "modulo", codigo: "controladoria" });
+    expect(fonteSaibaMais("outro")).toBeNull();
+    expect(fonteSaibaMais(null)).toBeNull();
+    expect(fonteSaibaMais("//evil.com")).toBeNull();
   });
 });
