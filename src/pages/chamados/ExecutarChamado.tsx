@@ -16,7 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { aguardandoGestorSistemas, podeFinalizarGestao } from "./validacaoPresidencia";
+import { aguardandoGestorSistemas, podeFinalizarGestao, seloConclusao } from "./validacaoPresidencia";
 import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil, ArrowRightLeft } from "lucide-react";
 import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
@@ -482,7 +482,8 @@ export default function ExecutarChamado() {
               {chamado.status === "concluido" ? (
                 <>
                   <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
-                    <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
+                    {/* "Chamado concluído" só depois do Gestor de Sistemas (17/11/2026). */}
+                    <CheckCircle2 className="h-4 w-4 animate-check-pop" /> {seloConclusao(chamado)}
                   </div>
                   {/* Horas gastas (mig 20261029002400). Concluído antes da regra = "—".
                       Concluído pelo merge da PR depois dela = pendente, e o

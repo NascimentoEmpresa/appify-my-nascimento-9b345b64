@@ -90,15 +90,34 @@ Claude Code interativo (manual, sempre)
 O título da PR **precisa** começar com `SIS-AAAA-NNNN: <resumo>` (sem
 colchetes) — sem chamado relacionado, usa `[SEM-CHAMADO]:` (com colchetes).
 Isso já é validado por CI hoje (`.github/workflows/chamado_pr_sync.yml`,
-required status check que bloqueia merge) e, quando a PR é aberta (fora de
-rascunho), `.github/workflows/chamado_concluir_no_merge.yml` **conclui o
-chamado sozinho** (desde 12/11/2026). No **merge**, a Edge
-`chamado-concluir-pr` põe no chat do chamado o resumo da entrega escrito pela
-I.A para o solicitante, com as URLs das telas alteradas (calculadas por
-`.github/scripts/rotas-da-pr.cjs`). Desde 13/11/2026 o resumo sai só no merge
-e lê a PR já fechada: só os commits do chamado (mensagem inteira) e o código
-alterado neles (`.github/scripts/contexto-resumo-pr.cjs`). O merge também
-conclui como reserva, sem passar por cima de uma reabertura do solicitante.
+required status check que bloqueia merge).
+
+**Abrir a PR não conclui o chamado** — só registra "PR aberta: ..." no
+histórico (Edge `chamado-vincular-pr`, chamada pelo `chamado_pr_sync.yml`).
+De 12 a 17/11/2026 a abertura concluía; foi desfeito porque o chamado
+aparecia como concluído com a PR ainda sem revisão (SIS-2026-0909, PR #1302).
+
+A conclusão tem **três etapas**, e só com as três o chamado está de fato
+concluído:
+
+1. **Desenvolvedor** — status `concluido`. Feita pelo **merge na `main`**
+   (`.github/workflows/chamado_concluir_no_merge.yml` → Edge
+   `chamado-concluir-pr`) ou pelo botão "Concluir chamado".
+2. **Solicitante** — botão "Confirmar conclusão" (`conclusao_confirmada_em`,
+   RPC `chamado_confirmar_conclusao`, mig 20261028001300). Se não resolveu,
+   ele reabre e o chamado volta para o dev.
+3. **Gestor de Sistemas** — botão "Finalizar chamado"
+   (`gestao_finalizada_em`, RPC `chamado_finalizar_gestao`, mig
+   20261110009000), só depois da confirmação do solicitante.
+
+O merge faz só a etapa 1: a Edge nunca escreve nas colunas das etapas 2 e 3,
+e os gatilhos zeram as duas a cada troca de status. No mesmo merge a Edge põe
+no chat do chamado o resumo da entrega escrito pela I.A para o solicitante,
+com as URLs das telas alteradas (calculadas por
+`.github/scripts/rotas-da-pr.cjs`). O resumo lê a PR já fechada: só os
+commits do chamado (mensagem inteira) e o código alterado neles
+(`.github/scripts/contexto-resumo-pr.cjs`). Se o merge desta PR já concluiu e
+o solicitante reabriu, uma reentrega do evento não conclui de novo.
 
 ## Modelo por complexidade (mesma classificação alimenta os dois agentes)
 

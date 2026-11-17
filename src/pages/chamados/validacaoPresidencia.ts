@@ -158,6 +158,21 @@ export function podeFinalizarGestao(
   return ehGestorSistemas && aguardandoGestorSistemas(c);
 }
 
+/**
+ * Selo do card "Ações rápidas" do dev (17/11/2026). Antes dizia "Chamado
+ * concluído" assim que o status virava 'concluido' — e, com o merge (ou, até
+ * 17/11, a simples ABERTURA da PR) concluindo a etapa do dev, o card dava o
+ * chamado por encerrado com o solicitante e o Gestor de Sistemas ainda por
+ * clicar (SIS-2026-0909, PR #1302). "Chamado concluído" agora só depois da
+ * finalização do Gestor de Sistemas; antes disso é a etapa do dev que acabou.
+ */
+export function seloConclusao(
+  c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "gestao_finalizada_em">>,
+): "Chamado concluído" | "Desenvolvimento concluído" | null {
+  if (c.status !== "concluido") return null;
+  return c.gestao_finalizada_em ? "Chamado concluído" : "Desenvolvimento concluído";
+}
+
 /** Passo "o Gestor de Sistemas finalizou" na linha do tempo. */
 function passoFinalizacaoGestao(c: ChamadoStatus): PassoStatus {
   const feito = !!c.gestao_finalizada_em;

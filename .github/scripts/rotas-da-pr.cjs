@@ -4,8 +4,9 @@
 // solicitante recebe no chat um resumo do que foi feito "e as URLS pra ele
 // acessar").
 //
-// Usado pelo .github/workflows/chamado_concluir_no_merge.yml (job da PR
-// aberta). Só LÊ TEXTO: o src/App.tsx da PR chega como string pela API do
+// Usado pelo .github/workflows/chamado_concluir_no_merge.yml — desde
+// 13/11/2026 só no MERGE, e desde 17/11/2026 abrir a PR não conclui mais o
+// chamado (o merge conclui só a etapa do dev). Só LÊ TEXTO: o src/App.tsx da PR chega como string pela API do
 // GitHub e é analisado com expressões regulares — nada do código da PR é
 // executado (o workflow roda em pull_request_target, com secrets).
 //

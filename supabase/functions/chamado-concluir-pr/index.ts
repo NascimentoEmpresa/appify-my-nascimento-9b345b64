@@ -1,18 +1,28 @@
 // Arquivo: supabase/functions/chamado-concluir-pr/index.ts
-// Conclui um Chamado de Sistemas pela PR que o resolve.
-// Chamada pelo GitHub Actions (.github/workflows/chamado_concluir_no_merge.yml)
-// — mesma autenticação por secret de chamado-info / chamado-vincular-pr.
+// Conclui a ETAPA DO DESENVOLVEDOR de um Chamado de Sistemas pelo merge da
+// PR que o resolve. Chamada pelo GitHub Actions
+// (.github/workflows/chamado_concluir_no_merge.yml) — mesma autenticação por
+// secret de chamado-info / chamado-vincular-pr.
 //
-// QUANDO (12/11/2026, pedido do Pablo): "quando o desenvolvedor abrir um PR
-// conclua o chamado automaticamente". Antes era só no merge. Agora:
-//   · origem "pr_aberta" — PR aberta (ou saída de rascunho): conclui;
-//   · origem "merge" — conclui como reserva e, desde 13/11/2026, põe no chat
-//     do chamado o RESUMO do que foi feito, para o solicitante, com as URLs
-//     das telas. Pablo: "a i.a tem que ler os commits e a PR inteira depois
-//     do merge" — na abertura a PR ainda pode ganhar commits (no
-//     SIS-2026-0854 o commit do chamado subiu depois da abertura e o resumo
-//     saiu do pedido, não da entrega). Se ESTA PR já concluiu o chamado e ele
-//     foi reaberto, o merge não conclui de novo nem manda "pronto".
+// QUANDO — SÓ NO MERGE (17/11/2026). De 12 a 17/11 a PR ABERTA concluía o
+// chamado (origem "pr_aberta"): no SIS-2026-0909 a PR #1302 abriu e o chat
+// já disse "Chamado concluído automaticamente — PR #1302 aberta", com a PR
+// sem revisão nem merge. Pedido do Pablo: abrir a PR não conclui nada (o
+// "PR aberta: ..." no histórico é do chamado-vincular-pr); o merge na main
+// conclui só a parte do dev. origem "pr_aberta" agora é RECUSADA aqui — vale
+// para uma cópia antiga do workflow que ainda a mande.
+//   · origem "merge" — conclui a etapa do dev e, desde 13/11/2026, põe no
+//     chat do chamado o RESUMO do que foi feito, para o solicitante, com as
+//     URLs das telas. Pablo: "a i.a tem que ler os commits e a PR inteira
+//     depois do merge". Se o merge DESTA PR já concluiu o chamado e ele foi
+//     reaberto (reentrega do evento pelo GitHub), não conclui de novo nem
+//     manda "pronto".
+//
+// AS TRÊS ETAPAS: dev conclui (status 'concluido', AQUI) → solicitante
+// confirma (conclusao_confirmada_em, mig 20261028001300) → Gestor de Sistemas
+// finaliza (gestao_finalizada_em, mig 20261110009000). Esta função NUNCA
+// escreve nas duas colunas — e os gatilhos zeram as duas a cada troca de
+// status, então o merge não pula nenhuma das confirmações.
 //
 // Replica o que o botão "Concluir chamado" faz no ERP
 // (src/pages/chamados/ExecutarChamado.tsx, mudarStatus("concluido", ...)):
@@ -67,7 +77,7 @@ interface Body {
   pr_commits?: number | null;
   pr_linhas_adicionadas?: number | null;
   pr_arquivos_alterados?: number | null;
-  /** "pr_aberta" (padrão desde 12/11/2026) ou "merge". */
+  /** "merge" (único aceito desde 17/11/2026). "pr_aberta" é recusado. */
   origem?: string;
   pr_corpo?: string | null;
   /**
@@ -148,6 +158,10 @@ Deno.serve(async (req) => {
   // Sem origem = workflow antigo, que só chamava no merge.
   const origem = body.origem === "pr_aberta" ? "pr_aberta" : "merge";
   if (!numero || !prUrl) return json({ error: "numero e pr_url são obrigatórios" }, 400);
+  // 17/11/2026: abrir a PR não conclui nada — só o merge (ver topo).
+  if (origem === "pr_aberta") {
+    return json({ ok: true, concluido: false, origem, motivo: "abrir a PR não conclui o chamado; a etapa do desenvolvedor conclui no merge" });
+  }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
@@ -161,24 +175,29 @@ Deno.serve(async (req) => {
 
   const autorId = await perfilDoLoginGithub(admin, prAutorGithub);
 
-  // ── 1) Conclusão — na abertura da PR; o merge é reserva ─────────────
+  // ── 1) Conclusão da ETAPA DO DEV — só no merge (17/11/2026) ─────────
+  // Só o status: confirmação do solicitante e finalização do Gestor de
+  // Sistemas continuam pendentes (os gatilhos zeram as duas na troca).
   // Idempotência: o GitHub pode reentregar o mesmo evento, e um chamado
   // reaberto e concluído à mão não deve ganhar evento duplicado.
   let concluido = chamado.status === "concluido";
   let concluidoAgora = false;
   let motivo: string | null = concluido ? "já estava concluído" : null;
   if (!concluido) {
-    // Esta PR já concluiu o chamado antes (na abertura) e ele foi reaberto:
-    // o merge (ou a PR reaberta) não passa por cima da reabertura.
+    // O merge DESTA PR já concluiu o chamado e ele foi reaberto (o GitHub
+    // reentregou o evento): não passa por cima da reabertura. Conclusão
+    // antiga NA ABERTURA (12 a 17/11) não conta — ela não era entrega; se o
+    // solicitante reabriu com a PR ainda aberta, o dev corrigiu na mesma PR
+    // e o merge conclui a etapa do dev de novo.
     const { data: jaConcluiu } = await admin
       .from("CHAMADO_SISTEMA_EVENTO")
       .select("chamado_id")
       .eq("chamado_id", chamado.id)
       .eq("meta->>pr_url", prUrl)
-      .in("meta->>origem", ["pr_aberta", "merge"])
+      .eq("meta->>origem", "merge")
       .limit(1);
     if (jaConcluiu && jaConcluiu.length > 0) {
-      motivo = "esta PR já concluiu o chamado antes; ele foi reaberto depois";
+      motivo = "o merge desta PR já concluiu o chamado antes; ele foi reaberto depois";
     } else if (!autorId) {
       motivo = "autor do GitHub não mapeado";
     } else {
@@ -198,7 +217,7 @@ Deno.serve(async (req) => {
         chamado_id: chamado.id,
         autor_id: autorId,
         tipo: "evento",
-        texto: `Chamado concluído automaticamente — PR${prNumero !== null ? ` #${prNumero}` : ""} ${origem === "pr_aberta" ? "aberta" : "mergeada"}: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}`,
+        texto: `Desenvolvimento concluído automaticamente — PR${prNumero !== null ? ` #${prNumero}` : ""} mergeada: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}. Falta o solicitante confirmar a conclusão e o Gestor de Sistemas finalizar.`,
         meta: {
           canal: "github", origem, pr_numero: prNumero, pr_url: prUrl,
           pr_titulo: prTitulo, pr_autor_github: prAutorGithub, pr_commits: prCommits,
@@ -217,7 +236,7 @@ Deno.serve(async (req) => {
   // Pablo: "a i.a tem que ler os commits e a PR inteira depois do merge".
   // O workflow manda `resumo: true` com os commits DESTE chamado (mensagem
   // inteira), os arquivos, o código alterado e as URLs da PR já mergeada.
-  // Vale também para o chamado que a abertura já concluiu — é o caso comum.
+  // Vale também para o chamado já concluído à mão (ou na abertura, até 17/11).
   // Uma vez por PR; chamado reaberto (não concluído) não recebe "pronto".
   let resumoGravado = false;
   let motivoResumo: string | null = null;
