@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  BUCKET_SOLICITACAO_MANUTENCAO as BUCKET, validarArquivoManutencao,
+  type CategoriaAnexoManutencao,
+} from "@/lib/suprimentos/anexoManutencao";
 
 const sb = supabase as any;
 const TABELA = "SUP_SOLICITACAO_MANUTENCAO";
 const TABELA_ANEXO = "SUP_SOLICITACAO_MANUTENCAO_ANEXO";
-const BUCKET = "sup-solicitacoes-manutencao";
 
 export type TipoSolicitacaoManutencao = "peca" | "manutencao";
 export type StatusSolicitacaoManutencao =
@@ -32,6 +35,7 @@ export interface SolicitacaoManutencao {
 export interface AnexoSolicitacaoManutencao {
   id: string;
   solicitacao_id: string;
+  categoria: CategoriaAnexoManutencao;
   nome_arquivo: string;
   caminho: string;
   tipo_mime: string | null;
@@ -69,20 +73,39 @@ export function useAnexosSolicitacaoManutencao(solicitacaoId: string | null) {
   });
 }
 
+async function enviarAnexo(
+  usuarioId: string, solicitacaoId: string, arquivo: File, categoria: CategoriaAnexoManutencao,
+) {
+  const [rotulo, g, padrao] = categoria === "orcamento" ? ["o orçamento", "o", "pdf"] : ["a foto", "a", "jpg"];
+  const extensao = (arquivo.name.split(".").pop() || padrao).toLowerCase();
+  const caminho = `${usuarioId}/${solicitacaoId}/${crypto.randomUUID()}.${extensao}`;
+  const { error: erroUpload } = await supabase.storage.from(BUCKET).upload(caminho, arquivo);
+  if (erroUpload) throw new Error(`Solicitação criada, mas ${rotulo} não foi enviad${g}: ${erroUpload.message}`);
+
+  const { error: erroAnexo } = await sb.from(TABELA_ANEXO).insert({
+    solicitacao_id: solicitacaoId, categoria, nome_arquivo: arquivo.name, caminho,
+    tipo_mime: arquivo.type || null, tamanho_bytes: arquivo.size,
+  });
+  if (erroAnexo) throw new Error(`Solicitação criada, mas ${rotulo} não foi vinculad${g}: ${erroAnexo.message}`);
+}
+
 export function useCriarSolicitacaoManutencao() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (dados: {
       tipo: TipoSolicitacaoManutencao; contrato_id: string; maquinario: string;
-      numero_serie: string; descricao: string; foto: File;
+      numero_serie: string; descricao: string; foto: File; orcamento?: File | null;
     }) => {
       if (!dados.maquinario.trim() || !dados.numero_serie.trim()) {
         throw new Error("Informe o maquinário e o número de série.");
       }
-      if (!dados.foto?.type.startsWith("image/")) {
-        throw new Error("Anexe uma foto da máquina em formato de imagem.");
-      }
-      if (dados.foto.size > 5 * 1024 * 1024) throw new Error("A foto deve ter no máximo 5 MB.");
+      if (!dados.foto) throw new Error("Anexe uma foto do equipamento.");
+      // Confere os dois arquivos antes de criar a solicitação: recusa por
+      // tipo/tamanho não pode deixar solicitação aberta sem anexo.
+      const recusaFoto = validarArquivoManutencao(dados.foto, "foto_equipamento");
+      if (recusaFoto) throw new Error(recusaFoto);
+      const recusaOrcamento = dados.orcamento ? validarArquivoManutencao(dados.orcamento, "orcamento") : null;
+      if (recusaOrcamento) throw new Error(recusaOrcamento);
 
       const { data: usuario } = await supabase.auth.getUser();
       if (!usuario.user) throw new Error("Sessão não identificada.");
@@ -95,16 +118,8 @@ export function useCriarSolicitacaoManutencao() {
       }).select("id").single();
       if (error) throw error;
 
-      const extensao = (dados.foto.name.split(".").pop() || "jpg").toLowerCase();
-      const caminho = `${usuario.user.id}/${solicitacao.id}/${crypto.randomUUID()}.${extensao}`;
-      const { error: erroUpload } = await supabase.storage.from(BUCKET).upload(caminho, dados.foto);
-      if (erroUpload) throw new Error(`Solicitação criada, mas a foto não foi enviada: ${erroUpload.message}`);
-
-      const { error: erroAnexo } = await sb.from(TABELA_ANEXO).insert({
-        solicitacao_id: solicitacao.id, nome_arquivo: dados.foto.name, caminho,
-        tipo_mime: dados.foto.type || null, tamanho_bytes: dados.foto.size,
-      });
-      if (erroAnexo) throw new Error(`Solicitação criada, mas a foto não foi vinculada: ${erroAnexo.message}`);
+      await enviarAnexo(usuario.user.id, solicitacao.id, dados.foto, "foto_equipamento");
+      if (dados.orcamento) await enviarAnexo(usuario.user.id, solicitacao.id, dados.orcamento, "orcamento");
       return solicitacao.id as string;
     },
     onSuccess: () => {
@@ -135,6 +150,6 @@ export function useResponderSolicitacaoManutencao() {
 
 export async function abrirAnexoSolicitacaoManutencao(caminho: string) {
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(caminho, 300);
-  if (error || !data?.signedUrl) throw new Error(error?.message ?? "Não foi possível abrir a foto.");
+  if (error || !data?.signedUrl) throw new Error(error?.message ?? "Não foi possível abrir o anexo.");
   window.open(data.signedUrl, "_blank", "noopener,noreferrer");
 }
