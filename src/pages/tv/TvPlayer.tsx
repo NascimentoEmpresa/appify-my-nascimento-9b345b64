@@ -5,6 +5,7 @@ import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtube
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
 import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_ANTI_ESTATICA_MS, rotuloTelaAcordada, type ModoTelaAcordada } from "@/lib/tv/telaAcordada";
+import { criarRecargaSegura } from "@/lib/tv/recargaSegura";
 
 // =====================================================================
 // /tv — PLAYER das TVs da empresa (Sistemas › TV's, mig 20261007000012)
@@ -57,17 +58,31 @@ import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_
 //   · todo recarregamento (aviso, versão, comando, cão de guarda) vai para a
 //     MESMA rota com ?tv-r=<agora>: URL nova, o WebView não tem como devolver
 //     o HTML (e o JS) antigo do cache, como um reload() simples pode fazer.
+//
+// 17/11/2026 (SIS-2026-0912) — "dashboard na TV está o tempo todo saindo fora":
+// com o ERP fora, o cão de guarda recarregava DURANTE a queda e a TV ficava
+// presa na página de erro do navegador (sem o nosso JS, ninguém tenta de
+// novo). Toda recarga agora confere antes se o ERP está no ar
+// (src/lib/tv/recargaSegura.ts); fora do ar, a TV fica onde está e tenta de
+// novo depois.
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
 const CHAVE_AVISO_RECARREGADO = "gn:tv:aviso-recarregado";
 
-/** Recarrega a página por uma URL nova (?tv-r=), nunca pelo cache. */
-function recarregarTv() {
-  const u = new URL(window.location.href);
-  u.searchParams.set("tv-r", String(Date.now()));
-  window.location.replace(u.toString());
-}
+/**
+ * Recarrega a página por uma URL nova (?tv-r=), nunca pelo cache — e só se o
+ * ERP está no ar (SIS-2026-0912: recarregar na queda prendia a TV na página
+ * de erro do navegador). Fora do ar, não sai da página.
+ */
+const recarregarTv = criarRecargaSegura({
+  buscarIndex: () => fetch(`/?v=${Date.now()}`, { cache: "no-store" }).then((r) => (r.ok ? r.text() : null)),
+  irPara: () => {
+    const u = new URL(window.location.href);
+    u.searchParams.set("tv-r", String(Date.now()));
+    window.location.replace(u.toString());
+  },
+});
 /** Aviso que ainda não fez a TV recarregar → marca e devolve true. Sem localStorage, false (sem loop). */
 function recarregarPeloAviso(id: string): boolean {
   try {

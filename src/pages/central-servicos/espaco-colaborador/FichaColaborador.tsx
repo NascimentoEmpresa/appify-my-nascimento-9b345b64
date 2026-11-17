@@ -4,8 +4,11 @@ import QRCode from "qrcode";
 import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, Award, BookOpen, Building2, CalendarDays, ChevronLeft,
   ChevronRight, Clock, Download, GraduationCap, HeartPulse, History, IdCard, Loader2, Palmtree,
-  QrCode, ShieldCheck, Shirt, UserCog, UserRound,
+  QrCode, ShieldCheck, Shirt, Siren, UserCog, UserRound,
 } from "lucide-react";
+import { AcidentesDoColaborador } from "@/components/sst/AcidentesDoColaborador";
+import { MENU_ACIDENTES } from "@/hooks/useAcidentes";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { FotoCrachaCandidato } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -155,6 +158,9 @@ function FichaCarregada({ ficha }: { ficha: Ficha }) {
 export function PerfilColaborador({ ficha, proprio = false }: { ficha: Ficha; proprio?: boolean }) {
   const { data: historico = [], isLoading: carregandoHist } = useHistoricoColaborador(ficha.empregado_id);
   const { data: perfil, isLoading: carregandoPerfil, error: erroPerfil } = usePerfilColaborador(ficha.empregado_id);
+  // Acidentes de trabalho (SIS-2026-0889): a CAT é dado de saúde — a aba só
+  // aparece para quem tem o menu Acidentes de Trabalho, e nunca no "Meu perfil".
+  const veAcidentes = useScreenAccess(proprio ? null : MENU_ACIDENTES, "visualizar").data === true && !proprio;
 
   const advertencias = historico.filter((e) => e.origem === "advertencia");
   const materiais = historico.filter((e) => e.origem === "material");
@@ -231,6 +237,11 @@ export function PerfilColaborador({ ficha, proprio = false }: { ficha: Ficha; pr
           <TabsTrigger value="afastamentos" className="gap-1.5">
             <HeartPulse className="h-3.5 w-3.5" /> Afastamentos
           </TabsTrigger>
+          {veAcidentes && (
+            <TabsTrigger value="acidentes" className="gap-1.5">
+              <Siren className="h-3.5 w-3.5" /> Acidentes
+            </TabsTrigger>
+          )}
           <TabsTrigger value="advertencias" className="gap-1.5">
             <AlertTriangle className="h-3.5 w-3.5" /> Advertências
             <Contador n={advertencias.length} carregando={carregandoHist} />
@@ -270,6 +281,12 @@ export function PerfilColaborador({ ficha, proprio = false }: { ficha: Ficha; pr
         <TabsContent value="afastamentos">
           <AbaAfastamentos perfil={perfil} carregando={carregandoPerfil} />
         </TabsContent>
+
+        {veAcidentes && (
+          <TabsContent value="acidentes">
+            <AcidentesDoColaborador empregadoId={ficha.empregado_id} />
+          </TabsContent>
+        )}
 
         <TabsContent value="advertencias">
           <ListaEventos

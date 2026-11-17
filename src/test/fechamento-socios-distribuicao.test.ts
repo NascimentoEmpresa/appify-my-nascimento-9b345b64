@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  calcularMes, distribuirPorPercentual, donoDaLinha, fotoDoFechamento, linhaDoHistorico, pendenciasParaFechar, resultadoDoFechamento, resumoPorSocio, somarMeses,
+  calcularMes, calcularReserva, distribuirPorPercentual, donoDaLinha, fotoDoFechamento, linhaDoHistorico, pendenciasParaFechar, resultadoDoFechamento, resumoPorSocio, somarMeses,
   type EntradaMes, type LancamentoRetirada, type LinhaIntegrante, type SocioConfig,
 } from "@/pages/controladoria/fechamento-socios/regras";
 
@@ -40,7 +40,7 @@ describe("dono da linha de Investimentos / Obras Adm", () => {
 });
 
 describe("cálculo do mês", () => {
-  it("lucro = resultado − tributos; empresa consome antes da divisão; retiradas saem da parte de cada sócio", () => {
+  it("SIS-2026-0925: o Total a Distribuir parte do Resultado do Período; o consumo da Empresa não reduz a base e aparece depois; retiradas saem da parte de cada sócio", () => {
     const r = calcularMes(
       entrada({ resultadoAposOutrasReceitas: 1100, tributos: 100, colunaSocios: { Antonio: 50, Helena: 20 } }),
       SOCIOS, new Map(),
@@ -48,21 +48,23 @@ describe("cálculo do mês", () => {
     );
     expect(r.resultadoAntesRetiradas).toBe(1000);
     expect(r.consumoEmpresa).toMatchObject({ investimentos: 200, obras: 100, semIntegrante: 0, total: 300 });
-    expect(r.lucroDistribuir).toBe(700);
+    expect(r.lucroDistribuir).toBe(1000);
     const a = r.socios.find((s) => s.socioId === "a")!;
-    expect(a.valorLucro).toBe(175); // 25% de 700
+    expect(a.valorLucro).toBe(250); // 25% de 1000
     expect(a.retiradas).toBe(90); // coluna 50 + investimentos 30 + obras 10
-    expect(a.saldo).toBe(85);
+    expect(a.saldo).toBe(160);
     const h = r.socios.find((s) => s.socioId === "h")!;
     expect(h.retiradas).toBe(25); // coluna 20 + investimentos 5
     expect(r.totalRetiradas).toBe(115);
-    expect(r.totalSaldo).toBe(700 - 115);
+    expect(r.totalSaldo).toBe(1000 - 115);
+    expect(r.saldoFinal).toBe(1000 - 300 - 115); // lucro − consumo da Empresa − retiradas
     expect(r.percentualOk).toBe(true);
   });
   it("sem integrante consome o lucro (como hoje no Fechamento) e aparece à parte", () => {
     const r = calcularMes(entrada(), SOCIOS, new Map(), [lin(null, 40), lin(999, 10, "obras")]);
     expect(r.consumoEmpresa).toMatchObject({ investimentos: 0, obras: 0, semIntegrante: 50, total: 50 });
-    expect(r.lucroDistribuir).toBe(950);
+    expect(r.lucroDistribuir).toBe(1000);
+    expect(r.saldoFinal).toBe(950);
   });
   it("ignora linhas de outro mês e sócio inativo", () => {
     const inativo = [...SOCIOS.slice(0, 4), socio("s", "Senilton", 15, [50], false)];
@@ -81,6 +83,52 @@ describe("cálculo do mês", () => {
     const r = calcularMes(entrada({ resultadoAposOutrasReceitas: -400 }), SOCIOS, new Map(), []);
     expect(r.lucroDistribuir).toBe(-400);
     expect(r.socios.find((s) => s.socioId === "a")!.valorLucro).toBe(-100);
+  });
+});
+
+describe("Reserva de Investimento (SIS-2026-0925)", () => {
+  it("0%: os 100% do resultado ficam disponíveis (jan/26: 378.471,27)", () => {
+    const r = calcularMes(entrada({ resultadoAposOutrasReceitas: 378471.27 }), SOCIOS, new Map(), []);
+    expect(r.reserva).toBe(0);
+    expect(r.lucroDistribuir).toBe(378471.27);
+    expect(r.socios.find((s) => s.socioId === "a")!.valorLucro).toBe(94617.82);
+    expect(r.socios.find((s) => s.socioId === "c")!.valorLucro).toBe(56770.69);
+    expect(r.socios.find((s) => s.socioId === "h")!.valorLucro).toBe(75694.25);
+    expect(r.totalSaldo).toBe(378471.27);
+  });
+  it("20%: reserva de 75.694,25 e 302.777,02 a distribuir, recalculando os sócios", () => {
+    const r = calcularMes(entrada({ resultadoAposOutrasReceitas: 378471.27 }), SOCIOS, new Map(), [], 20);
+    expect(r.reservaPercentual).toBe(20);
+    expect(r.reserva).toBe(75694.25);
+    expect(r.lucroDistribuir).toBe(302777.02);
+    expect(r.socios.reduce((t, s) => t + s.valorLucro, 0)).toBeCloseTo(302777.02, 2);
+    expect(r.socios.find((s) => s.socioId === "a")!.valorLucro).toBeCloseTo(75694.255, 1); // 25% de 302.777,02 (o centavo que sobra vai para um dos dois de 25%)
+  });
+  it("as retiradas só saem depois do direito de cada sócio e o saldo final bate com o Fechamento da Empresa (−13.099,17)", () => {
+    const r = calcularMes(entrada({ resultadoAposOutrasReceitas: 378471.27, colunaSocios: { Antonio: 212443.34 } }), SOCIOS, new Map(), [lin(-1, 179127.1, "investimentos")]);
+    expect(r.totalRetiradas).toBe(212443.34);
+    expect(r.saldoFinal).toBe(-13099.17);
+  });
+  it("mês sem resultado positivo não reserva; percentual é limitado a 0–100", () => {
+    expect(calcularReserva(-400, 20)).toBe(0);
+    expect(calcularReserva(1000, 150)).toBe(1000);
+    expect(calcularReserva(1000, -5)).toBe(0);
+    expect(calcularMes(entrada({ resultadoAposOutrasReceitas: -400 }), SOCIOS, new Map(), [], 20).lucroDistribuir).toBe(-400);
+  });
+  it("vários meses: cada mês com a sua reserva e a soma dos totais", () => {
+    const m1 = calcularMes(entrada({ mes: "2026-01", resultadoAposOutrasReceitas: 1000 }), SOCIOS, new Map(), [], 20);
+    const m2 = calcularMes(entrada({ mes: "2026-02", resultadoAposOutrasReceitas: 1000 }), SOCIOS, new Map(), [], 0);
+    const t = somarMeses([m1, m2]);
+    expect(t.reserva).toBe(200);
+    expect(t.lucroDistribuir).toBe(1800);
+  });
+  it("mês fechado vale o percentual e o valor gravados", () => {
+    const foto = fotoDoFechamento(calcularMes(entrada(), SOCIOS, new Map(), [], 10));
+    const r = resultadoDoFechamento("2026-01", { resultadoAntesRetiradas: 1000, consumoEmpresa: 0, lucroDistribuir: 900, socios: foto, reservaPercentual: 10, reserva: 100 });
+    expect(r.reservaPercentual).toBe(10);
+    expect(r.reserva).toBe(100);
+    expect(r.lucroDistribuir).toBe(900);
+    expect(linhaDoHistorico(calcularMes(entrada(), SOCIOS, new Map(), [], 10), { status: "fechado", dataFechamento: "2026-02-05", socios: foto, resultadoAntesRetiradas: 1000, lucroDistribuir: 900, reserva: 100 }).reserva).toBe(100);
   });
 });
 

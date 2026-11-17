@@ -35,6 +35,7 @@ import {
   useAtualizarRendimento,
   useResgatarMontanteAplicacao,
   useResgatesCaixa,
+  useAjusteSaldoAplicado,
   useHistoricoImportadoAplicacao,
   useEditarResgate,
   useExcluirResgate,
@@ -1006,6 +1007,7 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: linhas = [] } = useAplicacoesFinanceiras();
   const { data: resgatesCaixa = [] } = useResgatesCaixa();
+  const { data: ajustesSaldo = [] } = useAjusteSaldoAplicado();
   const resgatar = useResgatarMontanteAplicacao();
   // SIS-2026-0778: banco em que o resgate entrou. Sem ele a Conciliação Bancária não enxerga o resgate no Fluxo daquele banco.
   const { data: bancos = [] } = useCartaoBancos();
@@ -1031,11 +1033,13 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
     const resgatadoDaEmpresa = resgatesCaixa.filter((r) => r.empresa_id === empresaId);
     const totalResgatadoPrincipal = resgatadoDaEmpresa.reduce((s, r) => s + Number(r.valor_principal), 0);
     const totalResgatadoRendimento = resgatadoDaEmpresa.reduce((s, r) => s + Number(r.valor_rendimento), 0);
+    // ajuste provisório do saldo aplicado (mesma soma da RPC)
+    const ajuste = ajustesSaldo.filter((a) => a.empresa_id === empresaId).reduce((s, a) => s + a.valor, 0);
     return {
-      principal: totalAplicadoPrincipal - totalResgatadoPrincipal,
+      principal: totalAplicadoPrincipal - totalResgatadoPrincipal + ajuste,
       rendimento: totalAplicadoRendimento - totalResgatadoRendimento,
     };
-  }, [linhas, resgatesCaixa, empresaId]);
+  }, [linhas, resgatesCaixa, ajustesSaldo, empresaId]);
 
   function limpar() {
     setEmpresaId(""); setBancoId(""); setContratoId(""); setDataResgate(hoje()); setValorPrincipal(""); setValorRendimento(""); setObservacao("");
