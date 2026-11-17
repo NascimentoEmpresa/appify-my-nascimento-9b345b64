@@ -411,9 +411,10 @@ jobs:
       - name: Instalar dependências
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
-      # Testes do worker rodam uma vez só (fatia 1): não dependem da divisão.
+      # As dependências do worker vão em TODAS as fatias: src/test/nfse-integracao
+      # importa worker/src/nfse e cai em qualquer fatia. Só o node --test do
+      # worker roda uma vez (fatia 1).
       - name: Instalar dependências do worker para os testes de NFS-e
-        if: matrix.fatia == 1
         run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
       - name: Testar execução isolada de NFS-e no GitHub
         if: matrix.fatia == 1
