@@ -9,6 +9,11 @@ const ASSINATURAS: Record<string, Assinatura> = {
     resumo: "orçamento de contratos pelo EXECUTADO (faturado nas NFs do mês) a partir de 70% do executável da Planilha de Custo; antes disso, ou sem NF no mês corrente e nos futuros, pelo executável (previsto); mês passado sem NF = 0",
     onde: "LIMIAR_EXECUTADO / baseDoOrcamento / computarGruposContrato (src/hooks/useOrcamentoContratos.ts)",
   },
+  "SIS-2026-0903": {
+    chamado: "SIS-2026-0903", desde: "17/11/2026",
+    resumo: "Conciliação Financeira ampliada: 24 indicadores em 4 fontes (indisponível ≠ zero), detalhamento até a nota, impostos/descontos, conta vinculada, filtros, Excel e tratativas com histórico",
+    onde: "src/pages/financeiro/conciliacao-servicos/ (indicadores.ts, regras.ts, tratativas.ts) e textos em infos.tsx",
+  },
   "SIS-2026-0925": {
     chamado: "SIS-2026-0925", desde: "17/11/2026",
     resumo: "Reserva de Investimento (%) por competência no Fechamento dos Sócios: Total a Distribuir = Resultado do Período − Reserva; consumo da Empresa e retiradas saem depois da divisão",

@@ -12,8 +12,22 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
+import { Input } from "@/components/ui/input";
+import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
+import { useCustosContratoPeriodo } from "@/pages/controladoria/faturamento/useCustosContratoMes";
+import { useLigacoesRubrica } from "@/pages/controladoria/faturamento/useLigacoesRubrica";
+import { custosPorContratoMes, ehContratoAdministrativo, totalCustos } from "@/pages/controladoria/faturamento/regras";
+import { AbaContaVinculada, AbaDetalhe, AbaImpostosDescontos, AbaIndicadores, PainelCriterios } from "@/pages/financeiro/conciliacao-servicos/AbasAvancadas";
+import { indicadoresExtendidos, linhasContaVinculada, linhasImpostosDescontos, type EntradaIndicadores, type IndicadorId } from "@/pages/financeiro/conciliacao-servicos/indicadores";
+import { baixarExcel, montarPlanilhas } from "@/pages/financeiro/conciliacao-servicos/exportarExcel";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { useTratativas, type NovaTratativa } from "@/hooks/useTratativasConciliacao";
+import { TituloComFormula } from "@/pages/controladoria/faturamento/Rentabilidade";
+import { INFO_BLOCO, INFO_COL, INFO_FONTE, INFO_KPI } from "@/pages/financeiro/conciliacao-servicos/infos";
+import { AbaTratativas, DialogTratativa, StatusTratativaPill } from "@/pages/financeiro/conciliacao-servicos/TratativasUi";
+import { chaveNota, dadosDashboard, indexarPorAlvo, type Tratativa } from "@/pages/financeiro/conciliacao-servicos/tratativas";
 import { fmtMoney, foraDoRelatorio, type StatusNota } from "@/pages/financeiro/nf-emissao/shared";
-import { conciliar, FONTES, INDICADORES, type FiltrosConciliacao, type FonteId, type GrupoConciliacao, type NotaConciliacao } from "@/pages/financeiro/conciliacao-servicos/regras";
+import { codigosDoFiltro, conciliar, FONTES, INDICADORES, ROTULO_TIPO_DIVERGENCIA, type FiltrosConciliacao, type FonteId, type GrupoConciliacao, type NotaConciliacao, type TipoDivergencia } from "@/pages/financeiro/conciliacao-servicos/regras";
 
 // SIS-2026-0869: Conciliação Financeira dentro do Relatório de Serviços. Confronta Relatório Geral, Dashboard e Faturamento da
 // Empresa (Controladoria) sobre as mesmas NFs e aponta onde as telas divergem — com o motivo e um atalho para a tela onde corrigir.
@@ -45,7 +59,21 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
   const { data: empresas = [] } = useEmpresasGrupo();
 
   const [ano, setAno] = useState(anoAtual);
-  const [competencia, setCompetencia] = useState(TODOS);
+  // SIS-2026-0903: vários meses (de/até), período de emissão e de pagamento, tipo de divergência e status da conciliação
+  const [compDe, setCompDe] = useState(TODOS);
+  const [compAte, setCompAte] = useState(TODOS);
+  const [emissaoDe, setEmissaoDe] = useState("");
+  const [emissaoAte, setEmissaoAte] = useState("");
+  const [pagamentoDe, setPagamentoDe] = useState("");
+  const [pagamentoAte, setPagamentoAte] = useState("");
+  const [tipoDivergencia, setTipoDivergencia] = useState<TipoDivergencia | typeof TODOS>(TODOS);
+  const [statusConciliacao, setStatusConciliacao] = useState<"todos" | "conciliada" | "divergente">(TODOS);
+  const [indicadorDetalhe, setIndicadorDetalhe] = useState<IndicadorId>("pendente");
+  // SIS-2026-0903 (Fase 2): tratativas das divergências
+  const { data: tratativas = [] } = useTratativas();
+  const { data: podeAlterarConciliacao = false } = useScreenAccess("relatorio-servicos-conciliacao", "alterar");
+  const [dialogTratativa, setDialogTratativa] = useState<{ existente: Tratativa | null; novo: NovaTratativa | null } | null>(null);
+  const tratativaPorAlvo = useMemo(() => indexarPorAlvo(tratativas), [tratativas]);
   const [empresaId, setEmpresaId] = useState(TODOS);
   const [contratoId, setContratoId] = useState(TODOS);
   const [cliente, setCliente] = useState(TODOS);
@@ -77,7 +105,10 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
 
   const filtros: FiltrosConciliacao = {
     ano,
-    competencia: competencia === TODOS ? "" : competencia,
+    competencia: "",
+    competenciaDe: compDe === TODOS ? "" : compDe,
+    competenciaAte: compAte === TODOS ? "" : compAte,
+    emissaoDe, emissaoAte, pagamentoDe, pagamentoAte,
     empresaId: empresaId === TODOS ? "" : empresaId,
     contratoId: contratoId === TODOS ? "" : contratoId,
     cliente: cliente === TODOS ? "" : cliente,
@@ -95,8 +126,71 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
   const resultado = useMemo(
     () => conciliar({ nfs, itensPorNf, contratoPorId, filtros }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nfs, itensPorNf, contratoPorId, ano, competencia, empresaId, contratoId, cliente, codigo, situacao],
+    [nfs, itensPorNf, contratoPorId, ano, compDe, compAte, emissaoDe, emissaoAte, pagamentoDe, pagamentoAte, empresaId, contratoId, cliente, codigo, situacao],
   );
+
+  // SIS-2026-0903 — indicadores ampliados: executável (planilha) e despesas (Fluxo de Caixa) dos contratos do recorte, nos meses já realizados.
+  const mesAtual = `${anoAtual}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const codigosBase = useMemo(() => codigosDoFiltro(codigo), [codigo]);
+  const { executavelDoContrato } = useBaseFaturamento(codigosBase);
+  const mesesRecorte = useMemo(() => {
+    const doRecorte = competencias.filter((c) => c <= mesAtual && (compDe === TODOS || c >= compDe) && (compAte === TODOS || c <= compAte));
+    if (doRecorte.length === 0) return [] as string[];
+    const out: string[] = [];
+    let [a, m] = doRecorte[0].split("-").map(Number);
+    const fim = doRecorte[doRecorte.length - 1];
+    for (;;) {
+      const k = `${a}-${String(m).padStart(2, "0")}`;
+      if (k > fim) break;
+      out.push(k);
+      m += 1; if (m > 12) { m = 1; a += 1; }
+    }
+    return out;
+  }, [competencias, compDe, compAte, mesAtual]);
+  const contratosDoRecorte = useMemo(
+    () => contratos.filter((c) => !ehContratoAdministrativo(c.nome)
+      && (empresaId === TODOS || c.empresa_id === empresaId) && (contratoId === TODOS || c.id === contratoId) && (cliente === TODOS || c.cliente === cliente)),
+    [contratos, empresaId, contratoId, cliente],
+  );
+  const precisaDespesas = aba === "indicadores";
+  const { data: fluxoCustos, isLoading: carregandoDespesas } = useCustosContratoPeriodo(precisaDespesas && mesesRecorte.length ? mesesRecorte[0] : "", precisaDespesas && mesesRecorte.length ? mesesRecorte[mesesRecorte.length - 1] : "", "competencia");
+  const { data: ligacoesRubrica } = useLigacoesRubrica();
+  const despesas = useMemo(() => {
+    if (!fluxoCustos) return null;
+    const custos = custosPorContratoMes(fluxoCustos, ligacoesRubrica);
+    let t = 0;
+    for (const c of contratosDoRecorte) for (const m of mesesRecorte) { const x = custos.get(`${c.id}|${m}`); if (x) t += totalCustos(x); }
+    return t;
+  }, [fluxoCustos, ligacoesRubrica, contratosDoRecorte, mesesRecorte]);
+  const entradaInd: EntradaIndicadores = useMemo(() => ({
+    linhasRelatorio: resultado.linhasRelatorio, linhasFaturamento: resultado.linhasFaturamento, itensPorNf,
+    executavelDoContratoMes: (contratoId, anoMes) => { const c = contratoPorId.get(contratoId); return c ? executavelDoContrato(c, anoMes) : 0; },
+    contratosDoRecorte, meses: mesesRecorte, despesas,
+  }), [resultado, itensPorNf, contratoPorId, executavelDoContrato, contratosDoRecorte, mesesRecorte, despesas]);
+  const linhasExt = useMemo(() => indicadoresExtendidos(entradaInd), [entradaInd]);
+  const nomeContratoNf = (n: { contrato?: { nome?: string } | null; contrato_id: string }) => n.contrato?.nome ?? contratoPorId.get(n.contrato_id)?.nome ?? "Sem contrato";
+  const linhasImpDesc = useMemo(
+    () => linhasImpostosDescontos(resultado.linhasRelatorio, itensPorNf, nomeContratoNf),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resultado, itensPorNf, contratoPorId],
+  );
+  const linhasCv = useMemo(
+    () => linhasContaVinculada(resultado.linhasRelatorio, nomeContratoNf),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resultado, contratoPorId],
+  );
+  const nomeEmpresa = (id: string) => empresaNome.get(id) ?? "";
+  const hojeIso = new Date().toISOString().slice(0, 10);
+  const dash = useMemo(() => dadosDashboard(resultado, tratativas, hojeIso), [resultado, tratativas, hojeIso]);
+  const tratarNota = (n: NotaConciliacao) => {
+    const existente = tratativaPorAlvo.get(chaveNota(n.id)) ?? null;
+    setDialogTratativa({
+      existente,
+      novo: existente ? null : { alvoChave: chaveNota(n.id), alvoTipo: "nota", nfEmissaoId: n.id, contratoId: n.contratoId, empresaId: n.empresaId, competencia: n.competencia,
+        titulo: `NF ${n.numero} · ${n.contratoNome} · ${mesLabel(n.competencia)}`, tipoDivergencia: n.tipos[0] ?? null, valorDiferenca: n.difTotal, justificativa: n.motivos.join(" ") },
+    });
+  };
+  const ctxNota = useMemo(() => ({ empresaNome: (id: string) => empresaNome.get(id) ?? "", contratoPorId: new Map(contratos.map((c) => [c.id, { nome: c.nome, cliente: c.cliente, empresa_id: c.empresa_id }])) }), [empresaNome, contratos]);
   const { resumo, indicadores, notas, porCompetencia, porContrato } = resultado;
   const pctInd = (n: number) => (indicadores.length ? `${((n / indicadores.length) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% dos indicadores` : "—");
 
@@ -114,7 +208,8 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
   }
 
   function limpar() {
-    setCompetencia(TODOS); setEmpresaId(TODOS); setContratoId(TODOS); setCliente(TODOS); setCodigo("N"); setSituacao(TODOS);
+    setCompDe(TODOS); setCompAte(TODOS); setEmissaoDe(""); setEmissaoAte(""); setPagamentoDe(""); setPagamentoAte("");
+    setTipoDivergencia(TODOS); setStatusConciliacao(TODOS); setEmpresaId(TODOS); setContratoId(TODOS); setCliente(TODOS); setCodigo("N"); setSituacao(TODOS);
   }
 
   function exportarCsv() {
@@ -133,6 +228,22 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  async function exportarExcel() {
+    try {
+      const partes = [
+        `Ano: ${ano || "todos"}`, compDe !== TODOS || compAte !== TODOS ? `Competência: ${compDe === TODOS ? "início" : mesLabel(compDe)} a ${compAte === TODOS ? "fim" : mesLabel(compAte)}` : "Competência: todas",
+        `Empresa: ${empresaId === TODOS ? "todas" : empresaNome.get(empresaId) ?? ""}`, `Contrato: ${contratoId === TODOS ? "todos" : contratoPorId.get(contratoId)?.nome ?? ""}`, `Cliente: ${cliente === TODOS ? "todos" : cliente}`,
+        `Código: ${codigo || "todos"}`, `Situação: ${situacao === TODOS ? "todas" : ROTULO_STATUS[situacao as StatusNota]}`,
+        ...(emissaoDe || emissaoAte ? [`Emissão: ${emissaoDe || "…"} a ${emissaoAte || "…"}`] : []), ...(pagamentoDe || pagamentoAte ? [`Pagamento: ${pagamentoDe || "…"} a ${pagamentoAte || "…"}`] : []),
+      ];
+      const planilhas = montarPlanilhas({ recorte: partes, geradoEm: new Date(), resultado, indicadores: linhasExt, impostos: linhasImpDesc, contaVinculada: linhasCv, tratativas, empresaNome: nomeEmpresa });
+      await baixarExcel(planilhas, `conciliacao_relatorio_servicos_${ano || "todos_os_anos"}.xlsx`);
+      toast.success("Excel gerado.");
+    } catch (e) {
+      toast.error((e as { message?: string })?.message ?? "Não foi possível gerar o Excel.");
+    }
+  }
+
   const abrir = (n: Pick<NotaConciliacao, "empresaId" | "competencia" | "contratoId">) =>
     onAbrirNoGeral({ empresa: n.empresaId, competencia: `${n.competencia}-01`, contrato: n.contratoId });
 
@@ -140,10 +251,10 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
   const evolucao = useMemo(() => {
     const m = new Map(porCompetencia.map((g) => [g.chave, g.difTotal]));
     // Todos os anos: uma barra por competência que tem NF (ordem cronológica), não os 12 meses de um ano.
-    if (!ano) return porCompetencia.map((g) => ({ mes: mesLabel(g.chave), diferenca: g.difTotal }));
+    if (!ano) return porCompetencia.map((g) => ({ mes: mesLabel(g.chave), diferenca: g.difTotal, chave: g.chave }));
     return Array.from({ length: 12 }, (_, i) => {
       const k = `${ano}-${String(i + 1).padStart(2, "0")}`;
-      return { mes: mesLabel(k), diferenca: m.get(k) ?? 0 };
+      return { mes: mesLabel(k), diferenca: m.get(k) ?? 0, chave: k };
     });
   }, [porCompetencia, ano]);
   const donut = [
@@ -151,7 +262,10 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
     { nome: "Divergentes", valor: resumo.notasDivergentes, cor: "#d75a54" },
   ].filter((d) => d.valor > 0);
   const topContratos = porContrato.filter((g) => g.difTotal > 0).slice(0, 5);
-  const notasVisiveis = soDivergentes ? notas.filter((n) => n.divergente) : notas;
+  const notasVisiveis = notas.filter((n) =>
+    (soDivergentes ? n.divergente : true)
+    && (statusConciliacao === TODOS || (statusConciliacao === "divergente" ? n.divergente : !n.divergente))
+    && (tipoDivergencia === TODOS || n.tipos.includes(tipoDivergencia)));
 
   if (carregandoNfs || carregandoContratos) return <p className="py-10 text-center text-sm text-muted-foreground">Carregando...</p>;
 
@@ -161,12 +275,12 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{titulo}</TableHead>
-              <TableHead className="text-right">Notas</TableHead>
-              <TableHead className="text-right">Divergentes</TableHead>
-              {INDICADORES.map((i) => <TableHead key={i.id} className="text-right">Dif. {i.rotulo.replace("Faturamento ", "").replace("Valor ", "")}</TableHead>)}
-              <TableHead className="text-right">Diferença total</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead><TituloComFormula alinhar="left" titulo={titulo} formula={INFO_COL.grupo} /></TableHead>
+              <TableHead className="text-right"><TituloComFormula titulo="Notas" formula={INFO_COL.notasGrupo} /></TableHead>
+              <TableHead className="text-right"><TituloComFormula titulo="Divergentes" formula={INFO_COL.divergentesGrupo} /></TableHead>
+              {INDICADORES.map((i) => <TableHead key={i.id} className="text-right"><TituloComFormula titulo={`Dif. ${i.rotulo.replace("Faturamento ", "").replace("Valor ", "")}`} formula={INFO_COL.difIndicador} /></TableHead>)}
+              <TableHead className="text-right"><TituloComFormula titulo="Diferença total" formula={INFO_COL.difTotalGrupo} /></TableHead>
+              <TableHead><TituloComFormula alinhar="left" titulo="Status" formula={INFO_COL.statusGrupo} /></TableHead>
               {onClique && <TableHead />}
             </TableRow>
           </TableHeader>
@@ -190,7 +304,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
   );
 
   function verNfsDoGrupo(g: GrupoConciliacao, tipo: "competencia" | "contrato") {
-    if (tipo === "competencia") setCompetencia(g.chave); else setContratoId(g.chave);
+    if (tipo === "competencia") { setCompDe(g.chave); setCompAte(g.chave); } else setContratoId(g.chave);
     setSoDivergentes(true);
     setAba("nota");
   }
@@ -199,26 +313,33 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Compara Relatório Geral, Dashboard e Faturamento da Empresa (Controladoria) sobre as mesmas NFs. Onde houver divergência, o motivo e o atalho para a tela de origem aparecem na aba “Por Nota Fiscal”.
+          Compara Relatório Geral, Dashboard, Faturamento da Empresa e Lucratividade de Contratos sobre as mesmas NFs. Onde houver divergência, o motivo e o atalho para a tela de origem aparecem em “Por Nota Fiscal” e em “Detalhar indicador”. Indicador que a tela não traz aparece como “Indisponível”, nunca como zero.
         </p>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{atualizadoEm ? `Atualizado às ${atualizadoEm.toLocaleTimeString("pt-BR")}` : "Calculado ao abrir a tela"}</span>
           <Button variant="outline" size="sm" onClick={exportarCsv}><FileDown className="mr-1.5 h-4 w-4" />Exportar CSV</Button>
+          <Button variant="outline" size="sm" onClick={exportarExcel}><FileDown className="mr-1.5 h-4 w-4" />Exportar Excel</Button>
           <Button size="sm" onClick={recalcular} disabled={recalculando}><RefreshCw className={`mr-1.5 h-4 w-4 ${recalculando ? "animate-spin" : ""}`} />Recalcular</Button>
         </div>
       </div>
 
       <div className="card-elevated flex flex-wrap items-end gap-2 p-3 text-xs">
         <Filtro rotulo="Ano">
-          <Select value={String(ano)} onValueChange={(v) => { setAno(Number(v)); setCompetencia(TODOS); }}>
+          <Select value={String(ano)} onValueChange={(v) => { setAno(Number(v)); setCompDe(TODOS); setCompAte(TODOS); }}>
             <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="0">Todos</SelectItem>{anos.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
           </Select>
         </Filtro>
-        <Filtro rotulo="Competência">
-          <Select value={competencia} onValueChange={setCompetencia}>
+        <Filtro rotulo="Competência de">
+          <Select value={compDe} onValueChange={(v) => { setCompDe(v); if (v !== TODOS && compAte !== TODOS && compAte < v) setCompAte(v); }}>
             <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value={TODOS}>Todas</SelectItem>{competencias.map((c) => <SelectItem key={c} value={c}>{`${c.slice(5, 7)}/${c.slice(0, 4)}`}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value={TODOS}>Início</SelectItem>{competencias.map((c) => <SelectItem key={c} value={c}>{`${c.slice(5, 7)}/${c.slice(0, 4)}`}</SelectItem>)}</SelectContent>
+          </Select>
+        </Filtro>
+        <Filtro rotulo="até">
+          <Select value={compAte} onValueChange={(v) => { setCompAte(v); if (v !== TODOS && compDe !== TODOS && compDe > v) setCompDe(v); }}>
+            <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value={TODOS}>Fim</SelectItem>{competencias.map((c) => <SelectItem key={c} value={c}>{`${c.slice(5, 7)}/${c.slice(0, 4)}`}</SelectItem>)}</SelectContent>
           </Select>
         </Filtro>
         <Filtro rotulo="Empresa">
@@ -251,16 +372,34 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
             <SelectContent><SelectItem value={TODOS}>Todas</SelectItem>{(Object.keys(ROTULO_STATUS) as StatusNota[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS[s]}</SelectItem>)}</SelectContent>
           </Select>
         </Filtro>
+        <Filtro rotulo="Emissão de"><Input type="date" className="h-8 w-36 text-xs" value={emissaoDe} onChange={(e) => setEmissaoDe(e.target.value)} /></Filtro>
+        <Filtro rotulo="Emissão até"><Input type="date" className="h-8 w-36 text-xs" value={emissaoAte} onChange={(e) => setEmissaoAte(e.target.value)} /></Filtro>
+        <Filtro rotulo="Pagamento de"><Input type="date" className="h-8 w-36 text-xs" value={pagamentoDe} onChange={(e) => setPagamentoDe(e.target.value)} /></Filtro>
+        <Filtro rotulo="Pagamento até"><Input type="date" className="h-8 w-36 text-xs" value={pagamentoAte} onChange={(e) => setPagamentoAte(e.target.value)} /></Filtro>
+        <Filtro rotulo="Status da conciliação (NF)">
+          <Select value={statusConciliacao} onValueChange={(v) => setStatusConciliacao(v as typeof statusConciliacao)}>
+            <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value={TODOS}>Todos</SelectItem><SelectItem value="conciliada">Conciliadas</SelectItem><SelectItem value="divergente">Divergentes</SelectItem></SelectContent>
+          </Select>
+        </Filtro>
+        <Filtro rotulo="Tipo de divergência (NF)">
+          <Select value={tipoDivergencia} onValueChange={(v) => setTipoDivergencia(v as TipoDivergencia | typeof TODOS)}>
+            <SelectTrigger className="h-8 w-52 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value={TODOS}>Todos</SelectItem>{(Object.keys(ROTULO_TIPO_DIVERGENCIA) as TipoDivergencia[]).map((t) => <SelectItem key={t} value={t}>{ROTULO_TIPO_DIVERGENCIA[t]}</SelectItem>)}</SelectContent>
+          </Select>
+        </Filtro>
         <Button variant="ghost" size="sm" onClick={limpar}>Limpar filtros</Button>
       </div>
+
+      <PainelCriterios nfs={[...resultado.linhasRelatorio, ...resultado.linhasFaturamento.filter((n) => !resultado.linhasRelatorio.some((r) => r.id === n.id))]} contratoPorId={contratoPorId} />
 
       {carregandoItens && <p className="text-xs text-muted-foreground">Carregando os itens das NFs (descontos pós-emissão)… o Valor Pendente pode mudar quando terminar.</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiTile label="Indicadores conciliados" valor={String(resumo.indicadoresConciliados)} sub={pctInd(resumo.indicadoresConciliados)} cor="emerald" icon={<CheckCircle2 className="h-14 w-14" />} valorClass="text-emerald-700 dark:text-emerald-300" />
-        <KpiTile label="Indicadores divergentes" valor={String(resumo.indicadoresDivergentes)} sub={pctInd(resumo.indicadoresDivergentes)} cor={resumo.indicadoresDivergentes ? "red" : "emerald"} icon={<AlertTriangle className="h-14 w-14" />} valorClass={resumo.indicadoresDivergentes ? "text-red-600" : "text-emerald-700 dark:text-emerald-300"} />
-        <KpiTile label="Diferença total (R$)" valor={fmtMoney(resumo.diferencaTotal)} sub="Soma das divergências por NF" cor="sky" icon={<FileText className="h-14 w-14" />} />
-        <KpiTile label="Notas em divergência" valor={`${resumo.notasDivergentes} de ${resumo.notasAvaliadas}`} sub="Registros para análise" cor={resumo.notasDivergentes ? "amber" : "emerald"} icon={<AlertTriangle className="h-14 w-14" />} onClick={() => { setSoDivergentes(true); setAba("nota"); }} />
+        <KpiTile info={INFO_KPI.conciliados} label="Indicadores conciliados" valor={String(resumo.indicadoresConciliados)} sub={pctInd(resumo.indicadoresConciliados)} cor="emerald" icon={<CheckCircle2 className="h-14 w-14" />} valorClass="text-emerald-700 dark:text-emerald-300" />
+        <KpiTile info={INFO_KPI.divergentes} label="Indicadores divergentes" valor={String(resumo.indicadoresDivergentes)} sub={pctInd(resumo.indicadoresDivergentes)} cor={resumo.indicadoresDivergentes ? "red" : "emerald"} icon={<AlertTriangle className="h-14 w-14" />} valorClass={resumo.indicadoresDivergentes ? "text-red-600" : "text-emerald-700 dark:text-emerald-300"} />
+        <KpiTile info={INFO_KPI.diferencaTotal} label="Diferença total (R$)" valor={fmtMoney(resumo.diferencaTotal)} sub="Soma das divergências por NF" cor="sky" icon={<FileText className="h-14 w-14" />} />
+        <KpiTile info={INFO_KPI.notasDivergentes} label="Notas em divergência" valor={`${resumo.notasDivergentes} de ${resumo.notasAvaliadas}`} sub="Registros para análise" cor={resumo.notasDivergentes ? "amber" : "emerald"} icon={<AlertTriangle className="h-14 w-14" />} onClick={() => { setSoDivergentes(true); setAba("nota"); }} />
       </div>
 
       <Tabs value={aba} onValueChange={setAba}>
@@ -269,21 +408,34 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
           <TabsTrigger value="competencia">Por Competência</TabsTrigger>
           <TabsTrigger value="contrato">Por Contrato</TabsTrigger>
           <TabsTrigger value="nota">Por Nota Fiscal</TabsTrigger>
+          <TabsTrigger value="indicadores">Todos os indicadores</TabsTrigger>
+          <TabsTrigger value="detalhe">Detalhar indicador</TabsTrigger>
+          <TabsTrigger value="impostos">Impostos e descontos</TabsTrigger>
+          <TabsTrigger value="conta">Contas vinculadas</TabsTrigger>
+          <TabsTrigger value="tratativas">Tratativas{dash.tratativas.porStatus.aberta + dash.tratativas.porStatus.em_analise > 0 ? ` (${dash.tratativas.porStatus.aberta + dash.tratativas.porStatus.em_analise})` : ""}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="visao" className="mt-4 space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <KpiTile label="% de conciliação" valor={dash.pctConciliacao === null ? "—" : pctTxt(dash.pctConciliacao)} sub={`${resumo.notasConciliadas.toLocaleString("pt-BR")} de ${resumo.notasAvaliadas.toLocaleString("pt-BR")} notas conciliadas`} cor="emerald" icon={<CheckCircle2 className="h-14 w-14" />} valorClass="text-emerald-700 dark:text-emerald-300"
+              info={INFO_KPI.pctConciliacao} />
+            <KpiTile label="Valor sob investigação" valor={fmtMoney(dash.tratativas.valorSobInvestigacao)} sub="Diferença das tratativas em aberto · clique" cor="sky" icon={<FileText className="h-14 w-14" />} onClick={() => setAba("tratativas")}
+              info={INFO_KPI.valorInvestigacao} />
+            <KpiTile info={INFO_KPI.semTratativa} label="Divergentes sem tratativa" valor={String(dash.semTratativa)} sub="Notas divergentes ainda sem responsável · clique" cor={dash.semTratativa ? "amber" : "emerald"} icon={<AlertTriangle className="h-14 w-14" />} onClick={() => { setSoDivergentes(true); setAba("nota"); }} />
+            <KpiTile info={INFO_KPI.vencidas} label="Tratativas vencidas" valor={String(dash.tratativas.vencidas)} sub="Prazo de resolução passou · clique" cor={dash.tratativas.vencidas ? "red" : "emerald"} icon={<AlertTriangle className="h-14 w-14" />} onClick={() => setAba("tratativas")} />
+          </div>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-base">Comparativo dos indicadores</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-base"><TituloComFormula alinhar="left" titulo="Comparativo dos indicadores" formula={INFO_BLOCO.comparativo} /></CardTitle></CardHeader>
             <CardContent className="overflow-x-auto p-0">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Indicador</TableHead>
-                    {FONTES.map((f) => <TableHead key={f.id} className="text-right">{f.rotulo}</TableHead>)}
-                    <TableHead className="text-right">Diferença (maior − menor)</TableHead>
-                    <TableHead className="text-right">Variação %</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Quem destoa</TableHead>
+                    <TableHead><TituloComFormula alinhar="left" titulo="Indicador" formula={INFO_COL.indicador} /></TableHead>
+                    {FONTES.map((f) => <TableHead key={f.id} className="text-right"><TituloComFormula titulo={f.rotulo} formula={INFO_FONTE[f.id]} /></TableHead>)}
+                    <TableHead className="text-right"><TituloComFormula titulo="Diferença (maior − menor)" formula={INFO_COL.diferenca} /></TableHead>
+                    <TableHead className="text-right"><TituloComFormula titulo="Variação %" formula={INFO_COL.variacao} /></TableHead>
+                    <TableHead><TituloComFormula alinhar="left" titulo="Status" formula={INFO_COL.status} /></TableHead>
+                    <TableHead><TituloComFormula alinhar="left" titulo="Quem destoa" formula={INFO_COL.destoa} /></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -304,7 +456,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-base">Comparativo por indicador (R$)</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base"><TituloComFormula alinhar="left" titulo="Comparativo por indicador (R$)" formula={INFO_BLOCO.graficoIndicadores} /></CardTitle></CardHeader>
               <CardContent>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -321,7 +473,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-base">Evolução da divergência por competência ({ano || "todos os anos"})</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base"><TituloComFormula alinhar="left" titulo={`Evolução da divergência por competência (${ano || "todos os anos"})`} formula={INFO_BLOCO.graficoEvolucao} /></CardTitle></CardHeader>
               <CardContent>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -330,7 +482,8 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
                       <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
                       <YAxis tick={{ fontSize: 11 }} width={64} tickFormatter={(v) => v.toLocaleString("pt-BR", { notation: "compact" })} />
                       <Tooltip formatter={(v: number) => fmtMoney(v)} />
-                      <Bar dataKey="diferenca" name="Diferença (R$)" fill="#527fb6" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="diferenca" name="Diferença (R$)" fill="#527fb6" radius={[4, 4, 0, 0]} cursor="pointer"
+                        onClick={(d: { payload?: { chave?: string } }) => { const k = d?.payload?.chave; if (k) { setCompDe(k); setCompAte(k); setSoDivergentes(true); setAba("nota"); } }} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -338,12 +491,32 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
             </Card>
           </div>
 
+          {dash.porTipo.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-base"><TituloComFormula alinhar="left" titulo="Divergências por tipo (notas) · clique para ver as NFs" formula={INFO_BLOCO.graficoTipos} /></CardTitle></CardHeader>
+              <CardContent>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dash.porTipo} layout="vertical" margin={{ left: 90 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <YAxis type="category" dataKey="rotulo" tick={{ fontSize: 11 }} width={170} />
+                      <Tooltip formatter={(v: number) => `${v} nota(s)`} />
+                      <Bar dataKey="notas" name="Notas" fill="#d75a54" radius={[0, 4, 4, 0]} cursor="pointer"
+                        onClick={(d: { payload?: { tipo?: TipoDivergencia } }) => { const t = d?.payload?.tipo; if (t) { setTipoDivergencia(t); setSoDivergentes(true); setAba("nota"); } }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-base">Principais contratos com divergência</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base"><TituloComFormula alinhar="left" titulo="Principais contratos com divergência" formula={INFO_BLOCO.topContratos} /></CardTitle></CardHeader>
               <CardContent className="p-0">
                 <Table>
-                  <TableHeader><TableRow><TableHead>Contrato</TableHead><TableHead className="text-right">NFs</TableHead><TableHead className="text-right">Diferença (R$)</TableHead><TableHead /></TableRow></TableHeader>
+                  <TableHeader><TableRow><TableHead>Contrato</TableHead><TableHead className="text-right">NFs</TableHead><TableHead className="text-right"><TituloComFormula titulo="Diferença (R$)" formula={INFO_COL.difTotalGrupo} /></TableHead><TableHead /></TableRow></TableHeader>
                   <TableBody>
                     {topContratos.length === 0 && <TableRow><TableCell colSpan={4} className="py-6 text-center text-muted-foreground">Nenhum contrato com divergência no recorte.</TableCell></TableRow>}
                     {topContratos.map((g) => (
@@ -359,7 +532,7 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-base">Status da conciliação (notas)</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base"><TituloComFormula alinhar="left" titulo="Status da conciliação (notas)" formula={INFO_BLOCO.statusNotas} /></CardTitle></CardHeader>
               <CardContent>
                 {resumo.notasAvaliadas === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">Nenhuma NF no recorte.</p> : (
                   <div className="flex items-center gap-4">
@@ -389,6 +562,17 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
           </div>
         </TabsContent>
 
+        <TabsContent value="indicadores" className="mt-4">
+          <AbaIndicadores linhas={linhasExt} carregandoDespesas={precisaDespesas && carregandoDespesas} onDetalhar={(id) => { setIndicadorDetalhe(id); setAba("detalhe"); }} />
+        </TabsContent>
+        <TabsContent value="detalhe" className="mt-4">
+          <AbaDetalhe indicadorId={indicadorDetalhe} onIndicador={setIndicadorDetalhe} entrada={entradaInd} ctx={ctxNota} onAbrir={abrir}
+            onTratar={podeAlterarConciliacao ? (id) => { const n = notas.find((x) => x.id === id); if (n) tratarNota(n); } : undefined} />
+        </TabsContent>
+        <TabsContent value="impostos" className="mt-4"><AbaImpostosDescontos linhas={linhasImpDesc} nomeEmpresa={nomeEmpresa} /></TabsContent>
+        <TabsContent value="conta" className="mt-4"><AbaContaVinculada linhas={linhasCv} /></TabsContent>
+        <TabsContent value="tratativas" className="mt-4"><AbaTratativas tratativas={tratativas} podeAlterar={podeAlterarConciliacao} onAbrir={(t) => setDialogTratativa({ existente: t, novo: null })} /></TabsContent>
+
         <TabsContent value="competencia" className="mt-4">{tabelaGrupo(porCompetencia.map((g) => ({ ...g, rotulo: `${g.chave.slice(5, 7)}/${g.chave.slice(0, 4)}` })), "Competência", (g) => verNfsDoGrupo(g, "competencia"))}</TabsContent>
         <TabsContent value="contrato" className="mt-4">{tabelaGrupo(porContrato, "Contrato", (g) => verNfsDoGrupo(g, "contrato"))}</TabsContent>
 
@@ -403,15 +587,15 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>NF</TableHead><TableHead>Contrato</TableHead><TableHead>Comp.</TableHead>
-                    <TableHead className="text-right">Pendente — Relatório/Dashboard</TableHead>
-                    <TableHead className="text-right">Pendente — Faturamento</TableHead>
-                    <TableHead className="text-right">Diferença total</TableHead>
-                    <TableHead>Motivo provável</TableHead><TableHead />
+                    <TableHead><TituloComFormula alinhar="left" titulo="NF" formula={INFO_COL.nf} /></TableHead><TableHead><TituloComFormula alinhar="left" titulo="Contrato" formula={INFO_COL.contrato} /></TableHead><TableHead><TituloComFormula alinhar="left" titulo="Comp." formula={INFO_COL.competencia} /></TableHead>
+                    <TableHead className="text-right"><TituloComFormula titulo="Pendente — Relatório/Dashboard" formula={INFO_COL.pendRel} /></TableHead>
+                    <TableHead className="text-right"><TituloComFormula titulo="Pendente — Faturamento" formula={INFO_COL.pendFat} /></TableHead>
+                    <TableHead className="text-right"><TituloComFormula titulo="Diferença total" formula={INFO_COL.difTotalNota} /></TableHead>
+                    <TableHead><TituloComFormula alinhar="left" titulo="Motivo provável" formula={INFO_COL.motivo} /></TableHead><TableHead><TituloComFormula alinhar="left" titulo="Tratativa" formula={INFO_COL.tratativa} /></TableHead><TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {notasVisiveis.length === 0 && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">{soDivergentes ? "Nenhuma divergência no recorte." : "Nenhuma NF no recorte."}</TableCell></TableRow>}
+                  {notasVisiveis.length === 0 && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">{soDivergentes ? "Nenhuma divergência no recorte." : "Nenhuma NF no recorte."}</TableCell></TableRow>}
                   {notasVisiveis
                     .filter((n) => !buscaNf.trim() || `${n.numero} ${n.contratoNome}`.toLowerCase().includes(buscaNf.trim().toLowerCase()))
                     .slice(0, 200)
@@ -423,7 +607,15 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
                         <TableCell className="text-right whitespace-nowrap">{n.fontes.geral.incluida ? fmtMoney(n.fontes.geral.pendente) : "fora"}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">{n.fontes.faturamento.incluida ? fmtMoney(n.fontes.faturamento.pendente) : "fora"}</TableCell>
                         <TableCell className={`text-right whitespace-nowrap ${n.divergente ? "font-semibold text-red-600" : ""}`}>{fmtMoney(n.difTotal)}</TableCell>
-                        <TableCell className="max-w-[420px] whitespace-normal text-xs">{n.divergente ? n.motivos.join(" ") : <StatusPill ok />}</TableCell>
+                        <TableCell className="max-w-[420px] whitespace-normal text-xs">
+                          {n.divergente ? n.motivos.join(" ") : <StatusPill ok />}
+                          {n.divergente && n.tipos.length > 0 && <span className="mt-1 block text-[11px] text-muted-foreground">Tipo: {[...new Set(n.tipos)].map((t) => ROTULO_TIPO_DIVERGENCIA[t]).join(", ")}</span>}
+                        </TableCell>
+                        <TableCell>
+                          {tratativaPorAlvo.get(chaveNota(n.id))
+                            ? <button type="button" onClick={() => tratarNota(n)} title="Abrir a tratativa"><StatusTratativaPill status={tratativaPorAlvo.get(chaveNota(n.id))!.status} /></button>
+                            : n.divergente && podeAlterarConciliacao ? <Button size="sm" variant="outline" onClick={() => tratarNota(n)}>Tratar</Button> : null}
+                        </TableCell>
                         <TableCell><Button size="sm" variant="ghost" onClick={() => abrir(n)} title="Abrir no Relatório Geral, já com empresa, competência e contrato"><ExternalLink className="mr-1 h-3.5 w-3.5" />Abrir</Button></TableCell>
                       </TableRow>
                     ))}
@@ -433,6 +625,8 @@ export default function ConciliacaoFinanceiraTab({ onAbrirNoGeral }: { onAbrirNo
           </Card>
         </TabsContent>
       </Tabs>
+
+      <DialogTratativa aberto={!!dialogTratativa} existente={dialogTratativa?.existente ?? null} novo={dialogTratativa?.novo ?? null} podeAlterar={podeAlterarConciliacao} onClose={() => setDialogTratativa(null)} />
     </div>
   );
 }
