@@ -90,15 +90,36 @@ Claude Code interativo (manual, sempre)
 O título da PR **precisa** começar com `SIS-AAAA-NNNN: <resumo>` (sem
 colchetes) — sem chamado relacionado, usa `[SEM-CHAMADO]:` (com colchetes).
 Isso já é validado por CI hoje (`.github/workflows/chamado_pr_sync.yml`,
-required status check que bloqueia merge) e, quando a PR é aberta (fora de
-rascunho), `.github/workflows/chamado_concluir_no_merge.yml` **conclui o
-chamado sozinho** (desde 12/11/2026). No **merge**, a Edge
-`chamado-concluir-pr` põe no chat do chamado o resumo da entrega escrito pela
-I.A para o solicitante, com as URLs das telas alteradas (calculadas por
-`.github/scripts/rotas-da-pr.cjs`). Desde 13/11/2026 o resumo sai só no merge
-e lê a PR já fechada: só os commits do chamado (mensagem inteira) e o código
-alterado neles (`.github/scripts/contexto-resumo-pr.cjs`). O merge também
-conclui como reserva, sem passar por cima de uma reabertura do solicitante.
+required status check que bloqueia merge).
+
+**Nem abrir nem mergear a PR conclui o chamado.** Abrir só registra "PR
+aberta: ..." no histórico (Edge `chamado-vincular-pr`, chamada pelo
+`chamado_pr_sync.yml`). De 12 a 17/11/2026 a abertura concluía, e antes
+disso o merge; foi desfeito na revisão da PR #1310 (SIS-2026-0909, PR #1302,
+apareceu como concluído com a PR ainda sem revisão).
+
+Do merge até o fim:
+
+1. **Merge na `main`** — `.github/workflows/chamado_concluir_no_merge.yml`
+   → Edge `chamado-concluir-pr`: **entrega ao Gestor de Sistemas**. Não
+   muda o status; marca `desenvolvimento_entregue_em`/`_pr` (mig
+   20261117235500), grava "Desenvolvimento entregue — PR #N mergeada" no
+   histórico e o gatilho avisa o gestor no sino ("Conclua o chamado #...").
+   No mesmo merge a Edge põe no chat o resumo da entrega escrito pela I.A
+   para o solicitante, com as URLs das telas alteradas
+   (`.github/scripts/rotas-da-pr.cjs`), lendo só os commits do chamado e o
+   código alterado neles (`.github/scripts/contexto-resumo-pr.cjs`).
+2. **Gestor de Sistemas conclui o chamado** — botão "Concluir chamado"
+   (status `concluido`). É aqui que o solicitante vê que o chamado foi
+   concluído (sino, push, parecer da I.A).
+3. **Solicitante confirma** — botão "Confirmar conclusão"
+   (`conclusao_confirmada_em`, mig 20261028001300), ou reabre.
+4. **Gestor de Sistemas finaliza** — botão "Finalizar chamado"
+   (`gestao_finalizada_em`, mig 20261110009000).
+
+O job da abertura que ainda existe no workflow chama a Edge, que não faz nada
+com ele (o workflow não foi mexido: mudança em GitHub Actions passa pelo
+time). Uma reentrega do evento de merge não registra a entrega duas vezes.
 
 ## Modelo por complexidade (mesma classificação alimenta os dois agentes)
 

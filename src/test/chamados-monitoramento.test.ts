@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   analiseQualidade, avaliarChamado, calcularKpis, classificarTema, entraNoMonitoramento, leituraControladoria,
   rankingSolicitantes, resumoTemas, termosPresentes, type ChamadoMonitor, type LinhaMonitor,
+  RANKING_RECENTES, notaRankingComposta, ultimosValidos,
 } from "@/lib/chamados/monitoramento";
 
 const AGORA = new Date("2026-10-22T12:00:00-03:00");
@@ -211,5 +212,107 @@ describe("Monitoramento de Chamados — nota da I.A e ranking por volume (13/11/
       ...Array.from({ length: 10 }, (_, i) => linha({ id: `b${i}`, solicitante_id: "b", solicitante_nome: "B", ia: ia(8.5) })),
     ];
     expect(rankingSolicitantes(ls).map((x) => x.nome)).toEqual(["B", "A"]);
+  });
+});
+
+describe("Ranking dos solicitantes — histórico + desempenho recente (SIS-2026-0919)", () => {
+  const ia = (nota: number) => ({
+    criterios: Object.fromEntries(["clareza_problema", "clareza_resultado", "descricao", "evidencias", "importancia",
+      "aderencia", "reaproveitamento", "reducao_manual", "confiabilidade"].map((k) => [k, { nota, motivo: "ok" }])),
+    resumo: null, avaliado_em: "2026-11-13T10:00:00-03:00",
+  });
+  // dia d de novembro/2026 (abertura) — quanto maior, mais recente
+  const dia = (d: number) => `2026-11-${String(d).padStart(2, "0")}T10:00:00-03:00`;
+  const L = (id: string, solic: string, d: number, nota: number, extra: Partial<ChamadoMonitor> = {}) =>
+    linha({ id, solicitante_id: solic, solicitante_nome: solic, created_at: dia(d), ia: ia(nota), ...extra });
+
+  it("fórmula 70/30 do exemplo do chamado: 6,3 × 0,7 + 8,5 × 0,3 = 6,96 → 7,0", () => {
+    expect(notaRankingComposta(6.3, 8.5)).toBe(7);
+    expect(notaRankingComposta(7.1, 8.9)).toBe(7.6);
+    expect(notaRankingComposta(8, 8)).toBe(8);
+    expect(RANKING_RECENTES).toBe(20);
+  });
+
+  it("com as 20 notas mais recentes do Yuri no print do chamado, a recente dá 7,0 e a nota 6,5", () => {
+    // Detalhamento do Yuri em 16/11/2026, SIS-2026-0915 até SIS-2026-0835 (aberturas mais novas primeiro).
+    const notas = [9.5, 8.7, 9.2, 8.7, 9.2, 7.7, 8.1, 4.8, 7.0, 5.2, 6.8, 5.2, 5.7, 6.2, 6.0, 7.7, 8.2, 5.4, 6.1, 5.5];
+    const recente = Math.round((notas.reduce((s, x) => s + x, 0) / notas.length) * 10) / 10;
+    expect(recente).toBe(7);
+    expect(notaRankingComposta(6.3, recente)).toBe(6.5);
+  });
+
+  it("a média recente pega só os 20 abertos mais recentemente", () => {
+    // 10 antigos fracos (dias 1–10) e 25 recentes (dias 11–28 + mesmo dia), dos quais
+    // os 5 mais antigos (dias 11–15) são fracos e os 20 mais novos são bons.
+    const ls = [
+      ...Array.from({ length: 10 }, (_, i) => L(`a${i}`, "yuri", 1 + (i % 10), 5)),
+      ...Array.from({ length: 5 }, (_, i) => L(`b${i}`, "yuri", 11 + i, 5)),
+      ...Array.from({ length: 20 }, (_, i) => L(`c${i}`, "yuri", 16 + (i % 14), 9)),
+    ];
+    const [r] = rankingSolicitantes(ls);
+    expect(r.total).toBe(35);
+    expect(r.qtdRecentes).toBe(20);
+    const idxBom = ls.find((l) => l.c.id === "c0")!.a.indice;
+    expect(r.mediaRecente).toBe(Math.round(idxBom * 10) / 10);
+    expect(r.notaRanking).toBe(notaRankingComposta(r.notaHistorica, r.mediaRecente));
+    expect(r.tendencia).toBeGreaterThan(0);
+    expect(r.tendencia).toBe(Math.round((r.mediaRecente - r.notaHistorica) * 10) / 10);
+  });
+
+  it("com menos de 20 chamados, usa os válidos disponíveis", () => {
+    const ls = Array.from({ length: 7 }, (_, i) => L(`x${i}`, "ana", i + 1, 8));
+    const [r] = rankingSolicitantes(ls);
+    expect(r.qtdRecentes).toBe(7);
+    expect(r.mediaRecente).toBe(r.indiceMedio);
+  });
+
+  it("até 20 chamados a tendência também tem número (recente = todos − histórica ajustada)", () => {
+    // como no modelo do chamado (Helena, 17 chamados, "↑ +1,5") — 17/11/2026, Pablo
+    const ls = [
+      ...Array.from({ length: 3 }, (_, i) => L(`n${i}`, "nove", i + 1, 9)),
+      ...Array.from({ length: 30 }, (_, i) => L(`g${i}`, `g${i % 6}`, 1 + (i % 25), 6)),
+    ];
+    const nove = rankingSolicitantes(ls).find((x) => x.nome === "nove")!;
+    expect(nove.qtdRecentes).toBe(3);
+    expect(nove.mediaRecente).toBe(nove.indiceMedio);
+    expect(nove.tendencia).toBe(Math.round((nove.mediaRecente - nove.notaHistorica) * 10) / 10);
+    expect(nove.tendencia).toBeGreaterThan(0);
+    // a nota do ranking continua sendo o 70/30 literal
+    expect(nove.notaRanking).toBe(notaRankingComposta(nove.notaHistorica, nove.mediaRecente));
+  });
+
+  it("cancelado não entra na média recente nem na histórica", () => {
+    const ls = [
+      ...Array.from({ length: 3 }, (_, i) => L(`v${i}`, "bia", i + 1, 8)),
+      L("cx", "bia", 28, 1, { status: "cancelado" }),
+    ];
+    const [r] = rankingSolicitantes(ls);
+    expect(r.total).toBe(3);
+    expect(r.qtdRecentes).toBe(3);
+    expect(ultimosValidos(ls).map((l) => l.c.id)).not.toContain("cx");
+  });
+
+  it("quem melhorou muito nos últimos passa à frente de quem estacionou com histórico parecido", () => {
+    const ls = [
+      // "subiu": 52 antigos médios + 20 recentes ótimos
+      ...Array.from({ length: 52 }, (_, i) => L(`s${i}`, "subiu", 1 + (i % 10), 6)),
+      ...Array.from({ length: 20 }, (_, i) => L(`t${i}`, "subiu", 15 + (i % 10), 9)),
+      // "parado": 72 chamados todos iguais, um pouco acima da média histórica do outro
+      ...Array.from({ length: 72 }, (_, i) => L(`p${i}`, "parado", 1 + (i % 25), 7)),
+    ];
+    const r = rankingSolicitantes(ls);
+    const subiu = r.find((x) => x.nome === "subiu")!;
+    const parado = r.find((x) => x.nome === "parado")!;
+    expect(subiu.notaHistorica).toBeLessThan(parado.notaHistorica);
+    expect(subiu.notaRanking).toBeGreaterThan(parado.notaRanking);
+    expect(r[0].nome).toBe("subiu");
+    expect(parado.tendencia).toBe(Math.round((parado.mediaRecente - parado.notaHistorica) * 10) / 10);
+  });
+
+  it("não mexe na nota individual do chamado", () => {
+    const l = L("u", "ze", 5, 8.5);
+    const antes = l.a.indice;
+    rankingSolicitantes([l]);
+    expect(l.a.indice).toBe(antes);
   });
 });

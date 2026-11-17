@@ -1,29 +1,31 @@
 // Arquivo: supabase/functions/chamado-concluir-pr/index.ts
-// Conclui um Chamado de Sistemas pela PR que o resolve.
-// Chamada pelo GitHub Actions (.github/workflows/chamado_concluir_no_merge.yml)
-// — mesma autenticação por secret de chamado-info / chamado-vincular-pr.
+// Entrega ao GESTOR DE SISTEMAS o chamado cuja PR foi mergeada — NÃO
+// conclui o chamado. Chamada pelo GitHub Actions
+// (.github/workflows/chamado_concluir_no_merge.yml) — mesma autenticação por
+// secret de chamado-info / chamado-vincular-pr. O nome da função e do
+// workflow ficaram os antigos de propósito: mexer no workflow do GitHub
+// Actions passa pelo time (revisão da PR #1310).
 //
-// QUANDO (12/11/2026, pedido do Pablo): "quando o desenvolvedor abrir um PR
-// conclua o chamado automaticamente". Antes era só no merge. Agora:
-//   · origem "pr_aberta" — PR aberta (ou saída de rascunho): conclui;
-//   · origem "merge" — conclui como reserva e, desde 13/11/2026, põe no chat
-//     do chamado o RESUMO do que foi feito, para o solicitante, com as URLs
-//     das telas. Pablo: "a i.a tem que ler os commits e a PR inteira depois
-//     do merge" — na abertura a PR ainda pode ganhar commits (no
-//     SIS-2026-0854 o commit do chamado subiu depois da abertura e o resumo
-//     saiu do pedido, não da entrega). Se ESTA PR já concluiu o chamado e ele
-//     foi reaberto, o merge não conclui de novo nem manda "pronto".
+// HISTÓRICO
+//   · até 12/11/2026: o merge concluía o chamado (status 'concluido');
+//   · 12 a 17/11: a PR ABERTA concluía (origem "pr_aberta") e o merge era
+//     reserva — no SIS-2026-0909 a PR #1302 abriu e o chat já disse "Chamado
+//     concluído automaticamente — PR #1302 aberta";
+//   · 17/11/2026, revisão da PR #1310: existem DUAS finalizações — concluir o
+//     chamado em si (status 'concluido', o que o solicitante vê) e a do Gestor
+//     de Sistemas. O merge passa a só ENTREGAR ao gestor
+//     (desenvolvimento_entregue_em/_pr, mig 20261117235500; o gatilho avisa o
+//     gestor no sino) e quem conclui o chamado é ele, no botão "Concluir
+//     chamado". Depois seguem a confirmação do solicitante (mig 20261028001300)
+//     e a finalização do gestor (mig 20261110009000), como antes.
 //
-// Replica o que o botão "Concluir chamado" faz no ERP
-// (src/pages/chamados/ExecutarChamado.tsx, mudarStatus("concluido", ...)):
-// muda o status, registra o evento no histórico e dispara o push pro
-// solicitante. A diferença é a origem: aqui não existe usuário logado.
-//
-// Concluir não encerra de vez (mig 20261028001300): o gatilho
-// chamado_sistema_confirmacao deixa o chamado aguardando o SOLICITANTE
-// clicar em "Confirmar conclusão", e chamado_concluido_avisa_solicitante põe
-// o aviso no sino dele. O parecer da I.A sai pelo gatilho da conclusão
-// (mig 20261112001000), sem horas gastas.
+// origem "pr_aberta": não faz nada (o "PR aberta: ..." no histórico é do
+// chamado-vincular-pr). origem "merge": entrega ao gestor e, desde 13/11/2026,
+// põe no chat o RESUMO do que foi feito, para o solicitante, com as URLs das
+// telas (Pablo: "a i.a tem que ler os commits e a PR inteira depois do merge").
+// Esta função não muda o status — por isso não dispara push de "concluído",
+// parecer da I.A nem o "Confirme a conclusão": tudo isso sai no clique do
+// gestor.
 //
 // RESUMO: Gemini (GEMINI_API_KEY) com Groq (GROQ_API_KEY) de reserva, os
 // mesmos do parecer. Sem I.A (sem chave, cota), vai o título da PR e os
@@ -67,7 +69,7 @@ interface Body {
   pr_commits?: number | null;
   pr_linhas_adicionadas?: number | null;
   pr_arquivos_alterados?: number | null;
-  /** "pr_aberta" (padrão desde 12/11/2026) ou "merge". */
+  /** "merge" (único aceito desde 17/11/2026). "pr_aberta" é recusado. */
   origem?: string;
   pr_corpo?: string | null;
   /**
@@ -148,6 +150,10 @@ Deno.serve(async (req) => {
   // Sem origem = workflow antigo, que só chamava no merge.
   const origem = body.origem === "pr_aberta" ? "pr_aberta" : "merge";
   if (!numero || !prUrl) return json({ error: "numero e pr_url são obrigatórios" }, 400);
+  // Abrir a PR não conclui nem entrega nada (ver topo).
+  if (origem === "pr_aberta") {
+    return json({ ok: true, concluido: false, origem, motivo: "abrir a PR não conclui o chamado; no merge ele é entregue ao Gestor de Sistemas, que conclui" });
+  }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
@@ -161,32 +167,33 @@ Deno.serve(async (req) => {
 
   const autorId = await perfilDoLoginGithub(admin, prAutorGithub);
 
-  // ── 1) Conclusão — na abertura da PR; o merge é reserva ─────────────
-  // Idempotência: o GitHub pode reentregar o mesmo evento, e um chamado
-  // reaberto e concluído à mão não deve ganhar evento duplicado.
-  let concluido = chamado.status === "concluido";
-  let concluidoAgora = false;
-  let motivo: string | null = concluido ? "já estava concluído" : null;
-  if (!concluido) {
-    // Esta PR já concluiu o chamado antes (na abertura) e ele foi reaberto:
-    // o merge (ou a PR reaberta) não passa por cima da reabertura.
-    const { data: jaConcluiu } = await admin
+  // ── 1) Entrega ao Gestor de Sistemas — NÃO conclui (17/11/2026) ──────
+  // Só marca desenvolvimento_entregue_em/_pr; o gestor conclui no botão.
+  // Idempotência: o GitHub pode reentregar o mesmo evento.
+  const encerrado = ["concluido", "cancelado", "reprovado"].includes(chamado.status);
+  let entregue = false;
+  let motivo: string | null = encerrado ? `chamado já está ${chamado.status} — nada a entregar` : null;
+  if (!encerrado) {
+    const { data: jaEntregou } = await admin
       .from("CHAMADO_SISTEMA_EVENTO")
       .select("chamado_id")
       .eq("chamado_id", chamado.id)
       .eq("meta->>pr_url", prUrl)
-      .in("meta->>origem", ["pr_aberta", "merge"])
+      .eq("meta->>origem", "merge")
       .limit(1);
-    if (jaConcluiu && jaConcluiu.length > 0) {
-      motivo = "esta PR já concluiu o chamado antes; ele foi reaberto depois";
+    if (jaEntregou && jaEntregou.length > 0) {
+      entregue = true;
+      motivo = "o merge desta PR já foi registrado";
     } else if (!autorId) {
       motivo = "autor do GitHub não mapeado";
     } else {
+      // Erro aqui (coluna ainda sem migration, por ex.) não impede o evento
+      // nem o resumo: o gestor vê a entrega pelo histórico.
       const { error: upErr } = await admin
         .from("CHAMADO_SISTEMA")
-        .update({ status: "concluido" })
+        .update({ desenvolvimento_entregue_em: new Date().toISOString(), desenvolvimento_entregue_pr: prUrl })
         .eq("id", chamado.id);
-      if (upErr) return json({ error: upErr.message }, 500);
+      if (upErr) console.error("Falha ao marcar a entrega:", upErr.message);
 
       const metricas = [
         prCommits !== null && `${prCommits} ${prCommits === 1 ? "commit" : "commits"}`,
@@ -198,18 +205,16 @@ Deno.serve(async (req) => {
         chamado_id: chamado.id,
         autor_id: autorId,
         tipo: "evento",
-        texto: `Chamado concluído automaticamente — PR${prNumero !== null ? ` #${prNumero}` : ""} ${origem === "pr_aberta" ? "aberta" : "mergeada"}: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}`,
+        texto: `Desenvolvimento entregue — PR${prNumero !== null ? ` #${prNumero}` : ""} mergeada: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}. Falta o Gestor de Sistemas concluir o chamado.`,
         meta: {
-          canal: "github", origem, pr_numero: prNumero, pr_url: prUrl,
+          canal: "github", origem, acao: "desenvolvimento_entregue", pr_numero: prNumero, pr_url: prUrl,
           pr_titulo: prTitulo, pr_autor_github: prAutorGithub, pr_commits: prCommits,
           pr_linhas_adicionadas: prLinhasAdicionadas, pr_arquivos_alterados: prArquivosAlterados,
         },
       });
-      // Status já mudou; um erro no histórico não justifica desfazer a conclusão.
-      if (insErr) console.error("Falha ao registrar evento de conclusão:", insErr.message);
-      concluido = true;
-      concluidoAgora = true;
-      motivo = null;
+      if (insErr) console.error("Falha ao registrar a entrega no histórico:", insErr.message);
+      entregue = true;
+      motivo = "desenvolvimento entregue ao Gestor de Sistemas — ele conclui o chamado";
     }
   }
 
@@ -217,12 +222,12 @@ Deno.serve(async (req) => {
   // Pablo: "a i.a tem que ler os commits e a PR inteira depois do merge".
   // O workflow manda `resumo: true` com os commits DESTE chamado (mensagem
   // inteira), os arquivos, o código alterado e as URLs da PR já mergeada.
-  // Vale também para o chamado que a abertura já concluiu — é o caso comum.
-  // Uma vez por PR; chamado reaberto (não concluído) não recebe "pronto".
+  // Vale para o chamado entregue agora e para o já concluído à mão pelo gestor.
+  // Uma vez por PR; cancelado/reprovado não recebe "pronto".
   let resumoGravado = false;
   let motivoResumo: string | null = null;
   if (origem === "merge" && body.resumo === true) {
-    if (!concluido) motivoResumo = "chamado não está concluído (reaberto?) — resumo não enviado";
+    if (!entregue && chamado.status !== "concluido") motivoResumo = `chamado não foi entregue (${motivo ?? "?"}) — resumo não enviado`;
     else if (!autorId) motivoResumo = "autor do GitHub não mapeado";
     else {
       const { data: jaTem } = await admin
@@ -270,24 +275,8 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Mesmo push que o clique manual dispara — só quando ESTA chamada concluiu.
-  // Best-effort: o chamado já está concluído, e falha de push não pode virar
-  // erro pro CI.
-  if (concluidoAgora) {
-    try {
-      const pushRes = await fetch(`${SUPABASE_URL}/functions/v1/enviar-notificacao-push`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${CI_SECRET}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ chamado_id: chamado.id, evento: "concluido" }),
-      });
-      if (!pushRes.ok) console.error("enviar-notificacao-push respondeu", pushRes.status);
-    } catch (e) {
-      console.error("Falha ao chamar enviar-notificacao-push:", (e as Error).message);
-    }
-  }
-
   return json({
-    ok: true, concluido, origem, resumo: resumoGravado,
+    ok: true, concluido: chamado.status === "concluido", entregue, origem, resumo: resumoGravado,
     ...(motivo ? { motivo } : {}), ...(motivoResumo ? { motivo_resumo: motivoResumo } : {}),
   });
 });
