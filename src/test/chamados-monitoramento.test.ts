@@ -233,6 +233,14 @@ describe("Ranking dos solicitantes — histórico + desempenho recente (SIS-2026
     expect(RANKING_RECENTES).toBe(20);
   });
 
+  it("com as 20 notas mais recentes do Yuri no print do chamado, a recente dá 7,0 e a nota 6,5", () => {
+    // Detalhamento do Yuri em 16/11/2026, SIS-2026-0915 até SIS-2026-0835 (aberturas mais novas primeiro).
+    const notas = [9.5, 8.7, 9.2, 8.7, 9.2, 7.7, 8.1, 4.8, 7.0, 5.2, 6.8, 5.2, 5.7, 6.2, 6.0, 7.7, 8.2, 5.4, 6.1, 5.5];
+    const recente = Math.round((notas.reduce((s, x) => s + x, 0) / notas.length) * 10) / 10;
+    expect(recente).toBe(7);
+    expect(notaRankingComposta(6.3, recente)).toBe(6.5);
+  });
+
   it("a média recente pega só os 20 abertos mais recentemente", () => {
     // 10 antigos fracos (dias 1–10) e 25 recentes (dias 11–28 + mesmo dia), dos quais
     // os 5 mais antigos (dias 11–15) são fracos e os 20 mais novos são bons.
