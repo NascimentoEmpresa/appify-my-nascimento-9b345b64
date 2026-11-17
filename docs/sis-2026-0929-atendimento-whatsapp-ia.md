@@ -115,6 +115,16 @@ colaborador** ou o **do encarregado dele**, conferido no cadastro **atual**.
   provedor/modelo, mensagens, retenção, setores).
 - A conversa em si continua em `https://app.grpnascimento.com.br/app/whatsapp`,
   na pasta **Atendimento Supervisores**.
+- **Simulador** — `https://app.grpnascimento.com.br/app/whatsapp/testes`, aba
+  **Atendimento Supervisores** (parte 2, mig `20261118180000`): escolhe-se quem
+  está escrevendo (colaborador do cadastro, número desconhecido ou com
+  divergência), conversa-se como no WhatsApp e vê-se o que a I.A responderia e
+  os bastidores (identificação, assunto sensível, consulta autorizada/negada,
+  ida para a fila, resumo, instruções enviadas à I.A). Roda o **mesmo fluxo**
+  do webhook (`_shared/whatsapp-atendimento-fluxo.ts`) com a I.A ligada, mas não
+  envia nada nem grava protocolo; dá para incluir procedimentos ainda não
+  aprovados para testar antes de aprovar. Acesso: `whatsapp_testes` +
+  `whatsapp_atd_base` (visualizar); cada simulação fica no log de acessos.
 
 ### Testes
 
@@ -334,7 +344,6 @@ acompanhamento do piloto.
 
 - Não houve chamada real à Meta nem à I.A (testes só da lógica pura e do SQL
   num Postgres descartável com dependências simuladas).
-- O simulador `/app/whatsapp/testes` simula só o bot do canal principal.
 - `WA_CONTATO` (nome/telefone do WhatsApp) continua visível para quem tem a
   Caixa de Entrada, como antes; o conteúdo das conversas do canal é que é
   restrito.

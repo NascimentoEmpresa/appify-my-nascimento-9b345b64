@@ -19,6 +19,9 @@ import {
   montarVagas, montarPastas, extrairTransferencia, AVISO_TRANSFERIDO_IA,
   type BotConfig, type Msg, type ModoConversa, type PastaBot,
 } from "../_shared/whatsapp-bot.ts";
+import { conduzirAtendimento, type PortasAtendimento } from "../_shared/whatsapp-atendimento-fluxo.ts";
+import type { RegraDado } from "../_shared/whatsapp-atendimento.ts";
+import type { CanalInfo } from "../_shared/whatsapp-canal.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -31,8 +34,106 @@ const cors = {
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
+// ---------------------------------------------------------------------------
+// SIS-2026-0929 — simulador do atendimento dos supervisores.
+//
+// Roda conduzirAtendimento (o MESMO fluxo do webhook) com portas que não
+// gravam nada: nenhum protocolo, mensagem ou log de consulta é criado e nada
+// vai para o WhatsApp. O que é real: a I.A (provedor/modelo do canal), a base
+// de conhecimento, as regras de dados e a decisão de consulta — esta pela RPC
+// wa_atd_simular_consulta, que monta a identidade simulada NO SERVIDOR a partir
+// do colaborador escolhido e registra o acesso em WA_ATD_ACESSO_LOG.
+// O estado da conversa (histórico e status) vive no navegador.
+// ---------------------------------------------------------------------------
+interface CorpoAtendimento {
+  quem: "empregado" | "desconhecido" | "divergente";
+  empregado_id?: number | null;
+  mensagem?: string;
+  tipo?: "text" | "image" | "audio" | "document";
+  historico?: Array<{ direcao: "entrada" | "saida"; origem: "contato" | "bot" | "atendente"; texto: string }>;
+  status?: "ia" | "aguardando_humano" | "em_atendimento_humano" | "concluido";
+  primeira?: boolean;          // primeira mensagem do protocolo: mostra o aviso de abertura
+  usar_pendentes?: boolean;    // incluir procedimentos ainda não aprovados (para testar antes de aprovar)
+}
+
+async function simularAtendimento(db: ReturnType<typeof createClient>, b: CorpoAtendimento): Promise<Response> {
+  const { data: pode } = await db.rpc("wa_atd_simular_pode");
+  if (pode !== true) return json({ error: "sem acesso: precisa de WhatsApp › Testes e de Atendimento Supervisores (base e regras)" }, 403);
+
+  const tipo = b.tipo ?? "text";
+  const mensagem = (b.mensagem ?? "").trim();
+  if (tipo === "text" && !mensagem) return json({ error: "mensagem é obrigatória" }, 400);
+  const quem = b.quem === "empregado" || b.quem === "divergente" ? b.quem : "desconhecido";
+  const empregadoId = quem === "empregado" ? Number(b.empregado_id) || null : null;
+  if (quem === "empregado" && !empregadoId) return json({ error: "escolha o colaborador que está escrevendo" }, 400);
+
+  const { data: canalReal } = await db.from("WA_CANAL")
+    .select("codigo, phone_number_id, finalidade, ativo, ia_ativa, pasta_padrao, provedor, modelo, max_tokens, persona, aviso_abertura, msg_encaminhado, msg_negado")
+    .eq("codigo", "supervisores").maybeSingle();
+  if (!canalReal) return json({ error: "canal dos supervisores não encontrado (migration aplicada?)" }, 404);
+  // Simula com o canal e a I.A LIGADOS — é para testar antes de ligar.
+  const canal = { ...canalReal, ativo: true, ia_ativa: true } as CanalInfo;
+
+  const status = b.status ?? "ia";
+  const respostas: string[] = [];
+  const historico = (Array.isArray(b.historico) ? b.historico.slice(-19) : [])
+    .map((m) => ({ direcao: m.direcao, origem: m.origem, texto: String(m.texto ?? "") }));
+  historico.push({ direcao: "entrada", origem: "contato", texto: tipo === "text" ? mensagem : `[${tipo}]` });
+
+  let baseItens = 0;
+  const portas: PortasAtendimento = {
+    async preparar() {
+      const { data, error } = await db.rpc("wa_atd_simular_identidade", { p_quem: quem, p_empregado: empregadoId });
+      if (error) throw new Error(error.message);
+      return { protocolo: "ATD-SIMULACAO", status, enviar_aviso: !!b.primeira, identificacao: data };
+    },
+    botAtivo: async () => status === "ia",
+    historico: async () => historico,
+    async regras() {
+      const { data } = await db.from("WA_ATD_REGRA_DADO")
+        .select("categoria, nome, sensivel, proprio, encarregado, supervisor, palavras_chave").eq("ativo", true).order("ordem");
+      return (data ?? null) as RegraDado[] | null;
+    },
+    async base() {
+      let q = db.from("WA_ATD_BASE").select("titulo, conteudo, assunto").eq("ativo", true);
+      if (!b.usar_pendentes) q = q.eq("aprovado", true);
+      const { data } = await q.order("assunto").limit(200);
+      baseItens = (data ?? []).length;
+      return data ?? [];
+    },
+    async cfgIA() {
+      const { data } = await db.from("WA_BOT_CONFIG").select("provedor, modelo, max_tokens").limit(1).maybeSingle();
+      return data ?? null;
+    },
+    async consultar(categoria, alvo) {
+      const { data, error } = await db.rpc("wa_atd_simular_consulta", {
+        p_quem: quem, p_empregado: empregadoId, p_categoria: categoria, p_alvo: alvo,
+      });
+      if (error) return { autorizada: false, motivo: `erro: ${error.message}` };
+      return data;
+    },
+    encaminhar: async () => {},
+    marcar: async () => {},
+    concluir: async () => {},
+    enviar: async (t) => { respostas.push(t); },
+  };
+
+  try {
+    const trilha = await conduzirAtendimento(portas, { msgType: tipo, texto: tipo === "text" ? mensagem : null, canal });
+    return json({
+      respostas, trilha,
+      diagnostico: {
+        canal_ativo_de_verdade: !!canalReal.ativo, ia_ativa_de_verdade: !!canalReal.ia_ativa,
+        numero_configurado: !!canalReal.phone_number_id, base_itens: baseItens, usou_pendentes: !!b.usar_pendentes,
+      },
+    });
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+}
+
 interface Corpo {
-  acao?: "simular" | "ping";
+  acao?: "simular" | "ping" | "atendimento";
   mensagem?: string;
   historico?: Msg[];
   reply_id?: string | null;      // clique numa opção do menu simulado
@@ -59,6 +160,9 @@ Deno.serve(async (req) => {
 
   let body: Corpo;
   try { body = await req.json(); } catch { return json({ error: "json inválido" }, 400); }
+
+  // SIS-2026-0929: simulador do atendimento dos supervisores (canal próprio).
+  if (body.acao === "atendimento") return simularAtendimento(db, body as unknown as CorpoAtendimento);
 
   // Configuração real do bot (RLS da sessão do usuário autoriza a leitura).
   const { data: cfgRow } = await db.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
