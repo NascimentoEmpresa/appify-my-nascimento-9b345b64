@@ -3,8 +3,11 @@
 //
 // Pedido de chamado: na abertura dá para dizer impacto, urgência, prazo e
 // quantos usuários, mas não QUAIS setores e módulos do ERP a mudança atinge.
-// Duas seleções múltiplas (opcionais), gravadas em CHAMADO_SISTEMA
-// (mig 20261115001000) e usadas no Monitoramento de Chamados para filtrar.
+// Duas seleções múltiplas, gravadas em CHAMADO_SISTEMA (mig 20261115001000)
+// e usadas no Monitoramento de Chamados para filtrar. Desde o SIS-2026-0910
+// são obrigatórias e fazem parte do "impacto sistêmico" (com a posição =
+// modulo_sistema) — regras em src/lib/chamados/impactoSistemico.ts, campos em
+// ./impacto/.
 //
 // Setor: texto do catálogo de setores da empresa (useSetoresEmpresa).
 // Módulo: o `value` de MODULOS_ERP, como já é o modulo_sistema — o rótulo sai
@@ -28,13 +31,6 @@ export const rotuloModuloImpactado = (v: string) =>
 /** Lista legível para tabela/detalhe ("—" quando vazio). */
 export const listaImpactados = (xs: readonly string[] | null | undefined, rotulo: (v: string) => string = (v) => v) =>
   xs && xs.length ? xs.map(rotulo).join(", ") : "—";
-
-/**
- * O insert falhou porque as colunas ainda não existem (migration não entrou)?
- * PostgREST: "Could not find the 'setores_impactados' column ... in the schema cache".
- */
-export const semColunasImpactados = (mensagem: string | null | undefined) =>
-  /(setores|modulos)_impactados/.test(mensagem ?? "");
 
 /** O chamado atinge esse valor? (filtro "todos" = sempre). */
 export const atinge = (xs: readonly string[] | null | undefined, valor: string, todos: string) =>

@@ -21,6 +21,9 @@ import {
   PRIORIDADES, STATUS_CHAMADO, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
 } from "./types";
 import { atinge, listaImpactados, rotuloModuloImpactado } from "./impactados";
+import { ImpactoSistemicoPainel } from "./impacto/ImpactoSistemicoPainel";
+import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
+import { abrangencia } from "@/lib/chamados/impactoSistemico";
 import {
   ADERENCIA_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
   analiseQualidade, avaliarChamado, calcularKpis, entraNoMonitoramento, leituraControladoria, rankingSolicitantes, resumoTemas,
@@ -188,11 +191,11 @@ export default function MonitoramentoChamados() {
 
   const exportarSelecionados = () => {
     const linhas = filtradas.filter(({ c }) => selecionados.has(c.id));
-    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo / Sistema", "Setores impactados", "Módulos impactados", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
+    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo ajustado (posição)", "Setores impactados", "Módulos impactados", "Abrangência (nº de módulos)", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const corpo = linhas.map(({ c, a }) => [
       c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c),
-      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloModuloImpactado),
+      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloModuloImpactado), abrangencia(c) ?? "",
       PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
       a.efetividade ?? "", fmt1(a.indice), STATUS_CHAMADO[c.status]?.label ?? c.status, fmt1(a.prazoDias),
       fmtData(c.created_at), c.status === "concluido" ? fmtData(c.concluido_em) : "",
@@ -307,7 +310,7 @@ export default function MonitoramentoChamados() {
         </div>
         <FiltroSelect label="Setor" value={rascunho.setor} onChange={(v) => muda({ setor: v })} todos="Todos os setores"
           opcoes={opcoes.setores.map((s) => ({ value: s, label: s }))} />
-        <FiltroSelect label="Módulo / Sistema" value={rascunho.modulo} onChange={(v) => muda({ modulo: v })} todos="Todos os módulos" opcoes={opcoes.modulos} />
+        <FiltroSelect label="Módulo ajustado (posição)" value={rascunho.modulo} onChange={(v) => muda({ modulo: v })} todos="Todos os módulos" opcoes={opcoes.modulos} />
         <FiltroSelect label="Setor impactado" value={rascunho.setorImpactado} onChange={(v) => muda({ setorImpactado: v })} todos="Todos"
           opcoes={opcoes.setoresImpactados} />
         <FiltroSelect label="Módulo impactado" value={rascunho.moduloImpactado} onChange={(v) => muda({ moduloImpactado: v })} todos="Todos"
@@ -364,7 +367,7 @@ export default function MonitoramentoChamados() {
                     <th className="py-2 pr-2">Nº do chamado</th>
                     <th className="py-2 pr-2">Assunto</th>
                     <th className="py-2 pr-2">Resumo do Tema da Solicitação</th>
-                    <th className="py-2 pr-2">Módulo / Sistema</th>
+                    <th className="py-2 pr-2" title="Posição do novo módulo ou módulo diretamente ajustado">Módulo ajustado</th>
                     <th className="py-2 pr-2">Prioridade</th>
                     <th className="py-2 pr-2">Efetividade</th>
                     <th className="py-2 pr-2">Inteligência</th>
@@ -411,7 +414,8 @@ export default function MonitoramentoChamados() {
                         {(c.setores_impactados?.length || c.modulos_impactados?.length) ? (
                           <span className="mt-0.5 block max-w-[170px] truncate text-[10px] text-muted-foreground"
                             title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}`}>
-                            Impacta: {[...(c.setores_impactados ?? []), ...(c.modulos_impactados ?? []).map(rotuloModuloImpactado)].join(", ")}
+                            {/* SIS-2026-0910: abrangência = nº de módulos impactados. */}
+                            Impacta {abrangencia(c) ?? 0} módulo(s) · {(c.setores_impactados ?? []).length} setor(es)
                           </span>
                         ) : null}
                       </td>
@@ -472,6 +476,23 @@ export default function MonitoramentoChamados() {
           </>
         )}
       </Card>
+
+      {/* ── Impacto sistêmico (SIS-2026-0910): módulos e setores mais
+          impactados, abrangência e áreas para homologação, sobre o filtro.
+          Clicar aplica o filtro de impactado (e clicar de novo desfaz). ── */}
+      <ImpactoSistemicoPainel
+        chamados={filtradas.map(({ c }) => c)}
+        moduloAtivo={f.moduloImpactado !== TODOS ? f.moduloImpactado : null}
+        setorAtivo={f.setorImpactado !== TODOS ? f.setorImpactado : null}
+        onFiltrarModulo={(v) => {
+          const moduloImpactado = f.moduloImpactado === v ? TODOS : v;
+          setRascunho((x) => ({ ...x, moduloImpactado })); setF((x) => ({ ...x, moduloImpactado })); setPagina(1);
+        }}
+        onFiltrarSetor={(v) => {
+          const setorImpactado = f.setorImpactado === v ? TODOS : v;
+          setRascunho((x) => ({ ...x, setorImpactado })); setF((x) => ({ ...x, setorImpactado })); setPagina(1);
+        }}
+      />
 
       {/* ── Ranking (largura inteira) ── */}
       <RankingCard
@@ -750,11 +771,7 @@ function DetalheDialog({ linha, foco, onClose }: { linha: LinhaMonitor; foco: Fo
             {c.numero} <StatusBadge status={c.status} /> <PrioridadeBadge prioridade={c.prioridade} />
           </DialogTitle>
           <DialogDescription>{c.assunto} — {c.solicitante_nome ?? "—"} ({c.setor ?? "sem setor"}) · aberto em {fmtData(c.created_at)}</DialogDescription>
-          <p className="text-xs text-muted-foreground">
-            <b className="text-foreground">Setores impactados:</b> {listaImpactados(c.setores_impactados)}
-            {" · "}
-            <b className="text-foreground">Módulos impactados:</b> {listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}
-          </p>
+          <ImpactoSistemicoResumo chamado={c} className="mt-1" />
         </DialogHeader>
 
         <div className="grid gap-3 sm:grid-cols-3">

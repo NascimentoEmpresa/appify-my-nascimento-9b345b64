@@ -1,0 +1,118 @@
+import { useMemo } from "react";
+import { Building2, ClipboardCheck, Crosshair, Layers, Network } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { analisarImpacto, type ChamadoImpacto, type ContagemImpacto } from "@/lib/chamados/impactoSistemico";
+import { rotuloModuloImpactado } from "../impactados";
+import { cn } from "@/lib/utils";
+
+// =====================================================================
+// IMPACTO SISTÊMICO — bloco do Monitoramento de Chamados (SIS-2026-0910).
+//
+// Responde o que a Controladoria pediu, sobre os chamados JÁ filtrados na
+// tela: módulos com mais alterações (e quantas vezes cada um foi o módulo
+// diretamente ajustado), setores mais impactados, abrangência (nº de módulos
+// por chamado) e as áreas que vão precisar homologar (setores com chamados
+// ainda não encerrados). Clicar num módulo/setor aplica o filtro de
+// "impactado" da tela. As contas moram em lib/chamados/impactoSistemico.ts.
+// =====================================================================
+
+const LIMITE = 8;
+
+function Barras({ titulo, icone: Icone, itens, rotulo, onClicar, ativo, mostrarPosicao }: {
+  titulo: string; icone: typeof Layers; itens: ContagemImpacto[]; rotulo: (v: string) => string;
+  onClicar: (v: string) => void; ativo: string | null; mostrarPosicao?: boolean;
+}) {
+  const max = Math.max(1, ...itens.map((i) => i.qtd));
+  return (
+    <div className="min-w-0">
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold"><Icone className="h-3.5 w-3.5 text-primary" /> {titulo}</p>
+      {itens.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados no filtro.</p> : (
+        <div className="space-y-1">
+          {itens.slice(0, LIMITE).map((i) => (
+            <button
+              key={i.valor} type="button" onClick={() => onClicar(i.valor)}
+              title={`${rotulo(i.valor)}: ${i.qtd} chamado(s)${mostrarPosicao ? ` · ${i.comoPosicao} como módulo ajustado` : ""}. Clique para filtrar.`}
+              className={cn("block w-full rounded-md px-1.5 py-1 text-left transition-colors hover:bg-muted/60", ativo === i.valor && "bg-primary/10 ring-1 ring-primary/40")}
+            >
+              <span className="flex items-center justify-between gap-2 text-[11px]">
+                <span className="truncate font-medium">{rotulo(i.valor)}</span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {i.qtd}
+                  {mostrarPosicao && i.comoPosicao > 0 && <span className="ml-1 text-primary" title="Como módulo diretamente ajustado">· {i.comoPosicao} <Crosshair className="inline h-3 w-3" /></span>}
+                </span>
+              </span>
+              <span className="mt-0.5 flex h-1.5 overflow-hidden rounded-full bg-muted">
+                {mostrarPosicao && <span className="h-full bg-primary" style={{ width: `${(i.comoPosicao / max) * 100}%` }} />}
+                <span className="h-full bg-primary/40" style={{ width: `${((mostrarPosicao ? i.qtd - i.comoPosicao : i.qtd) / max) * 100}%` }} />
+              </span>
+            </button>
+          ))}
+          {itens.length > LIMITE && <p className="px-1.5 text-[10px] text-muted-foreground">+ {itens.length - LIMITE} com menos chamados</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ImpactoSistemicoPainel({ chamados, onFiltrarModulo, onFiltrarSetor, moduloAtivo, setorAtivo }: {
+  chamados: readonly ChamadoImpacto[];
+  onFiltrarModulo: (v: string) => void;
+  onFiltrarSetor: (v: string) => void;
+  moduloAtivo: string | null;
+  setorAtivo: string | null;
+}) {
+  const a = useMemo(() => analisarImpacto(chamados), [chamados]);
+  const maxFaixa = Math.max(1, ...a.faixas.map((f) => f.qtd));
+
+  return (
+    <Card className="mb-4 p-4">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-sm font-bold"><Network className="h-4 w-4 text-primary" /> Impacto sistêmico das solicitações</p>
+        <p className="text-[11px] text-muted-foreground">
+          {a.comImpacto} chamado(s) com impacto informado
+          {a.semImpacto > 0 && <> · {a.semImpacto} sem (abertos antes do formulário de impacto)</>}
+        </p>
+      </div>
+
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        <Barras titulo="Módulos com mais alterações" icone={Layers} itens={a.modulos} rotulo={rotuloModuloImpactado}
+          onClicar={onFiltrarModulo} ativo={moduloAtivo} mostrarPosicao />
+        <Barras titulo="Setores mais impactados" icone={Building2} itens={a.setores} rotulo={(v) => v}
+          onClicar={onFiltrarSetor} ativo={setorAtivo} />
+
+        <div className="min-w-0">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold"><Network className="h-3.5 w-3.5 text-primary" /> Abrangência (módulos por chamado)</p>
+          <div className="mb-2 flex gap-4">
+            <div><p className="text-2xl font-bold leading-none">{a.abrangenciaMedia == null ? "—" : a.abrangenciaMedia.toFixed(1).replace(".", ",")}</p><p className="text-[10px] text-muted-foreground">média</p></div>
+            <div><p className="text-2xl font-bold leading-none">{a.abrangenciaMaxima || "—"}</p><p className="text-[10px] text-muted-foreground">maior</p></div>
+          </div>
+          <div className="space-y-1">
+            {a.faixas.map((f) => (
+              <div key={f.faixa} className="text-[11px]">
+                <span className="flex justify-between"><span>{f.faixa}</span><span className="tabular-nums text-muted-foreground">{f.qtd}</span></span>
+                <span className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-muted"><span className="block h-full bg-info" style={{ width: `${(f.qtd / maxFaixa) * 100}%` }} /></span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold"><ClipboardCheck className="h-3.5 w-3.5 text-primary" /> Áreas para homologação</p>
+          <p className="mb-2 text-[10px] text-muted-foreground">Setores impactados por chamados ainda não encerrados.</p>
+          {a.homologacao.length === 0 ? <p className="text-xs text-muted-foreground">Nenhuma área com entrega pendente.</p> : (
+            <div className="flex flex-wrap gap-1">
+              {a.homologacao.map((s) => (
+                <button key={s.valor} type="button" onClick={() => onFiltrarSetor(s.valor)}
+                  className={cn("rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning hover:bg-warning/20",
+                    setorAtivo === s.valor && "ring-1 ring-warning")}
+                  title={`${s.emAberto} chamado(s) em aberto impactam ${s.valor}`}>
+                  {s.valor} <span className="tabular-nums">· {s.emAberto}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}

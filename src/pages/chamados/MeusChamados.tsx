@@ -499,7 +499,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                   <TableHead className="w-16 text-center leading-tight">Posição<br />na fila</TableHead>
                   <TableHead>Nº do chamado</TableHead>
                   <TableHead>Assunto</TableHead>
-                  <TableHead>Módulo / Sistema</TableHead>
+                  <TableHead>Módulo ajustado</TableHead>
                   <TableHead>Prioridade</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Responsável</TableHead>
