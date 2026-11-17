@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS public."APLICACAO_FINANCEIRA_AJUSTE_SALDO" (
 ALTER TABLE public."APLICACAO_FINANCEIRA_AJUSTE_SALDO" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS aplicacao_ajuste_saldo_select ON public."APLICACAO_FINANCEIRA_AJUSTE_SALDO";
 CREATE POLICY aplicacao_ajuste_saldo_select ON public."APLICACAO_FINANCEIRA_AJUSTE_SALDO"
-  FOR SELECT TO authenticated USING (public.can_access(auth.uid(), 'financeiro-aplicacao-financeira', 'visualizar'));
+  FOR SELECT TO authenticated USING ((SELECT public.can_access((SELECT auth.uid()), 'financeiro-aplicacao-financeira', 'visualizar')));
 -- gravação só por migration/DBA: sem policy de INSERT/UPDATE/DELETE
 GRANT SELECT ON public."APLICACAO_FINANCEIRA_AJUSTE_SALDO" TO authenticated;
 
