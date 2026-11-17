@@ -82,3 +82,10 @@ nome em `abertura_template`) e esperar nova aprovação.
 - v1 trata **texto**. Mídia (imagem/áudio/documento) é registrada como `[tipo]` no histórico, sem download.
 - O bot só responde dentro do horário configurado; fora disso envia a mensagem de fora do horário.
 - As telas atualizam por polling (5s na conversa aberta, 8s na lista).
+
+## Segundo número: atendimento dos supervisores (SIS-2026-0929)
+
+- Cada número da Meta é um canal em `WA_CANAL`. O número do secret `WHATSAPP_PHONE_NUMBER_ID` é o canal `principal`.
+- O canal `supervisores` usa o número corporativo: cadastre-o na **mesma WABA** do `WHATSAPP_TOKEN` e informe o `phone_number_id` em **WhatsApp › Base e Regras (Supervisores) › Canal**. Nenhum secret novo é necessário (a chave da I.A é a do provedor escolhido, já listada acima).
+- O webhook é o mesmo (`whatsapp-webhook`): ele separa pelo `metadata.phone_number_id`. Assine o número novo no mesmo app da Meta.
+- Detalhes, piloto e pendências: `docs/sis-2026-0929-atendimento-whatsapp-ia.md`.
