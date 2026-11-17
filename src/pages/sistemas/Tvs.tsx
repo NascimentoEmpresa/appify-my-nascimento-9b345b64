@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowDown, ArrowUp, BarChart3, Copy, Eye, EyeOff, Image as ImageIcon, Link2, ListVideo, Loader2, Megaphone, MonitorPlay, Power,
+  AlertTriangle, ArrowDown, ArrowUp, BarChart3, Maximize, Copy, Eye, EyeOff, Image as ImageIcon, Link2, ListVideo, Loader2, Megaphone, MonitorPlay, Power,
   Pause, Play, Plus, RefreshCw, Trash2, Tv, Type, Upload, Video, Clapperboard, Globe, Radio, SkipBack, SkipForward,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -744,11 +744,24 @@ const nomeDoItem = (i: Pick<ItemTv, "tipo" | "titulo" | "texto" | "url" | "relat
  * reduzido para caber aqui. Recebe a TELA inteira por postMessage, e só
  * reenvia quando a `chave` muda (o vídeo não recomeça a cada atualização).
  * Vídeo que acaba lá dentro chama `onFim`.
+ *
+ * 18/11/2026 — "coloca um botão Ver tela inteira, ao clicar vai ficar em tela
+ * cheia a playlist pra ver como fica" (Pablo): `caixaRef` deixa o painel pôr
+ * ESTE quadro em tela cheia (Fullscreen API). Em tela cheia o palco cabe pela
+ * largura E pela altura, centralizado no preto — monitor que não é 16:9 não corta.
  */
-function QuadroTv({ tela, onFim, rotulo }: { tela: TelaTv; onFim?: () => void; rotulo: string }) {
-  const caixa = useRef<HTMLDivElement>(null);
+function QuadroTv({ tela, onFim, rotulo, caixaRef }: { tela: TelaTv; onFim?: () => void; rotulo: string; caixaRef?: { readonly current: HTMLDivElement | null } }) {
+  const caixaPropria = useRef<HTMLDivElement>(null);
+  const caixa = caixaRef ?? caixaPropria;
   const quadro = useRef<HTMLIFrameElement>(null);
   const [largura, setLargura] = useState(0);
+  const [altura, setAltura] = useState(0);
+  const [cheia, setCheia] = useState(false);
+  useEffect(() => {
+    const mudou = () => setCheia(!!caixa.current && document.fullscreenElement === caixa.current);
+    document.addEventListener("fullscreenchange", mudou);
+    return () => document.removeEventListener("fullscreenchange", mudou);
+  }, [caixa]);
   const [pronta, setPronta] = useState(false);
   const telaRef = useRef(tela);
   telaRef.current = tela;
@@ -758,10 +771,10 @@ function QuadroTv({ tela, onFim, rotulo }: { tela: TelaTv; onFim?: () => void; r
   useEffect(() => {
     const el = caixa.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setLargura(e.contentRect.width));
+    const ro = new ResizeObserver(([e]) => { setLargura(e.contentRect.width); setAltura(e.contentRect.height); });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [caixa]);
   useEffect(() => {
     const ouvir = (e: MessageEvent) => {
       if (e.origin !== window.location.origin || e.source !== quadro.current?.contentWindow) return;
@@ -775,11 +788,14 @@ function QuadroTv({ tela, onFim, rotulo }: { tela: TelaTv; onFim?: () => void; r
     if (pronta) quadro.current?.contentWindow?.postMessage({ tipo: "tv-tela", tela: telaRef.current }, window.location.origin);
   }, [pronta, tela.chave]);
 
+  const escala = cheia && altura > 0 ? Math.min(largura / 1920, altura / 1080) : largura / 1920;
+  const esquerda = cheia ? Math.max(0, (largura - 1920 * escala) / 2) : 0;
+  const topo = cheia ? Math.max(0, (altura - 1080 * escala) / 2) : 0;
   return (
-    <div ref={caixa} className="relative w-full overflow-hidden rounded-lg border bg-black" style={{ height: largura * 9 / 16 }}>
+    <div ref={caixa} className={`relative w-full overflow-hidden bg-black ${cheia ? "" : "rounded-lg border"}`} style={{ height: cheia ? "100%" : largura * 9 / 16 }}>
       {largura > 0 && (
-        <iframe ref={quadro} src="/tv/previa" title={rotulo} className="absolute left-0 top-0 border-0"
-          style={{ width: 1920, height: 1080, transform: `scale(${largura / 1920})`, transformOrigin: "top left", pointerEvents: "none" }} />
+        <iframe ref={quadro} src="/tv/previa" title={rotulo} className="absolute border-0"
+          style={{ left: esquerda, top: topo, width: 1920, height: 1080, transform: `scale(${escala})`, transformOrigin: "top left", pointerEvents: "none" }} />
       )}
       {!pronta && <div className="absolute inset-0 flex items-center justify-center text-xs text-white/60"><Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> Ligando a tela…</div>}
     </div>
@@ -923,6 +939,27 @@ function PainelPrevia({ p, playlists, rascunho }: { p: TvPlaylist; playlists: Tv
     ? { modo: "item", item: atual, chave: `${atual.id}|${volta}|${atual.novo ? novoVisto : ""}` }
     : { modo: "relogio", nome: p.nome, chave: "relogio" };
 
+  // Ver tela inteira (18/11/2026): a PRÉVIA em tela cheia, tocando a playlist
+  // como a TV toca. Esc sai; ← → trocam de item e espaço pausa.
+  const quadroCheio = useRef<HTMLDivElement | null>(null);
+  const verTelaInteira = () => {
+    const el = quadroCheio.current;
+    if (!el?.requestFullscreen) { toast.error("Este navegador não deixa abrir em tela cheia."); return; }
+    el.requestFullscreen().catch(() => toast.error("Não foi possível abrir em tela cheia."));
+  };
+  const teclas = useRef({ ir, idx, proximo });
+  teclas.current = { ir, idx, proximo };
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => {
+      if (!quadroCheio.current || document.fullscreenElement !== quadroCheio.current) return;
+      if (e.key === "ArrowRight") teclas.current.proximo();
+      else if (e.key === "ArrowLeft") teclas.current.ir(teclas.current.idx - 1);
+      else if (e.key === " ") { e.preventDefault(); setTocando((x) => !x); }
+    };
+    document.addEventListener("keydown", tecla);
+    return () => document.removeEventListener("keydown", tecla);
+  }, []);
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -934,7 +971,10 @@ function PainelPrevia({ p, playlists, rascunho }: { p: TvPlaylist; playlists: Tv
         </Button>
         <Button size="icon" variant="ghost" className="h-7 w-7" disabled={itens.length < 2} onClick={proximo} title="Próximo item"><SkipForward className="h-3.5 w-3.5" /></Button>
       </div>
-      <QuadroTv tela={tela} rotulo="Prévia da playlist" onFim={() => (itens.length > 1 ? proximo() : setVolta((v) => v + 1))} />
+      <QuadroTv tela={tela} rotulo="Prévia da playlist" caixaRef={quadroCheio} onFim={() => (itens.length > 1 ? proximo() : setVolta((v) => v + 1))} />
+      <Button size="sm" variant="outline" className="h-8 w-full text-xs" onClick={verTelaInteira}>
+        <Maximize className="mr-1.5 h-3.5 w-3.5" /> Ver tela inteira
+      </Button>
       {itens.length > 0 ? (
         <div className="flex flex-wrap gap-1">
           {itens.map((i, n) => (
