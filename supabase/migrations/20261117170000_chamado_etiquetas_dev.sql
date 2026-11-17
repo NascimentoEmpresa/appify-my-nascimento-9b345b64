@@ -52,10 +52,10 @@ GRANT SELECT, INSERT, DELETE ON public."CHAMADO_ETIQUETA_CHAMADO" TO authenticat
 DROP POLICY IF EXISTS chamado_etiqueta_dono ON public."CHAMADO_ETIQUETA";
 CREATE POLICY chamado_etiqueta_dono ON public."CHAMADO_ETIQUETA"
   FOR ALL TO authenticated
-  USING (usuario_id = auth.uid())
+  USING (usuario_id = (SELECT auth.uid()))
   WITH CHECK (
-    usuario_id = auth.uid()
-    AND public.has_screen_access(auth.uid(), 'chamados_sistemas_dev', 'visualizar')
+    usuario_id = (SELECT auth.uid())
+    AND (SELECT public.has_screen_access((SELECT auth.uid()), 'chamados_sistemas_dev', 'visualizar'))
   );
 
 DROP POLICY IF EXISTS chamado_etiqueta_chamado_select ON public."CHAMADO_ETIQUETA_CHAMADO";
@@ -63,17 +63,17 @@ CREATE POLICY chamado_etiqueta_chamado_select ON public."CHAMADO_ETIQUETA_CHAMAD
   FOR SELECT TO authenticated
   USING (EXISTS (
     SELECT 1 FROM public."CHAMADO_ETIQUETA" e
-    WHERE e.id = etiqueta_id AND e.usuario_id = auth.uid()
+    WHERE e.id = etiqueta_id AND e.usuario_id = (SELECT auth.uid())
   ));
 
 DROP POLICY IF EXISTS chamado_etiqueta_chamado_insert ON public."CHAMADO_ETIQUETA_CHAMADO";
 CREATE POLICY chamado_etiqueta_chamado_insert ON public."CHAMADO_ETIQUETA_CHAMADO"
   FOR INSERT TO authenticated
   WITH CHECK (
-    public.has_screen_access(auth.uid(), 'chamados_sistemas_dev', 'visualizar')
+    (SELECT public.has_screen_access((SELECT auth.uid()), 'chamados_sistemas_dev', 'visualizar'))
     AND EXISTS (
       SELECT 1 FROM public."CHAMADO_ETIQUETA" e
-      WHERE e.id = etiqueta_id AND e.usuario_id = auth.uid()
+      WHERE e.id = etiqueta_id AND e.usuario_id = (SELECT auth.uid())
     )
     -- Sem SECURITY DEFINER: o RLS de "CHAMADO_SISTEMA" vale aqui, então só
     -- entra chamado que o usuário já enxerga.
@@ -85,7 +85,7 @@ CREATE POLICY chamado_etiqueta_chamado_delete ON public."CHAMADO_ETIQUETA_CHAMAD
   FOR DELETE TO authenticated
   USING (EXISTS (
     SELECT 1 FROM public."CHAMADO_ETIQUETA" e
-    WHERE e.id = etiqueta_id AND e.usuario_id = auth.uid()
+    WHERE e.id = etiqueta_id AND e.usuario_id = (SELECT auth.uid())
   ));
 
 NOTIFY pgrst, 'reload schema';

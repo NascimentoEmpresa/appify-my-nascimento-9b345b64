@@ -18,7 +18,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
-  PARAM_LISTA, hrefNaLista, lerLista, ordemFilaResponsavel, posicaoNaLista, type ItemFila,
+  MAX_LISTA, PARAM_LISTA, hrefNaLista, lerLista, ordemFilaResponsavel, posicaoNaLista, type ItemFila,
 } from "@/lib/chamados/navegacaoLista";
 import { STATUS_ENCERRADOS, chamadoAtivo, type Chamado } from "./types";
 
@@ -39,7 +39,12 @@ export function NavegacaoListaChamados({ chamado }: Props) {
       const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA")
         .select("id, status, responsavel_id, posicao_dev, created_at")
         .eq("responsavel_id", chamado.responsavel_id)
-        .not("status", "in", `(${STATUS_ENCERRADOS.join(",")})`);
+        .not("status", "in", `(${STATUS_ENCERRADOS.join(",")})`)
+        // Mesma ordem de ordemFilaResponsavel, já no servidor, para o teto
+        // (MAX_LISTA) cortar o fim da fila e não um pedaço qualquer.
+        .order("posicao_dev", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true })
+        .limit(MAX_LISTA);
       if (error) throw error;
       return (data ?? []) as ItemFila[];
     },
@@ -57,7 +62,7 @@ export function NavegacaoListaChamados({ chamado }: Props) {
     enabled: vizinhos.length > 0,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data } = await (supabase as any).from("CHAMADO_SISTEMA").select("id, numero").in("id", vizinhos);
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA").select("id, numero").in("id", vizinhos).limit(2);
       return Object.fromEntries(((data ?? []) as Array<{ id: string; numero: string }>).map((c) => [c.id, c.numero])) as Record<string, string>;
     },
   });
