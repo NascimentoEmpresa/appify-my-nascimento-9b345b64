@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { FileText, Loader2, Paperclip, Search, Trash2 } from "lucide-react";
+import { FileText, Loader2, Paperclip, Search, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -13,13 +13,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  abrirAsoPeriodico, useAnexarAso, useListaAsoPeriodico, useRemoverAso, useSalvarCiclo, type DadosCiclo,
+  abrirAsoPeriodico, useAnexarAso, useConfigAsoPeriodico, useListaAsoPeriodico, useRemoverAso, useSalvarCiclo,
+  useSalvarConfigPeriodico, useSalvarPeriodicidadeContrato, type DadosCiclo,
 } from "@/hooks/useAsoPeriodico";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  DIAS_AVISO, PAINEL, ROTULO_TIPO, STATUS_PERIODICO, calcularVencimento, contarPainel, diasParaVencer, fmtData, hojeIso,
-  nomeContrato, ordenar, pendenciasParaRealizar,
-  type ChavePainel, type CicloPeriodico, type ItemPeriodico, type StatusAsoPeriodico,
+  DIAS_AVISO, PAINEL, PERIODICIDADE_PADRAO_MESES, ROTULO_TIPO, STATUS_PERIODICO, calcularVencimento, contarPainel,
+  diasParaVencer, erroConfig, erroMesesContrato, fmtData, hojeIso, nomeContrato, ordenar, pendenciasParaRealizar,
+  rotuloPeriodicidade,
+  type ChavePainel, type CicloPeriodico, type ConfigAsoPeriodico, type ContratoPeriodicidade, type ItemPeriodico,
+  type StatusAsoPeriodico,
 } from "@/lib/sst/asoPeriodico";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +33,10 @@ import { cn } from "@/lib/utils";
 // (UFFS a cada 1 ano, demais a cada 2, contando do último ASO: admissional,
 // periódico, retorno ou troca de função). O SST só pede o agendamento à
 // clínica e acompanha até o ASO em mãos. Cada cartão do painel filtra a lista.
+//
+// SIS-2026-0918 (mig 20261117020000): periodicidade por contrato e janela de
+// "próximo do vencimento" saem da configuração (botão "Configurar
+// vencimentos"), não mais de regra fixa no código.
 // =====================================================================
 
 const COR_STATUS: Record<StatusAsoPeriodico, string> = {
@@ -54,6 +61,11 @@ export default function AsoPeriodico() {
   const [contrato, setContrato] = useState("todos");
   const [estimados, setEstimados] = useState(false);
   const [aberto, setAberto] = useState<ItemPeriodico | null>(null);
+  const [configAberta, setConfigAberta] = useState(false);
+  const { data: config } = useConfigAsoPeriodico();
+  const diasAviso = config?.dias_aviso ?? DIAS_AVISO;
+  const padrao = config?.periodicidade_padrao_meses ?? PERIODICIDADE_PADRAO_MESES;
+  const comPeriodicidadePropria = config?.contratos.filter((c) => c.periodicidade_meses != null) ?? [];
 
   const painel = useMemo(() => contarPainel(itens), [itens]);
   const contratos = useMemo(() => [...new Set(itens.map(nomeContrato))].sort(), [itens]);
@@ -73,7 +85,14 @@ export default function AsoPeriodico() {
   return (
     <div className="space-y-4">
       <PageHeader title="ASO Periódico" module="SST" breadcrumb={["ASO Periódico"]}
-        subtitle={`Vencimento automático pelo último ASO — UFFS a cada 1 ano, demais contratos a cada 2. "Próximo" = vence em até ${DIAS_AVISO} dias.`} />
+        subtitle={`Vencimento automático pelo último ASO (admissional, periódico, retorno ou mudança de função) — ${
+          comPeriodicidadePropria.length ? `${comPeriodicidadePropria.length} contrato(s) com periodicidade própria, ` : ""
+        }demais a cada ${rotuloPeriodicidade(padrao)}. "Próximo" = vence em até ${diasAviso} dias.`}
+        actions={
+          <Button variant="outline" size="sm" onClick={() => setConfigAberta(true)}>
+            <Settings2 className="mr-2 h-4 w-4" /> Configurar vencimentos
+          </Button>
+        } />
 
       <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {PAINEL.map((p) => {
@@ -129,6 +148,7 @@ export default function AsoPeriodico() {
       <p className="text-xs text-muted-foreground">{visiveis.length} de {itens.length} colaborador(es) ativo(s).</p>
 
       {aberto && <CicloDialog item={aberto} podeAlterar={podeAlterar} onFechar={() => setAberto(null)} />}
+      {configAberta && <ConfigDialog config={config} podeAlterar={podeAlterar} onFechar={() => setConfigAberta(false)} />}
     </div>
   );
 }
@@ -145,7 +165,15 @@ function Linha({ i, hoje, podeAlterar, onAbrir }: { i: ItemPeriodico; hoje: stri
       </TableCell>
       <TableCell className="max-w-56">
         <span className="block truncate" title={nomeContrato(i)}>{nomeContrato(i)}</span>
-        <span className="block text-xs text-muted-foreground">a cada {i.periodicidade_meses === 12 ? "1 ano" : "2 anos"}</span>
+        <span className="block text-xs text-muted-foreground">
+          a cada {rotuloPeriodicidade(i.periodicidade_meses)}{i.periodicidade_origem === "padrao" ? " (padrão)" : ""}
+        </span>
+        {/* null = a lista nova não achou o contrato; undefined = RPC antiga, não marca. */}
+        {i.contrato_id === null && (
+          <span className="block text-xs font-medium text-amber-700" title="A filial/local da Senior não casou com nenhum contrato do ERP: vale a periodicidade padrão.">
+            contrato não identificado
+          </span>
+        )}
       </TableCell>
       <TableCell className="whitespace-nowrap">
         {fmtData(i.ultimo_aso)}
@@ -339,6 +367,141 @@ function CicloDialog({ item, podeAlterar, onFechar }: { item: ItemPeriodico; pod
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Configuração (SIS-2026-0918) ─────────────────────────────────────────
+// Geral: dias de aviso e periodicidade padrão. Por contrato: a periodicidade
+// própria (UFFS nasce com 1 ano pela migration); vazio = usa o padrão.
+function ConfigDialog({ config, podeAlterar, onFechar }: { config: ConfigAsoPeriodico | undefined; podeAlterar: boolean; onFechar: () => void }) {
+  const [dias, setDias] = useState(String(config?.dias_aviso ?? DIAS_AVISO));
+  const [padrao, setPadrao] = useState(String(config?.periodicidade_padrao_meses ?? PERIODICIDADE_PADRAO_MESES));
+  const [busca, setBusca] = useState("");
+  const salvar = useSalvarConfigPeriodico();
+  const so = !podeAlterar;
+
+  const contratos = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return (config?.contratos ?? []).filter((c) => !q || c.nome.toLowerCase().includes(q));
+  }, [config, busca]);
+
+  const enviar = () => {
+    const d = Number(dias), p = Number(padrao);
+    const e = erroConfig(d, p);
+    if (e) { toast.error(e); return; }
+    salvar.mutateAsync({ dias_aviso: d, periodicidade_padrao_meses: p })
+      .then(() => toast.success("Configuração salva. Vencimentos e status recalculados."), (x) => toast.error((x as Error).message));
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Configurar vencimentos do ASO periódico</DialogTitle>
+          <DialogDescription>
+            O vencimento conta do último ASO realizado. Contrato sem periodicidade própria usa o padrão.
+            {config?.atualizado_por_nome ? ` Última alteração por ${config.atualizado_por_nome}.` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        {!config ? (
+          <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+        ) : (
+          <div className="space-y-4">
+            <div className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
+              <Campo id="cfg-dias" rotulo='Dias para "próximo do vencimento"'>
+                <Input id="cfg-dias" type="number" min={1} max={365} disabled={so} value={dias} onChange={(e) => setDias(e.target.value)} />
+              </Campo>
+              <Campo id="cfg-padrao" rotulo="Periodicidade padrão (meses)">
+                <Input id="cfg-padrao" type="number" min={1} max={60} disabled={so} value={padrao} onChange={(e) => setPadrao(e.target.value)} />
+              </Campo>
+              {podeAlterar && (
+                <Button onClick={enviar} disabled={salvar.isPending}>
+                  {salvar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Salvar
+                </Button>
+              )}
+            </div>
+
+            {config.sem_contrato > 0 && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                {config.sem_contrato} colaborador(es) ativo(s) sem contrato identificado (a filial/local da Senior não casa com nenhum
+                contrato do ERP) — usam a periodicidade padrão. Na lista, aparecem marcados como "contrato não identificado".
+              </p>
+            )}
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-sm font-semibold">Periodicidade por contrato</Label>
+                <div className="relative w-64">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input className="pl-8" placeholder="Buscar contrato" aria-label="Buscar contrato" value={busca} onChange={(e) => setBusca(e.target.value)} />
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Contrato</TableHead>
+                    <TableHead className="text-right">Ativos</TableHead>
+                    <TableHead>Periodicidade</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {contratos.length === 0 ? (
+                    <TableRow><TableCell colSpan={3} className="py-6 text-center text-muted-foreground">Nenhum contrato.</TableCell></TableRow>
+                  ) : contratos.map((c) => (
+                    <LinhaContrato key={c.contrato_id} c={c} padrao={config.periodicidade_padrao_meses} podeAlterar={podeAlterar} />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LinhaContrato({ c, padrao, podeAlterar }: { c: ContratoPeriodicidade; padrao: number; podeAlterar: boolean }) {
+  const [meses, setMeses] = useState(c.periodicidade_meses == null ? "" : String(c.periodicidade_meses));
+  const salvar = useSalvarPeriodicidadeContrato();
+  const atual = c.periodicidade_meses == null ? "" : String(c.periodicidade_meses);
+  const mudou = meses.trim() !== atual;
+
+  const gravar = (valor: number | null) => {
+    if (valor != null) {
+      const e = erroMesesContrato(valor);
+      if (e) { toast.error(e); return; }
+    }
+    salvar.mutateAsync({ contrato_id: c.contrato_id, meses: valor })
+      .then(() => toast.success(valor == null ? `${c.nome}: volta ao padrão.` : `${c.nome}: a cada ${rotuloPeriodicidade(valor)}.`),
+        (x) => toast.error((x as Error).message));
+  };
+
+  return (
+    <TableRow>
+      <TableCell>
+        <span className="block">{c.nome}</span>
+        {c.status === "encerrado" && <span className="text-xs text-muted-foreground">encerrado</span>}
+        {c.motivo && <span className="block text-xs text-muted-foreground">{c.motivo}</span>}
+      </TableCell>
+      <TableCell className="text-right">{c.colaboradores}</TableCell>
+      <TableCell>
+        {podeAlterar ? (
+          <div className="flex items-center gap-2">
+            <Input type="number" min={1} max={60} className="w-24" aria-label={`Meses — ${c.nome}`} placeholder={String(padrao)}
+              value={meses} onChange={(e) => setMeses(e.target.value)} />
+            <span className="text-xs text-muted-foreground">meses</span>
+            {mudou && (
+              <Button size="sm" disabled={salvar.isPending} onClick={() => gravar(meses.trim() === "" ? null : Number(meses))}>Salvar</Button>
+            )}
+            {!mudou && c.periodicidade_meses != null && (
+              <Button size="sm" variant="ghost" disabled={salvar.isPending} onClick={() => { setMeses(""); gravar(null); }}>Usar padrão</Button>
+            )}
+          </div>
+        ) : (
+          <span>{rotuloPeriodicidade(c.periodicidade_meses ?? padrao)}{c.periodicidade_meses == null ? " (padrão)" : ""}</span>
+        )}
+      </TableCell>
+    </TableRow>
   );
 }
 

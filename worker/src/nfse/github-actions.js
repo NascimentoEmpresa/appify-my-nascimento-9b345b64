@@ -1,4 +1,4 @@
-// Fila fiscal isolada: ciclos de 60 s no Actions ou diagnóstico de até dois ciclos.
+// Fila fiscal isolada: drena trabalhos prontos, com 60 s entre ciclos vazios/limitados.
 const fs = require('node:fs');
 const path = require('node:path');
 const { carregarConfiguracao, validarUrlFiscal } = require('./cliente');
@@ -92,7 +92,17 @@ async function executarNoGithub(ambiente = process.env, dependencias = {}) {
       console.log('[nfse-actions] Processador ativo; intervalo de 60 segundos.');
       do {
         try {
-          await processar(supabase, temporarios.ambienteWorker);
+          // SIS-2026-0841: a pausa é entre ciclos, nunca entre notas prontas.
+          // Cada reserva continua individual; o banco respeita proxima_tentativa
+          // e só consulta documentos que já tiveram envio iniciado. O teto evita
+          // um ciclo infinito sob carga contínua e o prazo é conferido entre itens.
+          let processados = 0;
+          while (processados < 200 && agora() < fim) {
+            const resultado = await processar(supabase, temporarios.ambienteWorker);
+            if (!resultado?.processado) break;
+            processados++;
+          }
+          if (processados) console.log(`[nfse-actions] Operações da fila processadas no ciclo: ${processados}.`);
           if (falhasSeguidas) console.log(`[nfse-actions] Ciclo restabelecido após ${falhasSeguidas} falhas consecutivas.`);
           falhasSeguidas = 0;
         }

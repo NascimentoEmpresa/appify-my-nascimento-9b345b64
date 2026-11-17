@@ -1,8 +1,10 @@
 import { useMemo } from "react";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
-import { usePlanilhaCustos, resolverLinhasVigentes, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes, PlanilhaCustoRow } from "@/hooks/usePlanilhaCusto";
+import { usePlanilhaCustos, anoMesAtual, resolverLinhasVigentes, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes, PlanilhaCustoRow } from "@/hooks/usePlanilhaCusto";
 import { useLigacoesLicitacaoClassificacao } from "@/hooks/useMaloteLicitacaoClassificacaoLink";
 import { CLASSIFICACOES_LICITACAO, chaveCampoOutros, GRUPO_OUTROS } from "@/lib/planilhaCustoClassificacoes";
+import { useNfsEmissao } from "@/hooks/useNfEmissao";
+import { contaNoFaturamento } from "@/pages/controladoria/faturamento/regras";
 
 export interface OrcamentoContratoRubrica {
   campo: string;
@@ -18,6 +20,8 @@ export interface OrcamentoContratoRubrica {
   // Dedução VT no orçamento de VT), mas NÃO entra no valorTotal do contrato.
   // Ausente = soma no total.
   somaNoTotal?: boolean;
+  // SIS-2026-0828: valor da rubrica na Planilha de Custo (executável), antes de proporcionar ao faturado.
+  valorExecutavel?: number;
 }
 
 // SIS-2026-0505: a Dedução VT (transporte_desconto) não entra no total do posto
@@ -36,6 +40,58 @@ export interface OrcamentoContratoGrupo {
   contrato: ContratoERP;
   rubricas: OrcamentoContratoRubrica[];
   valorTotal: number;
+  // SIS-2026-0828: como o valor foi formado. `executavel` = total da Planilha de Custo vigente no mês; `executado` = o que as NFs do mês
+  // faturaram (valor_contrato_exec_total). `fator` = executado ÷ executável: cada rubrica da planilha é multiplicada por ele.
+  // Sem `executado` (cálculo sem NFs, ou sem mês) o orçamento segue pelo executável e `fator` é 1.
+  executavel?: number;
+  executado?: number | null;
+  fator?: number;
+  // De onde veio o valor do mês: "faturado" (NFs a partir do limiar), "previsto" (executável, enquanto a nota não chega ou é parcial) ou
+  // "sem_nota" (mês passado sem NF: R$ 0).
+  fonte?: FonteOrcamentoContrato;
+}
+
+export type FonteOrcamentoContrato = "faturado" | "previsto" | "sem_nota";
+
+// SIS-2026-0828: a partir de quanto do executável já faturado o orçamento passa do executável (previsão) para o executado (faturado).
+// Abaixo disso a nota é considerada parcial/ainda não emitida e o contrato segue pela previsão. Ajuste só aqui.
+export const LIMIAR_EXECUTADO = 0.7;
+
+/**
+ * Decide a base do orçamento do contrato no mês: fator (multiplica as rubricas da planilha) e origem.
+ *  - faturado >= 70% do executável → executado (fator = faturado ÷ executável, pode passar de 1);
+ *  - abaixo disso, ou sem NF, no mês corrente ou futuro → executável (previsão, fator 1);
+ *  - mês passado sem nenhuma NF → 0.
+ * Mês passado com NF parcial (< 70%) segue pela previsão: a nota que falta ainda é receita esperada daquele mês.
+ */
+export function baseDoOrcamento(executavel: number, faturado: number, anoMes: string, mesAtual: string): { fator: number; fonte: FonteOrcamentoContrato } {
+  if (executavel <= 0) return { fator: 0, fonte: faturado > 0 ? "faturado" : "sem_nota" };
+  if (faturado >= executavel * LIMIAR_EXECUTADO) return { fator: faturado / executavel, fonte: "faturado" };
+  if (faturado > 0 || anoMes >= mesAtual) return { fator: 1, fonte: "previsto" };
+  return { fator: 0, fonte: "sem_nota" };
+}
+
+// SIS-2026-0828: o orçamento de contratos passa a ser calculado pelo EXECUTADO (faturado nas NFs do mês), não pelo executável da Planilha de
+// Custo ("se hoje está por 12mi do executável, deve ser calculado pelos 9mi faturados"). Chave "contrato_id|YYYY-MM".
+export const chaveExecutado = (contratoId: string, anoMes: string): string => `${contratoId}|${anoMes}`;
+
+/** Soma, por contrato e competência, o "Valor contrato exec." das NFs que contam no faturamento (as mesmas do Controle de Faturamento). */
+export function executadoPorContratoMes(
+  nfs: { contrato_id: string; competencia: string; valor_contrato_exec_total: number | null; tipo_nota: string; status?: string; situacao_site_pmt?: string | null; situacao_dominio?: string | null }[],
+): Map<string, number> {
+  const mapa = new Map<string, number>();
+  for (const n of nfs) {
+    if (!n.contrato_id || !n.competencia || !contaNoFaturamento(n)) continue;
+    const k = chaveExecutado(n.contrato_id, n.competencia.slice(0, 7));
+    mapa.set(k, (mapa.get(k) ?? 0) + (Number(n.valor_contrato_exec_total) || 0));
+  }
+  return mapa;
+}
+
+export function useExecutadoContratos() {
+  const { data: nfs = [], isLoading } = useNfsEmissao(null, { todasEmpresas: true });
+  const data = useMemo(() => executadoPorContratoMes(nfs), [nfs]);
+  return { data, isLoading };
 }
 
 // outros_1/2/3 são campos livres da Planilha de Custo (com descrição por
@@ -104,7 +160,10 @@ export function computarGruposContrato(
   contratos: ContratoERP[],
   planilha: PlanilhaCustoRow[],
   maloteIdPorCampo: Map<string, string>,
-  anoMes?: string
+  anoMes?: string,
+  // SIS-2026-0828: executado por contrato|mês (executadoPorContratoMes). Informado junto com `anoMes`, o orçamento sai pelo faturado.
+  executado?: Map<string, number>,
+  mesAtual: string = anoMesAtual()
 ): OrcamentoContratoGrupo[] {
   const resultado: OrcamentoContratoGrupo[] = [];
   for (const contrato of contratos) {
@@ -136,8 +195,16 @@ export function computarGruposContrato(
       }
     }
     rubricas.push(...coletarRubricasOutros(linhasVigentes, maloteIdPorCampo));
-    const valorTotal = totalDoContrato(rubricas);
-    resultado.push({ contrato, rubricas, valorTotal });
+    const executavel = totalDoContrato(rubricas);
+    if (!anoMes || !executado) {
+      resultado.push({ contrato, rubricas, valorTotal: executavel, executavel, executado: null, fator: 1 });
+      continue;
+    }
+    // SIS-2026-0828: cada rubrica mantém a proporção da planilha; o fator e a origem vêm de baseDoOrcamento (executado a partir de 70%).
+    const faturado = executado.get(chaveExecutado(contrato.id, anoMes)) ?? 0;
+    const { fator, fonte } = baseDoOrcamento(executavel, faturado, anoMes, mesAtual);
+    const proporcionais = rubricas.map((r) => ({ ...r, valor: r.valor * fator, valorExecutavel: r.valor }));
+    resultado.push({ contrato, rubricas: proporcionais, valorTotal: totalDoContrato(proporcionais), executavel, executado: faturado, fator, fonte });
   }
   return resultado;
 }
@@ -172,13 +239,16 @@ export function useOrcamentoContratos(anoMes?: string) {
     return map;
   }, [ligacoes]);
 
+  // SIS-2026-0828: pelo executado (NFs do mês). Sem mês informado não há competência para casar com as NFs: segue pelo executável.
+  const { data: executado, isLoading: carregandoNfs } = useExecutadoContratos();
+
   const grupos: OrcamentoContratoGrupo[] = useMemo(
-    () => computarGruposContrato(contratos, planilha, maloteIdPorCampo, anoMes),
-    [contratos, planilha, maloteIdPorCampo, anoMes]
+    () => computarGruposContrato(contratos, planilha, maloteIdPorCampo, anoMes, anoMes ? executado : undefined),
+    [contratos, planilha, maloteIdPorCampo, anoMes, executado]
   );
 
   return {
     data: grupos,
-    isLoading: carregandoContratos || carregandoPlanilha || carregandoLigacoes,
+    isLoading: carregandoContratos || carregandoPlanilha || carregandoLigacoes || (!!anoMes && carregandoNfs),
   };
 }

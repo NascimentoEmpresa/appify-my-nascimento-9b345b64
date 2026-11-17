@@ -5,7 +5,53 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { prepararArquivos, executarNoGithub } = require('../src/nfse/github-actions.js');
 const { processarFilaNfse } = require('../src/nfse/index.js');
+const { renovarExecucao } = require('../src/nfse/renovar-actions.js');
 const pastas = [];
+
+describe('Renovação da fila no GitHub', () => {
+  const agora = Date.parse('2026-11-16T16:30:00Z');
+  const env = () => ({ GITHUB_ACTIONS:'true', GITHUB_REF:'refs/heads/main', GITHUB_REPOSITORY:'NascimentoEmpresa/appify-my-nascimento-9b345b64', GITHUB_RUN_ID:'123', NFSE_ACTIONS_CONTINUO:'1', NFSE_RENOVACAO_TOKEN:'token-sintetico' });
+  const origem = () => ({ id:123, repository:{full_name:env().GITHUB_REPOSITORY}, head_branch:'main', path:'.github/workflows/nfse_homologacao.yml', run_started_at:'2026-11-16T10:50:00Z', conclusion:null });
+  const resposta = json => ({ ok:true, json:async()=>json });
+  it('solicita uma única execução contínua na main após o período longo', async () => {
+    const chamadas=[];
+    const r=await renovarExecucao(env(),{agora:()=>agora,fetch:async(url,opcoes)=>{chamadas.push({url,opcoes});return resposta(origem());}});
+    assert.deepEqual(r,{renovada:true}); assert.equal(chamadas.length,2);
+    assert.match(chamadas[1].url,/\/workflows\/nfse_homologacao.yml\/dispatches$/);
+    assert.equal(chamadas[1].opcoes.method,'POST');
+    assert.deepEqual(JSON.parse(chamadas[1].opcoes.body),{ref:'main',inputs:{continuo:'true'}});
+    assert.equal(JSON.stringify(r).includes('token-sintetico'),false);
+  });
+  it('não renova diagnóstico, execução curta ou cancelada e não cria laço em falha imediata', async () => {
+    for(const troca of [{run_started_at:'2026-11-16T16:29:00Z'}, {conclusion:'cancelled'}]) {
+      let chamadas=0;
+      const r=await renovarExecucao(env(),{agora:()=>agora,fetch:async()=>{chamadas++;return resposta({...origem(),...troca});}});
+      assert.equal(r.renovada,false); assert.equal(chamadas,1);
+    }
+    let chamadas=0;
+    const r=await renovarExecucao({...env(),NFSE_ACTIONS_CONTINUO:'0'},{fetch:async()=>{chamadas++;}});
+    assert.equal(r.motivo,'diagnostico'); assert.equal(chamadas,0);
+  });
+  it('recusa branch, fork, token ausente e origem incorreta antes do dispatch', async () => {
+    for(const troca of [{GITHUB_REF:'refs/heads/eduardo'},{GITHUB_REPOSITORY:'outro/repo'},{NFSE_RENOVACAO_TOKEN:''}]) {
+      let chamadas=0;
+      await assert.rejects(renovarExecucao({...env(),...troca},{fetch:async()=>{chamadas++;}}),/Contexto inválido/);
+      assert.equal(chamadas,0);
+    }
+    for(const troca of [{head_branch:'eduardo'},{path:'.github/workflows/outro.yml'},{run_started_at:'data-invalida'}]) {
+      let chamadas=0;
+      await assert.rejects(renovarExecucao(env(),{agora:()=>agora,fetch:async()=>{chamadas++;return resposta({...origem(),...troca});}}));
+      assert.equal(chamadas,1);
+    }
+  });
+  it('preserva falhas HTTP sem expor resposta bruta ou token', async () => {
+    for(const falharNa of [1,2]) {
+      let chamadas=0;
+      await assert.rejects(renovarExecucao(env(),{agora:()=>agora,fetch:async()=>++chamadas===falharNa?{ok:false,status:403,json:async()=>({token:'nao-expor'})}:resposta(origem())}),e=>/HTTP 403/.test(e.message)&&!/nao-expor|token-sintetico/.test(e.message));
+      assert.equal(chamadas,falharNa);
+    }
+  });
+});
 afterEach(() => { for (const pasta of pastas.splice(0)) rmSync(pasta, { recursive: true, force: true }); });
 function ambiente() {
   const pasta = mkdtempSync(join(tmpdir(), 'nfse-actions-teste-')); pastas.push(pasta);
@@ -21,6 +67,80 @@ function ambiente() {
   };
 }
 describe('NFS-e no GitHub Actions', () => {
+  it('envia 100 notas prontas sem uma pausa por nota e consulta os resultados no ciclo seguinte', async () => {
+    const env = {...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0, chamadas=0, emExecucao=0, maximoSimultaneo=0;
+    const notas=Array.from({length:100},(_,id)=>({id,envios:0,consultas:0,consultarApos:Infinity,autorizada:false}));
+    const pausas=[];
+    await executarNoGithub(env,{
+      carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{
+        chamadas++; emExecucao++; maximoSimultaneo=Math.max(maximoSimultaneo,emExecucao);
+        try {
+          await Promise.resolve();
+          const nota=notas.find(n=>n.envios===0||(!n.autorizada&&n.consultarApos<=tempo));
+          if(!nota) return;
+          if(nota.envios===0){nota.envios++;nota.consultarApos=tempo+60_000;}
+          else {nota.consultas++;nota.autorizada=true;}
+          return {processado:true,aguardarConsulta:!nota.autorizada};
+        } finally {emExecucao--;}
+      },
+      aguardar:async ms=>{
+        assert.equal(notas.filter(n=>n.envios===1).length,100);
+        pausas.push(ms);tempo+=ms;
+      },
+    });
+    assert.deepEqual(pausas,[60_000]); assert.equal(chamadas,202); assert.equal(maximoSimultaneo,1);
+    assert.ok(notas.every(n=>n.envios===1&&n.consultas===1&&n.autorizada));
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('a fila real sinaliza trabalho confirmado, inclusive erro de preparação, e reconhece fila vazia', async () => {
+    for(const confirmado of [true,false]) {
+      const nomes=[];
+      const banco={rpc:async(nome,parametros)=>{
+        nomes.push(nome);
+        if(nome==='nfse_reservar_trabalho')return {data:[{id:'nota-sintetica',serie:1041,ambiente:'homologacao',estado:'processando',tentativas:1,
+          reserva:'reserva-sintetica',envio_iniciado_em:null,dados:{empresa:{cnpj:'11222333000181'}}}],error:null};
+        assert.equal(nome,'nfse_registrar_resultado');assert.equal(parametros._resultado.estado,'erro');
+        return {data:confirmado,error:null};
+      }};
+      const resultado=await processarFilaNfse(banco,{NFSE_HABILITADO:'1',NFSE_CONFIG_ARQUIVO:join(tmpdir(),'nfse-config-inexistente-0841.json')});
+      assert.equal(resultado.processado,confirmado);assert.equal(resultado.aguardarConsulta,false);
+      assert.deepEqual(nomes,['nfse_reservar_trabalho','nfse_registrar_resultado']);
+    }
+    let reservas=0;
+    const vazio=await processarFilaNfse({rpc:async()=>{reservas++;return {data:[],error:null};}},{NFSE_HABILITADO:'1'});
+    assert.equal(vazio,undefined);assert.equal(reservas,1);
+  });
+  it('limita o ciclo a 200 operações sob carga contínua e preserva a pausa de 60 segundos', async () => {
+    const env={...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0,operacoes=0;const pausas=[];
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{operacoes++;return {processado:true};},
+      aguardar:async ms=>{assert.equal(operacoes,200);pausas.push(ms);tempo+=ms;},
+    });
+    assert.equal(operacoes,400);assert.deepEqual(pausas,[60_000]);assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('confere o prazo entre operações e não reserva novas notas após o término', async () => {
+    const env={...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'1'};
+    let tempo=0,operacoes=0,pausas=0;
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{assert.ok(tempo<60_000);operacoes++;tempo+=15_000;return {processado:true};},
+      aguardar:async()=>{pausas++;},
+    });
+    assert.equal(operacoes,4);assert.equal(pausas,0);assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
+  it('uma falha de infraestrutura interrompe a drenagem e retoma no ciclo seguinte sem expor dados', async t => {
+    const env={...ambiente(),NFSE_ACTIONS_CONTINUO:'1',NFSE_ACTIONS_DURACAO_MIN:'2'};
+    let tempo=0,operacoes=0;const avisos=[];
+    t.mock.method(console,'warn',m=>avisos.push(m));
+    await executarNoGithub(env,{carregarConfiguracao:()=>undefined,criarCliente:()=>({}),agora:()=>tempo,
+      processarFilaNfse:async()=>{operacoes++;if(operacoes===2)throw new Error('segredo-sintetico');return operacoes===1||operacoes===3?{processado:true}:undefined;},
+      aguardar:async ms=>{assert.equal(operacoes,2);assert.equal(ms,60_000);tempo+=ms;},
+    });
+    assert.equal(operacoes,4);assert.equal(avisos.length,1);assert.doesNotMatch(avisos.join(' '),/segredo-sintetico/);
+    assert.deepEqual(readdirSync(env.RUNNER_TEMP),[]);
+  });
   it('recusa branches, forks e secrets ausentes antes de criar o certificado', () => {
     for (const troca of [{ GITHUB_REF: 'refs/heads/eduardo' }, { GITHUB_REPOSITORY: 'outro/repo' },
       { GITHUB_ACTIONS: 'false' }, { NFSE_CERTIFICADO_SENHA: '' }]) {

@@ -56,6 +56,7 @@ import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrut
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
 import { erroDataInicio, hojeIso, inicioTrabalho, linhaInicioPedido, sugestaoDataInicio } from "@/lib/recrutamento/inicioTrabalho";
 import { useAoPedirAtualizacao } from "@/lib/atualizarTela";
+import { outrosEmTexto } from "@/lib/licitacoes/quadroPostos";
 import { AprovacaoGerenteOperacoes } from "@/components/recrutamento/AprovacaoGerenteOperacoes";
 
 // ── Tipos ──────────────────────────────────────────────────────────
@@ -78,6 +79,9 @@ interface Solicitacao {
   beneficios?: string;
   insalubridade_recebe?: string;
   insalubridade_quanto?: string;
+  /** SIS-2026-0884: vindos do Quadro de Postos do contrato. */
+  periculosidade_quanto?: string | null;
+  outros_proventos?: { descricao: string; valor: number }[] | null;
   local_exato?: string;
   /** #0849: endereço efetivo do local de trabalho, digitado ao abrir a vaga. */
   endereco_trabalho?: string | null;
@@ -2650,6 +2654,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       ["Salário", s.salario],
       ["Benefícios", s.beneficios],
       ["Insalubridade", s.insalubridade_recebe ? s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : "") : ""],
+      ["Periculosidade", s.periculosidade_quanto ?? ""],
+      ["Outros proventos", outrosEmTexto(s.outros_proventos)],
       ["Posto de trabalho", postoLocal.posto || s.local_exato],
       ["Local exato", postoLocal.posto ? postoLocal.local : ""],
       ["Data início prevista", fmtBr(s.data_inicio_prevista)],
@@ -2721,6 +2727,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Salário", s.salario)}
           {di("Benefícios", s.beneficios, true)}
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
+          {/* SIS-2026-0884: só aparecem quando a vaga tem (vêm do Quadro de Postos do contrato). */}
+          {s.periculosidade_quanto ? di("Periculosidade", s.periculosidade_quanto) : null}
+          {outrosEmTexto(s.outros_proventos) ? di("Outros proventos", outrosEmTexto(s.outros_proventos), true) : null}
           {/* Sem posto do catálogo (vaga antiga/manual) segue o local_exato, como antes. */}
           {di("Posto de Trabalho", postoLocal.posto || s.local_exato)}
           {postoLocal.posto && postoLocal.local ? di("Local exato", postoLocal.local) : null}

@@ -253,7 +253,7 @@ export default function ControleNotas() {
         </Table>
       </div>
 
-      <ValidarNfDialog nf={nfSelecionada} onClose={() => setNfSelecionada(null)} />
+      <ValidarNfDialog nf={nfs.find(n => n.id === nfSelecionada?.id) ?? nfSelecionada} onClose={() => setNfSelecionada(null)} />
     </div>
   );
 }
@@ -331,8 +331,17 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
-  }, [itens, pctFiscais]);
+    return itens.map((it, indice) => {
+      const calculado = calcularItem(it, pctEfetivo(it, pctFiscais));
+      const salvo = itensExistentes[indice];
+      // Sem edição do item, apresentar os centavos efetivamente gravados.
+      // Recalcular floats aqui podia diferir da retenção arredondada por item.
+      if (!salvo || JSON.stringify(it) !== JSON.stringify(itemRowParaForm(salvo))) return calculado;
+      return { ...calculado, vlr_bruto: salvo.vlr_bruto, vlr_mao_obra: salvo.vlr_mao_obra,
+        vlr_liquido: salvo.vlr_liquido, issqn: salvo.issqn, inss: salvo.inss, ir: salvo.ir,
+        pis: salvo.pis, cofins: salvo.cofins, csll: salvo.csll };
+    });
+  }, [itens, itensExistentes, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
 
@@ -533,9 +542,10 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
           />
         )}
 
-        {nf && <NfseIntegracaoPainel nf={nf} alteracoesPendentes={Object.entries(totais).some(([campo, valor]) =>
-          Math.abs(Number(valor) - Number(nf[campo as keyof NfEmissaoRow] ?? 0)) > 0.005
-        )} />}
+        {nf && <NfseIntegracaoPainel nf={nf} alteracoesPendentes={
+          JSON.stringify(itens) !== JSON.stringify(itensExistentes.map(itemRowParaForm)) ||
+          codigoServico !== (nf.codigo_servico ?? "") || cnae !== (nf.cnae ?? "") || nbs !== (nf.nbs ?? "")
+        } />}
 
         {nf && (
           <section className="rounded-xl border bg-card p-3 space-y-3">

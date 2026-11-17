@@ -64,6 +64,7 @@ export interface NfEmissaoRow {
   pis_pct: number;
   csll_pct: number;
   created_at: string;
+  updated_at?: string;
   // SIS-2026-0614: quando o Financeiro concluiu/cancelou a validação (ordem dos relatórios). Ausente
   // enquanto a migration 20261007000003 não foi aplicada; nulo em rascunho/enviada.
   concluida_em?: string | null;

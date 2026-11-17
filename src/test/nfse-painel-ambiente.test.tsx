@@ -6,7 +6,10 @@ import type { NfEmissaoRow } from "@/hooks/useNfEmissao";
 import type { ParametrosNfse, SolicitacaoNfse } from "@/hooks/useNfseIntegracao";
 import { parametrosNfse } from "./fixtures/parametrosNfse";
 const estado = vi.hoisted(() => ({ habilitado: false, piloto: null as string | null, enviar: vi.fn(async (_parametros: ParametrosNfse) => "solicitacao"),
+  salvarPercentuais: vi.fn(async (_dados: unknown) => undefined),
   solicitacoes: [] as SolicitacaoNfse[], reprocessar: vi.fn(async (_dados: { id: string; descartar?: boolean }) => undefined), erro: vi.fn(), permitirIncluir: true }));
+vi.mock("@/hooks/useIBGEMunicipios", () => ({ useIBGEMunicipios: () => ({ municipios: [], isLoading: false, erro: false, recarregar: vi.fn() }) }));
+vi.mock("@/hooks/useNfEmissao", () => ({ useItensNfEmissao: () => ({ data: [{ id: "item", vlr_bruto: 100, pis: 0, cofins: 0, vlr_liquido: 82.2 }], isLoading: false, isError: false }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: estado.erro } }));
 vi.mock("@/components/auth/AcessoGate", () => ({ AcessoGate: ({ children, acao }: { children: ReactNode; acao: string }) => acao !== "incluir" || estado.permitirIncluir ? children : null }));
 vi.mock("@/hooks/useNfseIntegracao", () => ({
@@ -17,6 +20,7 @@ vi.mock("@/hooks/useNfseIntegracao", () => ({
   useSolicitacoesNfse: () => ({ data: estado.solicitacoes, isLoading: false, isError: false, isFetching: false, refetch: vi.fn() }),
   useSolicitarNfse: () => ({ mutateAsync: estado.enviar, isPending: false }),
   useReprocessarNfse: () => ({ mutateAsync: estado.reprocessar, isPending: false }),
+  useSalvarPisCofinsNfse: () => ({ mutateAsync: estado.salvarPercentuais, isPending: false }),
   abrirDocumentoNfse: vi.fn(),
 }));
 const nota = { id: "nota-piloto", empresa_id: "empresa", status: "enviada", competencia: "2026-10-01", vlr_bruto_total: 100, vlr_liquido_total: 82.2, issqn_total: 2, csll_total: 0 } as unknown as NfEmissaoRow;
@@ -27,9 +31,74 @@ beforeAll(() => vi.stubGlobal("ResizeObserver", class {
 }));
 afterAll(() => vi.unstubAllGlobals());
 afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; estado.enviar.mockClear();
-  estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.permitirIncluir = true; });
+  estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.salvarPercentuais.mockReset(); estado.permitirIncluir = true; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
+  it("permite acompanhar várias notas em segundo plano sem apresentar fila como autorização", () => {
+    estado.solicitacoes = [{ id: "em-fila", ambiente: "homologacao", estado: "pendente", serie: 1041, numero_dps: 13,
+      atualizado_em: "2026-11-16T20:00:00Z", envio_iniciado_em: null, dados: { parametros: parametrosNfse() } } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    expect(screen.getByText("Na fila")).toBeInTheDocument();
+    expect(screen.getByText(/Você pode fechar esta janela e preparar outra nota/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Atualizar" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "PDF oficial" })).not.toBeInTheDocument();
+    expect(estado.enviar).not.toHaveBeenCalled();
+  });
+  it("prevê e salva percentuais sem emitir, bloqueia envio durante edição e exige nova revisão fiscal", async () => {
+    estado.habilitado = true;
+    const atual = { ...nota, pis_total: 0, cofins_total: 0, pis_pct: 0, cofins_pct: 0, updated_at: "2026-11-16T15:00:00Z" };
+    render(<NfseIntegracaoPainel nf={atual} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button", { name: "Preparar emissão em produção" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Revisei os dados fiscais, as retenções e a série liberada." }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Autorizo a emissão de uma nota fiscal real em produção para esta preparação." }));
+    fireEvent.click(screen.getByRole("button", { name: "Ajustar percentuais de PIS/COFINS" }));
+    fireEvent.change(screen.getByLabelText("PIS (%)"), { target: { value: "0,65" } });
+    fireEvent.change(screen.getByLabelText("COFINS (%)"), { target: { value: "3" } });
+    expect(screen.getByRole("status")).toHaveTextContent(/PIS.*0,65.*COFINS.*3,00.*líquido.*78,55/);
+    const enviar = screen.getByRole("button", { name: "Solicitar emissão em produção" });
+    expect(enviar).toBeDisabled();
+    fireEvent.submit(enviar.closest("form")!); expect(estado.enviar).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar percentuais e recalcular" }));
+    await waitFor(() => expect(estado.salvarPercentuais).toHaveBeenCalledOnce());
+    expect(estado.salvarPercentuais).toHaveBeenCalledWith({ pisPct: .65, cofinsPct: 3, versao: atual.updated_at, base: [{ id: "item", bruto: 100, pis: 0, cofins: 0, liquido: 82.2 }] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ajustar percentuais de PIS/COFINS" })).toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: "Revisei os dados fiscais, as retenções e a série liberada." })).not.toBeChecked();
+    expect(estado.enviar).not.toHaveBeenCalled();
+  });
+  it("explica os tipos opcionais e mantém valor legado inválido visível para revisão", () => {
+    estado.habilitado = true;
+    const parametros = {...parametrosNfse(),codigo_integracao_municipal:"8111700",tipo_operacao:"0",tipo_ente_governamental:"0"};
+    estado.solicitacoes = [{id:"anterior",ambiente:"producao",estado:"rejeitada",serie:1041,numero_dps:2,atualizado_em:"2026-11-16T10:00:00Z",dados:{parametros}} as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={nota} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const ente=screen.getByLabelText("Tipo de ente governamental, se aplicável");
+    const operacao=screen.getByLabelText("Tipo de operação, se aplicável");
+    expect(ente).not.toBeRequired(); expect(operacao).not.toBeRequired();
+    expect(ente).toHaveValue("0"); expect(screen.getAllByRole("option",{name:"Valor inválido: 0 — revise"})).toHaveLength(2);
+    expect(screen.getByRole("option",{name:"1 — União"})).toBeInTheDocument();
+    expect(screen.getByRole("option",{name:"3 — Distrito Federal"})).toBeInTheDocument();
+    fireEvent.change(ente,{target:{value:"1"}}); expect(ente).toHaveValue("1");
+    expect(estado.enviar).not.toHaveBeenCalled();
+  });
+  it("impede entrar na fila com CST de um dígito quando a nota tem PIS/COFINS", async () => {
+    estado.habilitado = true;
+    const parametros = { ...parametrosNfse(), codigo_integracao_municipal:"8111700", cst_pis_cofins:"0" };
+    estado.solicitacoes = [{ id:"anterior", ambiente:"producao", estado:"rejeitada", serie:1041, numero_dps:2,
+      atualizado_em:"2026-11-16T10:00:00Z", dados:{parametros} } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={{...nota,pis_total:0.65,cofins_total:3,vlr_liquido_total:78.55}} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const revisar = () => {
+      fireEvent.click(screen.getByRole("checkbox",{name:"Revisei os dados fiscais, as retenções e a série liberada."}));
+      fireEvent.click(screen.getByRole("checkbox",{name:"Autorizo a emissão de uma nota fiscal real em produção para esta preparação."}));
+    };
+    const botao = screen.getByRole("button",{name:"Solicitar emissão em produção"});
+    revisar(); fireEvent.submit(botao.closest("form")!);
+    expect(estado.enviar).not.toHaveBeenCalled(); expect(estado.erro).toHaveBeenCalledWith(expect.stringMatching(/CST de PIS\/COFINS.*dois dígitos/));
+    fireEvent.change(screen.getByLabelText("CST de PIS/COFINS"),{target:{value:"01"}});
+    expect(botao).toBeDisabled(); revisar(); fireEvent.submit(botao.closest("form")!);
+    await waitFor(()=>expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({cst_pis_cofins:"01"});
+  });
   it("permite escolher a competência fiscal e exige nova revisão antes de enviar a data selecionada", async () => {
     estado.habilitado = true;
     const parametros = { ...parametrosNfse(), codigo_integracao_municipal: "8111700" };

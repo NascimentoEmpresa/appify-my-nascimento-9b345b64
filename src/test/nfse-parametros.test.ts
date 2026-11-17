@@ -3,6 +3,21 @@ import { validarParametrosNfse } from "@/pages/financeiro/controle-notas/validar
 import { parametrosNfse } from "./fixtures/parametrosNfse";
 
 describe("NFS-e: revisão antes de entrar na fila", () => {
+  it("recusa zero nos tipos opcionais e preserva valores válidos sem escolher enquadramento", () => {
+    expect(() => validarParametrosNfse({...parametrosNfse(),tipo_operacao:"0"})).toThrow(/Tipo de operação/);
+    expect(() => validarParametrosNfse({...parametrosNfse(),tipo_ente_governamental:"0"})).toThrow(/ente governamental/);
+    expect(validarParametrosNfse({...parametrosNfse(),tipo_operacao:"1",tipo_ente_governamental:"3"})).toMatchObject({tipo_operacao:"1",tipo_ente_governamental:"3"});
+    expect(validarParametrosNfse({...parametrosNfse(),tipo_operacao:"",tipo_ente_governamental:""})).toMatchObject({tipo_operacao:"",tipo_ente_governamental:""});
+  });
+  it("recusa CST incompleto quando há PIS/COFINS e preserva o código fiscal de dois dígitos", () => {
+    for (const cst of ["", "0", "1", "001", "A1"]) {
+      expect(() => validarParametrosNfse({ ...parametrosNfse(), cst_pis_cofins:cst }, "homologacao", false, true)).toThrow(/CST de PIS\/COFINS.*dois dígitos/);
+    }
+    const p = { ...parametrosNfse(), cst_pis_cofins:"01" };
+    expect(validarParametrosNfse(p,"homologacao",false,true).cst_pis_cofins).toBe("01");
+    expect(validarParametrosNfse({...p,cst_pis_cofins:""},"homologacao",false,false).cst_pis_cofins).toBe("");
+    expect(p.cst_pis_cofins).toBe("01");
+  });
   it("preserva a data fiscal escolhida, aceita ano bissexto e recusa datas inexistentes", () => {
     for (const data of ["2026-10-31", "2024-02-29"]) {
       const p = { ...parametrosNfse(), data_competencia: data };
