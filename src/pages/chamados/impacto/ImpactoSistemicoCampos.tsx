@@ -67,7 +67,9 @@ export function ImpactoSistemicoCampos({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div id="campo-modulos-impactados" className="scroll-mt-24">
-          <Label className="mb-1.5 block text-xs font-semibold">Módulos do sistema impactados {obrigatorio} <span className="font-normal text-muted-foreground">(um ou mais)</span></Label>
+          <Label className="mb-1.5 block text-xs font-semibold">Módulos do sistema impactados {posicao === POSICAO_OUTRO
+            ? <span className="font-normal text-muted-foreground">(opcional quando a posição é "Outro")</span>
+            : <>{obrigatorio} <span className="font-normal text-muted-foreground">(um ou mais)</span></>}</Label>
           <ModulosImpactadosSelect value={modulos} onChange={onModulos} posicao={posicao} />
         </div>
         <div id="campo-setores-impactados" className="scroll-mt-24">

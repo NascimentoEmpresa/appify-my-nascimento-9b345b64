@@ -23,7 +23,7 @@ import {
 import { atinge, listaImpactados, rotuloModuloImpactado } from "./impactados";
 import { ImpactoSistemicoPainel } from "./impacto/ImpactoSistemicoPainel";
 import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
-import { abrangencia } from "@/lib/chamados/impactoSistemico";
+import { abrangencia, modulosDoChamado } from "@/lib/chamados/impactoSistemico";
 import {
   ADERENCIA_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
   analiseQualidade, avaliarChamado, calcularKpis, entraNoMonitoramento, leituraControladoria, rankingSolicitantes, resumoTemas,
@@ -149,7 +149,8 @@ export default function MonitoramentoChamados() {
       const mk = c.modulo_sistema ?? "";
       if (mk) modulos.set(mk, moduloLabel(c));
       (c.setores_impactados ?? []).forEach((s) => setoresImp.add(s));
-      (c.modulos_impactados ?? []).forEach((m) => modulosImp.add(m));
+      // Com a posição incluída, igual ao painel (modulosDoChamado).
+      modulosDoChamado(c).forEach((m) => modulosImp.add(m));
     }
     return {
       setoresImpactados: [...setoresImp].sort((a, b) => a.localeCompare(b, "pt-BR")).map((s) => ({ value: s, label: s })),
@@ -166,7 +167,7 @@ export default function MonitoramentoChamados() {
     && (f.setor === TODOS || (c.setor?.trim() ?? "") === f.setor)
     && (f.modulo === TODOS || c.modulo_sistema === f.modulo)
     && atinge(c.setores_impactados, f.setorImpactado, TODOS)
-    && atinge(c.modulos_impactados, f.moduloImpactado, TODOS)
+    && atinge(modulosDoChamado(c), f.moduloImpactado, TODOS)
     && (f.tema === TODOS || a.tema === f.tema)
     && (f.prioridade === TODOS || c.prioridade === f.prioridade)
     && (f.status === TODOS || c.status === f.status),
@@ -195,7 +196,7 @@ export default function MonitoramentoChamados() {
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const corpo = linhas.map(({ c, a }) => [
       c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c),
-      listaImpactados(c.setores_impactados), listaImpactados(c.modulos_impactados, rotuloModuloImpactado), abrangencia(c) ?? "",
+      listaImpactados(c.setores_impactados), listaImpactados(modulosDoChamado(c), rotuloModuloImpactado), abrangencia(c) ?? "",
       PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
       a.efetividade ?? "", fmt1(a.indice), STATUS_CHAMADO[c.status]?.label ?? c.status, fmt1(a.prazoDias),
       fmtData(c.created_at), c.status === "concluido" ? fmtData(c.concluido_em) : "",
@@ -413,7 +414,7 @@ export default function MonitoramentoChamados() {
                         {/* Alcance informado na abertura (mig 20261115001000). */}
                         {(c.setores_impactados?.length || c.modulos_impactados?.length) ? (
                           <span className="mt-0.5 block max-w-[170px] truncate text-[10px] text-muted-foreground"
-                            title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(c.modulos_impactados, rotuloModuloImpactado)}`}>
+                            title={`Setores impactados: ${listaImpactados(c.setores_impactados)}\nMódulos impactados: ${listaImpactados(modulosDoChamado(c), rotuloModuloImpactado)}`}>
                             {/* SIS-2026-0910: abrangência = nº de módulos impactados. */}
                             Impacta {abrangencia(c) ?? 0} módulo(s) · {(c.setores_impactados ?? []).length} setor(es)
                           </span>

@@ -81,11 +81,24 @@ export interface ImpactoFormulario {
 /** O que falta no bloco de impacto (rótulo = o mesmo da tela), na ordem do formulário. */
 export function pendenciasImpacto(f: ImpactoFormulario): { id: string; label: string }[] {
   const p: { id: string; label: string }[] = [];
-  if (normalizarLista(f.modulos).length === 0) p.push({ id: "campo-modulos-impactados", label: "Módulos do sistema impactados" });
+  // Posição "Outro" = sistema fora do catálogo: pode não haver módulo do ERP
+  // impactado, então a lista não é exigida (revisão de 17/11/2026).
+  if (normalizarLista(f.modulos).length === 0 && f.posicao !== POSICAO_OUTRO) p.push({ id: "campo-modulos-impactados", label: "Módulos do sistema impactados" });
   if (normalizarLista(f.setores).length === 0) p.push({ id: "campo-setores-impactados", label: "Setores impactados" });
   if (!f.posicao.trim()) p.push({ id: "campo-modulo", label: "Posição do novo módulo ou módulo diretamente ajustado" });
   else if (f.posicao === POSICAO_OUTRO && !f.posicaoOutro.trim()) p.push({ id: "campo-modulo", label: "Qual sistema (Outro)" });
   return p;
+}
+
+/**
+ * Módulos impactados de um chamado como as análises e os filtros os leem:
+ * lista vazia segue vazia (não informado); senão, com a posição incluída —
+ * vale para chamado gravado antes do trigger com a posição fora da lista.
+ * Painel, filtro e opções do Monitoramento usam esta mesma função.
+ */
+export function modulosDoChamado(ch: { modulo_sistema: string | null; modulos_impactados?: string[] | null }): string[] {
+  const lista = normalizarLista(ch.modulos_impactados);
+  return lista.length ? incluirPosicao(lista, ch.modulo_sistema) : [];
 }
 
 /** Os módulos impactados separados entre "diretamente ajustado" e "demais impactados". */
@@ -122,7 +135,7 @@ export interface ContagemImpacto {
 export interface FaixaAbrangencia { faixa: string; qtd: number }
 
 export interface AnaliseImpacto {
-  /** Chamados com impacto informado (1+ módulo e 1+ setor). */
+  /** Chamados com impacto informado (1+ setor e 1+ módulo, ou posição "Outro"). */
   comImpacto: number;
   /** Chamados sem impacto informado (abertos antes do formulário). */
   semImpacto: number;
@@ -164,22 +177,24 @@ export function analisarImpacto(chamados: readonly ChamadoImpacto[]): AnaliseImp
     mapa.set(valor, c);
   };
 
+  let comImpacto = 0;
   for (const ch of chamados) {
     const setores = normalizarLista(ch.setores_impactados);
-    const modulosInformados = normalizarLista(ch.modulos_impactados);
-    if (modulosInformados.length === 0 || setores.length === 0) { semImpacto += 1; continue; }
-    // A posição conta como impactada mesmo em chamado gravado antes do trigger.
-    const modulos = incluirPosicao(modulosInformados, ch.modulo_sistema);
+    const modulos = modulosDoChamado(ch);
+    const outro = (ch.modulo_sistema ?? "").trim() === POSICAO_OUTRO;
+    if (setores.length === 0 || (modulos.length === 0 && !outro)) { semImpacto += 1; continue; }
+    comImpacto += 1;
     const aberto = emAberto(ch.status);
     const posicao = posicaoEhModulo(ch.modulo_sistema) ? (ch.modulo_sistema as string).trim() : null;
     modulos.forEach((m) => conta(mods, m, aberto, m === posicao));
     setores.forEach((s) => conta(sets, s, aberto, false));
-    tamanhos.push(modulos.length);
+    // Abrangência só de quem tem módulo do catálogo ("Outro" sem lista fica fora da média).
+    if (modulos.length) tamanhos.push(modulos.length);
   }
 
   const setores = [...sets.values()].sort(ordenar);
   return {
-    comImpacto: tamanhos.length,
+    comImpacto,
     semImpacto,
     modulos: [...mods.values()].sort(ordenar),
     setores,
@@ -193,6 +208,6 @@ export function analisarImpacto(chamados: readonly ChamadoImpacto[]): AnaliseImp
 
 /** Nº de módulos impactados do chamado (abrangência), contando a posição; null = não informado. */
 export function abrangencia(ch: ChamadoImpacto): number | null {
-  const m = normalizarLista(ch.modulos_impactados);
-  return m.length ? incluirPosicao(m, ch.modulo_sistema).length : null;
+  const m = modulosDoChamado(ch);
+  return m.length ? m.length : null;
 }
