@@ -13,11 +13,20 @@
 // regra do banco: quem tem concede_tudo NÃO ganha as telas da lista
 // `foraDoConcedeTudo`. Se a coluna ainda não existir no banco, a lista vem
 // vazia e o comportamento é o antigo.
+//
+// 17/11/2026 (SIS-2026-0931, mig 20261118093100) — tela nova nasce BLOQUEADA
+// para todos até um administrador liberar em Módulos & Menus › Novos Módulos
+// (app_menu.liberado_em NULL). No banco, has_screen_access responde "não"
+// antes de olhar qualquer permissão; aqui `can()` faz o mesmo com a lista
+// `telasPendentes`, para nenhum botão aparecer numa tela que o banco recusa.
+// Sem a coluna (front antes da migration), a lista vem vazia — de novo, o
+// banco é que segura.
 // O banco continua sendo a autoridade final via RLS/can_access/has_screen_access
 // — isto aqui é só heurística de UI (esconder botão), nunca a proteção real.
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { lerMeuPerfil } from "@/lib/meuPerfil";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemoMode } from "@/context/DemoModeContext";
@@ -122,6 +131,8 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
   const [concedeTudo, setConcedeTudo] = useState(false);
   // Telas cadastradas que o "concede tudo" NÃO alcança (as criadas a partir de 08/10/2026).
   const [foraDoConcedeTudo, setForaDoConcedeTudo] = useState<Set<string>>(() => new Set());
+  // Telas novas aguardando liberação (SIS-2026-0931): ninguém, nem com grant.
+  const [telasPendentes, setTelasPendentes] = useState<Set<string>>(() => new Set());
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [demoRole, setDemoRole] = useState<Role>(() => {
@@ -142,6 +153,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
           setPerfilPermissoes([]);
           setConcedeTudo(false);
           setForaDoConcedeTudo(new Set());
+          setTelasPendentes(new Set());
           setEmpresaId(null);
           setLoading(false);
         }
@@ -163,7 +175,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
 
       // Paginado: com mais de 1000 exceções, as que passavam do corte sumiam
       // (ver lerTodasAsLinhas).
-      const [overrides, perfisRes] = await Promise.all([
+      const [overrides, perfisRes, pendentesRes] = await Promise.all([
         lerTodasAsLinhas<{ menu_codigo: string; acao: string; allow: boolean }>((de, ate) =>
           (supabase as any)
             .from("screen_permission_user")
@@ -175,7 +187,13 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
           .from("usuario_perfil_acesso")
           .select("perfil_acesso(id, ativo, concede_tudo)")
           .eq("user_id", user.id),
+        // Telas aguardando liberação (SIS-2026-0931). Quase sempre poucas linhas.
+        // Erro (coluna ainda não criada) = lista vazia.
+        (supabase as unknown as SupabaseClient).from("app_menu").select("codigo").is("liberado_em", null),
       ]);
+      const pendentes = new Set<string>(
+        pendentesRes.error ? [] : ((pendentesRes.data ?? []) as { codigo: string }[]).map((r) => r.codigo),
+      );
 
       const perfisAtivos = ((perfisRes.data ?? []) as any[])
         .map((r) => r.perfil_acesso)
@@ -214,6 +232,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
         );
         setConcedeTudo(jaConcedeTudo);
         setForaDoConcedeTudo(fora);
+        setTelasPendentes(pendentes);
         setPerfilPermissoes(
           permissoesPerfil.map((permission: any) => ({
             menu: permission.menu_codigo,
@@ -253,6 +272,10 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
         return acao === "visualizar" || acao === "exportar";
       }
 
+      // Tela aguardando liberação: ninguém, antes de qualquer permissão —
+      // a mesma ordem de has_screen_access no banco (SIS-2026-0931).
+      if (menu && telasPendentes.has(menu)) return false;
+
       const override = findOverride(userOverrides, acao, menu);
       if (override) return override.allow;
 
@@ -262,7 +285,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
 
       return false;
     },
-  }), [concedeTudo, foraDoConcedeTudo, demoRole, empresaId, isDemo, loading, perfilPermissoes, roles, user, userOverrides]);
+  }), [concedeTudo, foraDoConcedeTudo, telasPendentes, demoRole, empresaId, isDemo, loading, perfilPermissoes, roles, user, userOverrides]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

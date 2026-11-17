@@ -71,6 +71,28 @@ describe("matchMenuCode — desempate por menu ativo", () => {
     expect(menuCodeComAcessoNaRota(rota, acesso)).toBeNull();
   });
 
+  it("cópia não abre tela nova que ainda aguarda liberação (SIS-2026-0931)", () => {
+    // A cópia criada enquanto a tela estava pendente herdou o acesso
+    // "preparado". Até um administrador liberar a original em Novos Módulos,
+    // nem o menu lateral nem a URL podem abri-la pela cópia.
+    const rota = "/app/sst/nova";
+    const routes: MenuRoute[] = [
+      { codigo: "sst_nova", rota, ativo: true, pendente: true },
+      { codigo: "menu_lateral_copia_sst_nova", rota, ativo: true },
+    ];
+    const acesso = { routes, codes: new Set(["menu_lateral_copia_sst_nova"]), inactiveCodes: new Set<string>() };
+    expect(rotaVisivelNoMenu(rota, acesso, "menu_lateral_copia_sst_nova")).toBe(false);
+    expect(menuCodeComAcessoNaRota(rota, acesso)).toBeNull();
+    // O código da rota continua sendo o da original — é ele que o RouteGuard
+    // usa para dizer "tela nova aguardando liberação".
+    expect(matchMenuCode(rota, routes)).toBe("sst_nova");
+
+    // Liberada a original, a cópia volta a valer como sempre.
+    const liberada = { ...acesso, routes: routes.map((r) => ({ ...r, pendente: false })) };
+    expect(rotaVisivelNoMenu(rota, liberada, "menu_lateral_copia_sst_nova")).toBe(true);
+    expect(menuCodeComAcessoNaRota(rota, liberada)).toBe("menu_lateral_copia_sst_nova");
+  });
+
   it("rota mais específica ainda ganha, mesmo que a genérica esteja ativa", () => {
     // Foi o que manteve /painel funcionando enquanto a tela raiz caía.
     const rotas: MenuRoute[] = [

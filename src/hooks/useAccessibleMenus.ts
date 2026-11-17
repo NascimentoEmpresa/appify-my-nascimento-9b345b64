@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaMovida, rotaSempreLiberada } from "@/lib/acesso";
 import { ehMenuDeCopia } from "@/lib/menuLateral/estrutura";
@@ -25,6 +26,8 @@ export interface MenuRoute {
   codigo: string;
   rota: string;
   ativo: boolean;
+  /** Tela nova aguardando liberação em Novos Módulos (SIS-2026-0931). */
+  pendente?: boolean;
 }
 
 export function useAccessibleMenus(acao: string = "visualizar") {
@@ -43,9 +46,9 @@ export function useAccessibleMenus(acao: string = "visualizar") {
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data: u } = await supabase.auth.getUser();
-      if (!u.user) return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>(), inactiveCodes: new Set<string>() };
+      if (!u.user) return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>(), inactiveCodes: new Set<string>(), pendingCodes: new Set<string>() };
 
-      const [rpcResult, menusResult, configuredResult] = await Promise.all([
+      const [rpcResult, menusResult, configuredResult, pendentesResult] = await Promise.all([
         supabase.rpc("list_accessible_menus", {
           _user: u.user.id,
           _acao: acao,
@@ -63,12 +66,23 @@ export function useAccessibleMenus(acao: string = "visualizar") {
         // (ninguém nunca mexeu no gerenciamento de acesso pra eles) ficam de fora do
         // enforcement — ver 20260729000001_routeguard_list_configured_menu_codes.sql.
         (supabase as any).rpc("list_configured_menu_codes"),
+        // Telas novas aguardando liberação (SIS-2026-0931, mig 20261118093100).
+        // Consulta à parte, e não "liberado_em" no select de cima: se o front
+        // for ao ar antes da migration, a coluna não existe e o erro aqui só
+        // esvazia ESTE conjunto — pedir a coluna lá em cima derrubaria o
+        // casamento de rotas e negaria o ERP inteiro. O banco continua sendo a
+        // barreira (list_accessible_menus já não devolve tela pendente); isto
+        // serve para a mensagem do RouteGuard e para cópia não reabrir a tela.
+        (supabase as unknown as SupabaseClient).from("app_menu").select("codigo").is("liberado_em", null),
       ]);
 
       if (rpcResult.error) {
         console.warn("list_accessible_menus error", rpcResult.error);
-        return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>(), inactiveCodes: new Set<string>() };
+        return { codes: new Set<string>(), routes: [] as MenuRoute[], configuredCodes: new Set<string>(), inactiveCodes: new Set<string>(), pendingCodes: new Set<string>() };
       }
+      const pendingCodes = new Set<string>(
+        pendentesResult.error ? [] : ((pendentesResult.data ?? []) as { codigo: string }[]).map((r) => r.codigo),
+      );
       const codes = new Set<string>((rpcResult.data ?? []).map((r: any) => r.menu_codigo));
 
       // Diretoria › Relatórios (05/10/2026, mig 20261005000006): o Relatório
@@ -87,7 +101,7 @@ export function useAccessibleMenus(acao: string = "visualizar") {
 
       const routes: MenuRoute[] = menus
         .filter((m) => !!m.rota)
-        .map((m) => ({ codigo: m.codigo, rota: m.rota as string, ativo: m.ativo }))
+        .map((m) => ({ codigo: m.codigo, rota: m.rota as string, ativo: m.ativo, pendente: pendingCodes.has(m.codigo) }))
         // Menu ainda cadastrado no endereço antigo de uma tela que mudou de
         // lugar (ROTAS_MOVIDAS): o endereço novo vale pelo mesmo código. Assim
         // o front pode ir ao ar antes ou depois da migration que troca a rota
@@ -107,7 +121,7 @@ export function useAccessibleMenus(acao: string = "visualizar") {
         ((configuredResult.data ?? []) as { menu_codigo: string }[]).map((r) => r.menu_codigo),
       );
 
-      return { codes, routes, configuredCodes, inactiveCodes };
+      return { codes, routes, configuredCodes, inactiveCodes, pendingCodes };
     },
   });
 }
@@ -144,8 +158,10 @@ export function rotaVisivelNoMenu(
     // Uma cópia nunca reativa uma tela desligada no Catálogo: além da
     // permissão da posição, a rota precisa conservar uma entrada original
     // ativa. Isso impede que um atalho sobreviva à desativação da tela.
+    // Idem para tela nova aguardando liberação (SIS-2026-0931): a cópia não
+    // a publica antes de um administrador liberar a original.
     const originaisAtivas = matchingMenuRoutes(rotaMovida(to) ?? to, access.routes)
-      .some((r) => r.ativo && !ehMenuDeCopia(r.codigo));
+      .some((r) => r.ativo && !r.pendente && !ehMenuDeCopia(r.codigo));
     return originaisAtivas && !access.inactiveCodes.has(menuCodigo) && access.codes.has(menuCodigo);
   }
   // Favoritos e entradas salvas com o endereço antigo seguem a mesma
@@ -173,7 +189,7 @@ export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | n
 export function matchingMenuRoutes(pathname: string, routes: MenuRoute[]): MenuRoute[] {
   let bestLen = -1;
   const matches: MenuRoute[] = [];
-  for (const { codigo, rota, ativo } of routes) {
+  for (const { codigo, rota, ativo, pendente } of routes) {
     // Normalize dynamic segments like /:id by comparing only up to the first ":"
     const base = rota.split("/:")[0];
     if (pathname === rota || pathname === base || pathname.startsWith(base + "/")) {
@@ -181,7 +197,9 @@ export function matchingMenuRoutes(pathname: string, routes: MenuRoute[]): MenuR
         bestLen = base.length;
         matches.length = 0;
       }
-      if (base.length === bestLen) matches.push({ codigo, rota, ativo });
+      // `pendente` precisa vir junto: sem ele, a regra "cópia não abre tela
+      // aguardando liberação" (SIS-2026-0931) nunca dispararia.
+      if (base.length === bestLen) matches.push({ codigo, rota, ativo, pendente });
     }
   }
   return matches;
@@ -189,13 +207,14 @@ export function matchingMenuRoutes(pathname: string, routes: MenuRoute[]): MenuR
 
 /**
  * Porta que libera a rota no RouteGuard. Uma cópia pode ser a porta, mas
- * nunca mantém no ar uma tela cujo app_menu original foi desativado.
+ * nunca mantém no ar uma tela cujo app_menu original foi desativado — nem
+ * abre uma tela nova que ainda aguarda liberação (SIS-2026-0931).
  */
 export function menuCodeComAcessoNaRota(
   pathname: string,
   access: { codes: Set<string>; routes: MenuRoute[] },
 ): string | null {
   const matches = matchingMenuRoutes(pathname, access.routes);
-  if (!matches.some((m) => m.ativo && !ehMenuDeCopia(m.codigo))) return null;
+  if (!matches.some((m) => m.ativo && !m.pendente && !ehMenuDeCopia(m.codigo))) return null;
   return matches.find((m) => m.ativo && access.codes.has(m.codigo))?.codigo ?? null;
 }

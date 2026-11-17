@@ -75,11 +75,23 @@ tabela com dono, combine sempre com checagem de `solicitante_id = auth.uid()`
 /`responsavel_id = auth.uid()` (ver `chamado_sistema_select` como referência),
 senão vaza dado entre usuários que têm o mesmo menu liberado.
 
-## Menu novo nasce aberto
+## Menu novo nasce PENDENTE
 
-Um menu criado sem nenhuma regra em `perfil_acesso_permissao` fica visível
-pra todo autenticado — se a tela precisa de RLS/liberação restrita, semeie a
-regra na própria migration que cria o menu, não deixe pra depois.
+Desde 17/11/2026 (SIS-2026-0931, mig `20261118093100`) toda linha nova em
+`app_menu` nasce **bloqueada para todos** (`liberado_em IS NULL`) — o gatilho
+`trg_app_menu_nasce_pendente` garante isso mesmo que a migration tente
+preencher `liberado_em` ou `concede_tudo_alcanca`. Nem exceção individual, nem
+Administrador Geral, nem perfil do módulo abrem a tela até ela ser liberada em
+`/app/administracao?tab=modulos&visao=novos` (aba Novos Módulos) por quem tem
+a permissão `administracao_novos_modulos` (hoje Iury e Eduardo). Nunca semeie
+essa permissão para outra pessoa numa migration sem pedido do Iury.
+
+Semear pessoas/perfis na migration continua permitido e útil: vira "acesso
+preparado", pré-marcado no modal de liberação. Não tente liberar pela
+migration (`UPDATE app_menu SET liberado_em ...` é ignorado com WARNING).
+Exceção automática: cópia do menu lateral (`menu_lateral_copia_%`) e código
+que já tem linha liberada nascem liberados. Na PR de tela nova, avise que ela
+precisa ser liberada depois do merge.
 
 ## Storage
 
