@@ -1,4 +1,4 @@
-import type { ItemCatalogoCompra } from "@/hooks/useCompraPedido";
+import type { ItemCatalogoCompra } from "@/lib/suprimentos/catalogoPedidoCompra";
 
 export interface ItemPreparadoPedidoCompra {
   baseId: string;
