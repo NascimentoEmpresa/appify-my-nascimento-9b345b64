@@ -51,30 +51,23 @@ export function ImpactoSistemicoCampos({
   };
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
-      <div>
-        <p className="text-sm font-bold text-foreground">Impacto sistêmico</p>
-        <p className="mt-0.5 flex items-start gap-1.5 text-[11px] text-muted-foreground">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>
-            A <b className="text-foreground">posição</b> é onde a alteração é feita; os <b className="text-foreground">módulos impactados</b> são
-            todos os que precisam ser considerados no desenvolvimento, na integração, no teste e na homologação.
-          </span>
-        </p>
-      </div>
+    // Sem moldura nem título próprio (17/11/2026): no modelo anexado ao
+    // chamado os três campos ficam soltos na Classificação, logo acima da
+    // Prioridade — módulos | setores numa linha e a posição embaixo.
+    <div className="space-y-4">
 
       <div className="grid gap-4 md:grid-cols-2">
         <div id="campo-modulos-impactados" className="scroll-mt-24">
           <Label className="mb-1.5 block text-xs font-semibold">Módulos do sistema impactados {posicao === POSICAO_OUTRO
             ? <span className="font-normal text-muted-foreground">(opcional quando a posição é "Outro")</span>
-            : <>{obrigatorio} <span className="font-normal text-muted-foreground">(um ou mais)</span></>}</Label>
+            : obrigatorio}</Label>
           <ModulosImpactadosSelect value={modulos} onChange={onModulos} posicao={posicao} />
         </div>
         <div id="campo-setores-impactados" className="scroll-mt-24">
-          <Label className="mb-1.5 block text-xs font-semibold">Setores impactados {obrigatorio} <span className="font-normal text-muted-foreground">(um ou mais)</span></Label>
+          <Label className="mb-1.5 block text-xs font-semibold" title="Setores cujos processos ou informações mudam com a entrega">Setor(es) impactado(s) {obrigatorio}</Label>
           <SearchableMultiSelect value={setores} onChange={onSetores} options={opcoesSetores}
+            badgeClassName="border-accent/30 bg-accent/10 font-medium text-accent hover:bg-accent/15"
             placeholder="Selecionar setores impactados" searchPlaceholder="Buscar setor..." emptyLabel="Nenhum setor encontrado" />
-          <p className="mt-1 text-[11px] text-muted-foreground">Setores cujos processos ou informações mudam com a entrega.</p>
         </div>
       </div>
 
