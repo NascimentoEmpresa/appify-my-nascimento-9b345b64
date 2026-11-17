@@ -60,8 +60,6 @@ export function SeletorContaReceita({ classificacaoId, composicao }: { classific
   );
 }
 
-const LIMITE_FORA = 60;
-
 export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoReceitaAberta }) {
   const { podeAlterar, foraDaColuna } = composicao;
   const salvar = useSalvarAjusteReceitaExtra();
@@ -69,6 +67,8 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
   // SIS-2026-0836: marca várias classificações e adiciona de uma vez (chave = nome da linha).
   const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
   const alternarMarca = (nome: string) => setMarcadas((a) => { const n = new Set(a); if (n.has(nome)) n.delete(nome); else n.add(nome); return n; });
+  // SIS-2026-0932: a lista também traz, sem lançamento no período, as que já contam (padrão/ajuste) — essas não se "adicionam".
+  const naoContam = useMemo(() => foraDaColuna.filter((i) => !i.contaSemMovimento), [foraDaColuna]);
   const filtrada = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return foraDaColuna.filter((i) => !t || i.classificacao.toLowerCase().includes(t));
@@ -83,8 +83,18 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
     }
   }
 
+  async function naoContar(item: ItemDetalheClassificacao) {
+    try {
+      for (const id of item.classificacaoIds) await salvar.mutateAsync({ classificacaoId: id, conta: false });
+      toast.success(`${item.classificacao} deixou de contar como receita extra, só no Fechamento.`);
+    } catch (e: unknown) {
+      const msg = (e as { message?: unknown } | null)?.message;
+      toast.error(typeof msg === "string" && msg ? msg : "Erro ao salvar.");
+    }
+  }
+
   async function adicionarMarcadas() {
-    const itens = foraDaColuna.filter((i) => marcadas.has(i.classificacao) && i.classificacaoIds.length > 0);
+    const itens = naoContam.filter((i) => marcadas.has(i.classificacao) && i.classificacaoIds.length > 0);
     if (itens.length === 0) return;
     try {
       for (const item of itens) for (const id of item.classificacaoIds) await salvar.mutateAsync({ classificacaoId: id, conta: true });
@@ -99,34 +109,36 @@ export function ReceitasForaDaColuna({ composicao }: { composicao: ComposicaoRec
   return (
     <div className="space-y-2">
       <div className="flex items-end justify-between gap-3">
-        <h3 className="text-sm font-semibold">Entradas fora desta coluna ({foraDaColuna.length.toLocaleString("pt-BR")})</h3>
+        <h3 className="text-sm font-semibold">Entradas fora desta coluna ({naoContam.length.toLocaleString("pt-BR")}{foraDaColuna.length > naoContam.length ? ` · mais ${(foraDaColuna.length - naoContam.length).toLocaleString("pt-BR")} que já contam, sem lançamento` : ""})</h3>
         <Input className="h-7 w-48 text-xs" placeholder="Buscar classificação…" value={busca} onChange={(e) => setBusca(e.target.value)} />
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Todas as classificações que ainda não contam como receita extra (padrão ou ajuste): as com entrada neste período aparecem com o valor; as demais, sem movimento no período, também podem ser adicionadas (vale em todos os meses).{" "}
+        Todas as classificações de entrada do Fluxo de Caixa que não estão na tabela acima: as com entrada neste período aparecem com o valor; as demais, sem movimento no período, também. As marcadas “Já conta” entram na coluna assim que tiverem lançamento (pelo critério padrão ou por ajuste); as outras só entram se forem adicionadas (vale em todos os meses).{" "}
         {podeAlterar ? "Use “Adicionar” para trazer uma classificação para a coluna: vale só no Fechamento." : "Quem tem a ação Alterar em “Fechamento: ajustar o Total Desp. Adm” pode adicionar uma classificação."}
       </p>
       <div className="max-h-56 overflow-y-auto rounded-md border">
         <Table className="text-xs tabular-nums">
           <TableBody>
-            {filtrada.slice(0, LIMITE_FORA).map((i) => (
+            {/* SIS-2026-0932: lista inteira (antes parava nas 60 maiores e o resto só aparecia pela busca); a caixa já rola. */}
+            {filtrada.map((i) => (
               <TableRow key={i.classificacao}>
                 {podeAlterar && (
                   <TableCell className="w-px pr-0">
-                    {i.classificacaoIds.length > 0 && <Checkbox checked={marcadas.has(i.classificacao)} onCheckedChange={() => alternarMarca(i.classificacao)} aria-label={`Marcar ${i.classificacao}`} />}
+                    {i.classificacaoIds.length > 0 && !i.contaSemMovimento && <Checkbox checked={marcadas.has(i.classificacao)} onCheckedChange={() => alternarMarca(i.classificacao)} aria-label={`Marcar ${i.classificacao}`} />}
                   </TableCell>
                 )}
-                <TableCell className="break-words">{i.classificacao}<span className="ml-2 text-muted-foreground">{i.lancamentos === 0 ? "sem movimento no período" : `${i.lancamentos} ${i.lancamentos === 1 ? "lançamento" : "lançamentos"}`}</span></TableCell>
+                <TableCell className="break-words">{i.classificacao}<span className="ml-2 text-muted-foreground">{i.lancamentos === 0 ? "sem movimento no período" : `${i.lancamentos} ${i.lancamentos === 1 ? "lançamento" : "lançamentos"}`}</span>
+                  {i.contaSemMovimento && <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{i.contaSemMovimento === "ajuste" ? "Já conta (ajustado no Fechamento)" : "Já conta (padrão)"}</span>}
+                </TableCell>
                 <TableCell className="whitespace-nowrap text-right">{fmtMoney(i.valor)}</TableCell>
                 <TableCell className="w-px whitespace-nowrap text-right">
-                  {podeAlterar && i.classificacaoIds.length > 0 && (
-                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={salvar.isPending} onClick={() => void adicionar(i)}>Adicionar</Button>
-                  )}
+                  {podeAlterar && i.classificacaoIds.length > 0 && (i.contaSemMovimento
+                    ? <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={salvar.isPending} onClick={() => void naoContar(i)}>Não contar</Button>
+                    : <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={salvar.isPending} onClick={() => void adicionar(i)}>Adicionar</Button>)}
                 </TableCell>
               </TableRow>
             ))}
             {filtrada.length === 0 && <TableRow><TableCell colSpan={3} className="py-4 text-center text-muted-foreground">Nenhuma entrada fora da coluna neste recorte.</TableCell></TableRow>}
-            {filtrada.length > LIMITE_FORA && <TableRow><TableCell colSpan={3} className="py-2 text-center text-muted-foreground">Mostrando as {LIMITE_FORA} maiores de {filtrada.length}: use a busca para achar as outras.</TableCell></TableRow>}
           </TableBody>
         </Table>
       </div>
