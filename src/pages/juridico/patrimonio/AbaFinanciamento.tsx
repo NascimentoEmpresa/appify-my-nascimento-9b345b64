@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { emLotes } from "@/lib/emLotes";
 import {
   numeroOuNulo, resolverParcelas, saldoDeReferencia, evolucaoDoSaldo,
   opcoesDePeriodo, rotuloPeriodo, rotuloIndice, corDaSituacao, SITUACOES, historicoIncc, calcularIncc,
@@ -407,12 +408,19 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
     setGravando(true);
     const extra = { atualizado_por: autor, ...(impProjetado ? { projetado: true } : {}) };
     let ok = 0; const falhas: string[] = [];
-    // Uma por vez em lotes pequenos: cada linha tem o seu conjunto de colunas
-    // e coluna que não veio NÃO pode ser apagada.
-    for (let i = 0; i < plano.atualizar.length; i += 15) {
-      const lote = plano.atualizar.slice(i, i + 15);
-      const rs = await Promise.all(lote.map(a => db.from("JUR_PATRIMONIO_PARCELAS").update({ ...a.dados, ...extra }).eq("id", a.id)));
-      rs.forEach((r, k) => r.error ? falhas.push(`${lote[k].dados.numero ?? lote[k].dados.vencimento}: ${r.error.message}`) : ok++);
+    // Um UPDATE por parcela (cada linha tem o seu conjunto de colunas e coluna
+    // que não veio NÃO pode ser apagada), no máximo 4 ao mesmo tempo via
+    // emLotes — 15 de uma vez num Promise.all foi barrado pelo Guardião (D7:
+    // rajada que esgota o pool do PostgREST, ver o incidente de 03/11). A
+    // falha de uma linha vira aviso; não aborta as outras.
+    const posicoes = plano.atualizar.map((_, i) => String(i));
+    const resultados = await emLotes<{ i: number; erro: string | null }>(posicoes, 1, async ([pos]) => {
+      const a = plano.atualizar[Number(pos)];
+      const { error } = await db.from("JUR_PATRIMONIO_PARCELAS").update({ ...a.dados, ...extra }).eq("id", a.id);
+      return { data: [{ i: Number(pos), erro: error ? error.message : null }], error: null };
+    });
+    for (const r of resultados) {
+      if (r.erro) { const d = plano.atualizar[r.i].dados; falhas.push(`${d.numero ?? d.vencimento}: ${r.erro}`); } else ok++;
     }
     if (plano.inserir.length) {
       // PostgREST exige as mesmas chaves em todas as linhas do lote.
