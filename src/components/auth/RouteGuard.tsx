@@ -45,6 +45,12 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   // Para auditoria/telemetria, registra a porta que efetivamente liberou a
   // tela. Sem grant, conserva o código original mais representativo.
   const menuCode = menuCodeComAcesso ?? (access ? matchMenuCode(pathname, access.routes) : null);
+  // Tela nova aguardando liberação (SIS-2026-0931). Não decide nada — quem
+  // nega é o banco (list_accessible_menus já não a devolve, então
+  // menuCodeComAcesso vem null) — só troca a mensagem: a pessoa que clicou no
+  // link do resumo do chamado precisa saber que falta liberar, não que ela
+  // "não tem permissão".
+  const telaAguardandoLiberacao = !!menuCode && !!access?.pendingCodes?.has(menuCode);
 
   // Encarregado externo: allowlist estrita, avaliada ANTES de qualquer outra
   // regra. Ele não tem perfil de acesso nenhum, então cairia no ramo "menu
@@ -103,10 +109,12 @@ export function RouteGuard({ children }: { children: ReactNode }) {
         allowed: false,
         motivo: !phaseFlagEnabled
           ? `route_guard_phase_flag_off:${phaseFlagged?.flag}`
-          : "route_guard_block",
+          : telaAguardandoLiberacao
+            ? "route_guard_tela_aguardando_liberacao"
+            : "route_guard_block",
       });
     })();
-  }, [isLoading, allowed, externo, movida, pathname, menuCode, phaseFlagEnabled, phaseFlagged]);
+  }, [isLoading, allowed, externo, movida, pathname, menuCode, phaseFlagEnabled, phaseFlagged, telaAguardandoLiberacao]);
 
   // Só bloqueia o render na primeira carga (sem dados ainda). Com dados em
   // cache (staleTime 30s), mantém children montado entre navegações.
@@ -125,6 +133,21 @@ export function RouteGuard({ children }: { children: ReactNode }) {
       <SemAcesso inicio="/app/encarregados/solicitar-materiais" semSuporte titulo="Esta área não faz parte do seu acesso">
         <p>O acesso externo é para <b>solicitar materiais</b> e <b>acompanhar seus pedidos</b>.</p>
         <p>Se precisar de outra coisa, fale com o seu contato no Grupo Nascimento.</p>
+      </SemAcesso>
+    );
+  }
+  if (telaAguardandoLiberacao) {
+    return (
+      <SemAcesso
+        inicio="/app"
+        titulo="Esta tela é nova e aguarda liberação"
+        detalhe={`Tela: ${menuCode}
+Rota: ${pathname}
+Situação: aguardando liberação (Novos Módulos)`}
+      >
+        <p>Toda tela nova do ERP começa <b>bloqueada para todos</b> até um administrador liberar o acesso.</p>
+        <p>A liberação é feita em <b>Configurações do ERP › Módulos &amp; Menus › Novos Módulos</b>.</p>
+        <p className="si-obrigado">O sistema está funcionando normalmente — assim que a tela for liberada para você, ela aparece no menu.</p>
       </SemAcesso>
     );
   }

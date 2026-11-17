@@ -1491,6 +1491,7 @@ const sstModule: ModuleDef = {
         { label: "Controle de Afastamentos", to: "/app/sst/controle-afastamentos", icon: ClipboardList },
         { label: "Exames Toxicológicos", to: "/app/sst/exames-toxicologicos", icon: FlaskConical },
         { label: "Acidentes de Trabalho", to: "/app/sst/acidentes", icon: Siren },
+        { label: "Incidentes", to: "/app/sst/incidentes", icon: FileText },
       ],
     },
   ],

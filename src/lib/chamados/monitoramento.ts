@@ -506,8 +506,26 @@ export interface RankingSolicitante {
   emAndamento: number;
   /** Média simples do índice dos chamados dele. */
   indiceMedio: number;
-  /** Nota que ORDENA o ranking: média puxada para a média geral quando há poucos chamados. */
+  /**
+   * Nota que ORDENA o ranking (SIS-2026-0919): 70% da histórica ajustada +
+   * 30% da média dos últimos 20 chamados válidos — ver notaRankingComposta.
+   */
   notaRanking: number;
+  /** Média histórica ajustada pelo volume (bayesiana) — a nota do ranking até o SIS-2026-0919. */
+  notaHistorica: number;
+  /** Média simples do índice dos últimos 20 chamados válidos (ou dos que houver). */
+  mediaRecente: number;
+  /** Quantos chamados entraram na média recente (≤ RANKING_RECENTES). */
+  qtdRecentes: number;
+  /**
+   * mediaRecente − notaHistorica: > 0 melhorando, < 0 piorando. Sempre com
+   * número, como no modelo do chamado (Helena, 17 chamados, "↑ +1,5") —
+   * 17/11/2026, Pablo escolheu "Mostrar o número". Com até 20 chamados a
+   * "recente" é a média simples de todos, então a diferença reflete só o
+   * ajuste pelo volume (quem está acima da média geral sai "↑"); a dica da
+   * tela avisa. Chegou a ser "—" nesse caso numa revisão de 16/11/2026.
+   */
+  tendencia: number;
   melhorIndice: number;
   /** % dos chamados com índice ≥ 8 (bem especificados). */
   pctBons: number;
@@ -527,7 +545,46 @@ export interface RankingSolicitante {
  */
 export const RANKING_PESO_MEDIA_GERAL = 5;
 
-/** Ordem: nota bayesiana, depois volume, depois efetividade. */
+/**
+ * DESEMPENHO RECENTE NO RANKING (SIS-2026-0919, 16/11/2026, Yuri Rosa —
+ * Controladoria): a nota dependia só do histórico acumulado — quem tinha 72
+ * chamados ficava em 6,3 mesmo com os últimos perto de 8–9, e a melhora não
+ * aparecia. Pedido: manter a média histórica ajustada pelo volume (continua
+ * com o maior peso, é a mais confiável) e somar o desempenho recente:
+ *
+ *   nota do ranking = 70% × histórica ajustada + 30% × média dos últimos 20
+ *
+ * "Últimos" = os de ABERTURA (created_at) mais recente: é a data que o
+ * Monitoramento usa no filtro de período e na ordem da lista, e o índice
+ * avalia a SOLICITAÇÃO, que nasce na abertura. Data de conclusão não serve —
+ * aberto/em andamento também vale aqui e não tem conclusão; data da avaliação
+ * da I.A também não — chamado na regra automática não tem, e a I.A reavalia
+ * quando o texto muda, o que embaralharia a ordem.
+ * "Válidos" = as mesmas regras do resto do Monitoramento (cancelado fora,
+ * filtros da tela valendo). Com menos de 20, usa os que houver.
+ * A conta usa as duas médias JÁ arredondadas (como aparecem na tela), para
+ * quem refizer na mão bater: 6,3 × 0,7 + 8,5 × 0,3 = 6,96 → 7,0 (arred1, a
+ * mesma regra de 1 casa de todas as notas daqui). Notas individuais dos
+ * chamados não mudam — só a consolidação por solicitante.
+ */
+export const RANKING_RECENTES = 20;
+export const RANKING_PESO_HISTORICO = 0.7;
+export const RANKING_PESO_RECENTE = 0.3;
+
+/** 70/30 entre a histórica ajustada e a média recente, arredondada a 1 casa. */
+export function notaRankingComposta(notaHistorica: number, mediaRecente: number): number {
+  return arred1(RANKING_PESO_HISTORICO * notaHistorica + RANKING_PESO_RECENTE * mediaRecente);
+}
+
+/** Os N chamados válidos de abertura mais recente (empate: id, para ser determinístico). */
+export function ultimosValidos(ls: LinhaMonitor[], n = RANKING_RECENTES): LinhaMonitor[] {
+  return ls
+    .filter((l) => !l.a.cancelado)
+    .sort((a, b) => (Date.parse(b.c.created_at) || 0) - (Date.parse(a.c.created_at) || 0) || b.c.id.localeCompare(a.c.id))
+    .slice(0, n);
+}
+
+/** Ordem: nota do ranking (70/30), depois a histórica, depois volume, depois efetividade. */
 export function rankingSolicitantes(linhas: LinhaMonitor[], m = RANKING_PESO_MEDIA_GERAL): RankingSolicitante[] {
   const validas = linhas.filter((l) => !l.a.cancelado);
   const geral = media(validas.map((l) => l.a.indice)) ?? 0;
@@ -545,6 +602,9 @@ export function rankingSolicitantes(linhas: LinhaMonitor[], m = RANKING_PESO_MED
     const contTema = new Map<Tema, number>();
     for (const l of ls) contTema.set(l.a.tema, (contTema.get(l.a.tema) ?? 0) + 1);
     const temaPrincipal = [...contTema.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    const notaHistorica = arred1((soma + m * geral) / (ls.length + m));
+    const recentes = ultimosValidos(ls);
+    const mediaRecente = arred1(media(recentes.map((l) => l.a.indice)) ?? notaHistorica);
     return {
       solicitante_id: id,
       nome: ls[0].c.solicitante_nome ?? "—",
@@ -553,14 +613,19 @@ export function rankingSolicitantes(linhas: LinhaMonitor[], m = RANKING_PESO_MED
       concluidos: ls.filter((l) => l.c.status === "concluido").length,
       emAndamento: ls.filter((l) => STATUS_ANDAMENTO.includes(l.c.status)).length,
       indiceMedio: arred1(soma / ls.length),
-      notaRanking: arred1((soma + m * geral) / (ls.length + m)),
+      notaRanking: notaRankingComposta(notaHistorica, mediaRecente),
+      notaHistorica,
+      mediaRecente,
+      qtdRecentes: recentes.length,
+      tendencia: arred1(mediaRecente - notaHistorica),
       melhorIndice: arred1(Math.max(...idx)),
       pctBons: Math.round((idx.filter((x) => x >= 8).length / ls.length) * 100),
       efetividadeMedia: em == null ? null : Math.round(em),
       temaPrincipal,
       avaliadosIa: ls.filter((l) => l.a.fonte === "ia").length,
     };
-  }).sort((a, b) => b.notaRanking - a.notaRanking || b.total - a.total || (b.efetividadeMedia ?? -1) - (a.efetividadeMedia ?? -1));
+  }).sort((a, b) => b.notaRanking - a.notaRanking || b.notaHistorica - a.notaHistorica || b.total - a.total
+    || (b.efetividadeMedia ?? -1) - (a.efetividadeMedia ?? -1));
 }
 
 export interface QualidadeResumo {

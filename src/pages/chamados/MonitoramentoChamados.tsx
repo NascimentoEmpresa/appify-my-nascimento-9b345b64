@@ -33,6 +33,9 @@ import {
   type ChamadoMonitor, type LinhaMonitor, type RankingSolicitante,
 } from "@/lib/chamados/monitoramento";
 import { cn } from "@/lib/utils";
+// Ranking 70/30 (SIS-2026-0919) — import à parte para não mexer nas linhas dos filtros.
+import { RANKING_PESO_HISTORICO, RANKING_PESO_RECENTE, RANKING_RECENTES } from "@/lib/chamados/monitoramento";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Layers, TrendingUp } from "lucide-react";
 
 // =====================================================================
 // MONITORAMENTO DE CHAMADOS (22/10/2026, mig 20261022000180).
@@ -595,13 +598,39 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
 // =====================================================================
 // RANKING DOS SOLICITANTES (13/11/2026, Pablo: "o ranking tá bem fraco o
 // layout, ajusta ele e deixa melhor, mais completo"). Pódio com os 3
-// primeiros e tabela com tudo o que explica a posição: nota do ranking
-// (média ajustada pelo volume — rankingSolicitantes na lib), média simples,
-// melhor chamado, % bem especificados, tema mais pedido, efetividade e
-// quantos já têm a nota da I.A. Clicar numa pessoa filtra a tela por ela.
+// primeiros e tabela com tudo o que explica a posição. Clicar numa pessoa
+// filtra a tela por ela.
+// 16/11/2026 (SIS-2026-0919, Yuri Rosa): a nota do ranking passou a ser
+// 70% histórica ajustada + 30% média dos últimos 20 (rankingSolicitantes na
+// lib), e a tela mostra as peças separadas, como no modelo anexado ao
+// chamado: nota do ranking, média histórica ajustada, média dos últimos 20,
+// chamados avaliados e tendência (recente − histórica, sempre com número,
+// como no modelo — 17/11/2026, Pablo). Layout no desenho do
+// "modelo proposto" anexado: pódio com a nota em destaque e os 4 números ao
+// lado, colunas na ordem do modelo com (i) explicando cada conta, posição
+// "1º/2º" e rodapé "Como é calculada a nota do ranking?". Média simples,
+// melhor chamado e % bem especificados (não estavam no modelo, mas o pedido
+// não mandou tirar) ficam no fim da tabela.
 // =====================================================================
 const MEDALHA = ["bg-amber-400 text-white", "bg-slate-400 text-white", "bg-orange-500 text-white"];
 const MOLDURA_PODIO = ["border-amber-300 bg-amber-50/60 dark:bg-amber-500/10", "border-slate-300 bg-slate-50/60 dark:bg-slate-500/10", "border-orange-300 bg-orange-50/60 dark:bg-orange-500/10"];
+const CAIXA_NOTA_PODIO = ["bg-amber-100/80 dark:bg-amber-500/20", "bg-slate-100/80 dark:bg-slate-500/20", "bg-orange-100/80 dark:bg-orange-500/20"];
+
+// Dicas dos (i) dos títulos — o mesmo texto do rodapé "Como é calculada".
+const DICA_NOTA = `${RANKING_PESO_HISTORICO * 100}% da média histórica ajustada + ${RANKING_PESO_RECENTE * 100}% da média dos últimos ${RANKING_RECENTES} chamados — é o que ordena o ranking.`;
+const DICA_HISTORICA = "Média de todos os chamados válidos da pessoa no período, puxada para a média geral quando há poucos chamados (ajuste pelo volume).";
+const DICA_RECENTE = `Média dos ${RANKING_RECENTES} chamados válidos abertos mais recentemente; com menos de ${RANKING_RECENTES}, usa os que houver.`;
+const DICA_TENDENCIA = `Média dos últimos ${RANKING_RECENTES} − média histórica ajustada. Com até ${RANKING_RECENTES} chamados, os últimos são todos e a diferença mostra só o ajuste pelo volume.`;
+
+function TituloDica({ children, dica, className }: { children: React.ReactNode; dica: string; className?: string }) {
+  return (
+    <th className={cn("py-2", className)}>
+      <span className="inline-flex cursor-help items-center gap-1" title={dica}>{children}<Info className="h-3 w-3 opacity-70" /></span>
+    </th>
+  );
+}
+
+const ordinal = (n: number) => `${n}º`;
 
 function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: {
   ranking: RankingSolicitante[]; mediaGeral: number | null; onFiltrar: (solicitanteId: string) => void;
@@ -623,9 +652,8 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-sm font-bold"><Trophy className="h-4 w-4 text-amber-500" /> Ranking dos solicitantes</p>
           <p className="mt-0.5 max-w-3xl text-[11px] text-muted-foreground">
-            Ordem pela <b>nota do ranking</b>: a média de inteligência dos chamados de cada pessoa, ajustada pelo volume —
-            quem abriu poucos chamados tem a nota puxada para a média geral{mediaGeral != null && <> ({fmt1(mediaGeral)})</>},
-            então não passa à frente de quem mantém a qualidade em muitos pedidos.
+            Avalia a qualidade dos chamados para o setor de Sistemas, considerando o histórico, o desempenho recente e a evolução
+            da nota, com foco em chamados mais completos, objetivos e que aumentam a eficiência no desenvolvimento.
             {totalCh > 0 && totalIa < totalCh && <> A I.A já avaliou {totalIa} de {totalCh} chamados; o restante ainda usa a regra automática.</>}
           </p>
         </div>
@@ -649,40 +677,50 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
       {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
         <>
           {!q && (
-            <div className="mb-4 grid gap-3 md:grid-cols-3">
+            <div className="mb-4 grid gap-3 xl:grid-cols-3">
               {podio.map((r, i) => (
                 <button key={r.solicitante_id} type="button" onClick={() => onFiltrar(r.solicitante_id)} title="Filtrar por este solicitante"
-                  className={cn("flex items-center gap-3 rounded-lg border p-3 text-left transition hover:shadow-sm", MOLDURA_PODIO[i])}>
-                  <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold", MEDALHA[i])}>{i + 1}</span>
-                  <div className="min-w-0 flex-1">
+                  className={cn("flex flex-wrap items-center gap-3 rounded-lg border p-3 text-left transition hover:shadow-sm", MOLDURA_PODIO[i])}>
+                  <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold", MEDALHA[i])}>{ordinal(i + 1)}</span>
+                  <div className="min-w-[8rem] flex-1">
                     <p className="truncate text-sm font-semibold">{r.nome}</p>
                     <p className="truncate text-[11px] text-muted-foreground">{r.setor || "sem setor"}</p>
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      {r.total} chamado(s) · média {fmt1(r.indiceMedio)} · {r.pctBons}% bem especificados
+                      {r.total} chamado{r.total === 1 ? "" : "s"}{r.efetividadeMedia != null && <> · {r.efetividadeMedia}% de efetividade</>}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className={cn("text-2xl font-bold leading-none", corIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</p>
-                    <p className="text-[10px] text-muted-foreground">nota do ranking</p>
+                  <div className={cn("rounded-md px-3 py-1.5 text-center", CAIXA_NOTA_PODIO[i])}>
+                    <p className="text-[10px] text-muted-foreground">Nota do ranking</p>
+                    <p className={cn("text-2xl font-bold leading-tight", corIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</p>
                   </div>
+                  <dl className="space-y-0.5 border-l pl-3 text-[11px] text-muted-foreground">
+                    <div className="flex items-center gap-1.5"><BarChart3 className="h-3 w-3 shrink-0" /><dt>Média histórica:</dt><dd className="font-semibold text-foreground">{fmt1(r.notaHistorica)}</dd></div>
+                    <div className="flex items-center gap-1.5"><CalendarDays className="h-3 w-3 shrink-0" /><dt>Média últimos {RANKING_RECENTES}:</dt><dd className="font-semibold text-foreground">{fmt1(r.mediaRecente)}</dd></div>
+                    <div className="flex items-center gap-1.5"><Layers className="h-3 w-3 shrink-0" /><dt>Chamados avaliados:</dt><dd className="font-semibold text-foreground">{r.total}</dd></div>
+                    <div className="flex items-center gap-1.5"><TrendingUp className="h-3 w-3 shrink-0" /><dt>Tendência:</dt><dd><Tendencia valor={r.tendencia} /></dd></div>
+                  </dl>
                 </button>
               ))}
             </div>
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-xs">
+            <table className="w-full min-w-[1280px] text-xs">
               <thead>
                 <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
                   <th className="w-10 py-2">#</th>
                   <th className="py-2">Solicitante</th>
-                  <th className="py-2 text-center">Chamados</th>
-                  <th className="py-2" title="Média ajustada pelo volume — é o que ordena">Nota do ranking</th>
-                  <th className="py-2 text-center" title="Média simples dos chamados">Média</th>
-                  <th className="py-2 text-center">Melhor chamado</th>
-                  <th className="py-2" title="Chamados com índice 8 ou mais">Bem especificados</th>
-                  <th className="py-2">Tema mais pedido</th>
+                  <th className="py-2">Setor</th>
+                  <TituloDica className="text-center" dica="Chamados válidos da pessoa no período (cancelados não entram).">Chamados</TituloDica>
+                  <TituloDica dica={DICA_NOTA}>Nota do ranking</TituloDica>
+                  <TituloDica className="text-center" dica={DICA_HISTORICA}>Média histórica</TituloDica>
+                  <TituloDica className="text-center" dica={DICA_RECENTE}>Média últimos {RANKING_RECENTES}</TituloDica>
+                  <TituloDica className="text-center" dica={DICA_TENDENCIA}>Tendência</TituloDica>
                   <th className="py-2 text-center">Efetividade</th>
+                  <th className="py-2">Tema mais pedido</th>
+                  <TituloDica className="text-center" dica="Média simples dos chamados, sem ajuste nenhum.">Média simples</TituloDica>
+                  <th className="py-2 text-center">Melhor chamado</th>
+                  <TituloDica dica="Chamados com índice 8 ou mais.">Bem especificados</TituloDica>
                 </tr>
               </thead>
               <tbody>
@@ -692,17 +730,15 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                     <tr key={r.solicitante_id} className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-muted/40" title="Filtrar por este solicitante"
                       onClick={() => onFiltrar(r.solicitante_id)}>
                       <td className="py-2">
-                        <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold", pos <= 3 ? MEDALHA[pos - 1] : "bg-muted text-muted-foreground")}>{pos}</span>
+                        <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold", pos <= 3 ? MEDALHA[pos - 1] : "bg-muted text-muted-foreground")}>{ordinal(pos)}</span>
                       </td>
                       <td className="py-2">
                         <div className="flex items-center gap-2">
                           <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold", corAvatar(r.solicitante_id))}>{iniciais(r.nome)}</span>
-                          <div className="min-w-0">
-                            <p className="truncate font-medium">{r.nome}</p>
-                            <p className="truncate text-[10px] text-muted-foreground">{r.setor || "sem setor"}</p>
-                          </div>
+                          <p className="max-w-[220px] truncate font-medium">{r.nome}</p>
                         </div>
                       </td>
+                      <td className="max-w-[160px] truncate py-2 text-muted-foreground">{r.setor || "sem setor"}</td>
                       <td className="py-2 text-center">
                         <p className="font-semibold">{r.total}</p>
                         <p className="text-[10px] text-muted-foreground">{r.concluidos} concl. · {r.emAndamento} andam.</p>
@@ -710,33 +746,39 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
                       <td className="py-2">
                         <div className="flex items-center gap-2">
                           <span className={cn("inline-block min-w-[44px] rounded border px-2 py-0.5 text-center font-semibold", pilulaIndice(r.notaRanking))}>{fmt1(r.notaRanking)}</span>
-                          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                          <span className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
                             <span className={cn("block h-full rounded-full", bgIndice(r.notaRanking))} style={{ width: `${Math.min(100, r.notaRanking * 10)}%` }} />
                           </span>
                         </div>
                       </td>
-                      <td className={cn("py-2 text-center font-semibold", corIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</td>
-                      <td className={cn("py-2 text-center", corIndice(r.melhorIndice))}>{fmt1(r.melhorIndice)}</td>
-                      <td className="py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-                            <span className="block h-full rounded-full bg-success" style={{ width: `${r.pctBons}%` }} />
-                          </span>
-                          <span className="w-9 text-right font-medium">{r.pctBons}%</span>
-                        </div>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.notaHistorica))}>{fmt1(r.notaHistorica)}</td>
+                      <td className={cn("py-2 text-center font-semibold", corIndice(r.mediaRecente))}>
+                        {fmt1(r.mediaRecente)}
+                        {r.qtdRecentes < RANKING_RECENTES && <p className="text-[10px] font-normal text-muted-foreground">({r.qtdRecentes} chamado{r.qtdRecentes === 1 ? "" : "s"})</p>}
                       </td>
+                      <td className="py-2 text-center"><Tendencia valor={r.tendencia} pilula /></td>
+                      <td className="py-2 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
                       <td className="py-2">
                         {r.temaPrincipal ? (
                           <span className="inline-block max-w-[180px] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
                             style={{ color: temaCor(r.temaPrincipal), backgroundColor: `${temaCor(r.temaPrincipal)}1a` }}>{temaLabel(r.temaPrincipal)}</span>
                         ) : "—"}
                       </td>
-                      <td className="py-2 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
+                      <td className={cn("py-2 text-center", corIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</td>
+                      <td className={cn("py-2 text-center", corIndice(r.melhorIndice))}>{fmt1(r.melhorIndice)}</td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+                            <span className="block h-full rounded-full bg-success" style={{ width: `${r.pctBons}%` }} />
+                          </span>
+                          <span className="w-9 text-right font-medium">{r.pctBons}%</span>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
                 {lista.length === 0 && (
-                  <tr><td colSpan={9} className="py-4 text-center text-muted-foreground">Ninguém encontrado com "{busca}".</td></tr>
+                  <tr><td colSpan={13} className="py-4 text-center text-muted-foreground">Ninguém encontrado com "{busca}".</td></tr>
                 )}
               </tbody>
             </table>
@@ -746,6 +788,26 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
               {todos ? "Mostrar só os 10 primeiros" : `Ver o ranking completo (${ranking.length})`}
             </button>
           )}
+
+          <div className="mt-4 grid gap-3 rounded-md border border-info/30 bg-info/5 p-3 text-[11px] text-muted-foreground lg:grid-cols-[auto_1fr_1fr_1fr] lg:divide-x lg:divide-info/20">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-info"><Info className="h-4 w-4 shrink-0" /> Como é calculada a nota do ranking?</p>
+            <p className="lg:pl-3">
+              <b className="text-foreground">Nota do ranking</b> = {RANKING_PESO_HISTORICO * 100}% média histórica (todos os chamados, ajustada
+              pelo volume) + {RANKING_PESO_RECENTE * 100}% média dos últimos {RANKING_RECENTES} chamados.
+              Ex.: 6,3 × 0,7 + 8,5 × 0,3 = 6,96 → 7,0.
+            </p>
+            <div className="space-y-1 lg:pl-3">
+              <p className="flex gap-1.5"><BarChart3 className="mt-0.5 h-3 w-3 shrink-0" /><span><b className="text-foreground">Média histórica:</b> todos os chamados válidos
+                da pessoa no período, puxada para a média geral{mediaGeral != null && <> ({fmt1(mediaGeral)})</>} quando há poucos.</span></p>
+              <p className="flex gap-1.5"><CalendarDays className="mt-0.5 h-3 w-3 shrink-0" /><span><b className="text-foreground">Média últimos {RANKING_RECENTES}:</b> os{" "}
+                {RANKING_RECENTES} abertos mais recentemente (com menos, os que houver). Cancelados não entram em nenhuma.</span></p>
+            </div>
+            <p className="flex gap-1.5 lg:pl-3"><TrendingUp className="mt-0.5 h-3 w-3 shrink-0" /><span>
+              <b className="text-foreground">Tendência:</b> variação entre a média dos últimos {RANKING_RECENTES} e a média histórica
+              (ex.: <span className="font-semibold text-success">↑ +2,2</span> = evolução de 2,2 pontos;{" "}
+              <span className="font-semibold text-destructive">↓</span> = queda).
+            </span></p>
+          </div>
         </>
       )}
     </Card>
@@ -753,6 +815,26 @@ function RankingCard({ ranking, mediaGeral, onFiltrar, filtradoPor, onVoltar }: 
 }
 
 const normalizarBusca = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+/**
+ * Tendência do ranking (recente − histórica): ↑ verde, ↓ vermelho, → estável.
+ */
+function Tendencia({ valor, pilula }: { valor: number; pilula?: boolean }) {
+  const sobe = valor > 0;
+  const cai = valor < 0;
+  const Icone = sobe ? ArrowUpRight : cai ? ArrowDownRight : ArrowRight;
+  const texto = `${sobe ? "+" : cai ? "−" : ""}${fmt1(Math.abs(valor))}`;
+  return (
+    <span
+      title={sobe ? "Últimos chamados acima do histórico" : cai ? "Últimos chamados abaixo do histórico" : "Estável"}
+      className={cn("inline-flex items-center gap-0.5 font-semibold",
+        sobe ? "text-success" : cai ? "text-destructive" : "text-muted-foreground",
+        pilula && "rounded border px-1.5 py-0.5",
+        pilula && (sobe ? "border-success/30 bg-success/10" : cai ? "border-destructive/30 bg-destructive/10" : "border-border bg-muted/40"))}>
+      <Icone className="h-3 w-3" />{texto}
+    </span>
+  );
+}
 
 function BarraQualidade({ label, pct, cor }: { label: string; pct: number; cor: string }) {
   return (

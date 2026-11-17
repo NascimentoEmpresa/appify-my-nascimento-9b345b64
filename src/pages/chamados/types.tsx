@@ -18,6 +18,9 @@ export const CATEGORIAS = [
   { value: "integracoes", label: "Integrações" },
   { value: "dados_informacao", label: "Dados / Informação" },
   { value: "acesso_permissao", label: "Acesso / Permissão" },
+  // SIS-2026-0934: com "Novo módulo / tela" ou "Acesso / Permissão" o chamado
+  // exige "Quais pessoas devem ter acesso ao módulo?" (lib/chamados/acessoModulo.ts).
+  { value: "novo_modulo", label: "Novo módulo / tela" },
   { value: "outros", label: "Outros" },
 ] as const;
 
@@ -111,6 +114,8 @@ export interface Chamado {
   /** Alcance informado na abertura (mig 20261115001000): setores e módulos (rota da tela — SIS-2026-0921 — ou value de MODULOS_ERP nos antigos). */
   setores_impactados?: string[] | null;
   modulos_impactados?: string[] | null;
+  /** Quem deve ter acesso ao módulo (SIS-2026-0934, mig 20261118100000): [{id, nome}], id = profiles.id. */
+  acesso_modulo_usuarios?: { id: string; nome: string }[] | null;
   observacoes_solicitante: string | null;
   solicitante_id: string;
   solicitante_nome: string | null;
@@ -140,6 +145,10 @@ export interface Chamado {
   // confirmação do solicitante. NULL com 'concluido' = ainda não fechou de vez.
   gestao_finalizada_em?: string | null;
   gestao_finalizada_por?: string | null;
+  // PR mergeada na main (mig 20261117235500): o desenvolvimento foi entregue
+  // ao Gestor de Sistemas, que conclui o chamado. Zera a cada troca de status.
+  desenvolvimento_entregue_em?: string | null;
+  desenvolvimento_entregue_pr?: string | null;
   // Início do desenvolvimento + prazo informado pelo dev (mig 20261028001400).
   // Com status 'em_andamento': iniciado = "Em desenvolvimento"; sem = na fila.
   desenvolvimento_iniciado_em?: string | null;

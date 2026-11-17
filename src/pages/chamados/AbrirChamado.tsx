@@ -26,6 +26,8 @@ import {
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 import { afetaUsuariosParaBanco, somenteDigitos } from "./afetaUsuarios";
 import { ImpactoSistemicoCampos } from "./impacto/ImpactoSistemicoCampos";
+import { AcessoModuloCampo } from "./AcessoModuloUsuarios";
+import { acessoModuloPendente, normalizarPessoasAcesso, type PessoaAcesso } from "@/lib/chamados/acessoModulo";
 import { incluirPosicao, normalizarLista, pendenciasImpacto, POSICAO_OUTRO } from "@/lib/chamados/impactoSistemico";
 import {
   filtrarChamadosParaVincular, formularioBaseadoEm, lerBaseado, MIN_COMPLEMENTO, proximaParte, rotuloParte,
@@ -123,6 +125,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   // SIS-2026-0910): vários setores e vários módulos, a posição entre eles.
   const [setoresImpactados, setSetoresImpactados] = useState<string[]>([]);
   const [modulosImpactados, setModulosImpactados] = useState<string[]>([]);
+  // "Quais pessoas devem ter acesso ao módulo?" (SIS-2026-0934): obrigatório
+  // com Novo módulo / tela ou Acesso / Permissão (lib/chamados/acessoModulo.ts).
+  const [acessoUsuarios, setAcessoUsuarios] = useState<PessoaAcesso[]>([]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
@@ -138,7 +143,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     enabled: !!baseadoId,
     queryFn: async () => {
       const { data, error } = await dbVinculo.from("CHAMADO_SISTEMA")
-        .select("id, numero, assunto, categorias, tipo_solicitacao, prioridade, descricao, observacoes_solicitante, impacto_trabalho, urgencia, prazo_solicitante, modulo_sistema, modulo_sistema_outro, ambiente, afeta_usuarios, setores_impactados, modulos_impactados")
+        .select("id, numero, assunto, categorias, tipo_solicitacao, prioridade, descricao, observacoes_solicitante, impacto_trabalho, urgencia, prazo_solicitante, modulo_sistema, modulo_sistema_outro, ambiente, afeta_usuarios, setores_impactados, modulos_impactados, acesso_modulo_usuarios")
         .eq("id", baseadoId as string).maybeSingle();
       if (error) throw error;
       if (!data) return null;
@@ -159,6 +164,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     setPrazoSolicitante(f.prazoSolicitante || (sugestaoPrazoSolicitante(f.urgencia) ?? "")); setPrazoManual(!!f.prazoSolicitante);
     setModulo(f.modulo); setModuloOutro(f.moduloOutro); setAmbiente(f.ambiente); setAfetaUsuarios(f.afetaUsuarios);
     setSetoresImpactados(f.setoresImpactados); setModulosImpactados(f.modulosImpactados);
+    setAcessoUsuarios(f.acessoUsuarios);
     setVinculadoA(chamadoBase.id);
     setPreenchidoDe(chamadoBase.id);
   }, [chamadoBase, parteNova, preenchidoDe]);
@@ -228,6 +234,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       { id: "campo-tipo",        label: "Tipo de solicitação",  ok: !!tipo },
       ...pendenciasImpacto({ modulos: modulosImpactados, setores: setoresImpactados, posicao: modulo, posicaoOutro: moduloOutro })
         .map((p) => ({ ...p, ok: false })),
+      { id: "campo-acesso-modulo", label: "Pessoas com acesso ao módulo", ok: !acessoModuloPendente(categorias, acessoUsuarios) },
       { id: "campo-prioridade",  label: "Prioridade",           ok: !!prioridade },
       { id: "campo-descricao",   label: "Descrição",            ok: !!descricao.trim() && descricao.trim() !== ROTEIRO_DESCRICAO.trim() },
       { id: "campo-impacto",     label: "Impacto no trabalho",  ok: !!impacto },
@@ -235,7 +242,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       { id: "campo-prazo",       label: "Prazo esperado",       ok: prazoSolicitanteValido(prazoSolicitante) },
     ];
     return req.filter((c) => !c.ok);
-  }, [assunto, categorias, tipo, modulo, moduloOutro, modulosImpactados, setoresImpactados, prioridade, descricao, impacto, urgencia, prazoSolicitante, baseadoId, complemento]);
+  }, [assunto, categorias, tipo, modulo, moduloOutro, modulosImpactados, setoresImpactados, prioridade, descricao, impacto, urgencia, prazoSolicitante, baseadoId, complemento, acessoUsuarios]);
   const podeEnviar = faltando.length === 0;
 
   const irParaCampo = (campoId: string) =>
@@ -244,7 +251,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const limpar = () => {
     setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao(""); setObservacoes("");
     setImpacto(""); setUrgencia(""); setPrazoSolicitante(""); setPrazoManual(false); setModulo(""); setModuloOutro(""); setAmbiente("producao");
-    setAfetaUsuarios(""); setArquivos([]); setSetoresImpactados([]); setModulosImpactados([]);
+    setAfetaUsuarios(""); setArquivos([]); setSetoresImpactados([]); setModulosImpactados([]); setAcessoUsuarios([]);
     // O vínculo do "baseado nesse" fica: limpar é recomeçar o texto, não desfazer a origem.
     if (!baseadoId) { setVincular(false); setVinculadoA(null); setBuscaVinculo(""); }
     setComplemento("");
@@ -286,6 +293,8 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       // silêncio o que a pessoa preencheu.
       setores_impactados: normalizarLista(setoresImpactados),
       modulos_impactados: incluirPosicao(modulosImpactados, modulo),
+      // SIS-2026-0934: o gatilho da mig 20261118100000 confere os ids e grava o nome de profiles.
+      acesso_modulo_usuarios: normalizarPessoasAcesso(acessoUsuarios),
     };
     const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA").insert(linha).select("id, numero, parte").single();
 
@@ -585,6 +594,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               posicao={modulo} onPosicao={setModulo}
               posicaoOutro={moduloOutro} onPosicaoOutro={setModuloOutro}
             />
+
+            {/* SIS-2026-0934: logo depois de onde o módulo é apontado. */}
+            <AcessoModuloCampo categorias={categorias} value={acessoUsuarios} onChange={setAcessoUsuarios} />
 
             <div id="campo-prioridade" className="scroll-mt-24">
               <Label className="mb-1.5 block text-xs font-semibold">Prioridade <span className="text-destructive">*</span></Label>

@@ -27,6 +27,7 @@ import {
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
 import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
+import { AcessoModuloResumo } from "./AcessoModuloUsuarios";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
@@ -201,6 +202,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             </div>
             {/* SIS-2026-0910: módulo diretamente ajustado separado dos demais impactados. */}
             <ImpactoSistemicoResumo chamado={chamado} />
+            {/* SIS-2026-0934: a quem liberar o módulo. */}
+            <AcessoModuloResumo chamado={chamado} />
           </Card>
 
           {/* CHAMADO REABERTO (mig 20261112190000): o solicitante acompanha

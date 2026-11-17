@@ -242,7 +242,9 @@ export function montarMensagemResumo(resumo: string, urls: string[]): string {
   if (urls.length) {
     partes.push("", urls.length === 1 ? "Onde acessar:" : "Onde acessar (telas alteradas):", ...urls.map((u) => `- ${u}`));
   }
-  partes.push("", "Confira e, se estiver tudo certo, clique em Confirmar conclusão. Se não atendeu, use Reabrir chamado.");
+  // 17/11/2026 (revisão da PR #1310): o merge não conclui mais o chamado — o
+  // Gestor de Sistemas confere e conclui; só aí aparecem Confirmar/Reabrir.
+  partes.push("", "O Gestor de Sistemas vai conferir a entrega e concluir o chamado. Depois disso, confira e clique em Confirmar conclusão — ou em Reabrir chamado, se não atendeu.");
   partes.push("", AVISO_MENSAGEM_AUTOMATICA);
   return partes.join("\n");
 }

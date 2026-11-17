@@ -9,6 +9,7 @@
 // Lógica pura, testada em src/test/chamado-vinculos.test.ts.
 // =====================================================================
 import { incluirPosicao, normalizarLista } from "./impactoSistemico";
+import { normalizarPessoasAcesso, type PessoaAcesso } from "./acessoModulo";
 
 export type MotivoReabertura = "nao_atendeu" | "modificacoes";
 
@@ -62,6 +63,8 @@ export interface ChamadoBase {
   /** Impacto sistêmico (SIS-2026-0910) — vai junto para a parte nova. */
   setores_impactados?: string[] | null;
   modulos_impactados?: string[] | null;
+  /** SIS-2026-0934 — quem deve ter acesso ao módulo; vai junto para a parte nova. */
+  acesso_modulo_usuarios?: PessoaAcesso[] | null;
 }
 
 export interface FormularioBaseado {
@@ -81,6 +84,7 @@ export interface FormularioBaseado {
   afetaUsuarios: string;
   setoresImpactados: string[];
   modulosImpactados: string[];
+  acessoUsuarios: PessoaAcesso[];
 }
 
 const TITULO_MAX = 120;
@@ -110,6 +114,7 @@ export function formularioBaseadoEm(c: ChamadoBase, proximaParte: number, hoje: 
     afetaUsuarios: c.afeta_usuarios != null ? String(c.afeta_usuarios) : "",
     setoresImpactados: normalizarLista(c.setores_impactados),
     modulosImpactados: incluirPosicao(c.modulos_impactados, c.modulo_sistema),
+    acessoUsuarios: normalizarPessoasAcesso(c.acesso_modulo_usuarios),
   };
 }
 

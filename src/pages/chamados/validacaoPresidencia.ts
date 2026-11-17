@@ -158,6 +158,20 @@ export function podeFinalizarGestao(
   return ehGestorSistemas && aguardandoGestorSistemas(c);
 }
 
+// ---- Entrega pelo merge da PR (mig 20261117235500) ----
+// Revisão da PR #1310 (17/11/2026): o merge NÃO conclui o chamado. Ele entrega
+// o desenvolvimento ao Gestor de Sistemas (desenvolvimento_entregue_em), e é o
+// gestor quem clica em "Concluir chamado" — o momento em que o solicitante vê
+// que o chamado foi concluído. Depois seguem a confirmação do solicitante e a
+// finalização do gestor, como antes.
+
+const ENCERRADOS = new Set(["concluido", "cancelado", "reprovado"]);
+
+/** PR mergeada e o Gestor de Sistemas ainda não concluiu o chamado? */
+export const aguardandoGestorConcluir = (
+  c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+) => !ENCERRADOS.has(c.status) && !!c.desenvolvimento_entregue_em;
+
 /** Passo "o Gestor de Sistemas finalizou" na linha do tempo. */
 function passoFinalizacaoGestao(c: ChamadoStatus): PassoStatus {
   const feito = !!c.gestao_finalizada_em;
@@ -347,7 +361,7 @@ export function montarLinhaDoTempo(
 }
 
 /** Rótulo curto da situação atual — o que aparece no botão "Status". */
-export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em"> & Partial<Pick<Chamado, "gestao_finalizada_em">>, v: ValidacaoChamado | null | undefined): string {
+export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em"> & Partial<Pick<Chamado, "gestao_finalizada_em" | "desenvolvimento_entregue_em">>, v: ValidacaoChamado | null | undefined): string {
   if (c.status === "reprovado") return "Reprovado";
   if (c.status === "cancelado") return "Cancelado";
   // Concluído pelo time e ainda sem a confirmação (quando já dá para confirmar).
@@ -356,6 +370,8 @@ export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_e
   if (aguardandoGestorSistemas({ ...c, gestao_finalizada_em: c.gestao_finalizada_em })) return "Aguardando o Gestor de Sistemas";
   if (v && v.etapa !== "desenvolvimento") return ETAPAS_VALIDACAO[v.etapa].label;
   if (c.status === "concluido") return "Concluído";
+  // PR mergeada, falta o Gestor de Sistemas concluir (mig 20261117235500).
+  if (aguardandoGestorConcluir(c)) return "Entregue — aguardando o Gestor de Sistemas concluir";
   if (c.status === "aguardando_retorno") return "Aguardando retorno";
   // Direcionado ao dev, mas ele ainda não clicou em Iniciar (mig 20261028001400).
   if (c.status === "em_andamento") return c.desenvolvimento_iniciado_em ? "Em desenvolvimento" : "Na fila do desenvolvedor";
