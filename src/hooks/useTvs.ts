@@ -25,6 +25,8 @@ export interface TvItem {
   relatorio: string | null; rel_periodo: string | null; rel_contrato: string | null;
   /** TVs gerenciais: visual do painel (mig 20261014000002). */
   rel_visual?: string | null;
+  /** Item "Outra playlist" (mig 20261118140000): a playlist que ele passa. */
+  inclui_playlist_id?: string | null;
 }
 export interface TvPlaylist { id: string; nome: string; descricao: string | null; itens: TvItem[] }
 export interface TvAlerta {

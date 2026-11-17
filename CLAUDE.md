@@ -127,7 +127,9 @@ chamado.** Abrir só registra "PR aberta" no histórico. No **merge na
 da entrega para o solicitante, escrito pela I.A a partir dos commits do
 chamado e do código alterado na PR já mergeada, com as URLs das telas. Quem
 **conclui o chamado** (o que o solicitante vê) é o Gestor de Sistemas, no
-botão; depois o solicitante confirma e o gestor finaliza. Até 17/11/2026 a PR
+botão; o "Concluir chamado" do dev também só entrega (fica pendente do gestor;
+concluir assim mesmo pede confirmação). Depois o solicitante confirma e o
+gestor finaliza. Até 17/11/2026 a PR
 concluía sozinha; foi desfeito na revisão da PR #1310. Mudança em workflow do
 GitHub Actions passa pelo time antes.
 Por isso a mensagem de commit do chamado deve dizer o que mudou. PR sem

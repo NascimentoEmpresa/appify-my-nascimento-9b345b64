@@ -210,7 +210,7 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
     try {
       const r = await concluir.mutateAsync({ aula_id: aula.id, tempo_seg: Math.round(acumulado.current), avaliacao });
       acumulado.current = 0;
-      toast.success(r.certificado ? "Aula concluída — e o curso também! Seu certificado foi emitido." : "Aula concluída.");
+      toast.success(r.certificado ? "Aula concluída — e o curso também! Toque em Certificado e assine para emiti-lo." : "Aula concluída.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível concluir.");
     }

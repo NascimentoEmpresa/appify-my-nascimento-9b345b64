@@ -167,6 +167,22 @@ Deno.serve(async (req) => {
         return json(await rpc("col_comentar", { p_emp: emp, p_aula: uuid(body.aula_id), p_texto: str(body.texto, 1000) ?? "" }));
       case "certificado":
         return json(await rpc("col_certificado", { p_emp: emp, p_curso: uuid(body.curso_id) }));
+      // 13/11/2026 (mig 20261115000200): o colaborador assina o próprio
+      // certificado antes de abri-lo — desenho (PNG) ou nome numa letra
+      // cursiva. Só os campos conhecidos passam; o banco valida o resto.
+      case "assinar_certificado": {
+        const a = body.assinatura && typeof body.assinatura === "object" && !Array.isArray(body.assinatura)
+          ? body.assinatura as Record<string, unknown> : {};
+        const tam = Number(a.tamanho);
+        const assinatura = {
+          tipo: str(a.tipo, 10),
+          imagem: str(a.imagem, 400_001), // 1 a mais: o banco recusa o grande demais em vez de gravar um PNG cortado
+          texto: str(a.texto, 80),
+          fonte: str(a.fonte, 60),
+          tamanho: Number.isFinite(tam) ? tam : null,
+        };
+        return json(await rpc("col_assinar_certificado", { p_emp: emp, p_curso: uuid(body.curso_id), p_assinatura: assinatura }));
+      }
       case "notificacoes_lidas":
         await rpc("col_notificacoes_lidas", { p_emp: emp });
         return json({ ok: true });

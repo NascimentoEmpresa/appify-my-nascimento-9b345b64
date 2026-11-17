@@ -371,6 +371,7 @@ const suprimentosModule: ModuleDef = {
         { label: "Aprovação de Catálogo", to: "/app/suprimentos/catalogo/aprovacoes", icon: ClipboardCheck },
         { label: "Pedidos de Materiais", to: "/app/suprimentos/pedidos-materiais", icon: PackageCheck },
         { label: "Separação de Pedidos", to: "/app/suprimentos/separacao", icon: PackageCheck },
+        { label: "Entrega de EPIs", to: "/app/suprimentos/entregas-epi", icon: ShieldCheck },
         // O caminho normal é o QR code da etiqueta; o item existe para digitar
         // o protocolo quando a etiqueta não lê.
         { label: "Retirada para Entrega", to: "/app/suprimentos/retirada", icon: Car },

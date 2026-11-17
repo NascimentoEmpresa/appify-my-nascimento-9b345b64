@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SUPABASE_FUNCTIONS_URL } from "@/integrations/supabase/env";
 import type { AssinaturaCertificado } from "@/pages/treinamentos/plataforma/tipos";
+import type { AssinaturaColaborador } from "@/lib/treinamentos/certificadoColaborador";
 import type { NumerosVideo } from "@/components/treinamentos/ReacoesVideo";
 
 // =====================================================================
@@ -175,6 +176,19 @@ export interface CertificadoAluno {
   modelo: Record<string, unknown> | null; modulos: { nome: string; aulas: string[] }[];
   /** Assinatura do treinador gravada na emissão (mig 20261005000003). */
   assinatura: AssinaturaCertificado | null;
+  /** Assinatura do próprio colaborador, gravada ao assinar (mig 20261115000200). */
+  assinatura_aluno: AssinaturaColaborador | null;
+  /** Empresa do colaborador na emissão (HAGG, SN…) — escolhe a arte. */
+  empresa: string | null;
+}
+/**
+ * Certificado emitido mas ainda sem a assinatura do colaborador: a RPC não
+ * devolve a folha, só o que a etapa de assinatura precisa (mig 20261115000200).
+ */
+export interface CertificadoPendenteAssinatura {
+  pendente_assinatura: true; aluno: string; curso: string;
+  /** A última assinatura que a pessoa usou em outro certificado, para reaproveitar. */
+  ultima_assinatura: AssinaturaColaborador | null;
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────
@@ -356,9 +370,19 @@ export function useComentar() {
 export function useCertificadoColaborador(cursoId: string | undefined) {
   return useQuery({
     queryKey: ["colaborador", "certificado", cursoId],
-    queryFn: () => chamarPortal<CertificadoAluno>("certificado", { curso_id: cursoId }),
+    queryFn: () => chamarPortal<CertificadoAluno | CertificadoPendenteAssinatura>("certificado", { curso_id: cursoId }),
     enabled: !!cursoId,
     retry: false,
+  });
+}
+
+/** O colaborador assina o próprio certificado (uma vez; não troca depois). */
+export function useAssinarCertificado(cursoId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (assinatura: AssinaturaColaborador) =>
+      chamarPortal<{ ok: boolean }>("assinar_certificado", { curso_id: cursoId, assinatura }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["colaborador", "certificado", cursoId] }),
   });
 }
 
