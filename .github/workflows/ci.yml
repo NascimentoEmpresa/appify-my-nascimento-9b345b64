@@ -378,13 +378,24 @@ jobs:
   # Os três jobs abaixo eram passos que ficavam na fila atrás do type-check.
   # Separados, respondem em ~1 minuto e falam antes.
   # ==========================================================================
-  testes:
-    name: testes
+  # 17/11/2026 — a suíte (499 arquivos, jsdom) levava ~205 s num runner só e era
+  # o caminho mais longo da PR. Agora o vitest divide os ARQUIVOS em 4 fatias
+  # (`--shard`): todo teste continua rodando, cada um em exatamente uma fatia,
+  # com workers isolados como antes (NÃO usar singleFork: polui o DOM e inventa
+  # falhas). O job `testes` abaixo é só o agregador: `testes` é check obrigatório
+  # da main, e matrix renomearia o job para "Testes (1/4)" e deixaria a
+  # proteção esperando um check que nunca chega.
+  testes-fatia:
+    name: Testes (${{ matrix.fatia }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event_name == 'pull_request' && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        fatia: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -400,12 +411,29 @@ jobs:
       - name: Instalar dependências
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
+      # Testes do worker rodam uma vez só (fatia 1): não dependem da divisão.
       - name: Instalar dependências do worker para os testes de NFS-e
+        if: matrix.fatia == 1
         run: npm ci --prefix worker --prefer-offline --no-audit --no-fund
       - name: Testar execução isolada de NFS-e no GitHub
+        if: matrix.fatia == 1
         run: node --test worker/test/nfse-github-actions.test.cjs
-      - name: Testes
-        run: npm test
+      - name: Testes (fatia ${{ matrix.fatia }}/${{ strategy.job-total }})
+        run: npm test -- --shard=${{ matrix.fatia }}/${{ strategy.job-total }}
+
+  testes:
+    name: testes
+    needs: testes-fatia
+    if: always() && github.event_name == 'pull_request' && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Todas as fatias passaram?
+        env:
+          RESULTADO: ${{ needs.testes-fatia.result }}
+        run: |
+          echo "Resultado das fatias: $RESULTADO"
+          [ "$RESULTADO" = "success" ]
 
   build:
     name: build
