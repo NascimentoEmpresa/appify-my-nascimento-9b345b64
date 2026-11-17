@@ -100,7 +100,13 @@ export function ArvoreModulosPicker(props: ArvoreModulosPickerProps) {
               ) : props.multiplo ? (
                 selecao.map((v) => (
                   <Badge key={v} variant="secondary" title={rotulo(v)}
-                    className={cn("max-w-full gap-1 pr-1 text-xs font-medium", v === destaque && "border-accent/40 bg-accent/10 text-accent")}>
+                    // Chips laranja como no modelo do SIS-2026-0910 (17/11/2026); o módulo
+                    // diretamente ajustado fica laranja CHEIO, com a mira, para não se
+                    // confundir com os demais impactados.
+                    className={cn("max-w-full gap-1 pr-1 text-xs font-medium",
+                      v === destaque
+                        ? "border-accent bg-accent text-accent-foreground hover:bg-accent"
+                        : "border-accent/30 bg-accent/10 text-accent hover:bg-accent/15")}>
                     {v === destaque && <Crosshair className="h-3 w-3 shrink-0" />}
                     <span className="truncate">{rotulo(v)}</span>
                     {!disabled && v !== destaque && (
