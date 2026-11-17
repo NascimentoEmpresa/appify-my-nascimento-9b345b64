@@ -1,3 +1,5 @@
+import type { AssinaturaColaborador } from "@/lib/treinamentos/certificadoColaborador";
+
 // =====================================================================
 // TREINAMENTOS — plataforma de cursos (porta do membox para o ERP)
 //
@@ -80,6 +82,11 @@ export interface Certificado {
   carga_horaria_min: number | null; emitido_em: string;
   /** Assinatura vigente na emissão (mig 20261005000003). */
   assinatura_id: string | null;
+  /** Assinatura do próprio colaborador, feita no portal antes de abrir (mig 20261115000200). */
+  assinatura_aluno?: AssinaturaColaborador | null;
+  assinado_aluno_em?: string | null;
+  /** Empresa do colaborador na emissão (HAGG, SN…) — escolhe a arte do modelo da empresa. */
+  empresa?: string | null;
 }
 
 /** "TRN_ASSINATURA" (mig 20261005000003): a assinatura de um treinador. */

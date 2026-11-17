@@ -2,8 +2,12 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import QRCode from "qrcode";
 import { urlMidia } from "@/hooks/useTreinamentosPlataforma";
 import logoNascimento from "@/assets/logo-nascimento-completo.webp";
+import fundoNascimento from "@/assets/certificado-fundo-nascimento.png";
+import fundoSN from "@/assets/certificado-fundo-sn.png";
+import fundoNH from "@/assets/certificado-fundo-nh.png";
+import { arteDaEmpresa, type AssinaturaColaborador } from "@/lib/treinamentos/certificadoColaborador";
 import type { AssinaturaCertificado, CertificadoModelo } from "./tipos";
-import { BlocoAssinatura } from "./assinaturaFolha";
+import { AssinaturaTraco, BlocoAssinatura } from "./assinaturaFolha";
 
 // =====================================================================
 // A folha do certificado — usada na prévia do editor de modelo e na
@@ -15,9 +19,9 @@ import { BlocoAssinatura } from "./assinaturaFolha";
 //
 // Fundos: `fundo_path` guarda OU o path de uma imagem enviada (storage do
 // Treinamentos) OU `preset:<id>` de um dos fundos prontos desenhados aqui
-// em SVG (FUNDOS_PRONTOS). NULL = fundo padrão Nascimento (arco cinza +
-// logo) — assim modelos antigos, criados antes da galeria, já saem no
-// layout novo sem precisar editar. Sem migration: a coluna é text livre.
+// em SVG (FUNDOS_PRONTOS). NULL = o padrão — até 13/11/2026 o arco
+// Nascimento, desde então o modelo da empresa (ver abaixo); quem quiser o
+// arco escolhe "Nascimento (antigo)". A coluna é text livre.
 //
 // Assinatura (05/10/2026, mig 20261005000003): quando o certificado foi
 // emitido com assinatura, o rodapé ganha à direita o bloco "ASSINADO
@@ -25,6 +29,13 @@ import { BlocoAssinatura } from "./assinaturaFolha";
 //
 // Tamanhos em `cqw` (relativos à largura da folha): a arte fica igual na
 // prévia pequena do editor, na tela do colaborador e na impressão A4.
+//
+// Modelo da empresa (13/11/2026, mig 20261115000200): `preset:empresa` é a
+// arte dos pptx "Certificado Nascimento" e "Certificado SN" que o Pablo
+// mandou como padrão dos cursos — a folha escolhe a arte pela empresa do
+// colaborador (arteDaEmpresa) e traz DUAS linhas de assinatura: a da
+// técnica à esquerda e a do colaborador à direita. O colaborador assina
+// antes de abrir o certificado (lib/treinamentos/certificadoColaborador).
 // =====================================================================
 
 export interface DadosCertificado {
@@ -32,6 +43,10 @@ export interface DadosCertificado {
   cargaHorariaMin?: number | null; codigo: string;
   modulos?: { nome: string; aulas: string[] }[];
   assinatura?: AssinaturaCertificado | null;
+  /** Assinatura do próprio colaborador (cópia gravada no certificado). */
+  assinaturaAluno?: AssinaturaColaborador | null;
+  /** Empresa do colaborador na emissão (HAGG, SN, NH…) — escolhe a arte do modelo da empresa. */
+  empresa?: string | null;
 }
 
 /** "30 de Setembro de 2026" — mês com inicial maiúscula, como no modelo. */
@@ -47,7 +62,8 @@ const troca = (t: string | null | undefined, d: DadosCertificado) =>
 // ---------------------------------------------------------------------
 
 export const FUNDOS_PRONTOS = [
-  { id: "nascimento", nome: "Nascimento (padrão)" },
+  { id: "empresa", nome: "Modelo da empresa (Nascimento / SN / NH)" },
+  { id: "nascimento", nome: "Nascimento (antigo)" },
   { id: "faixa", nome: "Faixa escura" },
   { id: "fita", nome: "Fita dourada" },
   { id: "geometrico", nome: "Geométrico" },
@@ -60,7 +76,8 @@ export const PREFIXO_PRESET = "preset:";
 
 /** Traduz o valor gravado em `fundo_path` para preset ou URL de imagem. */
 export function resolverFundo(path: string | null | undefined): { preset: FundoPronto | null; url: string | null } {
-  if (!path) return { preset: "nascimento", url: null };
+  // NULL = padrão: desde 13/11/2026 é o modelo da empresa (antes, o arco Nascimento).
+  if (!path) return { preset: "empresa", url: null };
   if (path.startsWith(PREFIXO_PRESET)) {
     const id = path.slice(PREFIXO_PRESET.length) as FundoPronto;
     return { preset: FUNDOS_PRONTOS.some((f) => f.id === id) ? id : "nascimento", url: null };
@@ -69,7 +86,7 @@ export function resolverFundo(path: string | null | undefined): { preset: FundoP
 }
 
 const COR_FUNDO: Record<FundoPronto, string> = {
-  nascimento: "#ffffff", faixa: "#f7f7f5", fita: "#ffffff", geometrico: "#ffffff", dourado: "#ffffff", creme: "#faf6ee",
+  empresa: "#ffffff", nascimento: "#ffffff", faixa: "#f7f7f5", fita: "#ffffff", geometrico: "#ffffff", dourado: "#ffffff", creme: "#faf6ee",
 };
 
 /** Canto ornamental (curvas) desenhado no canto superior esquerdo; os outros são espelhados. */
@@ -170,6 +187,14 @@ function ArteFundo({ preset, lado }: { preset: FundoPronto; lado: "frente" | "ve
 /** Miniatura do fundo (galeria do editor e lista de modelos). */
 export function FundoMiniatura({ path, lado = "frente" }: { path: string | null | undefined; lado?: "frente" | "verso" }) {
   const { preset, url } = resolverFundo(path);
+  if (preset === "empresa" && lado === "frente") {
+    // As três artes lado a lado: qual sai depende da empresa do colaborador.
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 2, width: "100%", aspectRatio: "297/210", background: "#fff" }}>
+        {[fundoNascimento, fundoSN, fundoNH].map((src) => <img key={src} src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />)}
+      </div>
+    );
+  }
   return (
     <div style={{ position: "relative", width: "100%", aspectRatio: "297/210", overflow: "hidden", background: url ? `url(${url}) center/cover no-repeat` : COR_FUNDO[preset!] }}>
       {preset && <ArteFundo preset={preset} lado={lado} />}
@@ -221,7 +246,8 @@ function Rodape({ modelo, dados, centro }: { modelo: CertificadoModelo; dados: D
           ID de validação:<br /><span style={{ letterSpacing: ".02em" }}>{dados.codigo}</span>
         </div>
       </div>
-      {(modelo.exibir_nome_negocio || modelo.exibir_cnpj) && (
+      {/* Modelos antigos: a assinatura do colaborador ocupa o meio (no lugar de "Grupo Nascimento"). */}
+      {dados.assinaturaAluno ? <LinhaAssinatura traco={tracoAluno(dados)} nome={dados.aluno} papel="Colaborador" largura={22} /> : (modelo.exibir_nome_negocio || modelo.exibir_cnpj) && (
         <div style={{ fontSize: ".95cqw", textAlign: "center", color: "#27272a" }}>
           {modelo.exibir_nome_negocio && <div>Grupo Nascimento</div>}
           {modelo.exibir_cnpj && <div style={{ color: "#71717a" }}>CNPJ: —</div>}
@@ -232,7 +258,73 @@ function Rodape({ modelo, dados, centro }: { modelo: CertificadoModelo; dados: D
   );
 }
 
+/** A assinatura do colaborador no formato que AssinaturaTraco desenha. */
+const tracoAluno = (d: DadosCertificado): AssinaturaCertificado => ({
+  nome_completo: d.aluno, cargo: null, registro: null,
+  tipo: d.assinaturaAluno?.tipo ?? "texto", imagem: d.assinaturaAluno?.imagem ?? null,
+  texto: d.assinaturaAluno?.texto ?? null, fonte: d.assinaturaAluno?.fonte ?? null, tamanho: d.assinaturaAluno?.tamanho ?? 1,
+});
+
+/** Traço + linha + nome + papel, como as duas caixas do rodapé dos pptx. */
+function LinhaAssinatura({ traco, nome, papel, extra, largura = 28 }: { traco: AssinaturaCertificado | null; nome: string; papel: string | null; extra?: string | null; largura?: number }) {
+  return (
+    <div style={{ width: `${largura}cqw`, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", color: "#27272a" }}>
+      {traco ? <AssinaturaTraco a={traco} altura="4.6cqw" /> : <div style={{ height: "4.6cqw" }} />}
+      <div style={{ width: "82%", borderTop: "1px solid #3f3f46", marginTop: ".3cqw" }} />
+      <div style={{ fontSize: "1.45cqw", marginTop: ".5cqw", lineHeight: 1.2 }}>{nome}</div>
+      {papel && <div style={{ fontSize: "1.3cqw", marginTop: ".2cqw", lineHeight: 1.2 }}>{papel}</div>}
+      {extra && <div style={{ fontSize: ".95cqw", marginTop: ".15cqw", color: "#71717a" }}>{extra}</div>}
+    </div>
+  );
+}
+
+const horasTexto = (min: number | null | undefined) =>
+  min != null && min > 0 ? `${(Math.round(min / 60 * 10) / 10).toLocaleString("pt-BR")} ${min === 60 ? "hora" : "horas"}` : null;
+
+/**
+ * Modelo da empresa — pptx "Certificado Nascimento" / "Certificado SN" /
+ * "Certificado_NH" (16/11/2026 — mesmas posições, só o fundo muda)
+ * (slide 297 × 210 mm). Posições tiradas do próprio pptx: texto a 33,7% do
+ * topo, caixas de assinatura a 75% (técnica em 6,7% da largura, colaborador
+ * em 65,2%) e a caixa do meio, vazia no pptx, leva o QR de validação.
+ */
+function CertificadoEmpresa({ modelo, dados }: { modelo: CertificadoModelo; dados: DadosCertificado }) {
+  const fundo = { sn: fundoSN, nh: fundoNH, nascimento: fundoNascimento }[arteDaEmpresa(dados.empresa)];
+  const horas = modelo.exibir_carga_horaria ? horasTexto(dados.cargaHorariaMin) : null;
+  const t = dados.assinatura;
+  return (
+    <div className="trn-cert" style={{
+      position: "relative", width: "100%", aspectRatio: "297/210", containerType: "inline-size",
+      background: `#fff url(${fundo}) center/100% 100% no-repeat`,
+      border: "1px solid #e4e4e7", borderRadius: 12, overflow: "hidden", color: "#000",
+      fontFamily: "Arial, Inter, ui-sans-serif, system-ui, sans-serif",
+      WebkitPrintColorAdjust: "exact", printColorAdjust: "exact",
+    } as CSSProperties}>
+      <div style={{ position: "absolute", top: "33.7%", left: "4.5%", right: "4.5%", textAlign: "center", fontSize: "1.9cqw", lineHeight: 1.15 }}>
+        <div>Certificamos que</div>
+        <div style={{ fontSize: "2.85cqw", fontWeight: 700, marginTop: "2.2cqw", textTransform: "uppercase" }}>{dados.aluno}</div>
+        {modelo.exibir_documento && dados.documento && <div style={{ fontSize: "1.3cqw", marginTop: ".6cqw" }}>CPF: {dados.documento}</div>}
+        <div style={{ marginTop: "2.2cqw", lineHeight: 1.5 }}>concluiu o curso de aperfeiçoamento de <b>{dados.curso},</b></div>
+        <div style={{ lineHeight: 1.5 }}>
+          {horas && <>com total de <b>{horas}</b>, </>}no dia <b>{dados.data}.</b>
+        </div>
+      </div>
+      <div style={{ position: "absolute", top: "75.2%", left: "6.7%", width: "28%", display: "flex", justifyContent: "center" }}>
+        {t && <LinhaAssinatura traco={t} nome={t.nome_completo} papel={t.cargo} extra={t.registro ? `Registro: ${t.registro}` : null} />}
+      </div>
+      <div style={{ position: "absolute", top: "78%", left: "36%", width: "28%", display: "flex", alignItems: "center", justifyContent: "center", gap: "1cqw" }}>
+        {modelo.exibir_qr && <QrValidacao codigo={dados.codigo} />}
+        <div style={{ fontSize: ".85cqw", lineHeight: 1.5, color: "#6b7280" }}>ID de validação:<br /><span style={{ letterSpacing: ".02em" }}>{dados.codigo}</span></div>
+      </div>
+      <div style={{ position: "absolute", top: "75.2%", left: "65.2%", width: "28%", display: "flex", justifyContent: "center" }}>
+        <LinhaAssinatura traco={dados.assinaturaAluno ? tracoAluno(dados) : null} nome={dados.aluno} papel="Colaborador" />
+      </div>
+    </div>
+  );
+}
+
 export function CertificadoFrente({ modelo, dados }: { modelo: CertificadoModelo; dados: DadosCertificado }) {
+  if (resolverFundo(modelo.fundo_path).preset === "empresa") return <CertificadoEmpresa modelo={modelo} dados={dados} />;
   const centro = modelo.layout === "centro";
   const horas = dados.cargaHorariaMin != null && dados.cargaHorariaMin > 0 ? Math.round(dados.cargaHorariaMin / 60 * 10) / 10 : null;
   return (
@@ -280,4 +372,7 @@ export const EXEMPLO: DadosCertificado = {
   data: dataCertificado(new Date()),
   cargaHorariaMin: 1800, codigo: "ABC789GHTD445S0",
   modulos: [{ nome: "Introdução", aulas: ["Conceitos básicos", "Primeiros passos"] }, { nome: "Desenvolvimento", aulas: ["Conceitos avançados", "Projeto prático"] }],
+  assinatura: { nome_completo: "Nome da Técnica", cargo: "Técnica em Segurança do Trabalho", registro: "0000000", tipo: "texto", imagem: null, texto: "Nome da Técnica", fonte: "Great Vibes", tamanho: 1 },
+  assinaturaAluno: { tipo: "texto", texto: "Nome do aluno", fonte: "Dancing Script", tamanho: 1 },
+  empresa: "HAGG",
 };

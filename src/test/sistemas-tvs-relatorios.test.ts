@@ -18,7 +18,8 @@ describe("todos os relatórios do módulo estão na TV", () => {
   });
   it("páginas e tempo recomendado", () => {
     expect(paginasRelatorioTv("vagas")).toBe(3);
-    expect(paginasRelatorioTv("geral")).toBe(1);
+    // 18/11/2026: Todos os setores + Comparativo (src/test/tv-visao-geral.test.ts).
+    expect(paginasRelatorioTv("geral")).toBe(2);
     expect(duracaoRecomendada(1)).toBe(30);
     expect(duracaoRecomendada(3)).toBe(45);
   });

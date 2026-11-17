@@ -1,6 +1,6 @@
 import { fmtKpi, rotuloMes, sistemaPorSlug, type RelatorioDados } from "@/pages/relatorios/sistemas";
 import {
-  maiores, misturarCor, rankingsParaTv, rotuloTv, semCodigo, semMesesVaziosNoInicio, serieDaDireita, statusEmGrupos, textoVariacao, type SistemaGeral,
+  comparativoGeralTv, maiores, misturarCor, rankingsParaTv, resumoGeralTv, rotuloTv, semCodigo, semMesesVaziosNoInicio, serieDaDireita, serieDoQuadro, statusEmGrupos, textoVariacao, type SistemaGeral,
 } from "@/lib/tv/relatorioTv";
 import { Anel, Barras, Cartao, CartaoKpi, COR_GRUPO, corDoTom, GraficoMensal, Selo, TINTA_SUAVE, Vazio } from "./base";
 
@@ -110,57 +110,219 @@ export function PaginaDestaques({ d, cor }: { d: RelatorioDados; cor: string }) 
   );
 }
 
-/** Relatório Geral: os números somados no topo e um quadro por sistema. */
+/**
+ * Relatório Geral — "Todos os setores" (18/11/2026). Pablo, com o print do
+ * Relatório Geral do ERP: "A tv tem que aparecer tipo isso, mas mais bonito,
+ * completo e detalhado". Os números somados no topo (com a taxa de conclusão
+ * e o tempo médio) e um quadro por sistema — os 8 de solicitação e o
+ * Turn-over — com a variação contra o período anterior, a situação e os 12
+ * meses; a vaga que sobra na grade vira "Onde olhar" (maior volume, mais
+ * parado, mais lento). Contas em resumoGeralTv (src/lib/tv/relatorioTv.ts).
+ */
 export function PaginaGeral({ sistemas }: { sistemas: SistemaGeral[] }) {
-  const soma = (i: number) => sistemas.reduce((s, x) => s + (Number(x.kpis[i]?.valor) || 0), 0);
-  const topo = [
-    { rotulo: "Solicitações no período", valor: soma(0), cor: "#2563eb" },
-    { rotulo: "Em andamento", valor: soma(1), cor: "#d97706" },
-    { rotulo: "Concluídas", valor: soma(2), cor: "#16a34a" },
-    { rotulo: "Recusadas / canceladas", valor: soma(3), cor: "#dc2626" },
+  const r = resumoGeralTv(sistemas);
+  const topo: { rotulo: string; valor: string; cor: string; dica: string }[] = [
+    { rotulo: "Solicitações no período", valor: r.total.toLocaleString("pt-BR"), cor: "#2563eb", dica: `${r.solicitacoes.length} sistemas somados` },
+    { rotulo: "Em andamento", valor: r.andamento.toLocaleString("pt-BR"), cor: "#d97706", dica: "ainda não concluídas" },
+    { rotulo: "Concluídas", valor: r.concluidas.toLocaleString("pt-BR"), cor: "#16a34a", dica: r.taxaConclusao != null ? `${fmtKpi(r.taxaConclusao, "pct")} do total` : "—" },
+    { rotulo: "Tempo médio até concluir", valor: fmtKpi(r.tempoMedio, "dias"), cor: "#0891b2", dica: "da abertura à conclusão" },
+    { rotulo: "Recusadas / canceladas", valor: r.recusadas.toLocaleString("pt-BR"), cor: "#dc2626",
+      dica: r.total ? `${fmtKpi(Math.round((r.recusadas * 1000) / r.total) / 10, "pct")} do total` : "no período" },
   ];
+  const quadros = [...r.solicitacoes, ...(r.turnover ? [r.turnover] : [])];
+  const colunas = Math.max(4, Math.ceil(quadros.length / 2));
+  const sobraVaga = quadros.length < colunas * 2 && r.solicitacoes.length > 1;
   return (
-    <div className="flex h-full flex-col gap-6">
-      <div className="grid shrink-0 grid-cols-4 gap-6" style={{ height: 186 }}>
-        {topo.map((k) => <CartaoKpi key={k.rotulo} rotulo={k.rotulo} valor={k.valor.toLocaleString("pt-BR")} cor={k.cor} dica={`${sistemas.length} sistemas`} />)}
+    <div className="flex h-full flex-col gap-5">
+      <div className="grid shrink-0 grid-cols-5 gap-5" style={{ height: 128 }}>
+        {topo.map((k) => <Placa key={k.rotulo} {...k} />)}
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-2 gap-6">
-        {sistemas.map((s) => <QuadroSistema key={s.slug} s={s} />)}
+      <div className="grid min-h-0 flex-1 grid-rows-2 gap-5" style={{ gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))` }}>
+        {quadros.map((s) => <QuadroSistema key={s.slug} s={s} />)}
+        {sobraVaga && <QuadroOndeOlhar solicitacoes={r.solicitacoes} />}
       </div>
     </div>
   );
+}
+
+const num = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+const SOMBRA = "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.08)";
+
+function Placa({ rotulo, valor, cor, dica }: { rotulo: string; valor: string; cor: string; dica: string }) {
+  return (
+    <div className="relative flex min-w-0 flex-col justify-center overflow-hidden rounded-[24px] bg-white" style={{ padding: "16px 24px 16px 30px", boxShadow: SOMBRA }}>
+      <span className="absolute inset-y-0 left-0 w-2" style={{ background: cor }} />
+      <p className="truncate font-bold uppercase tracking-wide" style={{ fontSize: 17, color: TINTA_SUAVE }}>{rotulo}</p>
+      <p className="truncate font-black leading-none tabular-nums" style={{ fontSize: 50, color: cor, marginTop: 6 }}>{valor}</p>
+      <p className="mt-1.5 truncate font-semibold" style={{ fontSize: 17, color: TINTA_SUAVE }}>{dica}</p>
+    </div>
+  );
+}
+
+/** "Onde olhar": o sistema com mais volume, o com mais em andamento e o mais lento até concluir. */
+function QuadroOndeOlhar({ solicitacoes }: { solicitacoes: SistemaGeral[] }) {
+  const linhas = comparativoGeralTv(solicitacoes);
+  const maior = linhas[0];
+  const parado = [...linhas].sort((a, b) => b.andamento - a.andamento)[0];
+  const lento = [...linhas].filter((l) => l.tempo != null).sort((a, b) => (b.tempo ?? 0) - (a.tempo ?? 0))[0];
+  const itens = [
+    maior && { rotulo: "Maior volume", nome: maior.titulo, valor: `${maior.total.toLocaleString("pt-BR")} no período`, cor: "#2563eb" },
+    parado?.andamento && { rotulo: "Mais em andamento", nome: parado.titulo, valor: `${parado.andamento.toLocaleString("pt-BR")} abertas`, cor: "#d97706" },
+    lento && { rotulo: "Mais lento até concluir", nome: lento.titulo, valor: fmtKpi(lento.tempo, "dias"), cor: "#0891b2" },
+  ].filter(Boolean) as { rotulo: string; nome: string; valor: string; cor: string }[];
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[26px]" style={{ padding: "18px 22px", background: "linear-gradient(150deg, #1e3a8a 0%, #172554 100%)", color: "#fff", boxShadow: SOMBRA }}>
+      <p className="font-extrabold" style={{ fontSize: 22 }}>Onde olhar</p>
+      <div className="mt-2 flex min-h-0 flex-1 flex-col justify-around gap-2">
+        {itens.map((i) => (
+          <div key={i.rotulo} className="min-w-0 rounded-2xl px-3.5 py-2" style={{ background: "rgba(255,255,255,0.09)", borderLeft: `5px solid ${i.cor}` }}>
+            <p className="truncate font-bold uppercase tracking-wide" style={{ fontSize: 12, opacity: 0.75 }}>{i.rotulo}</p>
+            <p className="truncate font-extrabold leading-tight" style={{ fontSize: 19 }}>{i.nome}</p>
+            <p className="truncate font-black tabular-nums leading-tight" style={{ fontSize: 17, color: misturarCor(i.cor, "#ffffff", 0.45) }}>{i.valor}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** As três "pílulas" e a linha de detalhe de cada quadro — o Turn-over tem outros números. */
+function detalheDoQuadro(s: SistemaGeral): { pilulas: { texto: string; cor: string }[]; linha: string | null } {
+  const v = (i: number) => num(s.kpis[i]?.valor);
+  if (s.slug === "turnover") {
+    const saldo = v(3);
+    return {
+      pilulas: [{ texto: `${fmtKpi(v(1), "n")} admitidos`, cor: "#16a34a" }, { texto: `${fmtKpi(v(2), "n")} desligados`, cor: "#dc2626" }],
+      linha: saldo == null ? null : `Saldo ${saldo > 0 ? "+" : ""}${saldo.toLocaleString("pt-BR")} · ${fmtKpi(v(4), "n")} saíram em até 90 dias`,
+    };
+  }
+  return {
+    pilulas: [
+      { texto: `${fmtKpi(v(1), "n")} em andamento`, cor: "#d97706" },
+      { texto: `${fmtKpi(v(2), "n")} concluídas`, cor: "#16a34a" },
+      ...((v(3) ?? 0) > 0 ? [{ texto: `${fmtKpi(v(3), "n")} recusadas`, cor: "#dc2626" }] : []),
+    ],
+    linha: v(4) != null ? `${fmtKpi(v(4), "dias")} em média até concluir` : null,
+  };
 }
 
 function QuadroSistema({ s }: { s: SistemaGeral }) {
   const meta = sistemaPorSlug(s.slug);
   const cor = meta?.cor ?? "#2563eb";
   const Icone = meta?.icone;
-  const [total, andamento, concluidas] = s.kpis;
-  const chave = s.mensal.series[0]?.chave ?? "total";
-  const ult = s.mensal.dados.slice(-6).map((m) => ({ mes: m.mes, v: Number(m[chave]) || 0 }));
-  const max = Math.max(1, ...ult.map((u) => u.v));
+  const principal = s.kpis[0];
+  const variacao = textoVariacao(principal?.variacao);
+  // Turn-over: subir é ruim; nos outros, só o sentido (sem juízo de bom/ruim) — cinza.
+  const corVariacao = !variacao ? TINTA_SUAVE : s.slug === "turnover" ? (variacao.sobe ? "#dc2626" : "#16a34a") : "#52525b";
+  const { pilulas, linha } = detalheDoQuadro(s);
+  const serie = semMesesVaziosNoInicio(serieDoQuadro(s), ["v"], 6).slice(-12);
+  const max = Math.max(1, ...serie.map((u) => u.v));
+  const pct = s.slug === "turnover";
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[28px] bg-white" style={{ padding: "22px 26px", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.08)" }}>
-      <span className="absolute inset-x-0 top-0 h-2.5" style={{ background: cor }} />
-      <div className="flex items-center gap-3">
-        {Icone && <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ background: `${cor}1a`, color: cor }}><Icone style={{ width: 26, height: 26 }} strokeWidth={2.4} /></span>}
-        <p className="min-w-0 truncate font-extrabold" style={{ fontSize: 25 }}>{s.titulo}</p>
+    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[26px] bg-white" style={{ padding: "18px 22px 14px", boxShadow: SOMBRA }}>
+      <span className="absolute inset-x-0 top-0 h-2" style={{ background: cor }} />
+      <div className="flex items-center gap-2.5">
+        {Icone && <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: `${cor}1a`, color: cor }}><Icone style={{ width: 23, height: 23 }} strokeWidth={2.4} /></span>}
+        <p className="min-w-0 flex-1 truncate font-extrabold" style={{ fontSize: 22 }}>{s.titulo}</p>
       </div>
-      <div className="mt-3 flex items-end gap-3">
-        <p className="font-black leading-none tabular-nums" style={{ fontSize: 60, color: cor }}>{fmtKpi(total?.valor ?? null, "n")}</p>
-        <p className="mb-1 font-bold" style={{ fontSize: 18, color: TINTA_SUAVE }}>{s.rotulo_item}</p>
+      <div className="mt-2 flex items-end gap-2.5">
+        <p className="font-black leading-none tabular-nums" style={{ fontSize: 50, color: cor }}>{fmtKpi(num(principal?.valor), principal?.formato ?? "n")}</p>
+        <div className="mb-0.5 min-w-0">
+          {variacao && <p className="font-extrabold tabular-nums leading-tight" style={{ fontSize: 16, color: corVariacao }}>{variacao.sobe ? "▲" : "▼"} {variacao.texto}</p>}
+          <p className="truncate font-bold leading-tight" style={{ fontSize: 15, color: TINTA_SUAVE }}>{pct ? "médio mensal" : s.rotulo_item}</p>
+        </div>
       </div>
-      <div className="mt-2.5 flex flex-wrap gap-2">
-        <Selo cor="#d97706" claro tamanho={16}>{fmtKpi(andamento?.valor ?? null, "n")} em andamento</Selo>
-        <Selo cor="#16a34a" claro tamanho={16}>{fmtKpi(concluidas?.valor ?? null, "n")} concluídas</Selo>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {pilulas.map((p) => <Selo key={p.texto} cor={p.cor} claro tamanho={13}>{p.texto}</Selo>)}
       </div>
-      <div className="mt-auto flex h-[62px] items-end gap-2 pt-3">
-        {ult.map((u, i) => (
-          <div key={u.mes} className="flex flex-1 flex-col items-center gap-1">
-            <div className="w-full rounded-t-md" style={{ height: `${Math.max(6, (u.v / max) * 44)}px`, background: i === ult.length - 1 ? cor : `${cor}55` }} />
-            <span className="font-bold" style={{ fontSize: 13, color: TINTA_SUAVE }}>{rotuloMes(u.mes).slice(0, 3)}</span>
+      {linha && <p className="mt-1.5 truncate font-semibold" style={{ fontSize: 15, color: TINTA_SUAVE }}>{linha}</p>}
+      <div className="mt-auto flex items-end gap-1 pt-2" style={{ height: 78 }}>
+        {serie.map((u, i) => {
+          const ultima = i === serie.length - 1;
+          return (
+            <div key={u.mes} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-0.5">
+              {ultima && <span className="font-black tabular-nums leading-none" style={{ fontSize: 13, color: cor }}>{pct ? `${u.v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : u.v.toLocaleString("pt-BR")}</span>}
+              <div className="w-full rounded-t" style={{ height: `${Math.max(4, (u.v / max) * 44)}px`, background: ultima ? cor : `${cor}59` }} />
+              <span className="font-bold leading-none" style={{ fontSize: 11, color: TINTA_SUAVE }}>{rotuloMes(u.mes).slice(0, 1).toUpperCase()}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Relatório Geral — "Comparativo": a situação de cada sistema numa barra só
+ * (concluídas, em andamento, recusadas), o tempo médio até concluir e o
+ * turn-over mês a mês (admitidos × desligados, com a taxa).
+ */
+export function PaginaGeralComparativo({ sistemas }: { sistemas: SistemaGeral[] }) {
+  const r = resumoGeralTv(sistemas);
+  const linhas = comparativoGeralTv(r.solicitacoes);
+  const max = Math.max(1, ...linhas.map((l) => l.total));
+  const tempos = linhas.filter((l) => l.tempo != null).sort((a, b) => (b.tempo ?? 0) - (a.tempo ?? 0));
+  const t = r.turnover;
+  const dadosTurnover = t ? semMesesVaziosNoInicio(t.mensal.dados, ["admitidos", "desligados"]).map((m) => ({ ...m, rotulo: rotuloMes(m.mes).slice(0, 3) })) : [];
+  return (
+    <div className="grid h-full gap-6" style={{ gridTemplateColumns: "1.35fr 1fr" }}>
+      <Cartao titulo="Solicitações por sistema" cor="#2563eb" selo={`${r.total.toLocaleString("pt-BR")} no período`}>
+        <div className="flex h-full flex-col">
+          <div className="mb-2 flex gap-5">
+            {[["Concluídas", COR_GRUPO.concluido], ["Em andamento", COR_GRUPO.aberto], ["Recusadas", COR_GRUPO.recusado]].map(([n, c]) => (
+              <span key={n} className="inline-flex items-center gap-2 font-bold" style={{ fontSize: 18, color: TINTA_SUAVE }}><span className="h-4 w-4 rounded" style={{ background: c }} />{n}</span>
+            ))}
           </div>
-        ))}
+          <div className="flex min-h-0 flex-1 flex-col justify-around">
+            {linhas.map((l) => {
+              const meta = sistemaPorSlug(l.slug);
+              return (
+                <div key={l.slug} className="flex items-center gap-4">
+                  <p className="w-[250px] shrink-0 truncate font-bold" style={{ fontSize: 21 }}>
+                    <span className="mr-2 inline-block h-3 w-3 rounded-full align-middle" style={{ background: meta?.cor ?? TINTA_SUAVE }} />{l.titulo}
+                  </p>
+                  <div className="flex h-7 min-w-0 flex-1 overflow-hidden rounded-full" style={{ background: "#f1f1f3" }}>
+                    <div className="flex h-full" style={{ width: `${Math.max(1, (l.total / max) * 100)}%` }}>
+                      {[[l.concluidas, COR_GRUPO.concluido], [l.andamento, COR_GRUPO.aberto], [l.recusadas, COR_GRUPO.recusado]].map(([n, c], i) =>
+                        Number(n) > 0 ? <div key={i} className="h-full" style={{ flexGrow: Number(n), background: String(c) }} /> : null)}
+                    </div>
+                  </div>
+                  <p className="w-[170px] shrink-0 text-right font-black tabular-nums" style={{ fontSize: 24 }}>
+                    {l.total.toLocaleString("pt-BR")}
+                    {l.pctConcluidas != null && <span className="ml-2 font-bold" style={{ fontSize: 16, color: COR_GRUPO.concluido }}>{l.pctConcluidas}% concl.</span>}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Cartao>
+      <div className="flex min-h-0 flex-col gap-6">
+        <Cartao titulo="Tempo médio até concluir" cor="#0891b2" selo={r.tempoMedio != null ? `média ${fmtKpi(r.tempoMedio, "dias")}` : null} className="flex-1">
+          {/* Grade de 2 colunas: cabem os 8 sistemas (em lista, o cartão cortava a partir do 5º). */}
+          {tempos.length ? (
+            <div className="grid h-full grid-cols-2 content-around gap-x-6 gap-y-2">
+              {tempos.map((l) => (
+                <div key={l.slug} className="min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="min-w-0 truncate font-semibold" style={{ fontSize: 18 }}>{l.titulo}</p>
+                    <p className="shrink-0 font-black tabular-nums" style={{ fontSize: 21, color: "#0891b2" }}>{fmtKpi(l.tempo, "dias")}</p>
+                  </div>
+                  <div className="mt-1 h-2.5 overflow-hidden rounded-full" style={{ background: "#f1f1f3" }}>
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, ((l.tempo ?? 0) / Math.max(1, tempos[0].tempo ?? 1)) * 100)}%`, background: "#0891b2" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <Vazio />}
+        </Cartao>
+        {t && (
+          <Cartao titulo="Turn-over mês a mês" cor={sistemaPorSlug("turnover")?.cor ?? "#c2410c"} selo={`${fmtKpi(num(t.kpis[0]?.valor), "pct")} médio`} className="flex-1">
+            <GraficoMensal dados={dadosTurnover} rotuloTopo={false}
+              series={[{ chave: "admitidos", nome: "Admitidos", cor: "#16a34a" }, { chave: "desligados", nome: "Desligados", cor: "#ef4444" }]}
+              linha={t.mensal.series.some((x) => x.chave === "taxa") ? { chave: "taxa", nome: "Turn-over", cor: "#0f172a", sufixo: "%" } : null} />
+          </Cartao>
+        )}
       </div>
     </div>
   );
