@@ -46,8 +46,9 @@ describe("revisão pessoal do chamado", () => {
       .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
     expect(sql).not.toMatch(/ALTER TABLE public\."CHAMADO_SISTEMA"\s/);
     expect(sql).not.toMatch(/UPDATE public\."CHAMADO_SISTEMA"\s/);
-    // RLS por dono, sem bypass.
-    expect(sql).toMatch(/USING \(user_id = auth\.uid\(\)\)/);
+    // RLS por dono, sem bypass. auth.uid() dentro de (SELECT ...): o guardião
+    // de desempenho (M1) barra a função solta, reavaliada em cada linha.
+    expect(sql).toMatch(/USING \(user_id = \(SELECT auth\.uid\(\)\)\)/);
     expect(sql).not.toMatch(/has_screen_access|has_role|tem_acesso_menu/);
   });
 });
