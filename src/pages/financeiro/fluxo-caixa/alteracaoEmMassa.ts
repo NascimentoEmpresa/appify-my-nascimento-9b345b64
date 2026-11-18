@@ -7,7 +7,7 @@
 export type TipoMassa = "centro_custo" | "classificacao" | "conta_banco" | "integrante";
 
 export interface LinhaMassa {
-  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida";
+  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | "conta_garantida" | "unificado";
   despesa_id: string;
   numero_parcela: number | null;
   id_malote?: string | null;
@@ -26,6 +26,12 @@ export interface LinhaMassa {
   /** SIS-2026-0823: integrante da linha de rateio (nulo = sem integrante ou mais de um) e quantas linhas de rateio a despesa tem. */
   integrante_empregado_id?: number | null;
   qtdLinhasRateio?: number;
+  /** SIS-2026-0927: o que a unificação confere (a linha da tela já traz tudo isto). */
+  data_pagamento?: string | null;
+  competencia?: string | null;
+  tipo?: string;
+  valor?: number;
+  situacao_base?: string | null;
 }
 
 export interface IgnoradaMassa {
@@ -47,6 +53,9 @@ const ORIGENS_MESMA_EMPRESA: LinhaMassa["origem"][] = ["malote", "debito_automat
 
 export const chaveDaLinhaMassa = (l: Pick<LinhaMassa, "despesa_id" | "numero_parcela">) => `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
 
+// SIS-2026-0927: a composição da linha unificada se refaz no rateio dela (Ver unificação), nunca por troca em massa.
+const MOTIVO_UNIFICADO = "Lançamento unificado: refaça o rateio em Ver unificação";
+
 const rateadaEmCentros = (l: LinhaMassa) => l.contrato_nome === "Rateio" || (!l.fatura_cartao_id && (l.rateioDetalhe?.length ?? 0) > 1);
 const rateadaEmClassificacoes = (l: LinhaMassa) => l.classificacao_nome === "Rateio" || (l.classificacoesIds?.length ?? 0) > 1;
 
@@ -57,7 +66,7 @@ export function planejarTrocaDeCentroDeCusto(linhas: LinhaMassa[], novo: { id: s
   for (const l of linhas) {
     const ignora = (motivo: string) => ignoradas.push({ linha: l, motivo });
     if (!ORIGENS_COM_TROCA_DE_CENTRO.includes(l.origem)) {
-      ignora(l.origem === "cartao_fatura" ? "Cartão: o centro de custo é definido em Classificar Lançamentos de Cartão" : "Este tipo de lançamento não tem centro de custo");
+      ignora(l.origem === "unificado" ? MOTIVO_UNIFICADO : l.origem === "cartao_fatura" ? "Cartão: o centro de custo é definido em Classificar Lançamentos de Cartão" : "Este tipo de lançamento não tem centro de custo");
       continue;
     }
     if (rateadaEmCentros(l)) { ignora("Rateada entre vários centros de custo: ajuste a grade de rateio na despesa"); continue; }
@@ -80,7 +89,7 @@ export function planejarTrocaDeClassificacao(linhas: LinhaMassa[], novaClassific
   const ignoradas: IgnoradaMassa[] = [];
   for (const l of linhas) {
     const ignora = (motivo: string) => ignoradas.push({ linha: l, motivo });
-    if (!ORIGENS_COM_AJUSTE.includes(l.origem)) { ignora("Este tipo de lançamento não permite trocar a classificação pelo Fluxo"); continue; }
+    if (!ORIGENS_COM_AJUSTE.includes(l.origem)) { ignora(l.origem === "unificado" ? MOTIVO_UNIFICADO : "Este tipo de lançamento não permite trocar a classificação pelo Fluxo"); continue; }
     if (rateadaEmClassificacoes(l)) { ignora("Rateada em várias classificações: trocar em massa apagaria a divisão"); continue; }
     if (l.classificacao_id === novaClassificacaoId) { ignora("Já está nesta classificação"); continue; }
     aplicar.push(l);
@@ -102,7 +111,7 @@ export function planejarTrocaDeIntegrante(linhas: LinhaMassa[], novoEmpregadoId:
     const ignora = (motivo: string) => ignoradas.push({ linha: l, motivo });
     // SIS-2026-0859: lançamento importado da planilha também tem integrante (grava em todas as cotas do lançamento, rateado ou não).
     // SIS-2026-0883: e o Débito Automático (DA-…), que grava no próprio débito (uma linha só no Fluxo, sem rateio).
-    if (!ORIGENS_COM_INTEGRANTE.includes(l.origem)) { ignora(MOTIVO_ORIGEM_SEM_INTEGRANTE); continue; }
+    if (!ORIGENS_COM_INTEGRANTE.includes(l.origem)) { ignora(l.origem === "unificado" ? MOTIVO_UNIFICADO : MOTIVO_ORIGEM_SEM_INTEGRANTE); continue; }
     if (l.origem === "malote") {
       if (l.fatura_cartao_id) { ignora("Fatura de cartão: o integrante é de cada despesa, no Malote"); continue; }
       if ((l.qtdLinhasRateio ?? 1) > 1) { ignora("Rateada em várias linhas: ajuste o integrante de cada uma na grade de rateio do Malote"); continue; }

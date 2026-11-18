@@ -381,7 +381,7 @@ export default function PainelDesenvolvedor() {
 
   // ---- Painéis laterais --------------------------------------------------
   const statusResumo = useMemo(() => {
-    const ordem: StatusPainel[] = ["em_desenvolvimento", "em_analise", "aguardando_retorno", "concluido"];
+    const ordem: StatusPainel[] = ["em_desenvolvimento", "aguardando_gestor", "em_analise", "aguardando_retorno", "concluido"];
     const m: Partial<Record<StatusPainel, number>> = {};
     base.forEach((c) => { const s = statusPainel(c); m[s] = (m[s] ?? 0) + 1; });
     return ordem.map((s) => ({ status: s, value: m[s] ?? 0 }));

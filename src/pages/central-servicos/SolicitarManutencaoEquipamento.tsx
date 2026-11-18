@@ -14,6 +14,7 @@ import {
   useCriarSolicitacaoManutencao, useSolicitacoesManutencao,
   type StatusSolicitacaoManutencao, type TipoSolicitacaoManutencao,
 } from "@/hooks/useSolicitacoesManutencao";
+import { ACCEPT_ANEXO_MANUTENCAO } from "@/lib/suprimentos/anexoManutencao";
 import { Camera, ClipboardList, Send, Wrench } from "lucide-react";
 
 const STATUS: Record<StatusSolicitacaoManutencao, string> = {
@@ -43,14 +44,17 @@ export default function SolicitarManutencaoEquipamento() {
   const [numeroSerie, setNumeroSerie] = useState("");
   const [descricao, setDescricao] = useState("");
   const [foto, setFoto] = useState<File | null>(null);
+  const [orcamento, setOrcamento] = useState<File | null>(null);
 
   const minhas = useMemo(() => solicitacoes.slice(0, 8), [solicitacoes]);
   const enviar = async () => {
     if (!contratoId || !foto) return;
-    await criar.mutateAsync({ tipo, contrato_id: contratoId, maquinario, numero_serie: numeroSerie, descricao, foto });
-    setContratoId(""); setMaquinario(""); setNumeroSerie(""); setDescricao(""); setFoto(null);
-    const campo = document.getElementById("foto-maquina") as HTMLInputElement | null;
-    if (campo) campo.value = "";
+    await criar.mutateAsync({ tipo, contrato_id: contratoId, maquinario, numero_serie: numeroSerie, descricao, foto, orcamento });
+    setContratoId(""); setMaquinario(""); setNumeroSerie(""); setDescricao(""); setFoto(null); setOrcamento(null);
+    for (const id of ["foto-maquina", "orcamento-manutencao"]) {
+      const campo = document.getElementById(id) as HTMLInputElement | null;
+      if (campo) campo.value = "";
+    }
   };
 
   return (
@@ -101,10 +105,16 @@ export default function SolicitarManutencaoEquipamento() {
                 placeholder={tipo === "peca" ? "Informe qual peça é necessária e o defeito identificado." : "Descreva o reparo ou manutenção necessária."} />
             </div>
             <div>
-              <Label htmlFor="foto-maquina">Foto da máquina *</Label>
-              <Input id="foto-maquina" type="file" accept="image/jpeg,image/png,image/webp" className="mt-1"
+              <Label htmlFor="foto-maquina">Foto do equipamento *</Label>
+              <Input id="foto-maquina" type="file" accept={ACCEPT_ANEXO_MANUTENCAO.foto_equipamento} className="mt-1"
                 onChange={(e) => setFoto(e.target.files?.[0] ?? null)} />
               <p className="mt-1 text-xs text-muted-foreground">JPG, PNG ou WEBP, até 5 MB. {foto ? `Selecionada: ${foto.name}` : ""}</p>
+            </div>
+            <div>
+              <Label htmlFor="orcamento-manutencao">Foto do orçamento (opcional)</Label>
+              <Input id="orcamento-manutencao" type="file" accept={ACCEPT_ANEXO_MANUTENCAO.orcamento} className="mt-1"
+                onChange={(e) => setOrcamento(e.target.files?.[0] ?? null)} />
+              <p className="mt-1 text-xs text-muted-foreground">JPG, PNG, WEBP ou PDF, até 5 MB. {orcamento ? `Selecionado: ${orcamento.name}` : ""}</p>
             </div>
             <Button onClick={enviar} disabled={!contratoId || !maquinario.trim() || !numeroSerie.trim() || !foto || criar.isPending}>
               <Send className="mr-2 h-4 w-4" /> {criar.isPending ? "Enviando..." : "Enviar ao Almoxarifado"}

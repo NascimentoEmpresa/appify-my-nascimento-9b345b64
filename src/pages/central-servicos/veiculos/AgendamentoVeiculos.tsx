@@ -174,7 +174,9 @@ export default function AgendamentoVeiculos() {
     if (passo === 0) return !!veiculo;
     if (passo === 1) {
       if (!veiculo || !dataInicio || !dataFim || dataFim < dataInicio) return false;
-      if (!disponibilidadeDoVeiculo(veiculo, dataInicio).disponivel) return false;
+      // O período inteiro pedido, não só a saída (SIS-2026-0930): uma viagem
+      // de 12 a 14 cruza uma manutenção de 13 a 17 mesmo saindo no dia 12.
+      if (!disponibilidadeDoVeiculo(veiculo, dataInicio, dataFim).disponivel) return false;
       if (validarChegadaPrevista(rascunho.chegadaPrevista, { data_inicio: dataInicio, turno })) return false;
       return !conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
     }
@@ -353,7 +355,7 @@ export default function AgendamentoVeiculos() {
                           key={v.id}
                           veiculo={v}
                           indice={i}
-                          disponibilidade={disponibilidadeDoVeiculo(v, rascunho.dataInicio)}
+                          disponibilidade={disponibilidadeDoVeiculo(v, rascunho.dataInicio, rascunho.dataFim)}
                           selecionado={rascunho.veiculo?.id === v.id}
                           onSelecionar={escolherVeiculo}
                           ultimoKm={ultimosKm.data?.get(v.id) ?? null}

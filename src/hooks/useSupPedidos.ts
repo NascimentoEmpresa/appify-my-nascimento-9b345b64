@@ -255,6 +255,8 @@ export interface ItemEnxoval {
   opcao_tamanho: string[] | null;
   opcao_quantidade: string[] | null;
   opcao_litros: string[] | null;
+  /** SIS-2026-0888: pede laudo e entra no controle de calçados ortopédicos do SST. */
+  ortopedico?: boolean;
 }
 export interface SessaoExterna {
   user_id: string;

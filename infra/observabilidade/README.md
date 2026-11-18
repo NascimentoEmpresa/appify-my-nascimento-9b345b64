@@ -98,10 +98,33 @@ escolha os `grafanacloud-grpnascimento-prom` e `-logs` → **Import**.
 O painel abre em "últimas 24 h". A linha **tracejada cinza** é a mesma hora de
 **ontem**. Para ver a semana, troque o período no canto superior direito.
 
-### 4. Alertas (direto para o seu Discord, por DM)
+### 4. Alertas (e-mail + DM do Discord)
 
-**Alerting → Contact points → Add**: tipo **Discord**, cole o webhook. Depois
-**Alerting → Alert rules → New alert rule**, uma para cada linha:
+**Para onde vão (18/11/2026).** Até essa data a política raiz apontava para o
+contato `empty` e NENHUM alerta saía do Grafana — nem os 7 do grupo
+`producao` (o "Disco > 85%" estava disparando havia dias sem avisar ninguém).
+Agora:
+
+- Política: rota filha `grafana_folder = ERP` → contato **`eduardo`** (espera
+  30 s, agrupa por pasta+alerta, repete a cada 4 h). A raiz continua `empty`,
+  para os alertas automáticos do knowledge-graph não virarem ruído.
+- Contato `eduardo`, duas integrações:
+  - **e-mail** para `analisededados@haggltda.com.br` (o Grafana Cloud só
+    aceita e-mail de membro da organização);
+  - **webhook** → `POST .../actions/workflows/alerta_grafana.yml/dispatches`
+    com payload customizado (`{"ref":"main","inputs":{"alerta": <JSON de
+    .Status e .Alerts>}}`) e `Authorization: Bearer <token do GitHub>`. O
+    workflow `.github/workflows/alerta_grafana.yml` manda a **DM** pelo bot —
+    alerta de infra vai por DM, nunca no canal coletivo. Não passa pelo
+    cluster, então avisa justamente quando a API está fora.
+- Token do GitHub: *fine-grained*, só este repositório, só **Actions: Read and
+  write**. Ele vive DENTRO do contato no Grafana; trocar = editar o webhook do
+  contato `eduardo` (campo de credencial) e revogar o antigo.
+- Testar: Actions → "Alerta do Grafana por DM" → Run workflow com `alerta`
+  vazio (só o trecho GitHub → Discord), ou **Test** na integração webhook do
+  contato `eduardo` (caminho inteiro).
+
+As regras, em **Alerting → Alert rules → New alert rule**, uma para cada linha:
 
 | Nome | Fonte | Consulta | Dispara quando |
 |---|---|---|---|
@@ -112,6 +135,24 @@ O painel abre em "últimas 24 h". A linha **tracejada cinza** é a mesma hora de
 | Disco | Prometheus | `max(100 - 100 * node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})` | > 85 |
 | Líder trocou | Prometheus | `changes(patroni_primary{no="banco1"}[10m])` | > 0 |
 | Réplica atrasada | Prometheus | `max(patroni_xlog_received_location - patroni_xlog_replayed_location)` | > 100000000 por 5 min |
+| API de um nó fora (vista de fora) | Prometheus | `max by (alvo, checagem) (probe_success{checagem=~"auth\|cors\|storage"})` | < 1 por 1 min |
+| Pilha local fora (Kong/REST) | Prometheus | `min by (alvo, checagem) (probe_success{checagem=~"kong_local\|rest_local"})` | < 1 por 1 min |
+| PostgREST sem métrica | Prometheus | `min by (no) (up{job="postgrest"})` | < 1 por 1 min |
+| Coletor de um nó parou de mandar | Prometheus | `absent_over_time(up{job="postgrest",no="banco1"}[3m]) or absent_over_time(up{job="postgrest",no="banco2"}[3m])` | > 0 por 1 min (sem dados = **OK**) |
+
+As quatro últimas estão no grupo **`api-por-no`** da pasta ERP, criadas em
+18/11/2026 pela API do Grafana (todas Normal na primeira avaliação). Vêm da sonda por nó (`prometheus.exporter.blackbox "api"` no
+`config.alloy`, 17/11/2026), criada depois do incidente de 13/11
+(`docs/incidentes/2026-11-13-api-banco1-fora.md`): a API do banco1 ficou ~5 h
+fora e nenhum alerta acima disparou, porque o de 5xx soma os dois nós e Kong
+parado não gera log. Cada nó testa os **dois** pela internet, então `max by
+(alvo)` só cai a 0 quando nenhum dos dois consegue chegar no alvo — um nó com a
+rede de saída ruim não acusa o outro à toa. Nas três primeiras, "sem dados" e
+"erro" = **Alerting**: sonda que parou de mandar dado é nó fora, não nó
+saudável. Só que "sem dados" vale para a consulta INTEIRA — se o Alloy de UM nó
+morre, só as séries dele somem e as outras seguem Normal. Por isso a quarta
+regra: `absent_over_time` por nó, que devolve 1 quando aquele nó some (aqui,
+sem dados é o estado saudável).
 
 ### 5. Ligar o `pg_stat_statements` (o "top consultas"), na próxima janela
 

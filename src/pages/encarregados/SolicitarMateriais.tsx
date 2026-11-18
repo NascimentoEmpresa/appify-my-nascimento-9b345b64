@@ -18,8 +18,9 @@ import {
   useCriarPedido, enviarFotoCracha, hojeISO, fmtDataBR, useContratosExternos,
   type ItemEnxoval,
 } from "@/hooks/useSupPedidos";
+import { ACCEPT_LAUDO, anexarLaudoNoPedido, erroDoLaudo } from "@/hooks/useCalcadosOrtopedicos";
 import {
-  ChevronLeft, ChevronRight, CheckCircle2, Shirt, HardHat, Upload, Truck, Loader2,
+  ChevronLeft, ChevronRight, CheckCircle2, Shirt, HardHat, Upload, Truck, Loader2, FileText,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -70,6 +71,9 @@ export default function SolicitarMateriais() {
   const [tipoAdmissao, setTipoAdmissao] = useState("substituicao");
   const [dataAdmissao, setDataAdmissao] = useState("");
   const [cracha, setCracha] = useState<File | null>(null);
+  // SIS-2026-0888: laudo do calçado ortopédico. Opcional — o pedido não trava
+  // sem ele; o SST vê "Laudo pendente" e anexa depois (decisão de 17/11).
+  const [laudo, setLaudo] = useState<File | null>(null);
   const [observacoes, setObservacoes] = useState("");
   const [selecionados, setSelecionados] = useState<Record<string, Selecao>>({});
   const [protocolo, setProtocolo] = useState<string | null>(null);
@@ -96,6 +100,7 @@ export default function SolicitarMateriais() {
     () => itens.filter((i) => !!selecionados[i.id]),
     [itens, selecionados],
   );
+  const temOrtopedico = marcados.some((i) => i.ortopedico);
 
   /** tipo_pedido derivado do que foi marcado — o legado pedia isso explícito. */
   const tipoPedido: "uniforme" | "insumos" | "ambos" = useMemo(() => {
@@ -211,6 +216,14 @@ export default function SolicitarMateriais() {
 
     try {
       const resultado = await criar.mutateAsync(dadosPedido);
+      // Mesmo trato do crachá: falha no laudo não derruba o pedido, mas avisa.
+      if (laudo && temOrtopedico && resultado?.id) {
+        try {
+          await anexarLaudoNoPedido(resultado.id, laudo);
+        } catch {
+          toast.warning("Pedido enviado, mas o laudo não subiu. Envie o laudo ao SST para ele anexar no controle.");
+        }
+      }
       if (resultado?.pedido_id) setProtocolo(resultado.pedido_id);
     } catch (erro: unknown) {
       const mensagem = erro instanceof Error ? erro.message : String(erro ?? "");
@@ -241,7 +254,7 @@ export default function SolicitarMateriais() {
           <Button variant="outline" onClick={() => {
             setProtocolo(null); setPasso(0); setPostoId(null); setFuncaoId(null);
             setSelecionados({}); setNomeColaborador(""); setColaborador(null);
-            setAdmissao(false); setDataAdmissao(""); setCracha(null); setObservacoes("");
+            setAdmissao(false); setDataAdmissao(""); setCracha(null); setLaudo(null); setObservacoes("");
           }}>
             Fazer outro pedido
           </Button>
@@ -491,6 +504,31 @@ export default function SolicitarMateriais() {
                 />
               )}
 
+              {temOrtopedico && (
+                <div className="rounded-md border border-dashed p-3">
+                  <Label>Laudo do calçado ortopédico (recomendado)</Label>
+                  <label className="mt-1 flex h-10 cursor-pointer items-center gap-2 rounded-md border bg-background px-3 text-sm hover:bg-muted">
+                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate text-muted-foreground">{laudo ? laudo.name : "Escolher PDF ou foto do laudo"}</span>
+                    <input
+                      type="file"
+                      accept={ACCEPT_LAUDO}
+                      className="hidden"
+                      onChange={(e) => {
+                        const arquivo = e.target.files?.[0] ?? null;
+                        const erro = arquivo && erroDoLaudo(arquivo);
+                        if (erro) { toast.error(erro); e.target.value = ""; return; }
+                        setLaudo(arquivo);
+                      }}
+                    />
+                  </label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    O laudo vai junto com o pedido para o SST e o Compras — não precisa mais mandar pelo Discord.
+                    Sem ele o pedido segue, e o SST cobra depois.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <Label>Observação (opcional)</Label>
                 <Textarea
@@ -527,6 +565,7 @@ export default function SolicitarMateriais() {
               <Resumo rotulo="Admissão" valor={admissao ? `Sim · ${tipoAdmissao} · ${fmtDataBR(dataAdmissao)}` : "Não"} />
               <Resumo rotulo="Data da solicitação" valor={fmtDataBR(hojeISO())} />
               {observacoes && <Resumo rotulo="Observação" valor={observacoes} />}
+              {temOrtopedico && <Resumo rotulo="Laudo" valor={laudo ? laudo.name : "Não anexado — o SST vai cobrar"} />}
 
               <div>
                 <p className="mb-2 font-semibold">Materiais ({marcados.length})</p>

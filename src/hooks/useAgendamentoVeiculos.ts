@@ -2,6 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import {
+  disponibilidadeDoVeiculo as calcularDisponibilidade,
+  type Disponibilidade,
+} from "@/lib/veiculos/indisponibilidade";
 
 /**
  * Agendamento de Veículos (Central de Serviços).
@@ -42,7 +46,11 @@ export interface VeiculoFrota {
   contrato_nome: string | null;
   /** Preenchida pelo módulo de Patrimônio. Aqui só é lida. */
   foto_path: string | null;
-  /** Indisponível — não só manutenção. O porquê vem em `motivo_indisponivel`. */
+  /**
+   * Há uma indisponibilidade REGISTRADA — não quer dizer "indisponível hoje".
+   * Ela vale só entre `data_inicio_manutencao` e `data_previsao_fim`
+   * (SIS-2026-0930); o status do dia sai de disponibilidadeDoVeiculo().
+   */
   em_manutencao: boolean;
   /** 'manutencao' | 'contrato' | 'outro' | null. Qualquer um deles impede o agendamento. */
   motivo_indisponivel: string | null;
@@ -185,56 +193,28 @@ export function useFotoVeiculo(fotoPath: string | null | undefined) {
 }
 
 // ── Disponibilidade ──────────────────────────────────────────────────
-// A mesma leitura das três colunas do Patrimônio que o banco faz em
-// cs_veiculo_motivo_indisponivel(). Está repetida aqui de propósito: a tela
-// precisa pintar o card antes de qualquer ida ao servidor. Quem decide de
-// verdade continua sendo o trigger — se as duas discordarem, o banco ganha.
+// A regra mora em src/lib/veiculos/indisponibilidade.ts (SIS-2026-0930): a
+// indisponibilidade do Patrimônio é um PERÍODO (início–fim), e o carro só
+// fica bloqueado para agendamentos que cruzem esse período. Até 17/11/2026
+// esta função ignorava a data de início — marcar "indisponível de 13 a 17"
+// travava o carro em todos os dias até o 17, inclusive antes do 13.
+//
+// É a mesma leitura que o banco faz em cs_veiculo_motivo_indisponivel();
+// está repetida na tela de propósito, para pintar o card antes de ir ao
+// servidor. Quem decide de verdade continua sendo o trigger — se as duas
+// discordarem, o banco ganha.
 
-export interface Disponibilidade {
-  disponivel: boolean;
-  rotulo: string;
-  detalhe: string | null;
-}
+export type { Disponibilidade };
 
-export function disponibilidadeDoVeiculo(v: VeiculoFrota, dataInicio?: string): Disponibilidade {
-  if (!v.em_manutencao) return { disponivel: true, rotulo: "Livre", detalhe: null };
-
-  // Contrato e "outro motivo" bloqueiam igual à manutenção — o que muda é só
-  // o texto. Registro antigo veio sem motivo gravado: era manutenção, porque
-  // até 17/08/2026 não havia outro.
-  const emContrato = v.motivo_indisponivel === "contrato";
-  const outro = v.motivo_indisponivel === "outro";
-
-  // Em "outro" quem explica é o texto que o Patrimônio escreveu. Se ele vier
-  // vazio — registro antigo, ou leitura por uma consulta que não trouxe a
-  // coluna — cai num rótulo genérico em vez de mostrar frase pela metade.
-  const porque = emContrato ? "Em contrato"
-    : outro ? (v.motivo_detalhe?.trim() || "Indisponível")
-    : "Em manutenção";
-  const volta = emContrato ? "devolução" : outro ? "liberação" : "retorno";
-
-  const fim = v.data_previsao_fim;
-  if (!fim) {
-    return {
-      disponivel: false,
-      rotulo: "Indisponível",
-      detalhe: `${porque} · ${volta} por tempo indeterminado`,
-    };
-  }
-  // Com previsão de retorno, o carro volta a ser agendável no dia seguinte.
-  const liberaEm = new Date(`${fim}T00:00:00`);
-  liberaEm.setDate(liberaEm.getDate() + 1);
-  const referencia = new Date(`${dataInicio ?? hojeISO()}T00:00:00`);
-
-  if (referencia >= liberaEm) {
-    const comoVolta = emContrato ? "Volta do contrato" : outro ? "Liberado" : "Retorna";
-    return { disponivel: true, rotulo: "Livre", detalhe: `${comoVolta} em ${formatarData(fim)}` };
-  }
-  return {
-    disponivel: false,
-    rotulo: "Indisponível",
-    detalhe: `${porque} até ${formatarData(fim)}`,
-  };
+/**
+ * Disponibilidade do veículo em [dataInicio, dataFim] — por padrão, hoje.
+ * `disponivel` diz se o período consultado está livre; `agendavel` diz se
+ * existe ALGUMA data possível (é o que deixa o card ser escolhido).
+ */
+export function disponibilidadeDoVeiculo(v: VeiculoFrota, dataInicio?: string, dataFim?: string): Disponibilidade {
+  const hoje = hojeISO();
+  const ini = dataInicio || hoje;
+  return calcularDisponibilidade(v, hoje, ini, dataFim && dataFim >= ini ? dataFim : ini);
 }
 
 export function hojeISO(): string {
