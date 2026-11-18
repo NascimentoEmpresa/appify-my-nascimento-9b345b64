@@ -187,6 +187,28 @@ export const pendenteDoGestorSistemas = (
 ) => aguardandoGestorConcluir(c) || aguardandoGestorSistemas(c);
 
 /**
+ * Clique na linha do Painel de Distribuição: abre a EXECUÇÃO (tela do dev,
+ * com chat, histórico, PR e os botões do gestor) em vez da distribuição.
+ * Concluído desde 10/11/2026; pendente do Gestor de Sistemas desde
+ * 18/11/2026 (Pablo: "TOTALMENTE O CONTRÁRIO" — o gestor caía na tela de
+ * distribuir uma tarefa que só falta ele concluir ou devolver).
+ */
+export const abreNaExecucao = (
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">
+    & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+) => c.status === "concluido" || pendenteDoGestorSistemas(c);
+
+/**
+ * "Devolver ao desenvolvedor" (mig 20261118210000): só o Gestor de Sistemas,
+ * só com a parte do dev entregue e o chamado não encerrado. ESPELHA a RPC
+ * chamado_devolver_ao_dev — o motivo obrigatório é conferido no diálogo e lá.
+ */
+export const podeDevolverAoDev = (
+  c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  ehGestorSistemas: boolean,
+) => ehGestorSistemas && aguardandoGestorConcluir(c);
+
+/**
  * O que o botão "Concluir chamado" faz para este usuário (17/11/2026, Pablo):
  *   · "entregar" — ainda não entregue: o responsável (mesmo sendo Gestor de
  *     Sistemas) entrega ao gestor; o chamado fica pendente, não concluído;
