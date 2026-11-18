@@ -4,7 +4,8 @@
 //
 // Lança a despesa (tipo, competência, valor, anexo), calcula o rateio por
 // contrato, deixa conferir/ajustar e exporta o Excel:
-//   · Jus Brasil → faturamento do contrato (planilha do RH, importável);
+//   · Jus Brasil → consultas do contrato (coluna amarela da planilha do RH,
+//     importável; desde 18/11/2026 — antes era o faturamento);
 //   · Senior → colaboradores TRABALHANDO por contrato (EMPREGADOS);
 //   · FGTS, Bullla, Seguro, BSF, Gratificação PCD, Mensalidade SEEAC → PDF
 //     da despesa: linha com CPF → colaborador → contrato; sem CPF, linha
@@ -74,7 +75,7 @@ export default function RateioDespesas() {
     <div className="space-y-4">
       <PageHeader
         title="Rateio de Despesas"
-        subtitle="Divide a despesa entre os contratos: Jus Brasil pelo faturamento, Senior pelos colaboradores trabalhando e FGTS, Bullla, Seguro, BSF, Gratificação PCD e SEEAC pelo PDF da despesa."
+        subtitle="Divide a despesa entre os contratos: Jus Brasil pelas consultas, Senior pelos colaboradores trabalhando e FGTS, Bullla, Seguro, BSF, Gratificação PCD e SEEAC pelo PDF da despesa."
         module="Recursos Humanos"
         breadcrumb={["Recursos Humanos", "Rateio de Despesas"]}
       />
@@ -204,7 +205,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
 
   const [carregando, setCarregando] = useState(!!id);
   const [tipo, setTipo] = useState<TipoRateio>("jusbrasil");
-  const [criterio, setCriterio] = useState<CriterioRateio>("faturamento");
+  const [criterio, setCriterio] = useState<CriterioRateio>(criterioPadrao("jusbrasil"));
   const [mes, setMes] = useState(mesAtual());
   const [valorTxt, setValorTxt] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -323,8 +324,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
             valor: aj ?? 0, ajustado: aj != null,
           };
         }),
+        criterio,
       ),
-    [valor, basesEfetivas, ajustes],
+    [valor, basesEfetivas, ajustes, criterio],
   );
   const resumo = resumirRateio(valor, itens);
   const totalBase = basesEfetivas.reduce((a, b) => a + (b.base || 0), 0);
@@ -857,9 +859,18 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
 
         {tipo === "jusbrasil" && (
           <p className="text-xs text-muted-foreground">
-            Como na planilha do RH: cada contrato paga <b>valor × faturamento do contrato ÷ faturamento total</b>. Importe a planilha
-            (colunas CONTRATOS / FATURAMENTO / Consultas) ou digite o faturamento abaixo. Diferente da planilha, o total soma
-            <b> todos</b> os contratos — lá as linhas 90 a 96 ficavam fora da soma e o rateio passava de 100%.
+            {criterio === "consultas" ? (
+              <>
+                Como a coluna amarela da planilha do RH: cada contrato paga <b>valor ÷ total de consultas × consultas do contrato</b>,
+                arredondado linha a linha. Importe a planilha (colunas CONTRATOS / FATURAMENTO / Consultas) ou digite as consultas abaixo.
+                Se o arredondamento deixar sobra de centavo, ela vai para o contrato com mais consultas, para fechar com o valor da fatura.
+              </>
+            ) : (
+              <>
+                Cada contrato paga <b>valor × faturamento do contrato ÷ faturamento total</b>. Importe a planilha
+                (colunas CONTRATOS / FATURAMENTO / Consultas) ou digite o faturamento abaixo.
+              </>
+            )}
           </p>
         )}
         {tipo === "senior" && (
@@ -905,7 +916,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">
             <AlertTriangle className="h-4 w-4 mt-0.5 text-warning shrink-0" />
             <span>Linhas da planilha sem contrato no ERP (o valor foi para "{SEM_CONTRATO}"; digite no contrato certo e zere lá):{" "}
-              {planilhaSemContrato.map((l) => `${l.nome} (${fmtMoeda(l.faturamento)})`).join("; ")}</span>
+              {planilhaSemContrato.map((l) => `${l.nome} (${criterio === "consultas" ? `${l.consultas} consulta(s)` : fmtMoeda(l.faturamento)})`).join("; ")}</span>
           </div>
         )}
 
@@ -1102,7 +1113,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         </div>
         {!itens.length ? (
           <div className="py-6 text-center text-sm text-muted-foreground">
-            {tipo === "senior" ? "Clique em \"Contar colaboradores agora\"." : usaPdf ? "Anexe o PDF da despesa para montar o rateio." : "Importe a planilha ou digite o faturamento dos contratos."}
+            {tipo === "senior" ? "Clique em \"Contar colaboradores agora\"." : usaPdf ? "Anexe o PDF da despesa para montar o rateio." : "Importe a planilha ou digite a base dos contratos."}
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -13,6 +13,16 @@
 //     linhas 90–96 (Veranópolis Recep., UFRGS ASB 030/2026, CEITEC, IRGA):
 //     esses quatro contratos recebiam rateio POR CIMA do total (107,6%).
 //     Aqui o total é a soma de todos os contratos — sempre fecha 100%.
+//     ⚠ 18/11/2026 — o critério do Jus Brasil passou a ser CONSULTAS. Na
+//     fatura de outubro/2026 ("Rateio JUSBRASIL.xlsx" + PDF da fatura) o RH
+//     destacou em amarelo a coluna G (valor ÷ total de consultas × consultas
+//     do contrato: 959,20 ÷ 120 = 7,99 por consulta) — é ESSE o valor que cada
+//     contrato paga. O ERP seguia rateando pelo faturamento (coluna E), e
+//     os valores saíam outros (ex.: IRGA 46,40 em vez de 207,83; contratos
+//     sem faturamento mas com consultas, como Polícia Civil 066/2026, saíam
+//     zerados). Faturamento continua disponível na tela como alternativa.
+//     Arredondamento de consultas: igual à planilha, linha a linha (meio
+//     centavo para cima) — ver distribuirPorUnidade.
 //   · SENIOR — pela quantidade de colaboradores TRABALHANDO por contrato
 //     (EMPREGADOS, o mesmo contrato de RH › Ativos/Contratos).
 //   · FGTS, Bullla, seguro, BSF, gratificação PCD, mensalidade SEEAC e, desde
@@ -42,7 +52,7 @@ export type TipoRateio =
 export type CriterioRateio = "faturamento" | "consultas" | "colaboradores" | "pdf";
 
 export const TIPOS_RATEIO: { tipo: TipoRateio; rotulo: string; criterio: CriterioRateio }[] = [
-  { tipo: "jusbrasil", rotulo: "Jus Brasil", criterio: "faturamento" },
+  { tipo: "jusbrasil", rotulo: "Jus Brasil", criterio: "consultas" },
   { tipo: "senior", rotulo: "Senior", criterio: "colaboradores" },
   { tipo: "fgts", rotulo: "FGTS", criterio: "pdf" },
   { tipo: "bullla", rotulo: "Bullla", criterio: "pdf" },
@@ -138,6 +148,39 @@ export function distribuirCentavos(total: number, bases: number[]): number[] {
   return piso.map((c) => c / 100);
 }
 
+/**
+ * Divide `total` por UNIDADE (consulta do Jus Brasil), do jeito da planilha
+ * do RH: valor da unidade = total ÷ soma das bases; cada linha = unidade ×
+ * base, arredondada sozinha para o centavo (meio centavo para cima). É o que
+ * a coluna amarela "Consultas" (G = $H$3/120 × F) mostra — com o maior resto
+ * de distribuirCentavos, um contrato de 1 consulta saía 8,00 em vez de 7,99.
+ *
+ * Arredondando linha a linha a soma pode não dar o total (out/2026: 959,19
+ * para uma fatura de 959,20). Sem fechar, a tela não deixa conferir nem
+ * mandar ao Malote; então o centavo que sobra (ou falta) vai para o contrato
+ * com MAIS unidades — um centavo por contrato, do maior para o menor.
+ */
+export function distribuirPorUnidade(total: number, bases: number[]): number[] {
+  const totalCent = Math.round(total * 100);
+  const b = bases.map((x) => (Number.isFinite(x) && x > 0 ? x : 0));
+  const soma = b.reduce((a, x) => a + x, 0);
+  if (soma <= 0 || totalCent === 0) return b.map(() => 0);
+  // +1e-9: 7,995 em ponto flutuante vira 7,99499… e arredondaria para baixo.
+  const cents = b.map((x) => (x > 0 ? Math.round((totalCent * x) / soma + 1e-9) : 0));
+  let dif = totalCent - cents.reduce((a, x) => a + x, 0);
+  const ordem = b
+    .map((x, i) => ({ i, x }))
+    .filter((o) => o.x > 0)
+    .sort((p, q) => q.x - p.x || p.i - q.i);
+  for (let k = 0; dif !== 0 && ordem.length > 0; k = (k + 1) % ordem.length) {
+    const passo = dif > 0 ? 1 : -1;
+    if (cents[ordem[k].i] + passo < 0) continue;
+    cents[ordem[k].i] += passo;
+    dif -= passo;
+  }
+  return cents.map((c) => c / 100);
+}
+
 export interface ItemRateio {
   /** contrato_id (uuid) ou null = "Sem contrato / não identificado". */
   contrato_id: string | null;
@@ -156,11 +199,13 @@ export interface ItemRateio {
  * como `ajustado` mantêm o valor digitado; o restante da despesa é dividido
  * entre os demais pela base.
  */
-export function calcularRateio(valorDespesa: number, itens: ItemRateio[]): ItemRateio[] {
+export function calcularRateio(valorDespesa: number, itens: ItemRateio[], criterio?: CriterioRateio): ItemRateio[] {
   const fixos = itens.filter((i) => i.ajustado);
   const somaFixos = Math.round(fixos.reduce((a, i) => a + (i.valor || 0), 0) * 100) / 100;
   const livres = itens.map((it, idx) => ({ it, idx })).filter((x) => !x.it.ajustado);
-  const valores = distribuirCentavos(
+  // Consultas (Jus Brasil) arredondam linha a linha como a planilha do RH.
+  const distribuir = criterio === "consultas" ? distribuirPorUnidade : distribuirCentavos;
+  const valores = distribuir(
     Math.max(0, Math.round((valorDespesa - somaFixos) * 100) / 100),
     livres.map((x) => x.it.base),
   );
