@@ -25,6 +25,9 @@ import { DetalheIndicadorDialog, type IndicadorGerencial } from "./fluxo-caixa-g
 import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { PendentesPanel } from "./fluxo-caixa-gerencial/PendentesPanel";
 import { DespesasPanel } from "./fluxo-caixa-gerencial/DespesasPanel";
+import { EmprestimosAplicacoesPanel } from "./fluxo-caixa-gerencial/EmprestimosAplicacoesPanel";
+import { fluxoPorNatureza } from "./fluxo-caixa-gerencial/emprestimosAplicacoes";
+import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { carteiraPendente, type ContratoParaPendentes } from "./fluxo-caixa-gerencial/pendentes";
 import { vencimentoDaNota } from "./fluxo-caixa-gerencial/vencimento";
 import { naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
@@ -112,6 +115,16 @@ export default function FluxoCaixaGerencial() {
   const necessidade = useMemo(() => necessidadeDeCaixa(fluxo.despesas_pagas, filtro.ini, filtro.fim, fluxo.projecao.d30.recebimentos), [fluxo, filtro]);
   const composicao = useMemo(() => composicaoTop(fluxo.composicao, 5), [fluxo.composicao]);
   const serieCaixa = useMemo(() => serieEntradasSaidas(serieNf, emprestimosMes, fluxo.por_mes), [serieNf, emprestimosMes, fluxo.por_mes]);
+  // Etapa 4: nome da instituição e o fluxo separado por natureza (operacional × empréstimos × aplicações), mês a mês.
+  const { data: bancosCatalogo = [] } = useCartaoBancos();
+  const nomeBanco = useMemo(() => { const m = new Map(bancosCatalogo.map((b) => [b.id, b.nome])); return (id: string) => m.get(id) ?? "—"; }, [bancosCatalogo]);
+  const natureza = useMemo(
+    () => fluxoPorNatureza({
+      meses: serieNf.map((p) => p.mes), recebidoPorMes: new Map(serieNf.map((p) => [p.mes, p.recebido])), despesasPorMes: new Map(fluxo.por_mes.map((d) => [d.mes, d.despesas])),
+      contas, movimentos, aplicacoes, resgates, historico, empresaId: filtro.empresaId,
+    }),
+    [serieNf, fluxo.por_mes, contas, movimentos, aplicacoes, resgates, historico, filtro.empresaId],
+  );
   const concMalote = conciliacaoMalote(fluxo.despesas_pagas, fluxo.malote_pago);
   const pctMalote = concMalote.pctMalote;
 
@@ -357,6 +370,9 @@ export default function FluxoCaixaGerencial() {
 
         {/* Recebimentos pendentes (aging) */}
         <PendentesPanel carteira={carteira} idsDoRecorte={idsDoRecorte} kpiPendente={kNotas.pendente} referencia={hojeIso} empresaNome={nomeEmpresa} />
+
+        {/* Empréstimos e aplicações (etapa 4) */}
+        <EmprestimosAplicacoesPanel contas={contas} movimentos={movimentos} aplicacoes={aplicacoes} nomeBanco={nomeBanco} filtro={{ ini: filtro.ini, fim: filtro.fim, empresaId: filtro.empresaId }} referencia={hojeIso} natureza={natureza} />
 
         {/* Necessidade de caixa */}
         <Card>
