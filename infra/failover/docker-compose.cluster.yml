@@ -47,7 +47,13 @@ services:
     # token e aceito.
     image: supabase/gotrue:v2.158.1
     logging: *logs
-    restart: unless-stopped
+    # 13/11/2026: `always`, nao `unless-stopped`, nos cinco servicos. O
+    # needrestart derrubou o containerd as 04:00 BRT, o Docker voltou em 17 s
+    # e NENHUM container voltou junto (restarts=0, Exited 0): a API do banco1
+    # ficou ~5 h fora. Ver docs/incidentes/2026-11-13-api-banco1-fora.md.
+    # Aplicado nos dois nos em 17/11 com `docker update --restart=always`,
+    # sem recriar; este arquivo e para o proximo `compose up` nao desfazer.
+    restart: always
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
     # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
@@ -87,7 +93,7 @@ services:
     # a RLS - por isso a replica precisa das policies carregadas.
     image: postgrest/postgrest:v12.2.3
     logging: *logs
-    restart: unless-stopped
+    restart: always
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
     # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
@@ -136,7 +142,7 @@ services:
     # Ao atualizar: conferir a contagem de migrations da tag ANTES de subir.
     image: supabase/storage-api:v1.80.2
     logging: *logs
-    restart: unless-stopped
+    restart: always
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
     # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
@@ -171,7 +177,7 @@ services:
     # funcoes sao publicas - por isso o config.toml e montado aqui.
     image: supabase/edge-runtime:v1.77.2
     logging: *logs
-    restart: unless-stopped
+    restart: always
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
     # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
@@ -210,7 +216,7 @@ services:
     # trocar UM endereco, nao reescrever o frontend.
     image: kong:2.8.1
     logging: *logs
-    restart: unless-stopped
+    restart: always
     depends_on: [auth, rest, storage, functions]
     ports:
       - "${PORTA_API:-8000}:8000"
