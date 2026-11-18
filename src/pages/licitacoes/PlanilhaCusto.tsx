@@ -140,6 +140,14 @@ const PAGE_SIZE = 50;
 // ADM" junto com "BENTO GONÇALVES - LIMPEZA").
 const normFiltro = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
 
+// SIS-2026-0943: qt_postos (que aqui conta PESSOAS) aceita decimal — contrato
+// cobrado por hora (Rodeio de Triunfo, 11/2026) é lançado como 3,2 pessoas pra
+// o Total Posto bater com o contrato. Somar 3,2 + 4,1 em JS dá
+// 7.300000000000001; toda quantidade de pessoas na tela passa por aqui.
+// Inteiro continua saindo "3", não "3,00".
+const formatPessoas = (n: number | null | undefined) =>
+  (n ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+
 type OpcaoFiltro = { key: string; label: string; sub?: string };
 
 // Filtro por seleção exata (combobox com busca), no estilo dos filtros do Excel.
@@ -596,7 +604,7 @@ export default function PlanilhaCusto() {
                   <td className="px-4 py-3 text-center">
                     <VigenciaStatusBadge status={statusMap.get(r.id) ?? "—"} />
                   </td>
-                  <td className="px-4 py-3 text-center">{r.qt_postos}</td>
+                  <td className="px-4 py-3 text-center">{formatPessoas(r.qt_postos)}</td>
                   <td className="px-4 py-3 text-center font-mono font-semibold">
                     {formatBRL(r.total_por_empregado)}
                   </td>
@@ -954,7 +962,7 @@ function PostosViewModal({
                   {c.cliente}
                 </p>
                 <p className={`text-[10px] mt-0.5 ${ativo ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-                  {c.qtPostos} posto{c.qtPostos !== 1 ? "s" : ""} · {c.qtPessoas} pessoas
+                  {c.qtPostos} posto{c.qtPostos !== 1 ? "s" : ""} · {formatPessoas(c.qtPessoas)} pessoas
                 </p>
               </button>
             );
@@ -976,7 +984,7 @@ function PostosViewModal({
               <div>
                 <h2 className="text-sm font-semibold truncate">{contratoSelecionado}</h2>
                 <p className="text-xs text-muted-foreground">
-                  <span className="font-semibold text-success">EXECUTADO VIGENTE</span> · {filteredPostos.length} postos · {totalPessoas} pessoas
+                  <span className="font-semibold text-success">EXECUTADO VIGENTE</span> · {filteredPostos.length} postos · {formatPessoas(totalPessoas)} pessoas
                 </p>
               </div>
               <div className="relative w-60 shrink-0">
@@ -1020,7 +1028,7 @@ function PostosViewModal({
                             {bate ? "✓" : "⚠"} {locs.length} {locs.length > 1 ? "locais" : "local"}
                           </span>
                         )}
-                        <span className="text-xs text-muted-foreground">{r.qt_postos} pessoas</span>
+                        <span className="text-xs text-muted-foreground">{formatPessoas(r.qt_postos)} pessoas</span>
                         {aberto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                       </div>
                     </button>
@@ -1065,8 +1073,8 @@ function PostosViewModal({
                                 <span>Executado: <strong className={totalExec === r.qt_postos ? "text-success" : "text-warning"}>{totalExec}</strong></span>
                                 <span>Orçado: <strong>{totalOrc}</strong></span>
                                 <span className="text-muted-foreground">
-                                  Planilha: <strong>{r.qt_postos}</strong>{" "}
-                                  {totalExec === r.qt_postos ? "✓" : `⚠ dif. ${totalExec - r.qt_postos}`}
+                                  Planilha: <strong>{formatPessoas(r.qt_postos)}</strong>{" "}
+                                  {totalExec === r.qt_postos ? "✓" : `⚠ dif. ${formatPessoas(totalExec - r.qt_postos)}`}
                                 </span>
                               </div>
                             </div>
@@ -1219,7 +1227,7 @@ function PostosModal({
             {row.posto} · {row.contrato} · {row.cliente}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Qt. pessoas (planilha): <strong>{row.qt_postos}</strong>
+            Qt. pessoas (planilha): <strong>{formatPessoas(row.qt_postos)}</strong>
           </p>
         </div>
       </div>
@@ -1339,7 +1347,7 @@ function PostosModal({
               </span>
               {totalOrcado !== row.qt_postos && (
                 <span className="text-xs text-warning font-medium">
-                  ⚠ Orçado ({totalOrcado}) difere da planilha ({row.qt_postos} pessoas)
+                  ⚠ Orçado ({totalOrcado}) difere da planilha ({formatPessoas(row.qt_postos)} pessoas)
                 </span>
               )}
             </div>
@@ -1636,7 +1644,7 @@ function ContratosModal({ rows, statusMap, contratosAtivos }: { rows: PlanilhaCu
                         <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">sem execução</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right text-xs">{c.postos_exec || "—"}</td>
+                    <td className="px-3 py-2 text-right text-xs">{c.postos_exec ? formatPessoas(c.postos_exec) : "—"}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs text-info">{c.orcado ? formatBRL(c.orcado) : "—"}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs text-success">{c.executado ? formatBRL(c.executado) : "—"}</td>
                     <td className={`px-3 py-2 text-right font-mono text-xs font-semibold whitespace-nowrap ${diff > 0 ? "text-success" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>
@@ -1707,12 +1715,13 @@ function ContratosModal({ rows, statusMap, contratosAtivos }: { rows: PlanilhaCu
                             {postoLista.map((p) => {
                               const d = p.executado - p.orcado;
                               const diverge = Math.abs(d) > 0.01;
-                              const postoDiverge = p.postos_orc !== p.postos_exec && p.postos_orc > 0 && p.postos_exec > 0;
+                              // Margem em vez de !==: soma de pessoas quebradas (SIS-2026-0943) erra na 15ª casa.
+                              const postoDiverge = Math.abs(p.postos_orc - p.postos_exec) > 0.005 && p.postos_orc > 0 && p.postos_exec > 0;
                               return (
                                 <tr key={p.posto} className={diverge ? "font-medium" : "text-muted-foreground"}>
                                   <td className="py-0.5">{p.posto}</td>
-                                  <td className={`py-0.5 text-right ${postoDiverge ? "text-warning font-semibold" : ""}`}>{p.postos_orc || "—"}</td>
-                                  <td className={`py-0.5 text-right ${postoDiverge ? "text-warning font-semibold" : ""}`}>{p.postos_exec || "—"}</td>
+                                  <td className={`py-0.5 text-right ${postoDiverge ? "text-warning font-semibold" : ""}`}>{p.postos_orc ? formatPessoas(p.postos_orc) : "—"}</td>
+                                  <td className={`py-0.5 text-right ${postoDiverge ? "text-warning font-semibold" : ""}`}>{p.postos_exec ? formatPessoas(p.postos_exec) : "—"}</td>
                                   <td className="py-0.5 text-right font-mono text-info">{p.orcado ? formatBRL(p.orcado) : "—"}</td>
                                   <td className="py-0.5 text-right font-mono text-success">{p.executado ? formatBRL(p.executado) : "—"}</td>
                                   <td className={`py-0.5 text-right font-mono whitespace-nowrap ${d > 0 ? "text-success" : d < 0 ? "text-destructive" : ""}`}>
@@ -1897,7 +1906,7 @@ function ClientesModal({ rows, statusMap }: { rows: PlanilhaCustoRow[]; statusMa
                 <tr key={c.cliente} className="border-t border-border hover:bg-muted/20">
                   <td className="px-3 py-2 font-medium">{c.cliente}</td>
                   <td className="px-3 py-2 text-right text-xs text-muted-foreground">{c.contratos.size}</td>
-                  <td className="px-3 py-2 text-right text-xs">{c.postos}</td>
+                  <td className="px-3 py-2 text-right text-xs">{formatPessoas(c.postos)}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs text-info">{c.orcado ? formatBRL(c.orcado) : "—"}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs text-success">{c.executado ? formatBRL(c.executado) : "—"}</td>
                   <td className={`px-3 py-2 text-right font-mono text-xs font-semibold whitespace-nowrap ${diff > 0 ? "text-success" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>
@@ -2567,11 +2576,23 @@ function FormDrawer({
                   <input
                     type="number"
                     min={0}
-                    step={1}
-                    value={form.qt_postos ?? 0}
-                    onChange={(e) => set("qt_postos", parseInt(e.target.value) || 0)}
+                    step="0.01"
+                    placeholder="0"
+                    // SIS-2026-0943: aceita decimal (contrato por hora → 3,2 pessoas).
+                    // Era parseInt, que cortava 3,2 para 3. Arredonda em 2 casas pra
+                    // não gravar lixo de ponto flutuante. `|| ""` (como o Total p/
+                    // Empregado abaixo): com 0, o React reescreveria "0" por cima do
+                    // "3," enquanto a pessoa ainda digita a vírgula.
+                    value={form.qt_postos || ""}
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value);
+                      set("qt_postos", Number.isFinite(n) ? Math.round(n * 100) / 100 : 0);
+                    }}
                     className="h-8 w-full rounded border border-border bg-background px-2 text-sm outline-none focus:border-primary"
                   />
+                  <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                    Aceita decimal (ex. 3,2) para contrato por hora
+                  </p>
                 </div>
               </div>
             </Section>
@@ -3535,7 +3556,7 @@ function ViewModal({
                 {row.data_vigencia && (
                   <span>Vigência: {new Date(row.data_vigencia + "T00:00:00").toLocaleDateString("pt-BR")}</span>
                 )}
-                {row.qt_postos > 0 && <span>Pessoas: {row.qt_postos}</span>}
+                {row.qt_postos > 0 && <span>Pessoas: {formatPessoas(row.qt_postos)}</span>}
                 {row.arquivo_origem && <span>Arquivo: {row.arquivo_origem}</span>}
               </div>
             </div>
