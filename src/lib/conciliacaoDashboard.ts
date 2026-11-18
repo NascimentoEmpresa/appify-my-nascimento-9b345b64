@@ -34,7 +34,14 @@ export interface SaldoInicialConta {
   conta: string;
   ano: number;
   valor: number;
+  /** SIS-2026-0942: false = cadastro substituído, retirado da conciliação (a linha fica guardada como histórico). Ausente = ativo. */
+  ativo?: boolean | null;
 }
+
+// SIS-2026-0942: saldo inicial de conta substituída (ex.: "HAGG · Sicredi" sem conta, que virou HAGG 119 e HAGG 155) não abre cartão nem
+// entra na conta do saldo. A retirada é pela condição do cadastro (ativo = false), NUNCA por saldo zero: a linha retirada continua no banco,
+// com valor, data e motivo, e é listada à parte em "Retirados da conciliação".
+export const saldoInicialValeNaConciliacao = (i: Pick<SaldoInicialConta, "ativo">) => i.ativo !== false;
 
 export interface ConciliacaoParaSaldo {
   id: string;
@@ -126,6 +133,7 @@ export function saldosMensais(
   /** SIS-2026-0777: id da conta do banco → rótulo para mostrar ("119 — HAGG 119") */
   rotulosDeConta: Map<string, string> = new Map(),
 ): SaldoMensal[] {
+  iniciais = iniciais.filter(saldoInicialValeNaConciliacao);
   const atuais = registrosAtuais(conciliacoes);
   // movimento do mês por grupo (empresa|banco[|conta]): cada conta do banco é conferida à parte
   const mov = new Map<string, Map<string, { e: number; s: number }>>();
@@ -192,6 +200,13 @@ export function saldosMensais(
   }
   const grupoDe = (s: SaldoMensal) => s.empresaId + s.bancoId + (s.contaBancoId ?? "");
   return saida.sort((a, b) => (grupoDe(a) === grupoDe(b) ? (a.mes < b.mes ? -1 : 1) : grupoDe(a) < grupoDe(b) ? -1 : 1));
+}
+
+// SIS-2026-0942: o cartão só existe por causa do saldo inicial manual: nenhum mês tem entrada, saída nem conciliação salva. É o caso das
+// contas substituídas (o cartão fica "Pendente de conferência" para sempre); só esse cartão oferece "Retirar da conciliação". Recebe TODOS
+// os meses do grupo (não só os do filtro de período), para não oferecer a retirada de conta que se movimentou fora do período escolhido.
+export function grupoSoDeSaldoInicial(meses: Pick<SaldoMensal, "entradas" | "saidas" | "conciliacaoId">[]): boolean {
+  return meses.length > 0 && meses.every((m) => m.entradas === 0 && m.saidas === 0 && !m.conciliacaoId);
 }
 
 // SIS-2026-0724: totais de Saldo final (sistema), Saldo final (extrato) e Diferença, para a leitura de cima da conferência mensal.
