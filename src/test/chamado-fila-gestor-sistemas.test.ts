@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { abreNaExecucao, pendenteDoGestorSistemas, podeDevolverAoDev } from "@/pages/chamados/validacaoPresidencia";
+import { abreNaExecucao, pendenteDoGestorSistemas, podeConcluirTarefa, podeDevolverAoDev } from "@/pages/chamados/validacaoPresidencia";
 
 // Aba "Pendente de conclusão" do Painel de Distribuição (18/11/2026, Pablo:
 // "todos que estiverem como pendente do gestor devem aparecer aqui, se não,
@@ -37,6 +37,12 @@ describe("aba Pendente de conclusão abre a execução e o gestor decide (18/11/
     expect(abreNaExecucao(entregue)).toBe(true);
     expect(abreNaExecucao({ ...base, status: "concluido" })).toBe(true);
     expect(abreNaExecucao(base)).toBe(false);
+  });
+  it("Concluir tarefa: só Gerente/Gestor de Sistemas e só depois da entrega", () => {
+    expect(podeConcluirTarefa(entregue, true)).toBe(true);
+    expect(podeConcluirTarefa(entregue, false)).toBe(false);
+    expect(podeConcluirTarefa(base, true)).toBe(false);
+    expect(podeConcluirTarefa({ ...entregue, status: "concluido" }, true)).toBe(false);
   });
   it("só o Gestor de Sistemas devolve, e só o que foi entregue", () => {
     expect(podeDevolverAoDev(entregue, true)).toBe(true);

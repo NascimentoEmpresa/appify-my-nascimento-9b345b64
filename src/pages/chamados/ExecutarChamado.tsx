@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, botaoConcluir, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeDevolverAoDev, podeFinalizarGestao,
+  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, botaoConcluir, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeConcluirTarefa, podeDevolverAoDev, podeFinalizarGestao,
 } from "./validacaoPresidencia";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -644,6 +644,19 @@ export default function ExecutarChamado() {
                     cinza e parado — verde dava a entender que ainda faltava
                     concluir (17/11/2026, Pablo, SIS-2026-0919 / PR #1312).
                     O Gestor de Sistemas segue com o botão verde. */}
+                {/* 18/11/2026 (Pablo): o Gerente/Gestor de Sistemas vê o
+                    "Concluir tarefa" verde EM CIMA do cinza — o cinza mostra
+                    que o dev já fez a parte dele; o verde conclui de fato
+                    (é quando o solicitante vê o chamado concluído). */}
+                {podeConcluirTarefa(chamado, canGestorSistemas) && (
+                  <Button
+                    className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
+                    disabled={!!agindo}
+                    onClick={pedirConclusao}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir tarefa"}
+                  </Button>
+                )}
                 {botaoConcluir(chamado, canGestorSistemas, user?.id) === "parte_dev_concluida" ? (
                   <Button
                     variant="outline"

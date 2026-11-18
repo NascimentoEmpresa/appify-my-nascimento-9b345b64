@@ -233,9 +233,13 @@ export function acaoAoConcluir(
  * quem vê não é Gestor de Sistemas → "parte_dev_concluida", estado cinza e
  * desabilitado — verde dava a entender que o dev ainda precisava concluir.
  * Fica assim sozinho depois do merge da PR, ou logo após o clique do dev.
- * O Gestor de Sistemas segue com o botão verde ("concluir"). Concluir assim
- * mesmo sem ser gestor continua possível pelo seletor "Status atual", com a
- * confirmação CONFIRMA_CONCLUIR_PENDENTE_GESTOR.
+ * Concluir assim mesmo sem ser gestor continua possível pelo seletor
+ * "Status atual", com a confirmação CONFIRMA_CONCLUIR_PENDENTE_GESTOR.
+ *
+ * 18/11/2026 (Pablo): o cinza aparece para TODOS depois da entrega — também
+ * para o Gerente/Gestor de Sistemas, que ganha em cima dele o verde
+ * "Concluir tarefa" (podeConcluirTarefa). Antes o gestor via só um verde
+ * "Concluir chamado" e não dava para saber que o dev já tinha entregado.
  */
 export type BotaoConcluir = "concluir" | "parte_dev_concluida";
 export function botaoConcluir(
@@ -243,10 +247,20 @@ export function botaoConcluir(
   ehGestorSistemas: boolean,
   userId: string | null | undefined,
 ): BotaoConcluir {
-  return aguardandoGestorConcluir(c) && acaoAoConcluir(c, ehGestorSistemas, userId) === "concluir_confirmando"
-    ? "parte_dev_concluida"
-    : "concluir";
+  return aguardandoGestorConcluir(c) ? "parte_dev_concluida" : "concluir";
 }
+
+/**
+ * Botão verde "Concluir tarefa", em cima do cinza "Parte do desenvolvedor
+ * concluída" (18/11/2026, Pablo): só o Gerente de Sistemas
+ * (sistemas_gerente_sistemas) ou o Gestor de Sistemas
+ * (chamados_sistemas_gestor_sistemas), e só com a parte do dev entregue.
+ * Concluir aqui põe o status 'concluido' — é quando o solicitante vê.
+ */
+export const podeConcluirTarefa = (
+  c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  ehGestorSistemas: boolean,
+) => ehGestorSistemas && aguardandoGestorConcluir(c);
 
 /** Texto da confirmação de "concluir_confirmando". */
 export const CONFIRMA_CONCLUIR_PENDENTE_GESTOR =
