@@ -33,6 +33,6 @@ ONDE FICAM AS PECAS
   /usr/local/sbin/puxar-backups                    o script
   /etc/systemd/system/puxar-backups.{service,timer}
   /var/lib/erpcopia/.ssh/leitura, recibos          chaves (restritas nos nos)
-  usuario erpcopia                                 faz a copia, sem senha/sem login
+  usuario erpcopia                                 conta de servico que faz a copia (sem login)
 
 RESTAURAR UM BACKUP: docs/restaurar-backup.md no repositorio.

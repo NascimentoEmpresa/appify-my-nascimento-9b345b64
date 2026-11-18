@@ -36,12 +36,47 @@ flowchart LR
 - **Retenção aqui**: banco 365 dias, anexos 12 cópias por nó.
 - **Tudo cifrado**: a chave privada GPG do Eduardo não está aqui nem nos nós.
 
+## Arquitetura das pastas
+
+```
+/                                   sistema (NVMe, LV ubuntu-lv, 100 GB)
+├── dados/                          1,5 TB ESPELHADO (LV ubuntu-vg/dados, raid1 NVMe + HD WD Red)
+│   └── erp/                        dono: erpcopia
+│       ├── LEIA-ME.txt             mapa das pastas + comandos úteis
+│       ├── backups/
+│       │   ├── banco1/             cópias vindas do banco1
+│       │   └── banco2/             cópias vindas do banco2
+│       │       ├── erp-cluster-AAAAMMDD-HHMM.tar.gz.gpg   banco + papéis, 1/dia (365 dias)
+│       │       └── anexos-AAAAMMDD-HHMM.tar.gz.gpg        todos os anexos, 1/semana (12 cópias)
+│       ├── recibos/
+│       │   ├── banco1/             <arquivo>.ok = "nome tamanho sha256", devolvido ao nó
+│       │   └── banco2/
+│       └── logs/
+│           └── puxar-backups.log   resultado de cada execução (ok / FALHOU)
+├── usr/local/sbin/puxar-backups    o script (cópia de infra/servidor-local/puxar-backups.sh)
+├── etc/systemd/system/
+│   ├── puxar-backups.service       roda como erpcopia, prioridade baixa de disco/CPU
+│   └── puxar-backups.timer         todo dia 05:00 BRT
+└── var/lib/erpcopia/.ssh/
+    ├── leitura                     chave que só LÊ os backups nos nós (rrsync -ro)
+    └── recibos                     chave que só ESCREVE recibos nos nós (rrsync -wo)
+```
+
+Nos nós da nuvem (banco1 e banco2):
+
+```
+/var/backups/erp-cluster/           backups gerados pelo backup-cluster.sh (origem)
+/var/backups/erp-cluster-recibos/   recibos que o servidor da empresa devolve
+/usr/local/sbin/podar-backups.sh    apaga só o que tem recibo (timer 08:30 BRT)
+/home/erpbackup/.ssh/authorized_keys  as duas chaves restritas do servidor da empresa
+```
+
 ## Peças
 
 | Onde | O quê |
 |---|---|
 | `/dados` | LV `ubuntu-vg/dados`, 1,5 TB, **raid1 LVM** (NVMe + `sda`), ext4, `nofail` no fstab |
-| usuário `erpcopia` | sistema, sem login; dono de `/dados/erp`; chaves em `/var/lib/erpcopia/.ssh/{leitura,recibos}` |
+| usuário `erpcopia` | conta de serviço, sem login; dono de `/dados/erp`; chaves em `/var/lib/erpcopia/.ssh/{leitura,recibos}` |
 | `/usr/local/sbin/puxar-backups` | [`puxar-backups.sh`](puxar-backups.sh) |
 | `puxar-backups.timer` | `OnCalendar=*-*-* 08:00:00 UTC`, `Persistent=true` (servidor desligado na hora → roda ao ligar) |
 | nos nós, `/home/erpbackup/.ssh/authorized_keys` | `command="/usr/bin/rrsync -ro /var/backups/erp-cluster",restrict` e `command="/usr/bin/rrsync -wo /var/backups/erp-cluster-recibos",restrict` (backup do arquivo antigo: `.bak-20261118`) |
