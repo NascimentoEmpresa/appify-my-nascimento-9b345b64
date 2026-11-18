@@ -336,14 +336,20 @@ export interface SaldoInicialConciliacao {
 
 const KEY_SALDO_INICIAL = "conciliacao_saldo_inicial";
 
+// A tabela não está em types.ts (gerado fora do repo): um único ponto sem tipo para o saldo inicial, em vez de um `as any` por chamada
+// (SIS-2026-0942 — a catraca do lint conta cada `any`).
+const tabelaSaldoInicial = () => (supabase as any).from("financeiro_conciliacao_saldo_inicial");
+
+async function buscarSaldosIniciais(): Promise<SaldoInicialConciliacao[]> {
+  const { data, error } = await tabelaSaldoInicial().select("*").order("ano");
+  if (error) throw error;
+  return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
+}
+
 export function useSaldosIniciaisConciliacao() {
   return useQuery({
     queryKey: [KEY_SALDO_INICIAL],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").select("*").order("ano");
-      if (error) throw error;
-      return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
-    },
+    queryFn: buscarSaldosIniciais,
     // SIS-2026-0942: quem usa este hook (cartões, saldo do sistema, totais) só enxerga o que vale na conciliação. Os retirados ficam em
     // useSaldosIniciaisRetirados, para o histórico. Filtra no cliente (e não com .eq) para a tela não quebrar antes da migration rodar.
     select: (linhas: SaldoInicialConciliacao[]) => linhas.filter((s) => s.ativo !== false),
@@ -354,11 +360,7 @@ export function useSaldosIniciaisConciliacao() {
 export function useSaldosIniciaisRetirados() {
   return useQuery({
     queryKey: [KEY_SALDO_INICIAL],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").select("*").order("ano");
-      if (error) throw error;
-      return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
-    },
+    queryFn: buscarSaldosIniciais,
     select: (linhas: SaldoInicialConciliacao[]) => linhas.filter((s) => s.ativo === false),
   });
 }
@@ -378,7 +380,7 @@ export function useRetirarSaldoInicialConciliacao() {
       const dados = input.retirar
         ? { ativo: false, inativado_em: agora, inativado_por: auth.user?.id ?? null, motivo_inativacao: input.motivo?.trim() || null, updated_by: auth.user?.id ?? null, updated_at: agora }
         : { ativo: true, updated_by: auth.user?.id ?? null, updated_at: agora };
-      const { error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").update(dados).in("id", input.ids);
+      const { error } = await tabelaSaldoInicial().update(dados).in("id", input.ids);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_SALDO_INICIAL] }),
@@ -393,12 +395,11 @@ export function useSalvarSaldoInicialConciliacao() {
       const chave = { empresa_id: input.empresaId, banco_id: input.bancoId, conta: input.conta, ano: input.ano };
       // Valor em branco = remove a base (volta a "não informado").
       if (input.valor == null) {
-        const { error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").delete().match(chave);
+        const { error } = await tabelaSaldoInicial().delete().match(chave);
         if (error) throw error;
         return;
       }
-      const { error } = await (supabase as any)
-        .from("financeiro_conciliacao_saldo_inicial")
+      const { error } = await tabelaSaldoInicial()
         .upsert({ ...chave, valor: input.valor, updated_by: auth.user?.id ?? null, updated_at: new Date().toISOString() }, { onConflict: "empresa_id,banco_id,conta,ano" });
       if (error) throw error;
     },
