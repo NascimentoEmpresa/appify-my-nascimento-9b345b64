@@ -20,6 +20,10 @@
 --     só vê 'comentario') e avisa o responsável no sino.
 -- O status não muda: o chamado segue "em andamento" com o dev.
 --
+-- NA TELA o botão se chama "Solicitar mais atualizações" (logo abaixo de
+-- "Pedir transferência para outro dev"): o gestor informa ao dev o que mais
+-- precisa ser feito antes de concluir (Pablo, 18/11/2026).
+--
 -- Idempotente. ROLLBACK no fim.
 -- =========================================================================
 SET lock_timeout = '5s';
@@ -39,7 +43,7 @@ BEGIN
     RAISE EXCEPTION 'Só o Gestor de Sistemas devolve o chamado ao desenvolvedor.' USING ERRCODE = '42501';
   END IF;
   IF v_motivo = '' THEN
-    RAISE EXCEPTION 'Informe o motivo da devolução.' USING ERRCODE = '22023';
+    RAISE EXCEPTION 'Informe o que ainda precisa ser feito.' USING ERRCODE = '22023';
   END IF;
 
   SELECT numero, assunto, status, responsavel_id, desenvolvimento_entregue_em INTO v
@@ -61,14 +65,14 @@ BEGIN
 
   INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto, meta)
   VALUES (p_chamado_id, auth.uid(), 'evento',
-          'Devolvido ao desenvolvedor pelo Gestor de Sistemas — motivo: ' || v_motivo,
+          'Mais atualizações solicitadas ao desenvolvedor antes de concluir: ' || v_motivo,
           jsonb_build_object('acao', 'devolvido_ao_dev', 'motivo', v_motivo));
 
   IF v.responsavel_id IS NOT NULL AND v.responsavel_id IS DISTINCT FROM auth.uid() THEN
     BEGIN
       INSERT INTO public.notificacoes (user_id, titulo, mensagem, tipo, link)
       VALUES (v.responsavel_id,
-              'Chamado #' || v.numero || ' devolvido pelo Gestor de Sistemas',
+              'Chamado #' || v.numero || ': mais atualizações solicitadas',
               left(v_motivo, 200),
               'chamado_devolvido_dev',
               '/app/sistemas/chamados/' || p_chamado_id);

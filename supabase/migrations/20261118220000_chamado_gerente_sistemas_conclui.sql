@@ -24,6 +24,11 @@
 -- Nenhuma permissão é dada a ninguém aqui: só passa a valer quem já tem (ou
 -- receber) o "Gerente de Sistemas" em Administração › Acesso por Usuário.
 --
+-- NOME NOVO: a permissão passa a se chamar "Pode concluir chamados" em
+-- Acesso por Usuário (Pablo, 18/11/2026). Só o nome muda — o código
+-- sistemas_gerente_sistemas fica, porque as Solicitações ERP e as funções
+-- acima o usam.
+--
 -- Idempotente. ROLLBACK no fim.
 -- =========================================================================
 SET lock_timeout = '5s';
@@ -104,6 +109,12 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.chamado_confirmado_avisa_gestao() FROM PUBLIC, anon, authenticated;
 
+-- ── 5. Nome na tela de Acesso por Usuário ────────────────────────────────
+UPDATE public.app_menu
+   SET nome = 'Pode concluir chamados'
+ WHERE codigo = 'sistemas_gerente_sistemas'
+   AND nome IS DISTINCT FROM 'Pode concluir chamados';
+
 NOTIFY pgrst, 'reload schema';
 
 -- =========================================================================
@@ -113,4 +124,5 @@ NOTIFY pgrst, 'reload schema';
 -- chamado_confirmado_avisa_gestao() como na mig 20261110009000, e
 -- chamado_entregue_avisa_gestao() como na mig 20261117235500 (sem o menu
 -- sistemas_gerente_sistemas).
+-- UPDATE public.app_menu SET nome = 'Gerente de Sistemas' WHERE codigo = 'sistemas_gerente_sistemas';
 -- NOTIFY pgrst, 'reload schema';

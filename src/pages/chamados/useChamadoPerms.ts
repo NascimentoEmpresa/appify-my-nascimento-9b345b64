@@ -19,8 +19,8 @@ export function useChamadoPerms() {
   // Gestor de Sistemas (mig 20261110009000): finaliza o chamado depois da
   // confirmação do solicitante e conta como gestão — vê e participa de todos
   // os chats. Mesmo OR de chamado_sistema_gestor() no banco.
-  // 18/11/2026 (Pablo): a permissão "Gerente de Sistemas"
-  // (sistemas_gerente_sistemas, das Solicitações ERP) vale como Gestor de
+  // 18/11/2026 (Pablo): a permissão "Pode concluir chamados" (código
+  // sistemas_gerente_sistemas, antes "Gerente de Sistemas") vale como Gestor de
   // Sistemas aqui — conclui a tarefa entregue pelo dev, devolve ao dev e
   // finaliza. Mesmo OR de chamado_gestor_sistemas() (mig 20261118220000).
   const canGestorSistemas = has("chamados_sistemas_gestor_sistemas") || has("sistemas_gerente_sistemas");
