@@ -18,6 +18,7 @@ import {
   type EscopoTreinamento, type PerguntaProva, type Treinamento,
 } from "./core";
 import { MODULOS_ERP } from "@/pages/chamados/types";
+import { enviarArquivo, formatarTamanho } from "@/lib/uploadRetomavel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // =====================================================================
@@ -56,6 +57,10 @@ interface Props {
 export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTravado = null, meuNome, meuId, onFechar, onSalvo }: Props) {
   const { toast } = useToast();
   const [salvando, setSalvando] = useState(false);
+  // Progresso do envio do vídeo/anexo (TUS). Vídeo de 100–200 MB leva
+  // minutos: sem isto o botão ficava em "Salvando…" sem sinal de vida.
+  const [envio, setEnvio] = useState<{ oque: string; pct: number; enviado: number; total: number } | null>(null);
+  const [erroEnvio, setErroEnvio] = useState<string | null>(null);
 
   const [titulo, setTitulo] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -125,6 +130,7 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
     setEscopos(escopoTravado ? [escopoTravado] : t?.escopos?.length ? t.escopos : [escopoPadrao]);
     setCapaPath(t?.capa_path ?? null);
     setVideoArquivo(null); setAnexoArquivo(null); setCapaArquivo(null); setCapaPreview(null);
+    setEnvio(null); setErroEnvio(null);
   }, [aberto, treinamento, escopoPadrao, escopoTravado]);
 
   // O gabarito não vem no card (a prova chega com correta = -1 para todo
@@ -238,7 +244,27 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
     }
 
     setSalvando(true);
+    setErroEnvio(null);
     try {
+      // Upload simples até 6 MB; acima disso TUS em pedaços, com progresso.
+      // Até 18/11/2026 ia tudo no upload simples e o vídeo de ~100 MB do
+      // Pablo morreu com "The object exceeded the maximum allowed size" —
+      // o Storage do cluster tinha teto global de 50 MB (ver
+      // infra/failover/docker-compose.cluster.yml, FILE_SIZE_LIMIT).
+      const subir = async (oque: string, path: string, arquivo: File) => {
+        setEnvio({ oque, pct: 0, enviado: 0, total: arquivo.size });
+        try {
+          await enviarArquivo("treinamentos", path, arquivo, {
+            limiteBytes: LIMITE_UPLOAD_BYTES,
+            onProgresso: (pct, enviado, total) => setEnvio({ oque, pct, enviado, total }),
+          });
+        } catch (e) {
+          throw new Error(`${oque}: ${(e as Error).message}`);
+        } finally {
+          setEnvio(null);
+        }
+      };
+
       // O id sai antes do upload porque ele é a pasta do arquivo no bucket:
       // sem isso o anexo do card novo não teria onde morar.
       const id = treinamento?.id ?? crypto.randomUUID();
@@ -251,8 +277,7 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
       let vPath = videoPath;
       if (videoArquivo) {
         const path = caminhoNoBucket(id, "video", videoArquivo.name);
-        const { error } = await supabase.storage.from("treinamentos").upload(path, videoArquivo);
-        if (error) throw new Error(`vídeo: ${error.message}`);
+        await subir("Vídeo", path, videoArquivo);
         if (treinamento?.video_path) aRemover.push(treinamento.video_path);
         vPath = path;
       } else if (treinamento?.video_path && !videoPath) {
@@ -262,8 +287,7 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
       let aPath = anexoPath, aNome = anexoNome;
       if (anexoArquivo) {
         const path = caminhoNoBucket(id, "anexo", anexoArquivo.name);
-        const { error } = await supabase.storage.from("treinamentos").upload(path, anexoArquivo);
-        if (error) throw new Error(`anexo: ${error.message}`);
+        await subir("Material de apoio", path, anexoArquivo);
         if (treinamento?.anexo_path) aRemover.push(treinamento.anexo_path);
         aPath = path; aNome = anexoArquivo.name;
       } else if (treinamento?.anexo_path && !anexoPath) {
@@ -273,8 +297,7 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
       let cPath = capaPath;
       if (capaArquivo) {
         const path = caminhoNoBucket(id, "capa", capaArquivo.name);
-        const { error } = await supabase.storage.from("treinamentos").upload(path, capaArquivo);
-        if (error) throw new Error(`capa: ${error.message}`);
+        await subir("Foto de capa", path, capaArquivo);
         if (treinamento?.capa_path) aRemover.push(treinamento.capa_path);
         cPath = path;
       } else if (treinamento?.capa_path && !capaPath) {
@@ -312,7 +335,11 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
       toast({ title: treinamento ? "Treinamento atualizado" : "Treinamento publicado" });
       onSalvo(); onFechar();
     } catch (e) {
-      toast({ title: "Não deu para salvar", description: String((e as Error)?.message ?? e), variant: "destructive" });
+      const msg = String((e as Error)?.message ?? e);
+      // O toast some em segundos; o erro do envio fica escrito no rodapé
+      // até a próxima tentativa, para dar tempo de ler e repassar.
+      setErroEnvio(msg);
+      toast({ title: "Não deu para salvar", description: msg, variant: "destructive" });
     } finally {
       setSalvando(false);
     }
@@ -643,10 +670,33 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTra
           )}
         </div>
 
+        {envio && (
+          <div className="space-y-1 rounded-lg border p-3" aria-live="polite">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Enviando {envio.oque.toLowerCase()}… não feche esta janela</span>
+              <span className="tabular-nums">
+                {formatarTamanho(envio.enviado)} de {formatarTamanho(envio.total)} · {envio.pct}%
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className="h-full bg-primary transition-[width]" style={{ width: `${envio.pct}%` }} />
+            </div>
+          </div>
+        )}
+
+        {erroEnvio && !salvando && (
+          <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{erroEnvio}</span>
+          </div>
+        )}
+
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onFechar} disabled={salvando}>Cancelar</Button>
           <Button onClick={salvar} disabled={salvando || !tituloOk || !conteudoOk}>
-            {salvando ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</> : "Salvar"}
+            {salvando
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {envio ? `Enviando ${envio.pct}%` : "Salvando…"}</>
+              : "Salvar"}
           </Button>
         </div>
       </DialogContent>
