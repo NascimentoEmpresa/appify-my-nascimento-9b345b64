@@ -33,7 +33,7 @@ INSERT INTO public."TV_CONFIG" (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE public."TV_CONFIG" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tv_config_select ON public."TV_CONFIG";
-CREATE POLICY tv_config_select ON public."TV_CONFIG" FOR SELECT TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'visualizar'));
+CREATE POLICY tv_config_select ON public."TV_CONFIG" FOR SELECT TO authenticated USING ((SELECT public.has_screen_access((SELECT auth.uid()), 'sistemas_tvs', 'visualizar')));
 -- Escrita só pela tv_definir_filtro (SECURITY DEFINER): sem policy de INSERT/UPDATE/DELETE.
 REVOKE ALL ON public."TV_CONFIG" FROM anon;
 GRANT SELECT ON public."TV_CONFIG" TO authenticated;
