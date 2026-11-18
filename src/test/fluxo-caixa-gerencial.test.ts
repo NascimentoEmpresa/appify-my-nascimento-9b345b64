@@ -163,6 +163,19 @@ describe("filtro 'Faturamento por' (emissão × competência)", () => {
   });
 });
 
+describe("filtro 'Faturamento por' = vencimento (etapa 3)", () => {
+  const n = nf({ id: "v", data_emissao: "2026-10-20", competencia: "2026-10-01" } as Partial<NfEmissaoRow>);
+  it("a nota entra no período do seu vencimento calculado", () => {
+    const resolverVencimento = () => "2026-11-19";
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento })).map((x) => x.id)).toEqual(["v"]);
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento: () => "2026-12-05" }))).toHaveLength(0);
+  });
+  it("sem vencimento calculável a nota não entra", () => {
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento: () => null }))).toHaveLength(0);
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento" }))).toHaveLength(0);
+  });
+});
+
 describe("detalhamento e conciliação (etapa 1)", () => {
   it("a soma das linhas de detalhe fecha com o KPI de bruto e de líquido", () => {
     const notas = notasDoPeriodo([nf({ id: "1" }), nf({ id: "2", vlr_bruto_total: 500, vlr_liquido_total: 450 } as Partial<NfEmissaoRow>)], f());

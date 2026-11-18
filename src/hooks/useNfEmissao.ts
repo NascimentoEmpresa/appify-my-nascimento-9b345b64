@@ -46,6 +46,9 @@ export interface NfEmissaoRow {
   conta_vinculada_valor_recebido?: number | null;
   // SIS-2026-0609: soma das multas/glosas/outros descontos pós-emissão dos itens (não está no líquido).
   descontos_pos_emissao_total?: number | null;
+  // Fluxo de Caixa Gerencial (etapa 3): vencimento ajustado pelo Financeiro (migration 20261119110000). Nulo = vale o cálculo pelo prazo do contrato.
+  data_vencimento?: string | null;
+  vencimento_origem?: "manual" | null;
   recebimento_extra: number;
   falta_receber: number;
   pago_a_mais: number;

@@ -13,13 +13,15 @@ import { saldoPorConta, estaAtivo, type ContaGarantida, type MovimentoContaGaran
 //   · aplicações → Aplicações Financeiras (mesma função da tela, kpisAplicacoes).
 
 /** SIS-2026-XXXX (etapa 1): data que define QUAIS notas entram no faturamento (bruto, líquido, pendente). O recebimento é SEMPRE pela data de pagamento. */
-export type TipoDataGerencial = "emissao" | "competencia";
+export type TipoDataGerencial = "emissao" | "competencia" | "vencimento";
 
 export interface FiltroGerencial {
   ini: string; // YYYY-MM-DD
   fim: string;
   /** padrão: emissão */
   tipoData?: TipoDataGerencial;
+  /** etapa 3: vencimento calculado da nota (ajuste manual › prazo do contrato › emissão + 30); usado quando tipoData = "vencimento" */
+  resolverVencimento?: (n: NfEmissaoRow) => string | null;
   empresaId: string; // "" = todas
   contratoId: string; // "" = todos
 }
@@ -67,7 +69,8 @@ export function notasDoPeriodo(nfs: NfEmissaoRow[], f: FiltroGerencial): NfEmiss
 }
 
 /** Data usada para enquadrar a nota no faturamento: emissão (padrão) ou competência. */
-export function dataDoFaturamento(n: Pick<NfEmissaoRow, "data_emissao" | "competencia">, f: Pick<FiltroGerencial, "tipoData">): string | null {
+export function dataDoFaturamento(n: NfEmissaoRow, f: Pick<FiltroGerencial, "tipoData" | "resolverVencimento">): string | null {
+  if (f.tipoData === "vencimento") return f.resolverVencimento ? f.resolverVencimento(n) : null;
   return f.tipoData === "competencia" ? n.competencia : n.data_emissao;
 }
 

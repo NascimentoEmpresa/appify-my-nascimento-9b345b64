@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { useContratosAtivos, useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
+import { useContratosERP } from "@/hooks/useContratosERP";
 import { useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
 import { useContasGarantidas, useMovimentosContaGarantida } from "@/hooks/useContaGarantida";
 import { useAplicacoesFinanceiras, useHistoricoImportadoAplicacao, useResgatesCaixa } from "@/hooks/useAplicacaoFinanceira";
@@ -22,6 +23,10 @@ import {
 } from "./fluxo-caixa-gerencial/regras";
 import { DetalheIndicadorDialog, type IndicadorGerencial } from "./fluxo-caixa-gerencial/DetalheIndicadorDialog";
 import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
+import { PendentesPanel } from "./fluxo-caixa-gerencial/PendentesPanel";
+import { carteiraPendente, type ContratoParaPendentes } from "./fluxo-caixa-gerencial/pendentes";
+import { vencimentoDaNota } from "./fluxo-caixa-gerencial/vencimento";
+import { naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
 
 // SIS-2026-0871: Fluxo de Caixa Gerencial (pedido do Ruan, Financeiro; mockup dele). Só leitura. Veja regras.ts para a origem de cada número.
 export const MENU_FLUXO_GERENCIAL = "fluxo-caixa-gerencial";
@@ -62,7 +67,17 @@ export default function FluxoCaixaGerencial() {
   const contratosDaEmpresa = useMemo(() => contratos.filter((c) => !rascunho.empresaId || c.empresa_id === rascunho.empresaId), [contratos, rascunho.empresaId]);
 
   const { data: nfs = [], isLoading: carregandoNfs } = useNfsEmissao(null, { todasEmpresas: true });
-  const notas = useMemo(() => notasDoPeriodo(nfs, filtro), [nfs, filtro]);
+  // Etapa 3: prazo de pagamento e cliente de cada contrato (vencimento calculado e aging dos pendentes).
+  const { data: contratosERP = [] } = useContratosERP({ todasEmpresas: true });
+  const contratosPendentes = useMemo(
+    () => new Map<string, ContratoParaPendentes>(contratosERP.map((c) => [c.id, { nome: c.nome, cliente: c.cliente, prazoPagamento: c.prazo_pagamento }])),
+    [contratosERP],
+  );
+  const filtroNotas = useMemo<FiltroGerencial>(
+    () => ({ ...filtro, resolverVencimento: (n) => vencimentoDaNota(n, contratosPendentes.get(n.contrato_id)?.prazoPagamento)?.data ?? null }),
+    [filtro, contratosPendentes],
+  );
+  const notas = useMemo(() => notasDoPeriodo(nfs, filtroNotas), [nfs, filtroNotas]);
   const { data: itensPorNf } = useItensNfEmissaoEmLote(notas.map((n) => n.id));
   // SIS-2026-XXXX: o recebido é o que ENTROU no período (data de pagamento), independente de quando a nota foi emitida; o resto segue o recorte de faturamento.
   const recebidas = useMemo(() => notasRecebidasNoPeriodo(nfs, filtro), [nfs, filtro]);
@@ -71,7 +86,13 @@ export default function FluxoCaixaGerencial() {
   const detalheRecebidas = useMemo(() => linhasDetalheNotas(recebidas, undefined), [recebidas]);
   const nomeEmpresa = (id: string) => empresas.find((e) => e.id === id)?.nome ?? "—";
   const nomeContrato = (id: string) => contratos.find((c) => c.id === id)?.nome ?? "—";
-  const serieNf = useMemo(() => serieNotas(nfs, filtro), [nfs, filtro]);
+  const serieNf = useMemo(() => serieNotas(nfs, filtroNotas), [nfs, filtroNotas]);
+  const hojeIso = useMemo(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }, []);
+  const carteira = useMemo(
+    () => carteiraPendente(nfs, itensPorNf, contratosPendentes, { empresaId: filtro.empresaId, contratoId: filtro.contratoId }, hojeIso),
+    [nfs, itensPorNf, contratosPendentes, filtro.empresaId, filtro.contratoId, hojeIso],
+  );
+  const idsDoRecorte = useMemo(() => new Set(notas.filter((n) => !naoContabilizaKpi(n)).map((n) => n.id)), [notas]);
 
   const { data: contas = [] } = useContasGarantidas();
   const { data: movimentos = [] } = useMovimentosContaGarantida();
@@ -131,6 +152,7 @@ export default function FluxoCaixaGerencial() {
                 <SelectContent>
                   <SelectItem value="emissao">Data de emissão</SelectItem>
                   <SelectItem value="competencia">Competência</SelectItem>
+                  <SelectItem value="vencimento">Vencimento (calculado)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -328,6 +350,9 @@ export default function FluxoCaixaGerencial() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Recebimentos pendentes (aging) */}
+        <PendentesPanel carteira={carteira} idsDoRecorte={idsDoRecorte} kpiPendente={kNotas.pendente} referencia={hojeIso} empresaNome={nomeEmpresa} />
 
         {/* Necessidade de caixa */}
         <Card>
