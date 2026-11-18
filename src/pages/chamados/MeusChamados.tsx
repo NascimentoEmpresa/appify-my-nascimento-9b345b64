@@ -562,7 +562,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
-                        <StatusBadge status={c.status} />
+                        <StatusBadge status={c.status} semRetorno={c.concluido_sem_retorno} />
                         <SeloDesenvolvimento chamado={c} paraSolicitante />
                         {avaliacaoLiberada(validacoes[c.id]).liberada && <SeloConfirmacao chamado={c} paraSolicitante />}
                         <SeloEtapaValidacao v={validacoes[c.id]} compacto />
