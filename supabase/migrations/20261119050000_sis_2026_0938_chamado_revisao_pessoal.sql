@@ -62,26 +62,26 @@ ALTER TABLE public."CHAMADO_SISTEMA_REVISAO" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS chamado_revisao_dono_select ON public."CHAMADO_SISTEMA_REVISAO";
 CREATE POLICY chamado_revisao_dono_select ON public."CHAMADO_SISTEMA_REVISAO"
   FOR SELECT TO authenticated
-  USING (user_id = auth.uid());
+  USING (user_id = (SELECT auth.uid()));
 
 DROP POLICY IF EXISTS chamado_revisao_dono_insert ON public."CHAMADO_SISTEMA_REVISAO";
 CREATE POLICY chamado_revisao_dono_insert ON public."CHAMADO_SISTEMA_REVISAO"
   FOR INSERT TO authenticated
   WITH CHECK (
-    user_id = auth.uid()
+    user_id = (SELECT auth.uid())
     AND EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.id = chamado_id)
   );
 
 DROP POLICY IF EXISTS chamado_revisao_dono_update ON public."CHAMADO_SISTEMA_REVISAO";
 CREATE POLICY chamado_revisao_dono_update ON public."CHAMADO_SISTEMA_REVISAO"
   FOR UPDATE TO authenticated
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
+  USING (user_id = (SELECT auth.uid()))
+  WITH CHECK (user_id = (SELECT auth.uid()));
 
 DROP POLICY IF EXISTS chamado_revisao_dono_delete ON public."CHAMADO_SISTEMA_REVISAO";
 CREATE POLICY chamado_revisao_dono_delete ON public."CHAMADO_SISTEMA_REVISAO"
   FOR DELETE TO authenticated
-  USING (user_id = auth.uid());
+  USING (user_id = (SELECT auth.uid()));
 
 REVOKE ALL ON public."CHAMADO_SISTEMA_REVISAO" FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public."CHAMADO_SISTEMA_REVISAO" TO authenticated;
