@@ -280,7 +280,10 @@ export default function ExecutarChamado() {
     if (!m) { toast({ title: "Informe o que ainda precisa ser feito", variant: "destructive" }); return; }
     if (agindo) return;
     setAgindo("devolver");
-    const { error } = await (supabase as any).rpc("chamado_devolver_ao_dev", { p_chamado_id: id, p_motivo: m });
+    // Sem `as any` (catraca do lint): a RPC ainda não está nos tipos gerados.
+    const rpcSemTipo = supabase.rpc.bind(supabase) as unknown as
+      (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+    const { error } = await rpcSemTipo("chamado_devolver_ao_dev", { p_chamado_id: id, p_motivo: m });
     setAgindo(null);
     if (error) { toast({ title: "Erro ao solicitar atualizações", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Atualizações solicitadas ao desenvolvedor", description: "Ele foi avisado do que ainda precisa ser feito." });
