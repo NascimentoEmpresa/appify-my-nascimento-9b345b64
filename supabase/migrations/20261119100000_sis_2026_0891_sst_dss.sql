@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS public."SST_DSS_CIENCIA" (
 );
 CREATE INDEX IF NOT EXISTS idx_sst_dss_ciencia_contrato ON public."SST_DSS_CIENCIA" (dss_id, empresa, filial);
 CREATE INDEX IF NOT EXISTS idx_sst_dss_ciencia_emp ON public."SST_DSS_CIENCIA" (empregado_id, dss_id);
+CREATE INDEX IF NOT EXISTS sst_dss_ciencia_folha_id_idx ON public."SST_DSS_CIENCIA" (folha_id);
 
 -- ── 3) Imutabilidade ────────────────────────────────────────────────────
 -- DSS publicado: conteúdo, público e semana congelados. Só pode encerrar
