@@ -26,6 +26,8 @@
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+// SIS-2026-0929: responde pelo número do canal da conversa (WA_CANAL).
+import { numeroDaConversa } from "../_shared/whatsapp-canal.ts";
 import { descobrirWaba } from "../_shared/whatsapp-waba.ts";
 import { barradoPorMarketing, statusNaMeta as statusNaMetaComum } from "../_shared/whatsapp-saudacao.ts";
 
@@ -195,6 +197,7 @@ Deno.serve(async (req) => {
   const { data: contato } = await db.from("WA_CONTATO")
     .select("wa_id").eq("id", conversa.contato_id).maybeSingle();
   if (!contato) return json({ error: "contato não encontrado" }, 404);
+  const numero = await numeroDaConversa(db, conversaId, PHONE_NUMBER_ID);
 
   // Consultada aqui, e não recebida do front: a janela pode ter fechado
   // entre abrir o menu e escolher a mensagem.
@@ -248,7 +251,7 @@ Deno.serve(async (req) => {
         : { ...base, type: "text", text: { body: texto } })
     : comoTemplate(tpl.template_nome);
 
-  const enviarGraph = (m: Record<string, unknown>) => fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+  const enviarGraph = (m: Record<string, unknown>) => fetch(`${GRAPH}/${numero}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(m),

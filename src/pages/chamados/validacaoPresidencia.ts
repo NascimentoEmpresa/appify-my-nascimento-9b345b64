@@ -11,6 +11,7 @@
 // linha do tempo do botão "Status" — para as telas e os testes concordarem.
 // =====================================================================
 import type { Chamado } from "./types";
+import { parteDevConcluida } from "@/lib/chamados/prazoDesenvolvimento";
 
 /** Espelho do CHECK de etapa na tabela (mig 20260930000266). */
 export const ETAPAS_VALIDACAO = {
@@ -165,12 +166,55 @@ export function podeFinalizarGestao(
 // que o chamado foi concluído. Depois seguem a confirmação do solicitante e a
 // finalização do gestor, como antes.
 
-const ENCERRADOS = new Set(["concluido", "cancelado", "reprovado"]);
-
-/** PR mergeada e o Gestor de Sistemas ainda não concluiu o chamado? */
+/** PR mergeada e o Gestor de Sistemas ainda não concluiu o chamado?
+ *  Mesmo sinal do selo "Parte do desenvolvedor concluída" (parteDevConcluida). */
 export const aguardandoGestorConcluir = (
   c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
-) => !ENCERRADOS.has(c.status) && !!c.desenvolvimento_entregue_em;
+) => parteDevConcluida(c);
+
+/**
+ * Fila do Gestor de Sistemas — aba "Pendente de conclusão" do Painel de
+ * Distribuição (18/11/2026, Pablo: "todos que estiverem como pendente do
+ * gestor devem aparecer aqui, se não, onde o gestor vai concluir?").
+ * Antes a aba só tinha os já concluídos e confirmados (falta FINALIZAR); os
+ * entregues pelo dev ou pelo merge da PR (falta CONCLUIR) não apareciam.
+ * Concluído e ainda sem a confirmação do solicitante NÃO entra: aí quem deve
+ * é o solicitante.
+ */
+export const pendenteDoGestorSistemas = (
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">
+    & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+) => aguardandoGestorConcluir(c) || aguardandoGestorSistemas(c);
+
+/**
+ * Clique na linha do Painel de Distribuição: abre a EXECUÇÃO (tela do dev,
+ * com chat, histórico, PR e os botões do gestor) em vez da distribuição.
+ * Concluído desde 10/11/2026; pendente do Gestor de Sistemas desde
+ * 18/11/2026 (Pablo: "TOTALMENTE O CONTRÁRIO" — o gestor caía na tela de
+ * distribuir uma tarefa que só falta ele concluir ou devolver).
+ */
+export const abreNaExecucao = (
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">
+    & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+) => c.status === "concluido" || pendenteDoGestorSistemas(c);
+
+/**
+ * "Solicitar mais atualizações" (migs 20261118210000 e 20261118230000): só
+ * quem pode concluir chamados (Gestor de Sistemas / "Pode concluir
+ * chamados"), em dois momentos:
+ *   · parte do dev entregue e o chamado ainda não concluído;
+ *   · chamado concluído que o gestor ainda NÃO finalizou (confirmado ou não
+ *     pelo solicitante) — 18/11/2026, Pablo, no SIS-2026-0934: "em produção
+ *     não aparece o botão". Aí o chamado volta para 'em_andamento'.
+ * ESPELHA a RPC chamado_devolver_ao_dev. gestao_finalizada_em não lido
+ * (undefined) não libera o concluído.
+ */
+export const podeDevolverAoDev = (
+  c: Pick<Chamado, "status">
+    & Partial<Pick<Chamado, "desenvolvimento_entregue_em" | "gestao_finalizada_em">>,
+  ehGestorSistemas: boolean,
+) => ehGestorSistemas && (aguardandoGestorConcluir(c)
+  || (c.status === "concluido" && c.gestao_finalizada_em === null));
 
 /**
  * O que o botão "Concluir chamado" faz para este usuário (17/11/2026, Pablo):
@@ -191,6 +235,40 @@ export function acaoAoConcluir(
   }
   return ehGestorSistemas ? "concluir" : "concluir_confirmando";
 }
+
+/**
+ * Como o botão "Concluir chamado" aparece (17/11/2026, Pablo): já entregue e
+ * quem vê não é Gestor de Sistemas → "parte_dev_concluida", estado cinza e
+ * desabilitado — verde dava a entender que o dev ainda precisava concluir.
+ * Fica assim sozinho depois do merge da PR, ou logo após o clique do dev.
+ * Concluir assim mesmo sem ser gestor continua possível pelo seletor
+ * "Status atual", com a confirmação CONFIRMA_CONCLUIR_PENDENTE_GESTOR.
+ *
+ * 18/11/2026 (Pablo): o cinza aparece para TODOS depois da entrega — também
+ * para o Gerente/Gestor de Sistemas, que ganha em cima dele o verde
+ * "Concluir tarefa" (podeConcluirTarefa). Antes o gestor via só um verde
+ * "Concluir chamado" e não dava para saber que o dev já tinha entregado.
+ */
+export type BotaoConcluir = "concluir" | "parte_dev_concluida";
+export function botaoConcluir(
+  c: Pick<Chamado, "status" | "responsavel_id"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  ehGestorSistemas: boolean,
+  userId: string | null | undefined,
+): BotaoConcluir {
+  return aguardandoGestorConcluir(c) ? "parte_dev_concluida" : "concluir";
+}
+
+/**
+ * Botão verde "Concluir tarefa", em cima do cinza "Parte do desenvolvedor
+ * concluída" (18/11/2026, Pablo): só o Gerente de Sistemas
+ * (sistemas_gerente_sistemas) ou o Gestor de Sistemas
+ * (chamados_sistemas_gestor_sistemas), e só com a parte do dev entregue.
+ * Concluir aqui põe o status 'concluido' — é quando o solicitante vê.
+ */
+export const podeConcluirTarefa = (
+  c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  ehGestorSistemas: boolean,
+) => ehGestorSistemas && aguardandoGestorConcluir(c);
 
 /** Texto da confirmação de "concluir_confirmando". */
 export const CONFIRMA_CONCLUIR_PENDENTE_GESTOR =

@@ -1,0 +1,101 @@
+name: Alerta do Grafana por DM
+
+# ---------------------------------------------------------------------------
+# 18/11/2026 — ponte Grafana -> DM do Eduardo no Discord
+#
+# O Grafana só sabe mandar para Discord por webhook de CANAL, e alerta de
+# infraestrutura vai por DM, só para o Eduardo, nunca no canal coletivo (mesma
+# regra do vigia_banco.yml). Então o contato "eduardo" do Grafana tem um
+# webhook que dispara ESTE workflow (workflow_dispatch pela API do GitHub,
+# token fine-grained só com Actions: write neste repositório), e daqui sai a
+# DM pelo bot, com o mesmo código do vigia_banco.
+#
+# Por que pelo GitHub e não por uma Edge Function: alerta de "API de um nó
+# fora" precisa chegar justamente quando o cluster está com problema. O
+# caminho Grafana Cloud -> GitHub -> Discord não passa por nenhuma máquina
+# nossa.
+#
+# O que chega em `alerta` é o JSON montado pelo payload customizado do webhook
+# no Grafana: {"status": "firing|resolved", "alertas": [...]} — os campos de
+# .Alerts do Grafana (labels, annotations, startsAt, status).
+#
+# Teste sem esperar incidente: Actions -> este workflow -> Run workflow, com o
+# campo `alerta` vazio (manda uma DM de teste), ou o "Test" do contato no
+# Grafana.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      alerta:
+        description: 'JSON do Grafana (vazio = DM de teste)'
+        required: false
+        default: ''
+
+permissions: {}
+
+concurrency:
+  # Rajada de alertas não pode atropelar: uma DM por vez, na ordem.
+  group: alerta-grafana
+  cancel-in-progress: false
+
+jobs:
+  dm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Mandar DM
+        env:
+          ALERTA: ${{ inputs.alerta }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DESTINO: ${{ vars.DISCORD_USER_ID_EDUARDO || '1384572666752663653' }}
+        run: |
+          set -uo pipefail
+          PAINEL="https://redgarlic110.grafana.net/d/erp-saude-producao"
+
+          if [ -z "$ALERTA" ]; then
+            CORPO=":test_tube: **Teste do alerta do Grafana** — se chegou, o caminho Grafana → GitHub → Discord está funcionando."
+          elif ! echo "$ALERTA" | jq -e . >/dev/null 2>&1; then
+            CORPO=$(printf ':warning: **Alerta do Grafana com formato inesperado**\n```\n%s\n```' "${ALERTA:0:1500}")
+          else
+            STATUS=$(echo "$ALERTA" | jq -r '.status // "firing"')
+            case "$STATUS" in
+              resolved) TITULO=":white_check_mark: **Grafana: normalizou**" ;;
+              *)        TITULO=":rotating_light: **Grafana: alerta disparado**" ;;
+            esac
+            # Uma linha por alerta: nome, onde (alvo/checagem/no) e o resumo.
+            LINHAS=$(echo "$ALERTA" | jq -r '
+              .alertas[]? |
+              (if .status == "resolved" then "✅" else "🔴" end) + " **" + (.labels.alertname // "?") + "**" +
+              ([.labels.alvo, .labels.checagem, .labels.no] | map(select(. != null and . != "")) |
+                if length > 0 then " — " + join(" / ") else "" end) +
+              (if (.annotations.summary // "") != "" then "\n    " + .annotations.summary else "" end)')
+            CORPO=$(printf '%s\n%s\n\n%s' "$TITULO" "$LINHAS" "$PAINEL")
+          fi
+          # Limite do Discord: 2000 caracteres por mensagem.
+          CORPO="${CORPO:0:1900}"
+
+          if [ -z "${DISCORD_TOKEN:-}" ]; then
+            echo "::error::DISCORD_TOKEN não configurado — ninguém foi avisado."
+            echo "$CORPO"; exit 1
+          fi
+
+          API="https://discord.com/api/v10"
+          UA="DiscordBot (https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64, 1.0)"
+          # A DM não existe até ser aberta: este POST devolve o id do canal
+          # privado entre o bot e o destinatário.
+          CANAL=$(curl -sS -X POST "$API/users/@me/channels" \
+                    -H "Authorization: Bot $DISCORD_TOKEN" \
+                    -H "Content-Type: application/json" -A "$UA" \
+                    -d "{\"recipient_id\":\"$DESTINO\"}" \
+                  | jq -r '.id // empty')
+          if [ -z "$CANAL" ]; then
+            echo "::error::Não consegui abrir DM no Discord. Ninguém foi avisado."
+            echo "$CORPO"; exit 1
+          fi
+          jq -n --arg c "$CORPO" '{content:$c}' \
+            | curl -sS -f -X POST "$API/channels/$CANAL/messages" \
+                -H "Authorization: Bot $DISCORD_TOKEN" \
+                -H "Content-Type: application/json" -A "$UA" -d @- > /dev/null \
+            && echo "DM enviada." \
+            || { echo "::error::Discord recusou a mensagem."; echo "$CORPO"; exit 1; }

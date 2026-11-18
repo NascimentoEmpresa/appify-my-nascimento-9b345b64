@@ -255,12 +255,33 @@ export function chamadosComMesmaData<T extends ChamadoComPrazo>(prazo: Date | nu
 
 // ---- Selo do andamento ------------------------------------------------
 
-export type SituacaoDesenvolvimento = "na_fila" | "em_desenvolvimento" | null;
+export type SituacaoDesenvolvimento = "na_fila" | "em_desenvolvimento" | "parte_dev_concluida" | null;
 
-/** Em andamento com início marcado = "Em desenvolvimento"; sem início = "Na fila". */
+// ---- Parte do desenvolvedor concluída (17/11/2026, Pablo) ----------------
+// Depois do merge da PR (ou do clique do dev em "Concluir chamado"), a coluna
+// desenvolvimento_entregue_em fica preenchida e o status NÃO muda — continua
+// 'em_andamento' até o Gestor de Sistemas concluir (mig 20261117235500 /
+// 20261118120000). Por isso a tela dizia "Em desenvolvimento · Em andamento"
+// com um botão verde "Concluir chamado" logo abaixo do aviso "PR mergeada":
+// dava a entender que o dev ainda precisava concluir (SIS-2026-0919, PR #1312).
+// Este é o sinal único de "a parte do dev acabou, falta o gestor".
+
+/** Desenvolvimento entregue ao Gestor de Sistemas e o chamado ainda não encerrado? */
+export const parteDevConcluida = (
+  c: { status: string; desenvolvimento_entregue_em?: string | null },
+) => ativo(c.status) && !!c.desenvolvimento_entregue_em;
+
+export const ROTULO_PARTE_DEV_CONCLUIDA = "Parte do desenvolvedor concluída";
+export const ROTULO_AGUARDANDO_GESTOR = "Aguardando Gestor de Sistemas";
+
+/**
+ * Em andamento com início marcado = "Em desenvolvimento"; sem início = "Na fila".
+ * Entregue ao gestor = "Parte do desenvolvedor concluída" (vem antes do status).
+ */
 export function situacaoDesenvolvimento(
-  c: { status: string; desenvolvimento_iniciado_em?: string | null },
+  c: { status: string; desenvolvimento_iniciado_em?: string | null; desenvolvimento_entregue_em?: string | null },
 ): SituacaoDesenvolvimento {
+  if (parteDevConcluida(c)) return "parte_dev_concluida";
   if (c.status === "em_andamento") return c.desenvolvimento_iniciado_em ? "em_desenvolvimento" : "na_fila";
   return null;
 }
@@ -288,13 +309,15 @@ export const prazoSolicitanteValido = (v: string, hoje = new Date()) =>
 
 // ---- Painel do Desenvolvedor (layout do mockup, SIS-2026-0763) ---------
 
-export type StatusPainel = "em_desenvolvimento" | "em_analise" | "aguardando_retorno" | "concluido" | "reprovado" | "cancelado";
+export type StatusPainel = "em_desenvolvimento" | "aguardando_gestor" | "em_analise" | "aguardando_retorno" | "concluido" | "reprovado" | "cancelado";
 
 /**
  * Status como o Painel do Desenvolvedor mostra: em andamento com início
- * marcado = "Em desenvolvimento"; aberto ou na fila sem início = "Em análise".
+ * marcado = "Em desenvolvimento"; aberto ou na fila sem início = "Em análise";
+ * entregue ao gestor (PR mergeada) = "Aguardando Gestor de Sistemas".
  */
-export function statusPainel(c: { status: string; desenvolvimento_iniciado_em?: string | null }): StatusPainel {
+export function statusPainel(c: { status: string; desenvolvimento_iniciado_em?: string | null; desenvolvimento_entregue_em?: string | null }): StatusPainel {
+  if (parteDevConcluida(c)) return "aguardando_gestor";
   if (c.status === "em_andamento" && c.desenvolvimento_iniciado_em) return "em_desenvolvimento";
   if (c.status === "aberto" || c.status === "em_andamento") return "em_analise";
   return c.status as StatusPainel;
@@ -302,6 +325,7 @@ export function statusPainel(c: { status: string; desenvolvimento_iniciado_em?: 
 
 export const STATUS_PAINEL: Record<StatusPainel, { label: string; cls: string; cor: string }> = {
   em_desenvolvimento: { label: "Em desenvolvimento", cls: "border-info/30 bg-info/10 text-info",                   cor: "hsl(var(--info))" },
+  aguardando_gestor:  { label: ROTULO_AGUARDANDO_GESTOR, cls: "border-muted-foreground/30 bg-muted text-muted-foreground", cor: "hsl(var(--primary))" },
   em_analise:         { label: "Em análise",         cls: "border-muted-foreground/20 bg-muted text-muted-foreground", cor: "hsl(var(--warning))" },
   aguardando_retorno: { label: "Aguardando retorno", cls: "border-warning/40 bg-warning/10 text-warning",          cor: "hsl(var(--destructive))" },
   concluido:          { label: "Concluído",          cls: "border-success/30 bg-success/10 text-success",          cor: "hsl(var(--success))" },

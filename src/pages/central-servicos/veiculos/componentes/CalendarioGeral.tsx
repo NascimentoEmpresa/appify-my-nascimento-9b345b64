@@ -6,12 +6,17 @@ import { cn } from "@/lib/utils";
 import { agendamentoVivo } from "@/lib/veiculos/concluirAgendamento";
 import {
   LABEL_TURNO,
-  disponibilidadeDoVeiculo,
   formatarData,
   hojeISO,
   type Agendamento,
   type VeiculoFrota,
 } from "@/hooks/useAgendamentoVeiculos";
+import {
+  descreverPeriodo,
+  indisponivelNoDia,
+  periodoVigenteOuFuturo,
+  porqueIndisponivel,
+} from "@/lib/veiculos/indisponibilidade";
 
 interface Props {
   agendamentos: Agendamento[];
@@ -40,7 +45,19 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
   const [diaAberto, setDiaAberto] = useState<string | null>(null);
 
   const hoje = hojeISO();
-  const emManutencao = frota.filter((v) => !disponibilidadeDoVeiculo(v, hoje).disponivel);
+  // Indisponibilidade é um período (SIS-2026-0930): entra na lista o que está
+  // valendo hoje OU ainda vai começar; o que já terminou some. E cada dia do
+  // calendário mostra os carros bloqueados nele, ao lado das reservas.
+  const foraDeOperacao = useMemo(
+    () => frota
+      .map((v) => ({ v, p: periodoVigenteOuFuturo(v, hoje) }))
+      .filter((x): x is { v: VeiculoFrota; p: NonNullable<typeof x.p> } => !!x.p)
+      .map((x) => ({ ...x, agora: indisponivelNoDia(x.v, hoje) }))
+      .sort((a, b) => Number(b.agora) - Number(a.agora) || (a.p.inicio ?? "").localeCompare(b.p.inicio ?? "")),
+    [frota, hoje],
+  );
+  const bloqueadosNoDia = (data: string) =>
+    foraDeOperacao.filter((x) => indisponivelNoDia(x.v, data)).map((x) => x.v);
 
   const confirmados = useMemo(
     // Concluído (10/11/2026) continua no calendário: a viagem aconteceu.
@@ -68,6 +85,7 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
   };
 
   const agendamentosDoDiaAberto = diaAberto ? doDia(diaAberto) : [];
+  const bloqueadosDoDiaAberto = diaAberto ? bloqueadosNoDia(diaAberto) : [];
 
   return (
     <div className="space-y-4">
@@ -93,6 +111,7 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
           {celulas.map((c, i) => {
             if (!c) return <div key={`v${i}`} />;
             const reservas = doDia(c.data);
+            const bloqueados = bloqueadosNoDia(c.data);
             const ehHoje = c.data === hoje;
             const aberto = diaAberto === c.data;
             return (
@@ -116,6 +135,19 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
                   {c.dia}
                 </span>
                 <div className="flex w-full flex-col gap-0.5">
+                  {bloqueados.slice(0, 2).map((v) => (
+                    <span
+                      key={`b${v.id}`}
+                      className="flex items-center gap-0.5 truncate rounded bg-amber-500/15 px-1 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+                      title={`${v.nome} — ${porqueIndisponivel(v)}`}
+                    >
+                      <Wrench className="h-2.5 w-2.5 shrink-0" />
+                      <span className="truncate">{v.nome}</span>
+                    </span>
+                  ))}
+                  {bloqueados.length > 2 && (
+                    <span className="px-1 text-[10px] text-amber-700 dark:text-amber-300">+{bloqueados.length - 2} parado(s)</span>
+                  )}
                   {reservas.slice(0, 2).map((r) => (
                     <span
                       key={r.id}
@@ -141,8 +173,25 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
             {formatarData(diaAberto)} — {agendamentosDoDiaAberto.length}{" "}
             {agendamentosDoDiaAberto.length === 1 ? "reserva" : "reservas"}
           </h4>
+          {bloqueadosDoDiaAberto.length > 0 && (
+            <ul className="mb-3 space-y-1.5">
+              {bloqueadosDoDiaAberto.map((v) => (
+                <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-sm">
+                  <span className="flex items-center gap-1.5 font-medium text-foreground">
+                    <Wrench className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                    {v.nome}
+                  </span>
+                  <span className="text-xs text-amber-700 dark:text-amber-300">
+                    {porqueIndisponivel(v)} · {descreverPeriodo(periodoVigenteOuFuturo(v, hoje) ?? { inicio: null, fim: null })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           {agendamentosDoDiaAberto.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Frota inteira livre neste dia.</p>
+            <p className="text-sm text-muted-foreground">
+              {bloqueadosDoDiaAberto.length ? "Nenhuma reserva neste dia." : "Frota inteira livre neste dia."}
+            </p>
           ) : (
             <ul className="space-y-2">
               {agendamentosDoDiaAberto.map((a) => (
@@ -178,21 +227,22 @@ export function CalendarioGeral({ agendamentos, frota }: Props) {
         </Card>
       )}
 
-      {emManutencao.length > 0 && (
+      {foraDeOperacao.length > 0 && (
         <Card className="p-4">
           <h4 className="mb-2 flex items-center gap-2 text-sm font-bold text-foreground">
             <Wrench className="h-4 w-4 text-amber-500" />
             Fora de operação
           </h4>
           <p className="mb-3 text-xs text-muted-foreground">
-            Definido no módulo de Patrimônio. Esta tela apenas respeita o que está marcado lá.
+            Definido no módulo de Patrimônio. O veículo só fica bloqueado nos dias do período — fora deles, agenda normal.
           </p>
           <ul className="space-y-1.5">
-            {emManutencao.map((v) => (
+            {foraDeOperacao.map(({ v, p, agora }) => (
               <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="font-medium text-foreground">{v.nome}</span>
                 <span className="text-xs text-amber-600 dark:text-amber-400">
-                  {disponibilidadeDoVeiculo(v, hoje).detalhe}
+                  {agora ? "Agora · " : "Agendado · "}
+                  {porqueIndisponivel(v)} {descreverPeriodo(p)}
                 </span>
               </li>
             ))}
