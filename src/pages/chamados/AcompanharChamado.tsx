@@ -177,7 +177,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <p className="text-sm font-bold">Informações do chamado</p>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {liberacao.liberada && <SeloConfirmacao chamado={chamado} paraSolicitante={ehSolicitante} />}
-                <SeloDesenvolvimento chamado={chamado} />
+                <SeloDesenvolvimento chamado={chamado} paraSolicitante />
                 <StatusBadge status={chamado.status} />
               </div>
             </div>

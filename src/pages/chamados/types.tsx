@@ -5,8 +5,10 @@
 // =====================================================================
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Star, type LucideIcon } from "lucide-react";
-import { prazoVencido, situacaoDesenvolvimento } from "@/lib/chamados/prazoDesenvolvimento";
+import { CheckCircle2, Star, type LucideIcon } from "lucide-react";
+import {
+  parteDevConcluida, prazoVencido, ROTULO_AGUARDANDO_GESTOR, ROTULO_PARTE_DEV_CONCLUIDA, situacaoDesenvolvimento,
+} from "@/lib/chamados/prazoDesenvolvimento";
 import { ehTela, indiceDasTelas, rotuloModulo } from "@/lib/chamados/arvoreModulos";
 
 // ---- Opções (options de select / checkbox) --------------------------
@@ -431,7 +433,20 @@ export function StatCard({
   );
 }
 
-export function StatusBadge({ status }: { status: string }) {
+/**
+ * Selo do status. Com `entregueEm` (desenvolvimento_entregue_em) preenchido e
+ * o chamado ainda aberto, mostra "Aguardando Gestor de Sistemas" em vez de
+ * "Em andamento" — só nas telas do time (o solicitante segue vendo o status).
+ * 17/11/2026, Pablo (SIS-2026-0919 depois do merge da PR #1312).
+ */
+export function StatusBadge({ status, entregueEm }: { status: string; entregueEm?: string | null }) {
+  if (parteDevConcluida({ status, desenvolvimento_entregue_em: entregueEm })) {
+    return (
+      <Badge variant="outline" className="border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">
+        {ROTULO_AGUARDANDO_GESTOR}
+      </Badge>
+    );
+  }
   const s = STATUS_CHAMADO[status] ?? { label: status, cls: "" };
   return <Badge variant="outline" className={`text-[10px] font-semibold ${s.cls}`}>{s.label}</Badge>;
 }
@@ -465,11 +480,22 @@ export function SeloConfirmacao({ chamado, paraSolicitante = false }: {
  * Selo do andamento do dev (mig 20261028001400): em andamento com início
  * marcado = "Em desenvolvimento"; sem início = "Na fila". Prazo vencido em vermelho.
  */
-export function SeloDesenvolvimento({ chamado, comPrazo = false }: {
-  chamado: Pick<Chamado, "status" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">; comPrazo?: boolean;
+export function SeloDesenvolvimento({ chamado, comPrazo = false, paraSolicitante = false }: {
+  chamado: Pick<Chamado, "status" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>;
+  comPrazo?: boolean;
+  /** Tela do solicitante: a entrega ao gestor não aparece (ele só vê ao concluir). */
+  paraSolicitante?: boolean;
 }) {
-  const s = situacaoDesenvolvimento(chamado);
+  const s = situacaoDesenvolvimento(paraSolicitante ? { ...chamado, desenvolvimento_entregue_em: null } : chamado);
   if (!s) return null;
+  // Entregue ao Gestor de Sistemas (PR mergeada ou dev concluiu): cinza, com check.
+  if (s === "parte_dev_concluida") {
+    return (
+      <Badge variant="outline" className="gap-1 border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">
+        <CheckCircle2 className="h-3 w-3" /> {ROTULO_PARTE_DEV_CONCLUIDA}
+      </Badge>
+    );
+  }
   if (s === "na_fila") {
     return <Badge variant="outline" className="border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">Na fila — aguardando início</Badge>;
   }
