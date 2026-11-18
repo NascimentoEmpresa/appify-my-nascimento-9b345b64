@@ -1030,7 +1030,8 @@ const App = () => (
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
-            <Route path="financeiro/osc-canaa" element={<OscCanaa />} />
+            {/* lazy sem <Suspense> quebrava a tela para todos ("Sistema temporariamente indisponível"), 18/11/2026 */}
+            <Route path="financeiro/osc-canaa" element={<Suspense fallback={null}><OscCanaa /></Suspense>} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
             <Route path="financeiro/gestao-financeira/cartao-credito/classificar" element={<ClassificarLancamentos />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
