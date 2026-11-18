@@ -218,20 +218,35 @@ function GraficoTv({ i, tom }: { i: IndicadorGerencial; tom: string }) {
       // 14/11/2026: linha quando o protótipo pede linha (faltas, turnover, afastamentos…), mesmo por contrato.
       : (g.tipo === "linha" && dados.length >= 2) || ehSerieNoTempo(dados) ? <Linha dados={dados} w={w} h={h} unidade={unidade} />
       : dados.some((d) => d.a != null && d.b != null) ? <BarrasDuplas dados={dados} w={w} h={h} series={g.series ?? ["Previsto", "Realizado"]} />
-      : <Barras dados={dados} w={w} h={h} unidade={unidade} tom={tom} destaca={s === "vermelho" || s === "amarelo"} meta={g.tipo === "combo" && i.meta != null ? Number(i.meta) : null} />;
+      : <Barras dados={dados} w={w} h={h} unidade={unidade} tom={tom} destaca={s === "vermelho" || s === "amarelo"} meta={g.tipo === "combo" && i.meta != null ? Number(i.meta) : null}
+          cavalo={COM_CAVALO.has(i.codigo)} />;
   }
   return <div ref={ref} className="absolute inset-0">{corpo}</div>;
 }
 
 const larguraTexto = (n: number, fonte: number) => n * fonte * 0.56;
 
-function Barras({ dados, w, h, unidade, tom, destaca, meta }: { dados: LinhaDetalhe[]; w: number; h: number; unidade: IndicadorGerencial["unidade"]; tom: string; destaca: boolean; meta: number | null }) {
+// 18/11/2026, Pablo com o print do "Valor potencial das propostas em andamento":
+// "os cavalos deveriam aparecer aqui também" — cada proposta é um cavalinho
+// galopando na ponta da barra, como na corrida da equipe (CorridaEquipe).
+const COM_CAVALO = new Set(["lic_valor"]);
+const CSS_CAVALO_BARRA = `
+.tvd-cavalo-barra { transform-box: fill-box; transform-origin: 50% 100%; animation: tvd-galope-barra .42s ease-in-out infinite alternate; }
+@keyframes tvd-galope-barra { from { transform: scaleX(-1) translateY(0) rotate(0deg); } to { transform: scaleX(-1) translateY(-5px) rotate(-6deg); } }
+@media (prefers-reduced-motion: reduce) { .tvd-cavalo-barra { animation: none; transform: scaleX(-1); } }
+`;
+
+function Barras({ dados, w, h, unidade, tom, destaca, meta, cavalo = false }: { dados: LinhaDetalhe[]; w: number; h: number; unidade: IndicadorGerencial["unidade"]; tom: string; destaca: boolean; meta: number | null; cavalo?: boolean }) {
   const fonte = 22, topo = meta != null ? 28 : 0;
   const vals = dados.map((d) => Math.abs(Number(d.valor) || 0));
   const rotulos = dados.map((d) => formatarValor(Number(d.valor), unidade));
   const esq = Math.min(w * 0.46, Math.max(...dados.map((d) => larguraTexto(nomeCurto(d.nome, 22).length, fonte))) + 8);
-  const dir = Math.max(...rotulos.map((r) => larguraTexto(r.length, fonte + 2))) + 12;
-  const area = Math.max(20, w - esq - dir), slot = (h - topo) / dados.length, bh = Math.min(30, slot * 0.58);
+  const area0 = (dir0: number) => Math.max(20, w - esq - dir0);
+  const slot = (h - topo) / dados.length, bh = Math.min(30, slot * 0.58);
+  // Com cavalinho: ele fica em cima da ponta da barra e o valor vai para depois dele.
+  const tamCavalo = Math.round(Math.min(52, slot * 0.95)), folgaCavalo = cavalo ? Math.round(tamCavalo * 0.55) : 0;
+  const dir = Math.max(...rotulos.map((r) => larguraTexto(r.length, fonte + 2))) + 12 + folgaCavalo;
+  const area = area0(dir);
   const max = Math.max(1e-9, ...vals, meta != null ? Math.abs(meta) : 0);
   const iMax = vals.indexOf(Math.max(...vals));
   return (
@@ -242,7 +257,11 @@ function Barras({ dados, w, h, unidade, tom, destaca, meta }: { dados: LinhaDeta
           <g key={k}>
             <text x={esq - 8} y={y + 8} textAnchor="end" fill={COR.suave} fontSize={fonte} fontWeight={600}>{nomeCurto(d.nome, Math.max(8, Math.floor(esq / (fonte * 0.56))))}</text>
             <rect x={esq} y={y - bh / 2} width={bw} height={bh} rx={4} fill={destaca && k === iMax ? tom : COR.barra} />
-            <text x={esq + bw + 8} y={y + 8} fill={COR.texto} fontSize={fonte + 2} fontWeight={800}>{rotulos[k]}</text>
+            {cavalo && (
+              <text className="tvd-cavalo-barra" x={esq + bw} y={y + bh / 2 - 2} textAnchor="middle" fontSize={tamCavalo}
+                style={{ animationDelay: `${-k * 0.11}s`, filter: "drop-shadow(0 2px 2px rgba(0,0,0,.45))" }}>🏇</text>
+            )}
+            <text x={esq + bw + 8 + folgaCavalo} y={y + 8} fill={COR.texto} fontSize={fonte + 2} fontWeight={800}>{rotulos[k]}</text>
           </g>
         );
       })}
@@ -252,6 +271,7 @@ function Barras({ dados, w, h, unidade, tom, destaca, meta }: { dados: LinhaDeta
           <text x={esq + (Math.abs(meta) / max) * area} y={20} textAnchor="middle" fill={COR.meta} fontSize={20} fontWeight={800}>Meta {formatarValor(meta, unidade)}</text>
         </g>
       )}
+      {cavalo && <style>{CSS_CAVALO_BARRA}</style>}
     </svg>
   );
 }
