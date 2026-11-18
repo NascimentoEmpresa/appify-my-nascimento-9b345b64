@@ -24,6 +24,7 @@ import {
 import { DetalheIndicadorDialog, type IndicadorGerencial } from "./fluxo-caixa-gerencial/DetalheIndicadorDialog";
 import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { PendentesPanel } from "./fluxo-caixa-gerencial/PendentesPanel";
+import { DespesasPanel } from "./fluxo-caixa-gerencial/DespesasPanel";
 import { carteiraPendente, type ContratoParaPendentes } from "./fluxo-caixa-gerencial/pendentes";
 import { vencimentoDaNota } from "./fluxo-caixa-gerencial/vencimento";
 import { naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
@@ -350,6 +351,9 @@ export default function FluxoCaixaGerencial() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Análise das despesas (etapa 3) */}
+        <DespesasPanel filtro={filtro} />
 
         {/* Recebimentos pendentes (aging) */}
         <PendentesPanel carteira={carteira} idsDoRecorte={idsDoRecorte} kpiPendente={kNotas.pendente} referencia={hojeIso} empresaNome={nomeEmpresa} />
