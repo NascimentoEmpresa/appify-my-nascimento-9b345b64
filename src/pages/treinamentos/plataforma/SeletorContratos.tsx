@@ -26,10 +26,12 @@ function Marca({ estado }: { estado: "sim" | "parte" | "nao" }) {
   );
 }
 
-export function SeletorContratos({ contratos, value, onChange }: {
+export function SeletorContratos({ contratos, value, onChange, textoLimpar = "Limpar seleção (voltar a todos)" }: {
   contratos: Contrato[];
   value: string[];
   onChange: (v: string[]) => void;
+  /** DSS (SIS-2026-0891): lá vazio é "nenhum", não "todos". */
+  textoLimpar?: string;
 }) {
   const [aberto, setAberto] = useState(false);
   const ordenados = useMemo(
@@ -98,7 +100,7 @@ export function SeletorContratos({ contratos, value, onChange }: {
           {value.length > 0 && (
             <div className="border-t p-1">
               <Button type="button" variant="ghost" size="sm" className="h-8 w-full text-xs" onClick={() => onChange([])}>
-                Limpar seleção (voltar a todos)
+                {textoLimpar}
               </Button>
             </div>
           )}
