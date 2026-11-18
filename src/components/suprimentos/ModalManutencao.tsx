@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +16,35 @@ import {
 import { FotoDoBem } from "@/components/suprimentos/FotoDoBem";
 import { Upload, Trash2, FileText, Wrench, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { dataBR, descreverPeriodo } from "@/lib/veiculos/indisponibilidade";
+
+/**
+ * Reservas confirmadas do veículo que caem dentro do período informado
+ * (SIS-2026-0930). Só AVISA: a indisponibilidade vale para agendamentos
+ * novos; quem já reservou nesses dias precisa ser avisado pelo gestor.
+ * Sem o menu do Agendamento a RLS devolve vazio — e o aviso só não aparece.
+ */
+function useReservasNoPeriodo(patrimonioId: string | null, inicio: string, fim: string, ativo: boolean) {
+  return useQuery({
+    queryKey: ["reservas_no_periodo_indisponivel", patrimonioId, inicio, fim],
+    enabled: ativo && !!patrimonioId,
+    staleTime: 30_000,
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cs_veiculo_agendamento ainda não está no types.ts gerado
+      let q = (supabase as any)
+        .from("cs_veiculo_agendamento")
+        .select("id, numero, data_inicio, data_fim, solicitante_nome")
+        .eq("patrimonio_id", patrimonioId)
+        .eq("status", "confirmado")
+        .order("data_inicio");
+      if (inicio) q = q.gte("data_fim", inicio);
+      if (fim) q = q.lte("data_inicio", fim);
+      const { data, error } = await q.limit(20);
+      if (error) return [];
+      return (data ?? []) as { id: string; numero: number; data_inicio: string; data_fim: string; solicitante_nome: string | null }[];
+    },
+  });
+}
 
 /**
  * Status de manutenção do bem, com as notas e o custo.
@@ -54,6 +85,13 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
     setNovoArquivo(null); setNovoComentario(""); setNovoValor("");
   }
 
+  // Só veículo é agendável; o aviso de reservas no período só faz sentido nele.
+  const ehVeiculo = bem?.categoria === "veiculo";
+  const periodoInvertido = emManutencao && !!inicio && !!fim && fim < inicio;
+  const { data: reservasNoPeriodo = [] } = useReservasNoPeriodo(
+    bem?.id ?? null, inicio, fim, ehVeiculo && emManutencao && !periodoInvertido,
+  );
+
   const totalGasto = arquivos.reduce((s, a) => s + Number(a.valor ?? 0), 0);
 
   const salvar = async () => {
@@ -63,6 +101,13 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
     // existe justamente para dizer o porquê.
     if (motivo === "outro" && !detalhe.trim()) {
       toast.error("Escreva qual é o motivo da indisponibilidade.");
+      return;
+    }
+    // O período é o que bloqueia o Agendamento (SIS-2026-0930); invertido, ele
+    // não cobriria dia nenhum (não há constraint no banco: dado legado invertido
+    // não pode travar a edição de outras colunas do bem).
+    if (periodoInvertido) {
+      toast.error("A previsão de fim não pode ser antes da data de início.");
       return;
     }
     await atualizar.mutateAsync({
@@ -162,13 +207,15 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
 
             {emManutencao && (<>
               {/* Só veículo é agendável; dizer isso num equipamento seria ruído. */}
-              {bem?.categoria === "veiculo" && (
+              {/* SIS-2026-0930: o bloqueio no Agendamento vale SÓ entre as
+                  duas datas. Antes ele travava o carro inteiro até o fim —
+                  inclusive os dias antes do início. */}
+              {ehVeiculo && (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {motivo === "contrato"
-                    ? "Alocado a um contrato: o escritório não poderá agendá-lo no Agendamento de Veículos."
-                    : motivo === "outro"
-                      ? "Indisponível: não poderá ser agendado no Agendamento de Veículos."
-                      : "Parado em manutenção: não poderá ser agendado no Agendamento de Veículos."}
+                  {motivo === "contrato" ? "Alocado a um contrato" : motivo === "outro" ? "Indisponível" : "Parado em manutenção"}
+                  {": no Agendamento de Veículos ele fica bloqueado "}
+                  <b className="text-foreground">{descreverPeriodo({ inicio: inicio || null, fim: fim || null })}</b>
+                  {" — fora desse período, continua agendável. Para encerrar antes, volte para \"Sim — disponível\"; para estender, mude a previsão de fim."}
                 </p>
               )}
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -184,9 +231,29 @@ export function ModalManutencao({ bem, onFechar }: { bem: Bem | null; onFechar: 
                       : motivo === "outro" ? "Previsão de liberação"
                       : "Previsão de fim"}
                   </Label>
-                  <Input type="date" value={fim} onChange={(e) => setFim(e.target.value)} />
+                  <Input type="date" value={fim} min={inicio || undefined} onChange={(e) => setFim(e.target.value)} />
                 </div>
               </div>
+              {periodoInvertido && (
+                <p className="mt-2 text-xs font-medium text-destructive">
+                  A previsão de fim não pode ser antes da data de início.
+                </p>
+              )}
+              {ehVeiculo && reservasNoPeriodo.length > 0 && (
+                <div className="mt-3 rounded-md border border-amber-400/60 bg-amber-50/60 p-2.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                  <p className="font-semibold">
+                    {reservasNoPeriodo.length === 1 ? "Já existe 1 reserva" : `Já existem ${reservasNoPeriodo.length} reservas`} neste período — avise quem reservou:
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {reservasNoPeriodo.map((r) => (
+                      <li key={r.id}>
+                        nº {r.numero} · {r.solicitante_nome ?? "—"} · {dataBR(r.data_inicio)}
+                        {r.data_fim !== r.data_inicio ? ` a ${dataBR(r.data_fim)}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </>)}
           </div>
 

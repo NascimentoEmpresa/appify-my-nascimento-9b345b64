@@ -31,7 +31,12 @@ interface Props {
 export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onSelecionar, ultimoKm }: Props) {
   const [recusando, setRecusando] = useState(false);
   const [fotoQuebrada, setFotoQuebrada] = useState(false);
-  const livre = disponibilidade.disponivel;
+  // SIS-2026-0930: "escolhível" e "livre na data" são coisas diferentes. O carro
+  // indisponível de 13 a 17 continua escolhível — a pessoa só não pode pedir um
+  // desses dias. Só fica travado o que não tem data possível nenhuma
+  // (bloqueio já começado e sem previsão de fim).
+  const livre = disponibilidade.agendavel;
+  const livreNaData = disponibilidade.disponivel;
   const { data: fotoUrl } = useFotoVeiculo(veiculo.foto_path);
 
   // Trocou a foto no Patrimônio: dá outra chance de carregar.
@@ -75,9 +80,9 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
       )}
 
       {/* Selo de indisponível, no lugar do selo do print. */}
-      {!livre && (
+      {!livreNaData && (
         <span className="absolute left-4 top-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-          Indisponível
+          {livre ? "Indisponível na data" : "Indisponível"}
         </span>
       )}
 
@@ -87,7 +92,7 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
           dela. Assim o lado direito inteiro pertence à imagem, que pode
           crescer sem esbarrar em nada.
           Sem foto, a coluna da esquerda toma o card inteiro. */}
-      <div className={cn("flex w-full items-start gap-3", !livre && "mt-3")}>
+      <div className={cn("flex w-full items-start gap-3", !livreNaData && "mt-3")}>
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div className="relative w-fit">
             <div
@@ -111,7 +116,7 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
                 aria-hidden
                 className={cn(
                   "absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full ring-2 ring-card transition-colors",
-                  livre ? "bg-emerald-500 animate-pulse-soft" : "bg-destructive",
+                  livreNaData ? "bg-emerald-500 animate-pulse-soft" : livre ? "bg-amber-500" : "bg-destructive",
                 )}
               />
             )}
@@ -144,10 +149,10 @@ export function CardVeiculo({ veiculo, disponibilidade, selecionado, indice, onS
               <div
                 className={cn(
                   "mt-2 flex items-start gap-1.5 text-xs",
-                  livre ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+                  livreNaData ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
                 )}
               >
-                {livre ? (
+                {livreNaData ? (
                   <CalendarClock className="mt-0.5 h-3 w-3 shrink-0" />
                 ) : (
                   <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
