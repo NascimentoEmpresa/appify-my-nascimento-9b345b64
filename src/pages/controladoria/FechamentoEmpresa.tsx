@@ -21,6 +21,9 @@ import { useTratamentosContrato } from "./faturamento/useTratamentosContrato";
 import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { useCompetenciasFechadas, useReservasDoAno } from "@/hooks/useFechamentoSocios";
+import { reservaDoMesParaEmpresa } from "./fechamento-socios/regras";
+import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { useAjustesAdmClassificacao, useAjustesReceitaExtra, useContratosAdmTirados } from "./fechamento/useAjustesAdm";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import type { ComposicaoAdmAberta } from "./fechamento/ComposicaoAdm";
@@ -105,6 +108,9 @@ export default function FechamentoEmpresa() {
   const { data: ajustesAdmClassificacao } = useAjustesAdmClassificacao();
   const { data: contratosAdmTirados } = useContratosAdmTirados();
   const { data: podeAjustarAdm } = useScreenAccess("fechamento-empresa-despesa-adm", "alterar");
+  // SIS-2026-0926: Reserva Empresa — lida do Fechamento dos Sócios (percentual da competência aberta ou o valor gravado na competência fechada).
+  const { data: reservasAbertas } = useReservasDoAno(ano);
+  const { data: competenciasFechadas } = useCompetenciasFechadas(ano);
   const ligacoesAdm = useMemo(() => ligacoesDoFechamento(ligacoes, ajustesAdmClassificacao), [ligacoes, ajustesAdmClassificacao]);
   const tiradosAdm = useMemo(() => contratosAdmTirados ?? new Set<string>(), [contratosAdmTirados]);
 
@@ -319,6 +325,17 @@ export default function FechamentoEmpresa() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detalheParams, linhasAno, admTodas, ligacoes, ligacoesAdm, ajustesAdmClassificacao, ajustesReceita, entradasAdm, tiradosAdm, podeAjustarAdm, custosAno, idsAdministrativos, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual, base, idsContratosAdm]);
   const mesesDaTabela = linhas.map((l) => l.mes);
+  // Reserva Empresa por mês. O Fechamento dos Sócios é de TODAS as empresas e só dos meses realizados: com uma empresa filtrada ou em mês projetado
+  // não há reserva a mostrar (null = "—"), para nunca exibir um valor diferente do da origem.
+  const reservaDoMes = (l: LinhaFechamento) => {
+    if (empresaId !== TODOS || l.projetado) return null;
+    const f = competenciasFechadas?.get(l.mes);
+    return reservaDoMesParaEmpresa({
+      resultadoAposOutrasReceitas: l.resultadoAposOutrasReceitas, tributos: l.tributos, percentualAberto: reservasAbertas?.get(l.mes) ?? 0,
+      fechada: f ? { reserva: f.reserva, reservaPercentual: f.reservaPercentual } : null,
+    });
+  };
+  const totalReserva = Math.round(linhas.reduce((s, l) => s + (reservaDoMes(l)?.valor ?? 0), 0) * 100) / 100;
 
   const termo = buscaMes.trim().toLowerCase();
   const linhasTabela = linhas.filter((l) => !termo || rotuloMes(l.mes).toLowerCase().includes(termo) || l.mes.includes(termo));
@@ -642,6 +659,7 @@ export default function FechamentoEmpresa() {
                             : s === ROTULO_INVESTIMENTOS
                             ? <><p>Todas as saídas do Fluxo de Caixa lançadas nos contratos <strong>INVESTIMENTOS …</strong> (AGPS, HAGG, SN…), seja qual for a classificação. Ficam fora do Resultado Operacional e saem aqui, antes do Resultado Gerencial após Ajustes.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>
                             : <><p>Saídas do Fluxo de Caixa lançadas no contrato <strong>ADMINISTRATIVO SÓCIOS - {s.toUpperCase()}</strong>, inclusive distribuição de lucros. Transferência, aplicação, empréstimo e financiamento ficam de fora.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>)}
+                          <TableHead className={CAB}><TituloComFormula titulo="Reserva Empresa (R$)" formula={<><p><strong>Destinação do resultado</strong> que fica na empresa antes da distribuição aos sócios: Resultado do Período (Resultado após Outras Receitas − Tributos) × percentual de Reserva de Investimento do mês. Não é despesa, retirada, investimento nem obra.</p><p>O valor vem do <strong>Fechamento dos Sócios</strong>: mês fechado mostra o gravado no fechamento; mês aberto, o percentual atual. Não se digita aqui. Só aparece com “Todas as empresas” e nos meses realizados.</p><AssinaturaRegra chamado="SIS-2026-0926" /></>} /></TableHead>
                           <TableHead className={CAB}><TituloComFormula titulo="Resultado Gerencial após Ajustes (R$)" formula="Resultado após Outras Receitas − despesas dos sócios (Antonio, Carlos Eduardo, Guiomar, Helena e Senilton) − Investimentos − Obras Adm no mês." /></TableHead>
                           <TableHead className={CAB}><TituloComFormula titulo="Tributos sobre o Resultado (R$)" formula={<><p>Saídas do Fluxo de Caixa sem contrato nas classificações <strong>IRPJ</strong> e <strong>CSLL</strong>. Ficam fora das Despesas Administrativas e do Resultado Operacional e são descontadas aqui, depois do Resultado Gerencial após Ajustes. IMPOSTOS e TRIBUTOS ESTADUAIS continuam como despesa administrativa.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>
                           <TableHead className={CAB}><TituloComFormula titulo="Resultado Gerencial Líquido (R$)" formula="Resultado Gerencial após Ajustes − Tributos sobre o Resultado." /></TableHead>
@@ -650,7 +668,7 @@ export default function FechamentoEmpresa() {
                       </TableHeader>
                       <TableBody>
                         {linhas.length === 0 && (
-                          <TableRow><TableCell colSpan={nomesSocios.length + 8} className="text-center text-muted-foreground py-8">Nenhum mês no período.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={nomesSocios.length + 9} className="text-center text-muted-foreground py-8">Nenhum mês no período.</TableCell></TableRow>
                         )}
                         {linhas.map((l) => (
                           <TableRow key={l.mes}>
@@ -662,6 +680,10 @@ export default function FechamentoEmpresa() {
                             <TableCell className={CEL}><ValorDetalhavel valor={l.receitasExtras} onClick={() => abrirReceitas([l.mes])} /></TableCell>
                             <TableCell className={`${CEL} font-semibold ${l.resultadoAposOutrasReceitas < 0 ? "text-red-600" : ""}`}>{num2(l.resultadoAposOutrasReceitas)}</TableCell>
                             {nomesSocios.map((s) => <TableCell key={s} className={CEL}><ValorDetalhavel valor={l.socios[s] ?? 0} onClick={() => abrirSocio(s, [l.mes], l.socios[s] ?? 0)} /></TableCell>)}
+                            {(() => {
+                              const r = reservaDoMes(l);
+                              return <TableCell className={CEL} title={r ? `${r.percentual.toLocaleString("pt-BR")}% do Resultado do Período — ${r.fechada ? "valor gravado no fechamento" : "cálculo em aberto"} (origem: Fechamento dos Sócios)` : "Sem reserva: só meses realizados, com Todas as empresas"}>{r ? num2(r.valor) : "—"}</TableCell>;
+                            })()}
                             <TableCell className={`${CEL} font-semibold ${l.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(l.lucroLiquido)}</TableCell>
                             <TableCell className={CEL}><ValorDetalhavel valor={l.tributos} onClick={() => abrirTributos([l.mes])} /></TableCell>
                             <TableCell className={`${CEL} font-semibold ${l.resultadoGerencialLiquido < 0 ? "text-red-600" : ""}`}>{num2(l.resultadoGerencialLiquido)}</TableCell>
@@ -677,6 +699,7 @@ export default function FechamentoEmpresa() {
                             <TableCell className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.receitasExtras} onClick={() => abrirReceitas(mesesDaTabela)} /></TableCell>
                             <TableCell className={`${CEL} font-semibold ${total.resultadoAposOutrasReceitas < 0 ? "text-red-600" : ""}`}>{num2(total.resultadoAposOutrasReceitas)}</TableCell>
                             {nomesSocios.map((s) => <TableCell key={s} className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.socios[s] ?? 0} onClick={() => abrirSocio(s, mesesDaTabela, total.socios[s] ?? 0)} /></TableCell>)}
+                            <TableCell className={`${CEL} font-semibold`}>{empresaId === TODOS ? num2(totalReserva) : "—"}</TableCell>
                             <TableCell className={`${CEL} font-semibold ${total.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(total.lucroLiquido)}</TableCell>
                             <TableCell className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.tributos} onClick={() => abrirTributos(mesesDaTabela)} /></TableCell>
                             <TableCell className={`${CEL} font-semibold ${total.resultadoGerencialLiquido < 0 ? "text-red-600" : ""}`}>{num2(total.resultadoGerencialLiquido)}</TableCell>

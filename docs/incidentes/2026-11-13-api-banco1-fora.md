@@ -78,7 +78,7 @@ Alternativa sem custo mensal: só o DNS no Cloudflare (grátis) e um script
 Cloudflare a partir da mesma sonda. Funciona, mas é mais uma peça nossa
 para manter.
 
-## Em aberto: disco do banco2
+## Disco do banco2 — encaminhado em 18/11
 
 | Data | Uso | Livre |
 |---|---|---|
@@ -95,3 +95,14 @@ servidor físico (rack, 2 TB) que vai receber, por SSH, os arquivos com mais de
 espaço do banco2 se resolve quando esse servidor estiver configurado. Até lá,
 acompanhar o alerta "Disco > 85%" — abaixo de ~2 GB livres o Postgres do banco2
 corre risco e a decisão precisa ser revista.
+
+**18/11/2026 — servidor configurado** (`infra/servidor-local/README.md`).
+Ajuste da regra, com o servidor pronto: os anexos **continuam todos na nuvem**
+(se saíssem, o ERP não abriria anexo antigo, porque o servidor da empresa não é
+acessível pela internet). O que sai são os **backups**, que eram os 16 GB:
+o servidor da empresa puxa os `.gpg` todo dia às 05:00 BRT e devolve recibo; o
+`podar-backups` dos nós (08:30 BRT) apaga só o que tem recibo conferido — banco
+com mais de 3 dias, anexos menos o mais novo. Esperado depois da primeira
+carga (madrugada de 19/11): ~8 GB liberados por nó, banco2 de 91% para ~75%.
+Cadeia testada em 18/11 com o backup do dia (sha256 igual nas duas pontas;
+poda simulada).

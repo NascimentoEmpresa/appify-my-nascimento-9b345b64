@@ -92,6 +92,23 @@ export function calcularReserva(resultado: number, percentual: number): number {
   return resultado > 0 ? r2((resultado * p) / 100) : 0;
 }
 
+/**
+ * SIS-2026-0926: Reserva Empresa de um mês no Fechamento da Empresa. UMA origem só — o Fechamento dos Sócios: competência FECHADA vale o que ficou
+ * gravado no fechamento (valor e percentual); ABERTA vale a mesma conta da tela dos Sócios (percentual da competência × Resultado do Período, que é o
+ * Resultado após Outras Receitas − Tributos). Nunca é digitada no Fechamento da Empresa.
+ */
+export function reservaDoMesParaEmpresa(p: {
+  resultadoAposOutrasReceitas: number;
+  tributos: number;
+  /** % da competência ainda aberta (sem registro vale 0) */
+  percentualAberto: number;
+  /** foto da competência fechada, se houver */
+  fechada?: { reserva: number; reservaPercentual: number } | null;
+}): { valor: number; percentual: number; fechada: boolean } {
+  if (p.fechada) return { valor: p.fechada.reserva, percentual: p.fechada.reservaPercentual, fechada: true };
+  return { valor: calcularReserva(r2(p.resultadoAposOutrasReceitas - p.tributos), p.percentualAberto), percentual: p.percentualAberto, fechada: false };
+}
+
 /** Divide `total` pelos percentuais em centavos, sem sobra nem falta: o que sobra dos arredondamentos vai para quem tem a maior fração. */
 export function distribuirPorPercentual(total: number, partes: { id: string; percentual: number }[]): Map<string, number> {
   const out = new Map<string, number>();
