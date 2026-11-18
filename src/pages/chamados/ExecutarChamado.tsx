@@ -54,7 +54,7 @@ import {
 import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
 import { AcessoModuloResumo } from "./AcessoModuloUsuarios";
 import { useAnexoChamado } from "./useAnexoChamado";
-import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
+import { prazoRetornoTexto, ROTULO_CONCLUIDO_SEM_RETORNO } from "@/lib/chamados/prazoRetorno";
 
 /** Início da regra das horas gastas (mig 20261029002400): concluído antes disso fica "—". */
 const HORAS_GASTAS_DESDE = "2026-10-29T00:00:00-03:00";
@@ -348,7 +348,7 @@ export default function ExecutarChamado() {
               <span className={`flex items-center gap-1.5 rounded-full ${flash ? "animate-status-flash" : ""}`}>
                 <SeloConfirmacao chamado={chamado} />
                 <SeloDesenvolvimento chamado={chamado} />
-                <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} />
+                <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} semRetorno={chamado.concluido_sem_retorno} />
               </span>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -496,7 +496,7 @@ export default function ExecutarChamado() {
                     ))}
                   </SelectContent>
                 </Select>
-              ) : <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} />}
+              ) : <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} semRetorno={chamado.concluido_sem_retorno} />}
             </div>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Responsável</p>
@@ -733,7 +733,7 @@ export default function ExecutarChamado() {
               )}
               {chamado.status === "concluido" && chamado.concluido_sem_retorno && (
                 <p className="rounded bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
-                  Concluído automaticamente por falta de retorno do solicitante.
+                  {ROTULO_CONCLUIDO_SEM_RETORNO}: o pedido de mais informações ficou 3 dias úteis sem resposta do solicitante.
                 </p>
               )}
               {/* Só o responsável pede; o Gestor de Sistemas aprova ou recusa

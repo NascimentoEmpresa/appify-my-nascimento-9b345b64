@@ -514,7 +514,7 @@ export default function CoordenarChamado() {
         <div className="border-b border-border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-5 py-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs font-bold">#{chamado.numero}</span>
-            <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} />
+            <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} semRetorno={chamado.concluido_sem_retorno} />
             <PrioridadeBadge prioridade={chamado.prioridade} />
             {chamado.definicao && <DefinicaoBadge definicao={chamado.definicao} />}
             {chamado.categorias.map((x) => (
