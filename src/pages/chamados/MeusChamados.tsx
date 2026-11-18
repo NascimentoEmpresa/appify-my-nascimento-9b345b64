@@ -35,6 +35,8 @@ import {
   type ConversaSolicitante, type FiltrosMeusChamados, type MotivoNaLista,
 } from "./listaSolicitante";
 import { useIndiceDasTelas } from "./impacto/catalogoTelas";
+import { BotaoRevisaoChamado, useRevisoesChamados } from "./RevisaoPessoalChamado";
+import { contarRevisoes, passaNoFiltroRevisao, type FiltroRevisao } from "./revisaoPessoal";
 
 // RPC/tabela fora do types.ts gerado: um ponto sem tipo, em vez de mais
 // "(supabase as any)" — a catraca do lint não deixa o arquivo subir de erro.
@@ -199,12 +201,22 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     .map((id) => ({ id, nome: nomeDe(id) })).sort((a, b) => a.nome.localeCompare(b.nome));
   const opcoesModulo = useMemo(() => [...new Set(chamados.map((c) => moduloLabel(c)))].sort(), [chamados, indiceTelas]);
 
+  // Marcação pessoal de revisão (SIS-2026-0938): só minha, fora da trava de
+  // pendências — não entra em `motivos` nem em qtdPendentes.
+  const { data: revisoes = {} } = useRevisoesChamados();
+  const [filtroRevisao, setFiltroRevisao] = useState<FiltroRevisao>("");
+  const qtdRevisao = useMemo(
+    () => contarRevisoes(chamados.map((c) => revisoes[c.id]?.estado ?? null)),
+    [chamados, revisoes],
+  );
+
   const filtrados = useMemo(() => chamados.filter((c) => {
     const naLista = !!motivos[c.id];
     if (visao === "pendentes" && !naLista) return false;
     if (visao === "historico" && naLista) return false;
+    if (!passaNoFiltroRevisao(revisoes[c.id]?.estado ?? null, filtroRevisao)) return false;
     return passaNosFiltros(c, moduloLabel(c), filtros);
-  }), [chamados, motivos, visao, filtros, indiceTelas]);
+  }), [chamados, motivos, visao, filtros, indiceTelas, revisoes, filtroRevisao]);
 
   const marcarVisto = async (c: Chamado) => {
     let { error } = await rpcSemTipo("chamado_marcar_visto", { p_chamado_id: c.id });
@@ -468,6 +480,29 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
             <Input type="date" value={filtros.ate} onChange={(e) => mudarFiltro({ ate: e.target.value })} className="h-9 min-w-0 flex-1 px-2 text-xs" title="Até" />
           </div>
         </div>
+        {/* Marcação pessoal de revisão (SIS-2026-0938): filtro rápido com
+            contadores. Ao filtrar, passa para "Todos" — a marcação vale também
+            para chamado já concluído. */}
+        {(qtdRevisao.revisar > 0 || qtdRevisao.revisado > 0 || filtroRevisao) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Minha revisão:</span>
+            {([
+              ["revisar", `Marcados para revisar (${qtdRevisao.revisar})`, "border-yellow-400 bg-yellow-400 text-yellow-950 hover:bg-yellow-300"],
+              ["revisado", `Revisados (${qtdRevisao.revisado})`, "border-success/40 bg-success/15 text-success hover:bg-success/25"],
+            ] as const).map(([v, rot, ativo]) => (
+              <Button key={v} variant="outline" size="sm"
+                className={`h-7 px-2.5 text-xs ${filtroRevisao === v ? ativo : ""}`}
+                onClick={() => {
+                  const novo = filtroRevisao === v ? "" : v;
+                  setFiltroRevisao(novo);
+                  setPagina(1);
+                  if (novo && visao === "pendentes") setVisao("todos");
+                }}>
+                {rot}
+              </Button>
+            ))}
+          </div>
+        )}
         {filtrosAtivos(filtros) && (
           <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
             <span>{filtrados.length} chamado(s) com esses filtros</span>
@@ -578,6 +613,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="ml-auto flex max-w-[220px] flex-wrap items-center justify-end gap-1">
+                      <BotaoRevisaoChamado chamadoId={c.id} revisao={revisoes[c.id]} />
                       <BotaoStatusChamado chamado={c} validacao={validacoes[c.id] ?? null} nomeDe={nomeDe} />
                       <BotaoChatChamado
                         chamado={c}
