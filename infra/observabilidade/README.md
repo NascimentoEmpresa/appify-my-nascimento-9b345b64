@@ -115,16 +115,21 @@ O painel abre em "últimas 24 h". A linha **tracejada cinza** é a mesma hora de
 | API de um nó fora (vista de fora) | Prometheus | `max by (alvo, checagem) (probe_success{checagem=~"auth\|cors\|storage"})` | < 1 por 1 min |
 | Pilha local fora (Kong/REST) | Prometheus | `min by (alvo, checagem) (probe_success{checagem=~"kong_local\|rest_local"})` | < 1 por 1 min |
 | PostgREST sem métrica | Prometheus | `min by (no) (up{job="postgrest"})` | < 1 por 1 min |
+| Coletor de um nó parou de mandar | Prometheus | `absent_over_time(up{job="postgrest",no="banco1"}[3m]) or absent_over_time(up{job="postgrest",no="banco2"}[3m])` | > 0 por 1 min (sem dados = **OK**) |
 
-As três últimas vêm da sonda por nó (`prometheus.exporter.blackbox "api"` no
+As quatro últimas estão no grupo **`api-por-no`** da pasta ERP, criadas em
+18/11/2026 pela API do Grafana (todas Normal na primeira avaliação). Vêm da sonda por nó (`prometheus.exporter.blackbox "api"` no
 `config.alloy`, 17/11/2026), criada depois do incidente de 13/11
 (`docs/incidentes/2026-11-13-api-banco1-fora.md`): a API do banco1 ficou ~5 h
 fora e nenhum alerta acima disparou, porque o de 5xx soma os dois nós e Kong
 parado não gera log. Cada nó testa os **dois** pela internet, então `max by
 (alvo)` só cai a 0 quando nenhum dos dois consegue chegar no alvo — um nó com a
-rede de saída ruim não acusa o outro à toa. Nessas três, em **Configure no data
-and error handling**, ponha **Alerting** nos dois campos: sonda que parou de
-mandar dado é nó fora, não nó saudável.
+rede de saída ruim não acusa o outro à toa. Nas três primeiras, "sem dados" e
+"erro" = **Alerting**: sonda que parou de mandar dado é nó fora, não nó
+saudável. Só que "sem dados" vale para a consulta INTEIRA — se o Alloy de UM nó
+morre, só as séries dele somem e as outras seguem Normal. Por isso a quarta
+regra: `absent_over_time` por nó, que devolve 1 quando aquele nó some (aqui,
+sem dados é o estado saudável).
 
 ### 5. Ligar o `pg_stat_statements` (o "top consultas"), na próxima janela
 
