@@ -13,7 +13,7 @@ import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { detalheAplicacoes, type LinhaEmprestimo, type PontoNatureza, type SituacaoVencimento, totaisEmprestimos, emprestimosPorInstituicao } from "./emprestimosAplicacoes";
 import type { ContaGarantida, MovimentoContaGarantida } from "@/pages/financeiro/conta-garantida/regras";
 
-// SIS-2026-XXXX (etapa 4): Empréstimos (Conta Garantida) por instituição, Aplicações detalhadas e o fluxo SEPARADO por natureza (operacional × empréstimos × aplicações).
+// SIS-2026-0893 (etapa 4): Empréstimos (Conta Garantida) por instituição, Aplicações detalhadas e o fluxo SEPARADO por natureza (operacional × empréstimos × aplicações).
 const data = (iso: string | null) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("pt-BR") : "—");
 const mesCurto = (m: string) => `${m.slice(5, 7)}/${m.slice(2, 4)}`;
 const ROTULO_VENC: Record<SituacaoVencimento, { texto: string; classe: string }> = {
@@ -60,7 +60,7 @@ export function EmprestimosAplicacoesPanel({ contas, movimentos, aplicacoes, nom
     <Card>
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
         <CardTitle className="text-base">
-          <TituloComFormula alinhar="left" titulo="Empréstimos e Aplicações Financeiras" formula={<><span className="block"><strong>Empréstimos</strong> = Conta Garantida: resgate é utilização do limite (entra no banco), amortização devolve (sai) e juros são encargo pago (sai, sem mexer no saldo devedor). Saldo devedor = resgates − amortizações, o mesmo da tela da Conta Garantida. O limite não utilizado NÃO é caixa próprio.</span><span className="block"><strong>Aplicações</strong>: aplicado, rendimento, resgatado e saldo atual como na tela de Aplicações Financeiras. A liquidez estruturada (carência, D+N) vem na etapa 2.</span><span className="block">Empréstimos e aplicações seguem só o filtro de Empresa.</span><AssinaturaRegra chamado="SIS-2026-XXXX" /></>} />
+          <TituloComFormula alinhar="left" titulo="Empréstimos e Aplicações Financeiras" formula={<><span className="block"><strong>Empréstimos</strong> = Conta Garantida: resgate é utilização do limite (entra no banco), amortização devolve (sai) e juros são encargo pago (sai, sem mexer no saldo devedor). Saldo devedor = resgates − amortizações, o mesmo da tela da Conta Garantida. O limite não utilizado NÃO é caixa próprio.</span><span className="block"><strong>Aplicações</strong>: aplicado, rendimento, resgatado e saldo atual como na tela de Aplicações Financeiras. A liquidez estruturada (carência, D+N) vem na etapa 2.</span><span className="block">Empréstimos e aplicações seguem só o filtro de Empresa.</span><AssinaturaRegra chamado="SIS-2026-0893" /></>} />
         </CardTitle>
         <div className="flex items-center gap-2">
           <Tabs value={aba} onValueChange={(v) => setAba(v as typeof aba)}>

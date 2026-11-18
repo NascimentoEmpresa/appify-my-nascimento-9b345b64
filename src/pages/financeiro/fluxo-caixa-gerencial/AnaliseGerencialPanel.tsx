@@ -7,7 +7,7 @@ import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { periodosDeInsuficiencia, resumoGerencial, type PontoAnalise } from "./analiseGerencial";
 
-// SIS-2026-XXXX (etapa 4): comparativo mensal (recebimentos operacionais × despesas pagas × utilização de capital de giro), evolução da necessidade de
+// SIS-2026-0893 (etapa 4): comparativo mensal (recebimentos operacionais × despesas pagas × utilização de capital de giro), evolução da necessidade de
 // capital de giro, cobertura das despesas, dependência de recursos bancários e os meses de maior insuficiência de caixa.
 const mesCurto = (m: string) => `${m.slice(5, 7)}/${m.slice(2, 4)}`;
 const milhoes = (v: number) => (Math.abs(v) >= 1_000_000 ? `${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}M` : Math.abs(v) >= 1_000 ? `${Math.round(v / 1_000)}k` : String(Math.round(v)));
@@ -27,7 +27,7 @@ export function AnaliseGerencialPanel({ pontos }: { pontos: PontoAnalise[] }) {
             <span className="block"><strong>Resultado</strong> = recebimentos das notas (pela data de pagamento) − despesas pagas. Empréstimo e aplicação ficam de fora.</span>
             <span className="block"><strong>Necessidade de capital de giro</strong> do mês = quanto as despesas passaram dos recebimentos. <strong>Utilização de capital de giro</strong> = utilização líquida da Conta Garantida (utilizado − amortizado).</span>
             <span className="block"><strong>Cobertura</strong> = recebimentos ÷ despesas. <strong>Dependência de recursos bancários</strong> = utilização líquida de crédito ÷ despesas.</span>
-            <AssinaturaRegra chamado="SIS-2026-XXXX" /></>} />
+            <AssinaturaRegra chamado="SIS-2026-0893" /></>} />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

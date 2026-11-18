@@ -3,7 +3,7 @@ import type { NfEmissaoRow } from "@/hooks/useNfEmissao";
 import { agruparPendentes, carteiraPendente, composicaoPendente, conciliarComKpi, resumoPorFaixa } from "@/pages/financeiro/fluxo-caixa-gerencial/pendentes";
 import { aplicarPrazo, diasDeAtraso, faixaDeAtraso, interpretarPrazoContrato, vencimentoDaNota } from "@/pages/financeiro/fluxo-caixa-gerencial/vencimento";
 
-// SIS-2026-XXXX (etapa 3): vencimento da nota e aging dos recebimentos pendentes.
+// SIS-2026-0893 (etapa 3): vencimento da nota e aging dos recebimentos pendentes.
 describe("prazo de pagamento do contrato (texto livre)", () => {
   it.each([
     ["ATÉ 15 DIAS MÊS SUBSEQUENTE", { tipo: "dia_do_mes_seguinte", dia: 15 }],

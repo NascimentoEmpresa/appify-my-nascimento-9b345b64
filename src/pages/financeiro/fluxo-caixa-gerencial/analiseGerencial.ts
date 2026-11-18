@@ -1,6 +1,6 @@
 import type { PontoNatureza } from "./emprestimosAplicacoes";
 
-// SIS-2026-XXXX (etapa 4) — Análises gerenciais mês a mês. Funções puras sobre a série por natureza (operacional × empréstimos × aplicações).
+// SIS-2026-0893 (etapa 4) — Análises gerenciais mês a mês. Funções puras sobre a série por natureza (operacional × empréstimos × aplicações).
 // Definições (para quem for mexer, e para o infobox da tela):
 //   · Resultado do mês           = recebimentos operacionais − despesas pagas (empréstimo e aplicação ficam de fora).
 //   · Necessidade de capital de giro do mês = déficit operacional = max(0, despesas − recebimentos).

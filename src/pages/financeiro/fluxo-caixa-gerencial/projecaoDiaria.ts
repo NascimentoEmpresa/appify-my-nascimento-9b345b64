@@ -1,4 +1,4 @@
-// SIS-2026-XXXX (etapa 2, commit 1) — Motor da projeção diária de caixa do Fluxo de Caixa Gerencial.
+// SIS-2026-0893 (etapa 2, commit 1) — Motor da projeção diária de caixa do Fluxo de Caixa Gerencial.
 // FUNÇÕES PURAS (sem React, sem banco): recebem saldo inicial, movimentos e aplicações e devolvem a evolução dia a dia, o menor saldo, a necessidade
 // máxima de caixa e a necessidade em 30/60/90 dias. Quem lê os dados (etapas seguintes) só monta a entrada; a regra mora aqui e é testada.
 //

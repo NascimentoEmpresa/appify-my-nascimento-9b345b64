@@ -2,7 +2,7 @@ import type { AplicacaoFinanceiraLinha, AplicacaoFinanceiraResgateCaixa, Aplicac
 import { deltaDoMovimento, estaAtivo, type ContaGarantida, type MovimentoContaGarantida } from "@/pages/financeiro/conta-garantida/regras";
 import { somarDias } from "./projecaoDiaria";
 
-// SIS-2026-XXXX (etapa 4) — Empréstimos (Conta Garantida) por instituição e detalhe das Aplicações Financeiras. Funções puras, sobre os dados que as telas
+// SIS-2026-0893 (etapa 4) — Empréstimos (Conta Garantida) por instituição e detalhe das Aplicações Financeiras. Funções puras, sobre os dados que as telas
 // de Conta Garantida e Aplicações Financeiras já carregam (o saldo devedor aqui é o MESMO delas: resgates − amortizações, estornados de fora).
 // Modelo da Conta Garantida: resgate = utilização do limite (entra no banco); amortização = devolução (sai); juros = encargo pago (sai, não mexe no saldo devedor).
 

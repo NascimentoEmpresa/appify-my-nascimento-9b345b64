@@ -3,7 +3,7 @@ import type { AplicacaoFinanceiraLinha, AplicacaoFinanceiraResgateCaixa } from "
 import type { ContaGarantida, MovimentoContaGarantida } from "@/pages/financeiro/conta-garantida/regras";
 import { detalheAplicacoes, diasAte, emprestimosPorInstituicao, fluxoPorNatureza, situacaoDoVencimento, totaisEmprestimos } from "@/pages/financeiro/fluxo-caixa-gerencial/emprestimosAplicacoes";
 
-// SIS-2026-XXXX (etapa 4): empréstimos por instituição, aplicações e fluxo por natureza.
+// SIS-2026-0893 (etapa 4): empréstimos por instituição, aplicações e fluxo por natureza.
 const conta = (p: Partial<ContaGarantida>): ContaGarantida => ({ id: "c1", numero: "CG-1", empresa_id: "e1", banco_id: "b1", conta_banco_id: null, conta: "119", limite: 1_000_000, taxa: "CDI + 2%", vencimento: "2026-12-15", status: "ativa", observacao: null, ...p });
 let seq = 0;
 const mov = (p: Partial<MovimentoContaGarantida>): MovimentoContaGarantida => ({

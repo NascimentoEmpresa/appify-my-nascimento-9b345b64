@@ -4,7 +4,7 @@ import type { PontoNatureza } from "@/pages/financeiro/fluxo-caixa-gerencial/emp
 import { montarPlanilhasGerencial, type DadosExportacaoGerencial } from "@/pages/financeiro/fluxo-caixa-gerencial/exportarGerencial";
 import { ANALISE_VAZIA } from "@/pages/financeiro/fluxo-caixa-gerencial/analiseDespesas";
 
-// SIS-2026-XXXX (etapa 4): análises gerenciais mês a mês e exportação completa.
+// SIS-2026-0893 (etapa 4): análises gerenciais mês a mês e exportação completa.
 const nat = (mes: string, p: Partial<PontoNatureza>): PontoNatureza => ({
   mes, recebimentosOperacionais: 0, despesasOperacionais: 0, resultadoOperacional: 0, emprestimoUtilizado: 0, emprestimoAmortizado: 0, jurosPagos: 0, saldoDevedorFim: 0, aplicado: 0, resgatadoAplicacoes: 0, rendimentos: 0, ...p,
 });

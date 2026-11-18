@@ -16,7 +16,7 @@ import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { agruparPendentes, composicaoPendente, conciliarComKpi, resumoPorFaixa, type LinhaPendente } from "./pendentes";
 import { ORDEM_FAIXAS, ROTULO_FAIXA, ROTULO_ORIGEM_VENCIMENTO, type FaixaAging } from "./vencimento";
 
-// SIS-2026-XXXX (etapa 3): Recebimentos Pendentes (aging). Toda a carteira em aberto (qualquer período), por faixa de atraso, cliente e contrato, com as
+// SIS-2026-0893 (etapa 3): Recebimentos Pendentes (aging). Toda a carteira em aberto (qualquer período), por faixa de atraso, cliente e contrato, com as
 // notas de cada saldo, a composição do valor e a conciliação com o indicador do topo. O vencimento é editável (Financeiro) e volta ao cálculo se limpo.
 const COR_FAIXA: Record<FaixaAging, string> = {
   a_vencer: "#22c55e", vencido_1_30: "#f59e0b", vencido_31_60: "#f97316", vencido_61_90: "#ef4444", vencido_90_mais: "#991b1b", sem_vencimento: "#94a3b8",
@@ -107,7 +107,7 @@ export function PendentesPanel({ carteira, idsDoRecorte, kpiPendente, referencia
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-base">
-          <TituloComFormula alinhar="left" titulo="Recebimentos Pendentes (Aging)" formula={<><span className="block">Toda a carteira de notas com saldo a receber (qualquer período), por faixa de atraso na data de hoje. Valor por nota = líquido − pago − conta vinculada − descontos pós-emissão (regra do Relatório de Serviços).</span><span className="block">Vencimento: o ajustado pelo Financeiro; senão o prazo de pagamento do contrato; senão emissão + 30 dias (estimado). Clique na data para ajustar.</span><AssinaturaRegra chamado="SIS-2026-XXXX" /></>} />
+          <TituloComFormula alinhar="left" titulo="Recebimentos Pendentes (Aging)" formula={<><span className="block">Toda a carteira de notas com saldo a receber (qualquer período), por faixa de atraso na data de hoje. Valor por nota = líquido − pago − conta vinculada − descontos pós-emissão (regra do Relatório de Serviços).</span><span className="block">Vencimento: o ajustado pelo Financeiro; senão o prazo de pagamento do contrato; senão emissão + 30 dias (estimado). Clique na data para ajustar.</span><AssinaturaRegra chamado="SIS-2026-0893" /></>} />
         </CardTitle>
         <Button variant="outline" size="sm" className="gap-1" onClick={() => void exportar()} disabled={carteira.length === 0}><Download className="h-3.5 w-3.5" />Excel</Button>
       </CardHeader>

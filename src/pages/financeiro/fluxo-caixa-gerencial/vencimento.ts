@@ -1,6 +1,6 @@
 import { somarDias, somarDiasUteis } from "./projecaoDiaria";
 
-// SIS-2026-XXXX (etapa 3) — Vencimento da nota fiscal. Funções puras.
+// SIS-2026-0893 (etapa 3) — Vencimento da nota fiscal. Funções puras.
 // Ordem de decisão (a mais confiável primeiro):
 //   1. data_vencimento gravada na nota (ajuste manual do Financeiro)              → origem "manual"
 //   2. prazo de pagamento do CONTRATO (texto livre) interpretado                  → origem "prazo_contrato"

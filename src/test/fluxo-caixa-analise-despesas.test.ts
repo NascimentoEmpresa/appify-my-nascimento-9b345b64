@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { montarComparativo, normalizarAnalise, quebrasConciliam, variacao } from "@/pages/financeiro/fluxo-caixa-gerencial/analiseDespesas";
 
-// SIS-2026-XXXX (etapa 3): análise de despesas com comparativo do período anterior.
+// SIS-2026-0893 (etapa 3): análise de despesas com comparativo do período anterior.
 describe("variação entre períodos", () => {
   it("subiu / caiu com valor e percentual", () => {
     expect(variacao(120, 100)).toEqual({ valor: 20, pct: 0.2, situacao: "subiu" });

@@ -2,7 +2,7 @@ import type { NfEmissaoItemRow, NfEmissaoRow } from "@/hooks/useNfEmissao";
 import { foraDoRelatorio, naoContabilizaKpi, valorPendenteNf } from "@/pages/financeiro/nf-emissao/shared";
 import { diasDeAtraso, faixaDeAtraso, ORDEM_FAIXAS, vencimentoDaNota, type FaixaAging, type OrigemVencimento } from "./vencimento";
 
-// SIS-2026-XXXX (etapa 3) — Recebimentos pendentes: a CARTEIRA em aberto (todas as notas com saldo, qualquer que seja o período), com vencimento, faixa de
+// SIS-2026-0893 (etapa 3) — Recebimentos pendentes: a CARTEIRA em aberto (todas as notas com saldo, qualquer que seja o período), com vencimento, faixa de
 // atraso, cliente e contrato. Funções puras. O valor pendente por nota é o MESMO do Relatório de Serviços (valorPendenteNf):
 // líquido − pago − desconto de conta vinculada − descontos pós-emissão.
 

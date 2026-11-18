@@ -4,7 +4,7 @@ import {
   type AplicacaoResgatavel, type MovimentoProjetado,
 } from "@/pages/financeiro/fluxo-caixa-gerencial/projecaoDiaria";
 
-// SIS-2026-XXXX (etapa 2, commit 1): motor da projeção diária. Dia 1 = data-base. Dezembro/2026 começa numa terça-feira.
+// SIS-2026-0893 (etapa 2, commit 1): motor da projeção diária. Dia 1 = data-base. Dezembro/2026 começa numa terça-feira.
 const BASE = "2026-12-01";
 const dia = (n: number) => somarDias(BASE, n - 1); // dia 1 = BASE
 const saida = (n: number, valor: number, p: Partial<MovimentoProjetado> = {}): MovimentoProjetado => ({ data: dia(n), valor, tipo: "saida", rotulo: `saída dia ${n}`, ...p });

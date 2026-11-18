@@ -6,7 +6,7 @@ import type { LinhaPendente } from "./pendentes";
 import type { FiltroGerencial, KpisNotas, LinhaDetalheNota } from "./regras";
 import { ROTULO_FAIXA, ROTULO_ORIGEM_VENCIMENTO } from "./vencimento";
 
-// SIS-2026-XXXX (etapa 4) — Exportação completa do Fluxo de Caixa Gerencial: UM arquivo com os demonstrativos e os detalhamentos de onde vêm os números.
+// SIS-2026-0893 (etapa 4) — Exportação completa do Fluxo de Caixa Gerencial: UM arquivo com os demonstrativos e os detalhamentos de onde vêm os números.
 // `montarPlanilhasGerencial` é pura (testável); quem baixa é `baixarExcel`, de conciliacao-servicos/exportarExcel.
 
 const dia = (iso: string | null | undefined) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("pt-BR") : "—");
