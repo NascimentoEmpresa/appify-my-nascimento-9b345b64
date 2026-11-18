@@ -43,14 +43,40 @@ recriar nada).
 |---|---|---|
 | needrestart não reinicia `docker`/`containerd` | `infra/ha/atualizacoes-seguras.sh` | **aplicado** nos 2 nós em 17/11 (~00:30 UTC de 18/11), sem reinício; backup em `/etc/needrestart/conf.d/99-cluster-ha.conf.bak-20261117` |
 | `restart: always` nos 5 containers | `infra/failover/docker-compose.cluster.yml` | **aplicado** nos 2 nós com `docker update --restart=always` (sem recriar; horário de início dos containers inalterado) |
-| Healthcheck real em Auth/REST/Storage/Functions | compose | pendente — exige recriar containers, fazer nó a nó em janela |
-| `live-restore` no Docker | `/etc/docker/daemon.json` | pendente — exige reload do daemon |
+| Healthcheck real em Auth/REST/Storage/Functions | compose | **descartado** (18/11): a imagem do REST e a do Functions não têm shell/wget/curl, o Kong já tem o da imagem, e o Docker não age sobre "unhealthy". A sonda por nó cobre o mesmo de fora, sem recriar nada |
+| `live-restore` no Docker | `/etc/docker/daemon.json` | **aplicado** nos 2 nós em 18/11 ~00:15 UTC com `systemctl reload docker` (reloadável no Docker 29; validado com `dockerd --validate`; horário de início dos containers inalterado) |
 | Sonda blackbox **por nó** no Alloy + alertas (API de um nó fora > 1 min, "sem dados" = falha) | `infra/observabilidade/config.alloy` | sonda **aplicada** nos 2 nós em 18/11 ~00:12 UTC (reload, sem reinício; 8 alvos `up` em cada nó; backup `/etc/alloy/config.alloy.bak-20261117`). Alertas: criar no Grafana conforme `infra/observabilidade/README.md` §4 |
-| Balanceador / DNS com health check na frente dos 2 IPs | DNS hoje no Registro.br (sem health check) | pendente — decidir entre Cloudflare e HAProxy+VIP |
-| Watchdog limitado (`docker compose up -d --no-recreate`) | — | pendente |
+| Balanceador / DNS com health check na frente dos 2 IPs | DNS hoje no Registro.br (sem health check) | pendente — decisão do Eduardo; roteiro abaixo |
+| Vigia limitado: religa container parado (`docker start`, nunca recria), 3×/hora, pausável | `infra/ha/vigia-pilha.sh` (timer de 2 min) | **instalado** nos 2 nós em 18/11 ~00:17 UTC; testado no banco2 com containers descartáveis (ordem, limite por hora, pausa) |
 
 Validação após aplicar (17/11, de fora, em cada IP com `--resolve`): preflight
 CORS de `/rest/v1/rpc/sistema_saude` → 200; `/auth/v1/health` → 200.
+
+## Em aberto: balanceador com health check
+
+Sem ele, um nó com a API fora continua recebendo metade dos acessos — as
+camadas acima reduzem a chance e o tempo, não o efeito.
+
+**IP virtual (keepalived/HAProxy) não serve aqui:** banco1 está na Vultr e
+banco2 na Linode, e IP flutuante não atravessa provedor. Um HAProxy numa
+terceira máquina vira ponto único de falha.
+
+**Recomendado: Cloudflare Load Balancing em modo DNS-only** (nuvem cinza —
+TLS continua no Caddy de cada nó, sem limite de upload do proxy):
+
+1. Exportar TODOS os registros de `grpnascimento.com.br` do Registro.br
+   (inclusive `app.` da Lovable e e-mail) e conferir um a um no Cloudflare
+   antes de trocar os nameservers — "DNS primeiro, serviço depois" (14/10).
+2. Trocar os nameservers no Registro.br para os do Cloudflare (plano grátis).
+3. Load Balancing (~US$ 5/mês): pool com os 2 IPs, monitor HTTPS
+   `GET /auth/v1/health` esperando 200, Host `api.grpnascimento.com.br`;
+   tirar o nó após 2 falhas, devolver após sucessos seguidos; TTL 30 s.
+4. Notificação quando o pool ficar com 1 nó só.
+
+Alternativa sem custo mensal: só o DNS no Cloudflare (grátis) e um script
+(no runner ou no árbitro) que tira/devolve o registro A pela API do
+Cloudflare a partir da mesma sonda. Funciona, mas é mais uma peça nossa
+para manter.
 
 ## Em aberto: disco do banco2
 
