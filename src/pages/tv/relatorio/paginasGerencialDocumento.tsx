@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, CircleSlash, Info as IconeInfo, MapPin, Target, UserCheck, type LucideIcon } from "lucide-react";
 import {
-  dadosDoGrafico, ehSerieNoTempo, formatarValor, graficoDo, indicadoresDaTela, indicadoresDaTv, nomeCurto, placar, resultadoDoCard,
-  situacao, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type PainelGerencial, type Situacao, type VisualGerencial,
+  CORES_EQUIPE, dadosDoGrafico, ehSerieNoTempo, formatarMetaEquipe, formatarValor, graficoDo, indicadoresDaTela, indicadoresDaTv, nomeCurto, placar, resultadoDoCard,
+  situacao, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type MetaEquipe, type PainelGerencial, type Situacao, type VisualGerencial,
 } from "@/lib/tv/gerencial";
 import { FaixaGerencial, STATUS, useTamanho } from "./paginasGerencialPainel";
 
@@ -44,11 +44,13 @@ export function TelaDocumento({ p, cor, chave, visual, paginas, pagina, duracaoM
     <div className="flex h-full w-full flex-col" style={{ color: COR.texto }}>
       <FaixaGerencial cor={cor} sobre={`Painel gerencial · ${p.painel?.diretoria ?? ""}`} titulo={`TV ${p.painel?.titulo ?? ""}`} pergunta={p.painel?.pergunta} placarTv={pl} />
       <div className="flex min-h-0 flex-1 flex-col" style={{ padding: "20px 32px 14px", gap: 12 }}>
+        {chave === "equipe" && p.equipe?.length ? <CorridaEquipe key={chave} equipe={p.equipe} /> : (
         <div key={chave} className="grid min-h-0 flex-1" style={{ gap: 16, gridTemplateColumns: "repeat(2,minmax(0,1fr))", gridTemplateRows: `repeat(${linhas},minmax(0,1fr))` }}>
           {itens.map((i, k) => (
             <Card key={i.codigo} i={i} largo={itens.length % 2 === 1 && k === itens.length - 1} onClick={onIndicador ? () => onIndicador(i) : undefined} />
           ))}
         </div>
+        )}
         <div className="flex shrink-0 items-center gap-5" style={{ height: 36, fontSize: 20, color: COR.suave }}>
           {paginas.length > 1 && <span className="font-extrabold tabular-nums" style={{ color: COR.texto }}>Tela {pagina + 1} de {paginas.length}</span>}
           <div className="relative h-2 min-w-0 flex-1 overflow-hidden rounded-full" style={{ background: paginas.length > 1 ? COR.trilho : "transparent" }}>
@@ -104,6 +106,78 @@ function Card({ i, largo, onClick }: { i: IndicadorGerencial; largo: boolean; on
   );
 }
 
+/**
+ * "Desempenho da equipe — Meta por analista" com os CAVALINHOS (SIS-2026-0672,
+ * 15/10/2026), de volta em 18/11/2026: tinha ficado só no layout "dashboard"
+ * (CartaoEquipe, paginasGerencialDashboard.tsx) e sumiu da TV quando ela passou
+ * para os cards do documento. Aqui é uma tela própria do rodízio, no visual
+ * escuro: uma raia por pessoa, o cavalinho galopa do zero até o realizado ao
+ * entrar a tela, a bandeira na meta, e à direita a meta e o quanto falta.
+ * O dado é o mesmo: tvg_equipe_meta (editais "Ganhamos" da Capa de Edital).
+ */
+function CorridaEquipe({ equipe }: { equipe: MetaEquipe[] }) {
+  const lista = equipe.slice(0, 6);
+  const desde = lista[0]?.ganhos_desde ? new Date(`${lista[0].ganhos_desde}T12:00:00`).toLocaleDateString("pt-BR") : "";
+  // Larga do zero e corre até o realizado logo que a tela entra.
+  const [largou, setLargou] = useState(false);
+  useEffect(() => { const t = window.setTimeout(() => setLargou(true), 250); return () => window.clearTimeout(t); }, []);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: COR.fundoCard, border: `1px solid ${COR.borda}`, borderRadius: 20, padding: "18px 30px 14px", gap: 6 }}>
+      <div className="flex shrink-0 items-baseline" style={{ gap: 16 }}>
+        <p className="font-extrabold leading-tight" style={{ fontSize: 31 }}>Desempenho da equipe — Meta por analista</p>
+        <p className="ml-auto truncate font-semibold" style={{ fontSize: 20, color: COR.suave }}>Contratos ganhos na Capa de Edital desde {desde} · valor estimado ÷ prazo</p>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col justify-around">
+        {lista.map((m, k) => {
+          const c = m.cor || CORES_EQUIPE[k % CORES_EQUIPE.length];
+          const pct = Math.max(0, Math.min(100, Number(m.pct) || 0));
+          const falta = Math.max(0, Number(m.meta) - Number(m.realizado));
+          const batida = falta <= 0;
+          const iniciais = m.nome.split(/s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
+          const pos = largou ? pct : 0;
+          return (
+            <div key={m.id} className="flex items-center" style={{ gap: 20 }}>
+              {m.foto
+                ? <img src={m.foto} alt="" className="shrink-0 rounded-full object-cover" style={{ width: 64, height: 64, border: `3px solid ${c}` }} />
+                : <span className="flex shrink-0 items-center justify-center rounded-full font-black text-white" style={{ width: 64, height: 64, background: c, fontSize: 24 }}>{iniciais}</span>}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline" style={{ gap: 14 }}>
+                  <p className="truncate font-extrabold" style={{ fontSize: 26, lineHeight: 1.1 }}>{m.nome}</p>
+                  <p className="ml-auto shrink-0 font-semibold tabular-nums" style={{ fontSize: 20, color: COR.suave }}>
+                    <b style={{ color: c }}>{formatarMetaEquipe(m.realizado, m.tipo)}</b> · {Math.round(Number(m.pct) || 0)}% da meta · {m.contratos} ganho{m.contratos === 1 ? "" : "s"}
+                  </p>
+                </div>
+                {/* A raia: pista tracejada, o feito pintado, o cavalinho na ponta e a bandeira na meta. */}
+                <div className="relative" style={{ height: 18, marginTop: 30, marginRight: 34, borderRadius: 999, background: COR.trilho, backgroundImage: "repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 18px, transparent 18px 36px)" }}>
+                  <div style={{ width: `${pos}%`, height: "100%", borderRadius: 999, background: c, transition: "width 2.6s cubic-bezier(.2,.7,.3,1)" }} />
+                  <div className="absolute" style={{ left: `calc(${pos}% - 26px)`, top: -36, transition: "left 2.6s cubic-bezier(.2,.7,.3,1)" }}>
+                    <span className="tvd-cavalo" style={{ animationDelay: `${-k * 0.13}s` }}>🏇</span>
+                  </div>
+                  <span className="absolute" style={{ right: -34, top: -18, fontSize: 30, lineHeight: 1 }}>🏁</span>
+                </div>
+              </div>
+              <div className="shrink-0" style={{ width: 150 }}>
+                <p className="font-semibold" style={{ fontSize: 18, color: COR.suave, lineHeight: 1.2 }}>Meta</p>
+                <p className="font-black tabular-nums" style={{ fontSize: 24, lineHeight: 1.2 }}>{formatarMetaEquipe(m.meta, m.tipo)}</p>
+              </div>
+              <div className="shrink-0 rounded-2xl text-center" style={{ width: 170, padding: "6px 10px", background: "rgba(255,255,255,0.05)", border: `2px solid ${batida ? TOM.verde : c}` }}>
+                <p className="font-semibold" style={{ fontSize: 18, color: COR.suave, lineHeight: 1.2 }}>{batida ? "Meta" : "Faltam"}</p>
+                <p className="font-black tabular-nums" style={{ fontSize: 24, lineHeight: 1.2, color: batida ? TOM.verde : c }}>{batida ? "batida ✓" : formatarMetaEquipe(falta, m.tipo)}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <style>{CSS_CAVALO}</style>
+    </div>
+  );
+}
+// Galope: sobe e desce e inclina de leve (só transform: leve para a TV). O emoji olha para a esquerda; o scaleX(-1) vira para a meta.
+const CSS_CAVALO = `
+.tvd-cavalo { display: inline-block; font-size: 52px; line-height: 1; filter: drop-shadow(0 3px 3px rgba(0,0,0,.45)); animation: tvd-galope .42s ease-in-out infinite alternate; }
+@keyframes tvd-galope { from { transform: scaleX(-1) translateY(0) rotate(0deg); } to { transform: scaleX(-1) translateY(-7px) rotate(-6deg); } }
+`;
+
 function Fato({ Icone, rotulo, texto, forte }: { Icone: LucideIcon; rotulo: string; texto: string | null | undefined; forte?: boolean }) {
   return (
     <div className="flex min-w-0 items-start gap-2.5" style={{ fontSize: 22, lineHeight: 1.2 }}>
@@ -143,20 +217,34 @@ function GraficoTv({ i, tom }: { i: IndicadorGerencial; tom: string }) {
       // 14/11/2026: linha quando o protótipo pede linha (faltas, turnover, afastamentos…), mesmo por contrato.
       : (g.tipo === "linha" && dados.length >= 2) || ehSerieNoTempo(dados) ? <Linha dados={dados} w={w} h={h} unidade={unidade} />
       : dados.some((d) => d.a != null && d.b != null) ? <BarrasDuplas dados={dados} w={w} h={h} series={g.series ?? ["Previsto", "Realizado"]} />
-      : <Barras dados={dados} w={w} h={h} unidade={unidade} tom={tom} destaca={s === "vermelho" || s === "amarelo"} meta={g.tipo === "combo" && i.meta != null ? Number(i.meta) : null} />;
+      : <Barras dados={dados} w={w} h={h} unidade={unidade} tom={tom} destaca={s === "vermelho" || s === "amarelo"} meta={g.tipo === "combo" && i.meta != null ? Number(i.meta) : null}
+          cavalo={COM_CAVALO.has(i.codigo)} />;
   }
   return <div ref={ref} className="absolute inset-0">{corpo}</div>;
 }
 
 const larguraTexto = (n: number, fonte: number) => n * fonte * 0.56;
 
-function Barras({ dados, w, h, unidade, tom, destaca, meta }: { dados: LinhaDetalhe[]; w: number; h: number; unidade: IndicadorGerencial["unidade"]; tom: string; destaca: boolean; meta: number | null }) {
+// 18/11/2026, Pablo com o print do "Valor potencial das propostas em andamento":
+// "os cavalos deveriam aparecer aqui também" — cada proposta é um cavalinho
+// galopando na ponta da barra, como na corrida da equipe (CorridaEquipe).
+const COM_CAVALO = new Set(["lic_valor"]);
+const CSS_CAVALO_BARRA = `
+.tvd-cavalo-barra { transform-box: fill-box; transform-origin: 50% 100%; animation: tvd-galope-barra .42s ease-in-out infinite alternate; }
+@keyframes tvd-galope-barra { from { transform: scaleX(-1) translateY(0) rotate(0deg); } to { transform: scaleX(-1) translateY(-5px) rotate(-6deg); } }
+`;
+
+function Barras({ dados, w, h, unidade, tom, destaca, meta, cavalo = false }: { dados: LinhaDetalhe[]; w: number; h: number; unidade: IndicadorGerencial["unidade"]; tom: string; destaca: boolean; meta: number | null; cavalo?: boolean }) {
   const fonte = 22, topo = meta != null ? 28 : 0;
   const vals = dados.map((d) => Math.abs(Number(d.valor) || 0));
   const rotulos = dados.map((d) => formatarValor(Number(d.valor), unidade));
   const esq = Math.min(w * 0.46, Math.max(...dados.map((d) => larguraTexto(nomeCurto(d.nome, 22).length, fonte))) + 8);
-  const dir = Math.max(...rotulos.map((r) => larguraTexto(r.length, fonte + 2))) + 12;
-  const area = Math.max(20, w - esq - dir), slot = (h - topo) / dados.length, bh = Math.min(30, slot * 0.58);
+  const area0 = (dir0: number) => Math.max(20, w - esq - dir0);
+  const slot = (h - topo) / dados.length, bh = Math.min(30, slot * 0.58);
+  // Com cavalinho: ele fica em cima da ponta da barra e o valor vai para depois dele.
+  const tamCavalo = Math.round(Math.min(52, slot * 0.95)), folgaCavalo = cavalo ? Math.round(tamCavalo * 0.55) : 0;
+  const dir = Math.max(...rotulos.map((r) => larguraTexto(r.length, fonte + 2))) + 12 + folgaCavalo;
+  const area = area0(dir);
   const max = Math.max(1e-9, ...vals, meta != null ? Math.abs(meta) : 0);
   const iMax = vals.indexOf(Math.max(...vals));
   return (
@@ -167,7 +255,11 @@ function Barras({ dados, w, h, unidade, tom, destaca, meta }: { dados: LinhaDeta
           <g key={k}>
             <text x={esq - 8} y={y + 8} textAnchor="end" fill={COR.suave} fontSize={fonte} fontWeight={600}>{nomeCurto(d.nome, Math.max(8, Math.floor(esq / (fonte * 0.56))))}</text>
             <rect x={esq} y={y - bh / 2} width={bw} height={bh} rx={4} fill={destaca && k === iMax ? tom : COR.barra} />
-            <text x={esq + bw + 8} y={y + 8} fill={COR.texto} fontSize={fonte + 2} fontWeight={800}>{rotulos[k]}</text>
+            {cavalo && (
+              <text className="tvd-cavalo-barra" x={esq + bw} y={y + bh / 2 - 2} textAnchor="middle" fontSize={tamCavalo}
+                style={{ animationDelay: `${-k * 0.11}s`, filter: "drop-shadow(0 2px 2px rgba(0,0,0,.45))" }}>🏇</text>
+            )}
+            <text x={esq + bw + 8 + folgaCavalo} y={y + 8} fill={COR.texto} fontSize={fonte + 2} fontWeight={800}>{rotulos[k]}</text>
           </g>
         );
       })}
@@ -177,6 +269,7 @@ function Barras({ dados, w, h, unidade, tom, destaca, meta }: { dados: LinhaDeta
           <text x={esq + (Math.abs(meta) / max) * area} y={20} textAnchor="middle" fill={COR.meta} fontSize={20} fontWeight={800}>Meta {formatarValor(meta, unidade)}</text>
         </g>
       )}
+      {cavalo && <style>{CSS_CAVALO_BARRA}</style>}
     </svg>
   );
 }

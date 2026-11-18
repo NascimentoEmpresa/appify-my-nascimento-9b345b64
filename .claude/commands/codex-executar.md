@@ -113,4 +113,8 @@ Depois rode o skill `code-review` sobre esse diff.
 Merge na branch `eduardo` e abertura da PR são do desenvolvedor, não suas —
 a menos que ele peça explicitamente. Lembre-o de que o título da PR precisa
 começar com `$ARGUMENTS: ` (sem colchetes), senão o CI bloqueia o merge; e
-que ao mergear, o chamado é concluído automaticamente no ERP.
+que ao abrir a PR (fora de rascunho), o chamado é concluído automaticamente
+no ERP.
+
+Assim que a PR for aberta, rode `/explicacao-chamado $ARGUMENTS` (ferramenta
+Skill, `explicacao-chamado`) e entregue a explicação pro usuário final.

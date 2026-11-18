@@ -671,7 +671,7 @@ export default function PainelDistribuicao() {
                           )
                         ) : (
                           <div className="flex flex-wrap items-center gap-1">
-                            <StatusBadge status={c.status} entregueEm={c.desenvolvimento_entregue_em} />
+                            <StatusBadge status={c.status} entregueEm={c.desenvolvimento_entregue_em} semRetorno={c.concluido_sem_retorno} />
                             {/* Confirmação do solicitante e finalização do Gestor de Sistemas (mig 20261110009000). */}
                             <SeloConfirmacao chamado={c} />
                           </div>

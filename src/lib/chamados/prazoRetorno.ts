@@ -20,3 +20,13 @@ export function prazoRetornoTexto(ate: string | null | undefined): string | null
   const semana = new Date(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(d) + "T12:00:00Z").getUTCDay();
   return `${DIAS[semana]}, ${dia}/${mes}`;
 }
+
+// Texto EXATO do selo e da linha de status quando a madrugada conclui o
+// chamado sem retorno (18/11/2026, Pablo, no SIS-2026-0771). O mesmo texto
+// vai na conversa e no sino (mig 20261119030000). Não é entrega: nada para o
+// Gestor de Sistemas concluir/finalizar nem para o solicitante confirmar.
+export const ROTULO_CONCLUIDO_SEM_RETORNO = "Concluído automaticamente por falta de retorno";
+
+/** Concluído pela rotina de falta de retorno? (coluna não lida = false). */
+export const concluidoSemRetorno = (c: { status: string; concluido_sem_retorno?: boolean | null }) =>
+  c.status === "concluido" && c.concluido_sem_retorno === true;

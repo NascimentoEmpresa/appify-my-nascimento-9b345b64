@@ -30,7 +30,8 @@ import { ImpactoSistemicoResumo } from "./impacto/ImpactoSistemicoResumo";
 import { AcessoModuloResumo } from "./AcessoModuloUsuarios";
 import { useAnexoChamado } from "./useAnexoChamado";
 import { useChamadoPerms } from "./useChamadoPerms";
-import { prazoRetornoTexto } from "@/lib/chamados/prazoRetorno";
+import { prazoRetornoTexto, ROTULO_CONCLUIDO_SEM_RETORNO } from "@/lib/chamados/prazoRetorno";
+import { CardObservacaoRevisao, SeloRevisao, useRevisoesChamados } from "./RevisaoPessoalChamado";
 
 interface ConsultaEventosChamado {
   select(colunas: string): {
@@ -122,6 +123,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const { data: validacao } = useValidacaoChamado(id);
   const liberacao = avaliacaoLiberada(validacao);
 
+  // Marcação pessoal de revisão (SIS-2026-0938) — a RLS só devolve a minha.
+  const { data: revisoes = {} } = useRevisoesChamados();
+  const minhaRevisao = id ? revisoes[id] ?? null : null;
+
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["chamado-validacao", id] });
     qc.invalidateQueries({ queryKey: ["chamado", id] });
@@ -176,9 +181,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold">Informações do chamado</p>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <SeloRevisao revisao={minhaRevisao} />
                 {liberacao.liberada && <SeloConfirmacao chamado={chamado} paraSolicitante={ehSolicitante} />}
                 <SeloDesenvolvimento chamado={chamado} paraSolicitante />
-                <StatusBadge status={chamado.status} />
+                <StatusBadge status={chamado.status} semRetorno={chamado.concluido_sem_retorno} />
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -204,6 +210,13 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             <ImpactoSistemicoResumo chamado={chamado} />
             {/* SIS-2026-0934: a quem liberar o módulo. */}
             <AcessoModuloResumo chamado={chamado} />
+            {/* Concluído pela rotina de falta de retorno (mig 20261119030000). */}
+            {chamado.status === "concluido" && chamado.concluido_sem_retorno && (
+              <p className="rounded bg-muted px-2.5 py-2 text-xs text-muted-foreground">
+                <b>{ROTULO_CONCLUIDO_SEM_RETORNO}.</b> Pedimos mais informações e não houve resposta em 3 dias úteis.
+                Se ainda precisar, escreva na conversa do chamado ou reabra.
+              </p>
+            )}
           </Card>
 
           {/* CHAMADO REABERTO (mig 20261112190000): o solicitante acompanha
@@ -334,6 +347,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               </Button>
             </Card>
           )}
+
+          {/* Revisão pessoal (SIS-2026-0938): observação privada e "Revisado".
+              Não muda o chamado nem vai para o chat. */}
+          <CardObservacaoRevisao chamadoId={chamado.id} revisao={minhaRevisao} />
 
           {/* Confirmar conclusão (28/10/2026, mig 20261028001300): concluir não
               fecha de vez. Até o solicitante confirmar, o chamado conta na trava

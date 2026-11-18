@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import { Bell, ChevronRight, Clock3, GraduationCap, History, Megaphone, UserRound, Wallet } from "lucide-react";
+import { Bell, ChevronRight, Clock3, GraduationCap, History, Megaphone, ShieldCheck, UserRound, Wallet } from "lucide-react";
 import { useSessaoColaborador } from "./ColaboradorShell";
 import {
-  ROTULO_BATIDA, fmtData, fmtHora, fmtMinutos, mesAtualISO, useCursosColaborador, usePontoColaborador,
+  ROTULO_BATIDA, fmtData, fmtHora, fmtMinutos, mesAtualISO, useCursosColaborador, useDssColaborador, usePontoColaborador,
 } from "@/hooks/useColaboradorPortal";
 import { Chip, EmDesenvolvimento, Secao, tomStatus } from "./ui";
 import { PONTO_LIBERADO } from "./PontoColaborador";
@@ -19,6 +19,8 @@ export default function InicioColaborador() {
   // Ponto em desenvolvimento (22/09/2026): sem chamar col_ponto enquanto não liberar.
   const ponto = usePontoColaborador(mesAtualISO(), PONTO_LIBERADO);
   const cursos = useCursosColaborador();
+  const dss = useDssColaborador();
+  const dssPendentes = (dss.data ?? []).filter((d) => d.vigente && !d.assinado_em);
   const hoje = ponto.data?.hoje;
   const naoLidas = cursos.data?.notificacoes.filter((n) => !n.lida).length ?? 0;
   const emAndamento = (cursos.data?.cursos ?? []).filter((c) => !c.bloqueado && c.pct < 100).slice(0, 3);
@@ -34,6 +36,19 @@ export default function InicioColaborador() {
           {perfil.matricula && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold">Matrícula {perfil.matricula}</span>}
         </div>
       </div>
+
+      {/* DSS da semana pendente (SIS-2026-0891) — fica no topo porque tem prazo. */}
+      {dssPendentes.length > 0 && (
+        <Link to={dssPendentes.length === 1 ? `/colaborador/dss/${dssPendentes[0].id}` : "/colaborador/dss"}
+          className="flex items-center gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 shadow-sm dark:bg-amber-500/10">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-500 text-white"><ShieldCheck className="h-6 w-6" /></div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold">{dssPendentes.length === 1 ? "DSS da semana para ler e assinar" : `${dssPendentes.length} DSS para ler e assinar`}</p>
+            <p className="truncate text-xs text-muted-foreground">{dssPendentes[0].tema}</p>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-amber-600" />
+        </Link>
+      )}
 
       {!PONTO_LIBERADO ? (
         <EmDesenvolvimento compacto icone={<Clock3 className="h-5 w-5" />} titulo="Ponto de hoje"
