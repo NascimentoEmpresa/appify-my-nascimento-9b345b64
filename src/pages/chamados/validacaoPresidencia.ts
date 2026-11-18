@@ -11,6 +11,7 @@
 // linha do tempo do botão "Status" — para as telas e os testes concordarem.
 // =====================================================================
 import type { Chamado } from "./types";
+import { parteDevConcluida } from "@/lib/chamados/prazoDesenvolvimento";
 
 /** Espelho do CHECK de etapa na tabela (mig 20260930000266). */
 export const ETAPAS_VALIDACAO = {
@@ -165,12 +166,11 @@ export function podeFinalizarGestao(
 // que o chamado foi concluído. Depois seguem a confirmação do solicitante e a
 // finalização do gestor, como antes.
 
-const ENCERRADOS = new Set(["concluido", "cancelado", "reprovado"]);
-
-/** PR mergeada e o Gestor de Sistemas ainda não concluiu o chamado? */
+/** PR mergeada e o Gestor de Sistemas ainda não concluiu o chamado?
+ *  Mesmo sinal do selo "Parte do desenvolvedor concluída" (parteDevConcluida). */
 export const aguardandoGestorConcluir = (
   c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
-) => !ENCERRADOS.has(c.status) && !!c.desenvolvimento_entregue_em;
+) => parteDevConcluida(c);
 
 /**
  * O que o botão "Concluir chamado" faz para este usuário (17/11/2026, Pablo):
@@ -190,6 +190,26 @@ export function acaoAoConcluir(
     return ehGestorSistemas && c.responsavel_id !== userId ? "concluir" : "entregar";
   }
   return ehGestorSistemas ? "concluir" : "concluir_confirmando";
+}
+
+/**
+ * Como o botão "Concluir chamado" aparece (17/11/2026, Pablo): já entregue e
+ * quem vê não é Gestor de Sistemas → "parte_dev_concluida", estado cinza e
+ * desabilitado — verde dava a entender que o dev ainda precisava concluir.
+ * Fica assim sozinho depois do merge da PR, ou logo após o clique do dev.
+ * O Gestor de Sistemas segue com o botão verde ("concluir"). Concluir assim
+ * mesmo sem ser gestor continua possível pelo seletor "Status atual", com a
+ * confirmação CONFIRMA_CONCLUIR_PENDENTE_GESTOR.
+ */
+export type BotaoConcluir = "concluir" | "parte_dev_concluida";
+export function botaoConcluir(
+  c: Pick<Chamado, "status" | "responsavel_id"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  ehGestorSistemas: boolean,
+  userId: string | null | undefined,
+): BotaoConcluir {
+  return aguardandoGestorConcluir(c) && acaoAoConcluir(c, ehGestorSistemas, userId) === "concluir_confirmando"
+    ? "parte_dev_concluida"
+    : "concluir";
 }
 
 /** Texto da confirmação de "concluir_confirmando". */

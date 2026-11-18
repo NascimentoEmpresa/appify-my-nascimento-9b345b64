@@ -12,6 +12,7 @@ import {
   Search, Car, Wrench, Download, ArrowLeft, CheckCircle2, ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { dataBR } from "@/lib/veiculos/indisponibilidade";
 import * as XLSX from "xlsx";
 
 /**
@@ -149,7 +150,15 @@ export default function PainelManutencoes() {
   );
 }
 
+function hojeLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function CardManutencao({ bem: b, onAbrir }: { bem: Bem; onAbrir: () => void }) {
+  // Período que ainda não começou (SIS-2026-0930): o bem segue em uso até lá.
+  const inicio = b.data_inicio_manutencao?.slice(0, 10) ?? null;
+  const agendada = !!inicio && inicio > hojeLocal();
   const Icone = b.categoria === "veiculo" ? Car : Wrench;
   return (
     <button
@@ -179,7 +188,7 @@ function CardManutencao({ bem: b, onAbrir }: { bem: Bem; onAbrir: () => void }) 
         </span>
         <Badge variant="outline"
                className={cn("mx-auto mt-1 border-amber-400/60 text-[10px] uppercase text-amber-700 dark:text-amber-300")}>
-          em manutenção
+          {agendada ? `agendada · ${dataBR(inicio!)}` : "em manutenção"}
         </Badge>
         <span className="mt-1 text-muted-foreground">
           {fmtDataBR(b.data_inicio_manutencao)} — {fmtDataBR(b.data_previsao_fim)}

@@ -21,6 +21,7 @@ import {
   MapPin, FileText, ShieldAlert, Boxes, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { dataBR } from "@/lib/veiculos/indisponibilidade";
 
 /**
  * Patrimônio — frota e maquinário, em cascata Contrato → Posto → Item.
@@ -286,6 +287,11 @@ export default function Patrimonio() {
 
 /** Card do bem. O identificador vem em destaque porque é o que distingue
  *  duas unidades do mesmo modelo — há 3 "ROÇADEIRA STHIL FS 220" na base. */
+function hojeLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function CardBem({
   bem, modoEdicao, onAbrir, onEditar, fotoUrl,
 }: {
@@ -330,7 +336,12 @@ function CardBem({
                        className="max-w-full border-rose-400/60 text-[10px] text-rose-700 dark:text-rose-300">
                   <span className="truncate">{rotuloIndisponivel(bem)}</span>
                 </Badge>
-              : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">em manutenção</Badge>
+              : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">
+                  {/* Período que ainda vai começar (SIS-2026-0930) não é "em manutenção" ainda. */}
+                  {bem.data_inicio_manutencao && bem.data_inicio_manutencao.slice(0, 10) > hojeLocal()
+                    ? `manutenção em ${dataBR(bem.data_inicio_manutencao.slice(0, 10))}`
+                    : "em manutenção"}
+                </Badge>
         )}
       </button>
       {modoEdicao && (
