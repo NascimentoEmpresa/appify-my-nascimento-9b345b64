@@ -1,4 +1,4 @@
-// SIS-2026-XXXX (etapa 3) — Análise das despesas: por classificação, contrato/centro de custo e origem, com o período anterior. Regras puras.
+// SIS-2026-0893 (etapa 3) — Análise das despesas: por classificação, contrato/centro de custo e origem, com o período anterior. Regras puras.
 // Os valores vêm da função financeiro_fluxo_gerencial_despesas (migration 20261119120000); aqui só se normaliza o JSON e se calculam variações e participações.
 
 export type TipoDataDespesa = "pagamento" | "competencia";
@@ -14,10 +14,12 @@ export interface AnaliseDespesasRpc {
   por_classificacao: ItemAnaliseRpc[];
   por_contrato: ItemAnaliseRpc[];
   por_origem: ItemAnaliseRpc[];
+  /** despesas dos 12 meses que terminam no mês do fim do período, pela mesma data de referência (migration 20261119130000) */
+  por_mes: { mes: string; despesas: number }[];
 }
 
 export const ANALISE_VAZIA: AnaliseDespesasRpc = {
-  tipo_data: "pagamento", periodo_anterior: { ini: "", fim: "" }, total: 0, total_anterior: 0, qtd: 0, por_classificacao: [], por_contrato: [], por_origem: [],
+  tipo_data: "pagamento", periodo_anterior: { ini: "", fim: "" }, total: 0, total_anterior: 0, qtd: 0, por_classificacao: [], por_contrato: [], por_origem: [], por_mes: [],
 };
 
 const num = (v: unknown) => {
@@ -48,6 +50,7 @@ export function normalizarAnalise(raw: unknown): AnaliseDespesasRpc {
     por_classificacao: itens(r.por_classificacao, (o) => String(o.nome ?? "Sem classificação")),
     por_contrato: itens(r.por_contrato, (o) => String(o.nome ?? "Sem contrato (administrativo)")),
     por_origem: itens(r.por_origem, (o) => ROTULO_ORIGEM[String(o.origem)] ?? String(o.origem ?? "—")),
+    por_mes: Array.isArray(r.por_mes) ? (r.por_mes as Record<string, unknown>[]).map((m) => ({ mes: String(m.mes ?? ""), despesas: num(m.despesas) })) : [],
   };
 }
 

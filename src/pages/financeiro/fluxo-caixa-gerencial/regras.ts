@@ -1,6 +1,7 @@
 import type { NfEmissaoItemRow, NfEmissaoRow } from "@/hooks/useNfEmissao";
 import type { AplicacaoFinanceiraLinha, AplicacaoFinanceiraResgateCaixa, AplicacaoHistoricoImportado } from "@/hooks/useAplicacaoFinanceira";
 import { foraDoRelatorio, naoContabilizaKpi, valorPendenteNf } from "@/pages/financeiro/nf-emissao/shared";
+import type { AnaliseDespesasRpc, TipoDataDespesa } from "./analiseDespesas";
 import { kpisDoDashboard } from "@/pages/financeiro/relatorio-servicos/kpisDashboard";
 import { kpisAplicacoes } from "@/pages/financeiro/aplicacao-financeira/kpis";
 import { saldoPorConta, estaAtivo, type ContaGarantida, type MovimentoContaGarantida } from "@/pages/financeiro/conta-garantida/regras";
@@ -12,7 +13,7 @@ import { saldoPorConta, estaAtivo, type ContaGarantida, type MovimentoContaGaran
 //   · empréstimos → Conta Garantida (limite contratado; saldo devedor = resgates − amortizações);
 //   · aplicações → Aplicações Financeiras (mesma função da tela, kpisAplicacoes).
 
-/** SIS-2026-XXXX (etapa 1): data que define QUAIS notas entram no faturamento (bruto, líquido, pendente). O recebimento é SEMPRE pela data de pagamento. */
+/** SIS-2026-0893 (etapa 1): data que define QUAIS notas entram no faturamento (bruto, líquido, pendente). O recebimento é SEMPRE pela data de pagamento. */
 export type TipoDataGerencial = "emissao" | "competencia" | "vencimento";
 
 export interface FiltroGerencial {
@@ -20,6 +21,8 @@ export interface FiltroGerencial {
   fim: string;
   /** padrão: emissão */
   tipoData?: TipoDataGerencial;
+  /** SIS-2026-0893: data que enquadra as DESPESAS nos indicadores do topo; padrão: pagamento */
+  tipoDataDespesa?: TipoDataDespesa;
   /** etapa 3: vencimento calculado da nota (ajuste manual › prazo do contrato › emissão + 30); usado quando tipoData = "vencimento" */
   resolverVencimento?: (n: NfEmissaoRow) => string | null;
   empresaId: string; // "" = todas
@@ -100,7 +103,7 @@ export interface KpisNotas {
 
 export function kpisNotas(notas: NfEmissaoRow[], itensPorNf: Map<string, NfEmissaoItemRow[]> | undefined, recebidasNoPeriodo?: NfEmissaoRow[]): KpisNotas {
   const k = kpisDoDashboard(notas, itensPorNf);
-  // SIS-2026-XXXX: com `recebidasNoPeriodo` o recebido é o que ENTROU no período (data de pagamento); sem ele, vale o pago das notas do recorte (comportamento antigo).
+  // SIS-2026-0893: com `recebidasNoPeriodo` o recebido é o que ENTROU no período (data de pagamento); sem ele, vale o pago das notas do recorte (comportamento antigo).
   if (recebidasNoPeriodo) k.recebido = recebidasNoPeriodo.reduce((s, n) => s + (Number(n.valor_pago) || 0), 0);
   // líquido: mesma exclusão do Dashboard (Cancelada/Substituída não contam)
   const liquido = arred(notas.filter((n) => !naoContabilizaKpi(n)).reduce((s, n) => s + (Number(n.vlr_liquido_total) || 0), 0));
@@ -115,7 +118,7 @@ export function kpisNotas(notas: NfEmissaoRow[], itensPorNf: Map<string, NfEmiss
   };
 }
 
-// ── Detalhamento dos indicadores (SIS-2026-XXXX) ───────────────────────────
+// ── Detalhamento dos indicadores (SIS-2026-0893) ───────────────────────────
 export interface LinhaDetalheNota {
   id: string;
   numero: string;
@@ -241,6 +244,22 @@ export interface FluxoGerencialRpc {
   por_mes: { mes: string; despesas: number }[];
   composicao: { nome: string; valor: number }[];
   projecao: Record<"d30" | "d60" | "d90", { recebimentos: number; pagamentos: number }>;
+}
+
+/**
+ * Indicadores de despesas pela data escolhida. Por pagamento valem os totais da função original; por COMPETÊNCIA, os da função de análise das despesas
+ * (mesma regra de "despesa", só muda a data de enquadramento). A projeção 30/60/90 dias é sempre a da função original: não depende dessa escolha.
+ */
+export function fluxoPorTipoData(original: FluxoGerencialRpc, analise: AnaliseDespesasRpc | undefined, tipo: TipoDataDespesa): FluxoGerencialRpc {
+  if (tipo !== "competencia" || !analise) return original;
+  return {
+    ...original,
+    despesas_pagas: analise.total,
+    qtd_despesas: analise.qtd,
+    malote_pago: analise.por_origem.filter((o) => o.nome === "Malote").reduce((s, o) => s + o.valor, 0),
+    composicao: analise.por_classificacao.filter((c) => c.valor > 0).map((c) => ({ nome: c.nome, valor: c.valor })),
+    por_mes: analise.por_mes,
+  };
 }
 
 export const FLUXO_VAZIO: FluxoGerencialRpc = {

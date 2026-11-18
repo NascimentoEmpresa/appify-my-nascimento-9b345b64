@@ -14,7 +14,7 @@ import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { ANALISE_VAZIA, montarComparativo, quebrasConciliam, type LinhaComparativo, type TipoDataDespesa } from "./analiseDespesas";
 import type { FiltroGerencial } from "./regras";
 
-// SIS-2026-XXXX (etapa 3): despesas por classificação, contrato/centro de custo e origem, comparadas com o período anterior (variação em R$ e %).
+// SIS-2026-0893 (etapa 3): despesas por classificação, contrato/centro de custo e origem, comparadas com o período anterior (variação em R$ e %).
 type Quebra = "classificacao" | "contrato" | "origem";
 const data = (iso: string) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("pt-BR") : "—");
 const pctTxt = (v: number | null) => (v === null ? "novo" : `${v > 0 ? "+" : ""}${(v * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
@@ -30,9 +30,8 @@ function Variacao({ l }: { l: LinhaComparativo }) {
   );
 }
 
-export function DespesasPanel({ filtro }: { filtro: FiltroGerencial }) {
+export function DespesasPanel({ filtro, tipoData }: { filtro: FiltroGerencial; tipoData: TipoDataDespesa }) {
   const navigate = useNavigate();
-  const [tipoData, setTipoData] = useState<TipoDataDespesa>("pagamento");
   const [quebra, setQuebra] = useState<Quebra>("contrato");
   const { data: analise = ANALISE_VAZIA, isLoading, error } = useAnaliseDespesasGerencial(filtro, tipoData);
 
@@ -69,12 +68,10 @@ export function DespesasPanel({ filtro }: { filtro: FiltroGerencial }) {
     <Card>
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
         <CardTitle className="text-base">
-          <TituloComFormula alinhar="left" titulo="Análise de Despesas" formula={<><span className="block">Despesas já pagas (mesma regra do indicador Despesas Pagas: fora aplicação, empréstimo, transferência entre contas e demais movimentações financeiras), por classificação, contrato (= centro de custo) e origem.</span><span className="block">Comparação com o período imediatamente anterior: os mesmos N meses logo antes, ou o mesmo número de dias. Variação = atual − anterior; “novo” = não havia despesa no período anterior.</span><AssinaturaRegra chamado="SIS-2026-XXXX" /></>} />
+          <TituloComFormula alinhar="left" titulo="Análise de Despesas" formula={<><span className="block">Despesas já pagas (mesma regra do indicador Despesas Pagas: fora aplicação, empréstimo, transferência entre contas e demais movimentações financeiras), por classificação, contrato (= centro de custo) e origem.</span><span className="block">Comparação com o período imediatamente anterior: os mesmos N meses logo antes, ou o mesmo número de dias. Variação = atual − anterior; “novo” = não havia despesa no período anterior.</span><AssinaturaRegra chamado="SIS-2026-0893" /></>} />
         </CardTitle>
         <div className="flex items-center gap-2">
-          <Tabs value={tipoData} onValueChange={(v) => setTipoData(v as TipoDataDespesa)}>
-            <TabsList><TabsTrigger value="pagamento">Por pagamento</TabsTrigger><TabsTrigger value="competencia">Por competência</TabsTrigger></TabsList>
-          </Tabs>
+          <span className="text-[11px] text-muted-foreground">Despesas por {tipoData === "pagamento" ? "data de pagamento" : "competência"} (filtro “Despesas por”)</span>
           <Button variant="outline" size="sm" className="gap-1" onClick={() => void exportar()} disabled={analise.total === 0 && analise.total_anterior === 0}><Download className="h-3.5 w-3.5" />Excel</Button>
         </div>
       </CardHeader>

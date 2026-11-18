@@ -119,7 +119,8 @@ describe("fluxo (RPC) e indicadores", () => {
 });
 
 // ── Etapa 1: tipo de data, recebido por data de pagamento, detalhamento e conciliação do Malote ─────────────────────────────────────────
-import { conciliacaoMalote, linhasDetalheNotas, notasRecebidasNoPeriodo } from "@/pages/financeiro/fluxo-caixa-gerencial/regras";
+import { conciliacaoMalote, fluxoPorTipoData, linhasDetalheNotas, notasRecebidasNoPeriodo } from "@/pages/financeiro/fluxo-caixa-gerencial/regras";
+import { normalizarAnalise } from "@/pages/financeiro/fluxo-caixa-gerencial/analiseDespesas";
 
 describe("recebimentos pela data de pagamento (hipótese do 'recebido zerado')", () => {
   // nota emitida em outubro e paga em novembro; nota emitida em novembro e ainda não paga
@@ -173,6 +174,38 @@ describe("filtro 'Faturamento por' = vencimento (etapa 3)", () => {
   it("sem vencimento calculável a nota não entra", () => {
     expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento: () => null }))).toHaveLength(0);
     expect(notasDoPeriodo([n], f({ tipoData: "vencimento" }))).toHaveLength(0);
+  });
+});
+
+describe("competência nos indicadores de despesas (SIS-2026-0893)", () => {
+  const original = { despesas_pagas: 1000, qtd_despesas: 10, malote_pago: 600, por_mes: [{ mes: "2026-11", despesas: 1000 }], composicao: [{ nome: "Folha", valor: 1000 }], projecao: { d30: { recebimentos: 5, pagamentos: 7 }, d60: { recebimentos: 6, pagamentos: 8 }, d90: { recebimentos: 7, pagamentos: 9 } } };
+  const analise = normalizarAnalise({
+    total: 1500, qtd: 20, total_anterior: 900, periodo_anterior: { ini: "2026-10-01", fim: "2026-10-31" },
+    por_classificacao: [{ nome: "Folha", valor: 900, valor_anterior: 500 }, { nome: "Aluguel", valor: 600, valor_anterior: 400 }, { nome: "Zerada", valor: 0, valor_anterior: 50 }],
+    por_contrato: [], por_origem: [{ origem: "malote", valor: 1100, valor_anterior: 700 }, { origem: "debito_automatico", valor: 400, valor_anterior: 200 }],
+    por_mes: [{ mes: "2026-10", despesas: 900 }, { mes: "2026-11", despesas: 1500 }],
+  });
+
+  it("por pagamento (padrão) vale a função original, sem mexer em nada", () => {
+    expect(fluxoPorTipoData(original, analise, "pagamento")).toBe(original);
+    expect(fluxoPorTipoData(original, undefined, "competencia")).toBe(original);
+  });
+  it("por competência: total, quantidade, Malote, composição e série mensal vêm da análise", () => {
+    const f = fluxoPorTipoData(original, analise, "competencia");
+    expect(f).toMatchObject({ despesas_pagas: 1500, qtd_despesas: 20, malote_pago: 1100 });
+    expect(f.composicao.map((c) => c.nome)).toEqual(["Folha", "Aluguel"]); // quem só tinha valor no período anterior não entra
+    expect(f.por_mes).toEqual([{ mes: "2026-10", despesas: 900 }, { mes: "2026-11", despesas: 1500 }]);
+  });
+  it("a projeção 30/60/90 é sempre a da função original", () => {
+    expect(fluxoPorTipoData(original, analise, "competencia").projecao).toBe(original.projecao);
+  });
+  it("o Malote dentro das despesas continua conciliando (Malote ≤ total)", () => {
+    const f = fluxoPorTipoData(original, analise, "competencia");
+    expect(conciliacaoMalote(f.despesas_pagas, f.malote_pago).ok).toBe(true);
+  });
+  it("a série mensal vem do JSON do servidor (e vazia se o servidor ainda não devolve)", () => {
+    expect(normalizarAnalise({ por_mes: [{ mes: "2026-11", despesas: "10.5" }] }).por_mes).toEqual([{ mes: "2026-11", despesas: 10.5 }]);
+    expect(normalizarAnalise({}).por_mes).toEqual([]);
   });
 });
 

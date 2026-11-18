@@ -19,13 +19,13 @@ import { useFluxoCaixaGerencial } from "@/hooks/useFluxoCaixaGerencial";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
   composicaoTop, conciliacaoMalote, emprestimosPorMes, FLUXO_VAZIO, indicadores, kpisAplicacoesGerencial, kpisEmprestimos, kpisNotas, linhasDetalheNotas, necessidadeDeCaixa,
-  notasDoPeriodo, notasRecebidasNoPeriodo, periodoDoMes, saldoProjetado, serieEntradasSaidas, serieNotas, type FiltroGerencial, type TipoDataGerencial,
+  fluxoPorTipoData, notasDoPeriodo, notasRecebidasNoPeriodo, periodoDoMes, saldoProjetado, serieEntradasSaidas, serieNotas, type FiltroGerencial, type TipoDataGerencial,
 } from "./fluxo-caixa-gerencial/regras";
 import { DetalheIndicadorDialog, type IndicadorGerencial } from "./fluxo-caixa-gerencial/DetalheIndicadorDialog";
 import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { PendentesPanel } from "./fluxo-caixa-gerencial/PendentesPanel";
 import { DespesasPanel } from "./fluxo-caixa-gerencial/DespesasPanel";
-import { ANALISE_VAZIA } from "./fluxo-caixa-gerencial/analiseDespesas";
+import { ANALISE_VAZIA, type TipoDataDespesa } from "./fluxo-caixa-gerencial/analiseDespesas";
 import { EmprestimosAplicacoesPanel } from "./fluxo-caixa-gerencial/EmprestimosAplicacoesPanel";
 import { detalheAplicacoes, emprestimosPorInstituicao, fluxoPorNatureza } from "./fluxo-caixa-gerencial/emprestimosAplicacoes";
 import { AnaliseGerencialPanel } from "./fluxo-caixa-gerencial/AnaliseGerencialPanel";
@@ -67,9 +67,9 @@ function Anel({ valor, rotulo, detalhe }: { valor: number; rotulo: string; detal
 
 export default function FluxoCaixaGerencial() {
   const inicial = periodoDoMes();
-  const [rascunho, setRascunho] = useState<FiltroGerencial>({ ...inicial, empresaId: "", contratoId: "", tipoData: "emissao" });
-  const [filtro, setFiltro] = useState<FiltroGerencial>({ ...inicial, empresaId: "", contratoId: "", tipoData: "emissao" });
-  // SIS-2026-XXXX (etapa 1): indicador cujo detalhamento está aberto.
+  const [rascunho, setRascunho] = useState<FiltroGerencial>({ ...inicial, empresaId: "", contratoId: "", tipoData: "emissao", tipoDataDespesa: "pagamento" });
+  const [filtro, setFiltro] = useState<FiltroGerencial>({ ...inicial, empresaId: "", contratoId: "", tipoData: "emissao", tipoDataDespesa: "pagamento" });
+  // SIS-2026-0893 (etapa 1): indicador cujo detalhamento está aberto.
   const [detalhe, setDetalhe] = useState<IndicadorGerencial | null>(null);
 
   const { data: empresas = [] } = useEmpresasGrupo();
@@ -89,7 +89,7 @@ export default function FluxoCaixaGerencial() {
   );
   const notas = useMemo(() => notasDoPeriodo(nfs, filtroNotas), [nfs, filtroNotas]);
   const { data: itensPorNf } = useItensNfEmissaoEmLote(notas.map((n) => n.id));
-  // SIS-2026-XXXX: o recebido é o que ENTROU no período (data de pagamento), independente de quando a nota foi emitida; o resto segue o recorte de faturamento.
+  // SIS-2026-0893: o recebido é o que ENTROU no período (data de pagamento), independente de quando a nota foi emitida; o resto segue o recorte de faturamento.
   const recebidas = useMemo(() => notasRecebidasNoPeriodo(nfs, filtro), [nfs, filtro]);
   const kNotas = useMemo(() => kpisNotas(notas, itensPorNf, recebidas), [notas, itensPorNf, recebidas]);
   const detalheNotas = useMemo(() => linhasDetalheNotas(notas, itensPorNf), [notas, itensPorNf]);
@@ -115,7 +115,10 @@ export default function FluxoCaixaGerencial() {
   const kAplicacoes = useMemo(() => kpisAplicacoesGerencial(aplicacoes, resgates, historico, filtro), [aplicacoes, resgates, historico, filtro]);
 
   const { data: fluxoRpc, isLoading: carregandoFluxo, error: erroFluxo } = useFluxoCaixaGerencial(filtro);
-  const fluxo = fluxoRpc ?? FLUXO_VAZIO;
+  // SIS-2026-0893: os indicadores de despesas seguem a data escolhida em "Despesas por" (pagamento ou competência); a projeção é sempre a da função original.
+  const tipoDespesa = filtro.tipoDataDespesa ?? "pagamento";
+  const { data: analiseKpi } = useAnaliseDespesasGerencial(filtro, tipoDespesa);
+  const fluxo = useMemo(() => fluxoPorTipoData(fluxoRpc ?? FLUXO_VAZIO, analiseKpi, tipoDespesa), [fluxoRpc, analiseKpi, tipoDespesa]);
 
   const ind = useMemo(() => indicadores(kNotas, fluxo.despesas_pagas, kEmprestimos), [kNotas, fluxo.despesas_pagas, kEmprestimos]);
   const necessidade = useMemo(() => necessidadeDeCaixa(fluxo.despesas_pagas, filtro.ini, filtro.fim, fluxo.projecao.d30.recebimentos), [fluxo, filtro]);
@@ -132,7 +135,7 @@ export default function FluxoCaixaGerencial() {
     [serieNf, fluxo.por_mes, contas, movimentos, aplicacoes, resgates, historico, filtro.empresaId],
   );
   const analise = useMemo(() => analiseMensal(natureza, new Map(serieNf.map((p) => [p.mes, p.liquido]))), [natureza, serieNf]);
-  const { data: despesasAnalise } = useAnaliseDespesasGerencial(filtro, "pagamento");
+  const despesasAnalise = analiseKpi;
 
   // Exportação completa: um arquivo com os demonstrativos e os detalhamentos de onde vêm os números.
   async function exportarTudo() {
@@ -154,7 +157,7 @@ export default function FluxoCaixaGerencial() {
   const periodoInvalido = !rascunho.ini || !rascunho.fim || rascunho.ini > rascunho.fim;
 
   function limpar() {
-    const base: FiltroGerencial = { ...periodoDoMes(), empresaId: "", contratoId: "", tipoData: "emissao" };
+    const base: FiltroGerencial = { ...periodoDoMes(), empresaId: "", contratoId: "", tipoData: "emissao", tipoDataDespesa: "pagamento" };
     setRascunho(base);
     setFiltro(base);
   }
@@ -192,6 +195,16 @@ export default function FluxoCaixaGerencial() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="min-w-[200px]">
+              <Label className="text-xs">Despesas por</Label>
+              <Select value={rascunho.tipoDataDespesa ?? "pagamento"} onValueChange={(v) => setRascunho((f) => ({ ...f, tipoDataDespesa: v as TipoDataDespesa }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pagamento">Data de pagamento</SelectItem>
+                  <SelectItem value="competencia">Competência</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="min-w-[180px]">
               <Label className="text-xs">Empresa</Label>
               <Select value={rascunho.empresaId || "__todas"} onValueChange={(v) => setRascunho((f) => ({ ...f, empresaId: v === "__todas" ? "" : v, contratoId: "" }))}>
@@ -215,7 +228,7 @@ export default function FluxoCaixaGerencial() {
             <Button disabled={periodoInvalido} onClick={() => setFiltro(rascunho)}><Search className="mr-2 h-4 w-4" /> Filtrar</Button>
             <Button variant="outline" onClick={limpar}>Limpar</Button>
             <p className="basis-full text-[11px] text-muted-foreground">
-              Faturamento (bruto, líquido e pendente) = notas pela data escolhida em “Faturamento por”. Recebido = o que entrou no período, pela data de pagamento da nota. Despesas = pagas no período. Contrato/Centro de custo vale para notas, despesas e projeção; empréstimos e aplicações seguem só a Empresa. Clique num indicador para ver de onde vem o número.
+              Faturamento (bruto, líquido e pendente) = notas pela data escolhida em “Faturamento por”. Recebido = o que entrou no período, pela data de pagamento da nota. Despesas = já pagas, enquadradas pela data escolhida em “Despesas por” (pagamento ou competência). Contrato/Centro de custo vale para notas, despesas e projeção; empréstimos e aplicações seguem só a Empresa. Clique num indicador para ver de onde vem o número.
             </p>
           </CardContent>
         </Card>
@@ -230,22 +243,22 @@ export default function FluxoCaixaGerencial() {
         {/* Notas e caixa */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <KpiTile label="Valor Bruto Já Emitido" valor={fmtMoney(kNotas.bruto)} sub={`${kNotas.qtd.toLocaleString("pt-BR")} nota(s) no período`} icon={<FileText />} cor="sky" onClick={() => setDetalhe("bruto")}
-            info={<span>Soma do valor bruto das notas do recorte (emissão ou competência, conforme “Faturamento por”). Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-XXXX" /></span>} />
+            info={<span>Soma do valor bruto das notas do recorte (emissão ou competência, conforme “Faturamento por”). Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-0893" /></span>} />
           <KpiTile label="Valor Líquido Faturado" valor={fmtMoney(kNotas.liquido)} sub="Bruto menos as retenções" icon={<Banknote />} cor="slate" onClick={() => setDetalhe("liquido")}
-            info={<span>Bruto menos as retenções, nas mesmas notas do Valor Bruto. Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-XXXX" /></span>} />
+            info={<span>Bruto menos as retenções, nas mesmas notas do Valor Bruto. Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-0893" /></span>} />
           <KpiTile label="Valor Efetivamente Recebido" valor={fmtMoney(kNotas.recebido)} sub={`${recebidas.length.toLocaleString("pt-BR")} nota(s) com pagamento no período`} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => setDetalhe("recebido")}
-            info={<span>Soma do valor pago das notas com <strong>data de pagamento dentro do período</strong>, qualquer que seja a emissão ou a competência. Antes só somava o pago das notas emitidas no período, e por isso podia aparecer zerado. Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-XXXX" /></span>} />
-          <KpiTile label="Despesas Pagas" valor={fmtMoney(fluxo.despesas_pagas)} sub={`${fluxo.qtd_despesas.toLocaleString("pt-BR")} lançamento(s) no período`} icon={<TrendingDown />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setDetalhe("despesas")}
-            info={<span>Saídas já pagas no Fluxo de Caixa. Não entram: transferência entre contas, aplicações, cheque especial, empréstimos, saldo anterior e recebimento de nota. Clique para ver a composição e a conciliação com o Malote.<AssinaturaRegra chamado="SIS-2026-XXXX" /></span>} />
+            info={<span>Soma do valor pago das notas com <strong>data de pagamento dentro do período</strong>, qualquer que seja a emissão ou a competência. Antes só somava o pago das notas emitidas no período, e por isso podia aparecer zerado. Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-0893" /></span>} />
+          <KpiTile label="Despesas Pagas" valor={fmtMoney(fluxo.despesas_pagas)} sub={`${fluxo.qtd_despesas.toLocaleString("pt-BR")} lançamento(s) por ${tipoDespesa === "competencia" ? "competência" : "pagamento"}`} icon={<TrendingDown />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setDetalhe("despesas")}
+            info={<span>Saídas já pagas no Fluxo de Caixa. Não entram: transferência entre contas, aplicações, cheque especial, empréstimos, saldo anterior e recebimento de nota. Clique para ver a composição e a conciliação com o Malote.<AssinaturaRegra chamado="SIS-2026-0893" /></span>} />
           <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kNotas.pendente)} sub={`${pct(kNotas.pctPendenteDoLiquido)} do valor líquido`} icon={<Clock />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setDetalhe("pendente")}
-            info={<span>Por nota: líquido − pago − desconto de conta vinculada − descontos pós-emissão (regra do Relatório de Serviços), nas notas do recorte de faturamento. Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-XXXX" /></span>} />
+            info={<span>Por nota: líquido − pago − desconto de conta vinculada − descontos pós-emissão (regra do Relatório de Serviços), nas notas do recorte de faturamento. Clique para ver as notas.<AssinaturaRegra chamado="SIS-2026-0893" /></span>} />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <KpiTile label="Total de Empréstimos (contratado)" valor={fmtMoney(kEmprestimos.contratado)} sub="Limite das contas garantidas ativas" icon={<Landmark />} cor="sky" />
           <KpiTile label="Saldo Devedor (a bancos)" valor={fmtMoney(kEmprestimos.saldoDevedor)} sub="Resgates menos amortizações" icon={<Wallet />} cor="sky" />
           <KpiTile label="Despesas Pagas no Malote" valor={fmtMoney(fluxo.malote_pago)} sub={`${pct(pctMalote)} das despesas do período${concMalote.ok ? "" : " — conferir duplicidade"}`} icon={<Briefcase />} cor="sky" onClick={() => setDetalhe("malote")}
-            info={<span>Parte das despesas pagas que veio do Malote. Já está <strong>dentro</strong> do total de Despesas Pagas, nunca é somada de novo; o detalhe mostra a conciliação (Malote + demais origens = total).<AssinaturaRegra chamado="SIS-2026-XXXX" /></span>} />
+            info={<span>Parte das despesas pagas que veio do Malote. Já está <strong>dentro</strong> do total de Despesas Pagas, nunca é somada de novo; o detalhe mostra a conciliação (Malote + demais origens = total).<AssinaturaRegra chamado="SIS-2026-0893" /></span>} />
           <KpiTile label="Valor Projetado (30 dias)" valor={fmtMoney(saldoProjetado(fluxo.projecao.d30))} sub="Recebimentos − pagamentos previstos" icon={<Target />} cor="emerald" />
           <KpiTile label="Aplicações Financeiras (saldo atual)" valor={fmtMoney(kAplicacoes.saldoAtual)} sub="Principal + rendimento" icon={<PiggyBank />} cor="sky" />
         </div>
@@ -388,7 +401,7 @@ export default function FluxoCaixaGerencial() {
         </div>
 
         {/* Análise das despesas (etapa 3) */}
-        <DespesasPanel filtro={filtro} />
+        <DespesasPanel filtro={filtro} tipoData={tipoDespesa} />
 
         {/* Recebimentos pendentes (aging) */}
         <PendentesPanel carteira={carteira} idsDoRecorte={idsDoRecorte} kpiPendente={kNotas.pendente} referencia={hojeIso} empresaNome={nomeEmpresa} />

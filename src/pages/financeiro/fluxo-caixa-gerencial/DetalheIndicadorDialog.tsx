@@ -9,7 +9,7 @@ import { baixarExcel, type Celula } from "@/pages/financeiro/conciliacao-servico
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { conciliacaoMalote, type FiltroGerencial, type FluxoGerencialRpc, type LinhaDetalheNota } from "./regras";
 
-// SIS-2026-XXXX (etapa 1): clicar num indicador abre de onde vem o número. Notas: uma linha por nota (a soma da coluna é o KPI) e Excel. Despesas e Malote:
+// SIS-2026-0893 (etapa 1): clicar num indicador abre de onde vem o número. Notas: uma linha por nota (a soma da coluna é o KPI) e Excel. Despesas e Malote:
 // a composição por classificação, a conciliação do Malote com o total e o atalho para o Fluxo de Caixa no mesmo recorte.
 export type IndicadorGerencial = "bruto" | "liquido" | "recebido" | "pendente" | "despesas" | "malote";
 
@@ -58,7 +58,9 @@ export function DetalheIndicadorDialog({
   const totalDaColuna = col ? Math.round(linhas.reduce((s, l) => s + l[col], 0) * 100) / 100 : 0;
 
   const urlFluxo = () => {
-    const q = new URLSearchParams({ tipo: "saida", de: filtro.ini, ate: filtro.fim });
+    const q = new URLSearchParams({ tipo: "saida" });
+    // despesas enquadradas por competência: o Fluxo de Caixa filtra pelo mesmo mês
+    if (filtro.tipoDataDespesa === "competencia") { q.set("competenciaDe", filtro.ini.slice(0, 7)); q.set("competenciaAte", filtro.fim.slice(0, 7)); } else { q.set("de", filtro.ini); q.set("ate", filtro.fim); }
     if (filtro.empresaId) q.set("empresa", filtro.empresaId);
     if (filtro.contratoId) q.set("contrato", filtro.contratoId);
     return `${ROTA_FLUXO_CAIXA}?${q.toString()}`;
