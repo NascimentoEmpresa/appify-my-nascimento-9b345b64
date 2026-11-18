@@ -176,7 +176,6 @@ function CorridaEquipe({ equipe }: { equipe: MetaEquipe[] }) {
 const CSS_CAVALO = `
 .tvd-cavalo { display: inline-block; font-size: 52px; line-height: 1; filter: drop-shadow(0 3px 3px rgba(0,0,0,.45)); animation: tvd-galope .42s ease-in-out infinite alternate; }
 @keyframes tvd-galope { from { transform: scaleX(-1) translateY(0) rotate(0deg); } to { transform: scaleX(-1) translateY(-7px) rotate(-6deg); } }
-@media (prefers-reduced-motion: reduce) { .tvd-cavalo { animation: none; transform: scaleX(-1); } }
 `;
 
 function Fato({ Icone, rotulo, texto, forte }: { Icone: LucideIcon; rotulo: string; texto: string | null | undefined; forte?: boolean }) {
@@ -233,7 +232,6 @@ const COM_CAVALO = new Set(["lic_valor"]);
 const CSS_CAVALO_BARRA = `
 .tvd-cavalo-barra { transform-box: fill-box; transform-origin: 50% 100%; animation: tvd-galope-barra .42s ease-in-out infinite alternate; }
 @keyframes tvd-galope-barra { from { transform: scaleX(-1) translateY(0) rotate(0deg); } to { transform: scaleX(-1) translateY(-5px) rotate(-6deg); } }
-@media (prefers-reduced-motion: reduce) { .tvd-cavalo-barra { animation: none; transform: scaleX(-1); } }
 `;
 
 function Barras({ dados, w, h, unidade, tom, destaca, meta, cavalo = false }: { dados: LinhaDetalhe[]; w: number; h: number; unidade: IndicadorGerencial["unidade"]; tom: string; destaca: boolean; meta: number | null; cavalo?: boolean }) {

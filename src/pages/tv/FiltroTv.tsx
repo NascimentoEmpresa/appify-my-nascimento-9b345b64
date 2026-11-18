@@ -17,7 +17,8 @@ import type { FiltroTv } from "@/lib/tv/tv";
 //     dos números;
 //   · o bigodinho fica pequeno espiando pela borda, troca de lugar a cada ~40 s (timer
 //     local, sem rede) e balança de leve;
-//   · prefers-reduced-motion: tudo parado (sem neve, sem balanço).
+//   · anima sempre, mesmo com prefers-reduced-motion (ver CSS_NATAL);
+//   · pisca-pisca colorido no topo da tela.
 // Filtro novo: um case aqui + FILTROS_TV (src/lib/tv/tv.ts) + o CHECK da TV_CONFIG.
 // =====================================================================
 
@@ -47,13 +48,20 @@ const CANTOS: React.CSSProperties[] = [
 const TROCA_CANTO_MS = 40_000;
 
 function FiltroNatal() {
-  const flocos = useMemo(() => Array.from({ length: 36 }, (_, k) => ({
+  const flocos = useMemo(() => Array.from({ length: 60 }, (_, k) => ({
     left: pseudo(k + 1) * 100,
-    tamanho: 3 + pseudo(k + 101) * 5,
-    queda: 14 + pseudo(k + 201) * 14,
-    atraso: -pseudo(k + 301) * 28,
-    balanco: 3 + pseudo(k + 401) * 3,
-    opacidade: 0.35 + pseudo(k + 501) * 0.4,
+    tamanho: 4 + pseudo(k + 101) * 7,
+    queda: 9 + pseudo(k + 201) * 10,
+    atraso: -pseudo(k + 301) * 19,
+    balanco: 2.5 + pseudo(k + 401) * 2.5,
+    opacidade: 0.55 + pseudo(k + 501) * 0.4,
+  })), []);
+  // Pisca-pisca no topo da tela: lâmpadas coloridas acendendo em sequência.
+  const lampadas = useMemo(() => Array.from({ length: 34 }, (_, k) => ({
+    left: 1.5 + k * (97 / 33),
+    top: 0.9 + Math.sin((k / 33) * Math.PI * 6) ** 2 * 1.5,
+    cor: LAMPADAS[k % LAMPADAS.length],
+    atraso: -((k % 4) * 0.45),
   })), []);
   // Estrelas e brilhos só nas faixas das bordas (topo e laterais), onde não há número.
   const estrelas = useMemo(() => Array.from({ length: 18 }, (_, k) => {
@@ -93,6 +101,12 @@ function FiltroNatal() {
           <span className="tvf-floco-miolo" style={{ animationDuration: `${f.balanco}s` }} />
         </span>
       ))}
+      <svg className="tvf-fio" viewBox="0 0 1000 40" preserveAspectRatio="none" aria-hidden>
+        <path d="M0 6 Q 83 40 167 6 T 333 6 T 500 6 T 667 6 T 833 6 T 1000 6" fill="none" stroke="#2f4a33" strokeWidth="3" />
+      </svg>
+      {lampadas.map((l, k) => (
+        <span key={`l${k}`} className="tvf-lampada" style={{ left: `${l.left}%`, top: `${l.top}vh`, color: l.cor, background: l.cor, animationDelay: `${l.atraso}s` }} />
+      ))}
       {estrelas.map((e, k) => (
         <span key={`e${k}`} className="tvf-estrela" style={{
           left: `${e.left}%`, top: `${e.top}%`, width: e.tamanho, height: e.tamanho,
@@ -109,9 +123,14 @@ function FiltroNatal() {
   );
 }
 
+const LAMPADAS = ["#ff3b3b", "#ffd23f", "#3ddc84", "#4aa8ff"];
+
+// 18/11/2026: a 1ª versão parava tudo com prefers-reduced-motion — e o PC do
+// Pablo (Windows com "efeitos de animação" desligado) via só estrelas paradas.
+// O filtro é decoração ligada de propósito na gestão: anima sempre.
 const CSS_NATAL = `
 .tvf-natal .tvf-floco { position: absolute; top: -12px; display: block; will-change: transform; animation-name: tvf-cair; animation-timing-function: linear; animation-iteration-count: infinite; }
-.tvf-natal .tvf-floco-miolo { display: block; width: 100%; height: 100%; border-radius: 9999px; background: #fff; box-shadow: 0 0 6px rgba(255,255,255,.8); animation-name: tvf-balancar-floco; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-direction: alternate; }
+.tvf-natal .tvf-floco-miolo { display: block; width: 100%; height: 100%; border-radius: 9999px; background: #fff; box-shadow: 0 0 8px 1px rgba(255,255,255,.9); animation-name: tvf-balancar-floco; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-direction: alternate; }
 .tvf-natal .tvf-estrela { position: absolute; display: block; filter: drop-shadow(0 0 4px currentColor); animation-name: tvf-piscar; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
 .tvf-natal .tvf-bigodinho-lugar { position: absolute; height: 18vh; transition: opacity .8s ease; }
 .tvf-natal .tvf-bigodinho { height: 100%; width: auto; transform-origin: 50% 100%; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); animation: tvf-wiggle 2.6s ease-in-out infinite; }
@@ -119,9 +138,7 @@ const CSS_NATAL = `
 @keyframes tvf-balancar-floco { from { transform: translateX(-14px); } to { transform: translateX(14px); } }
 @keyframes tvf-piscar { 0%, 100% { opacity: .15; transform: scale(.6); } 50% { opacity: .95; transform: scale(1); } }
 @keyframes tvf-wiggle { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .tvf-natal .tvf-floco { display: none; }
-  .tvf-natal .tvf-estrela, .tvf-natal .tvf-bigodinho { animation: none; }
-  .tvf-natal .tvf-estrela { opacity: .7; }
-}
+.tvf-natal .tvf-fio { position: absolute; left: 0; top: 0; width: 100%; height: 3.4vh; }
+.tvf-natal .tvf-lampada { position: absolute; width: 11px; height: 15px; margin-left: -5px; border-radius: 50% 50% 45% 45%; box-shadow: 0 0 10px 3px currentColor; animation: tvf-pisca 1.8s steps(1, end) infinite; }
+@keyframes tvf-pisca { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .25; box-shadow: none; } }
 `;
