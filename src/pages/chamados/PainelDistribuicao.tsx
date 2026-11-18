@@ -32,7 +32,7 @@ import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import { AvisoPendenciasGestao } from "./ReaberturaTransferenciaChamado";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
-import { aguardandoGestorSistemas, desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
+import { abreNaExecucao, desenvolvedorDaValidacao, pendenteDoGestorSistemas, type ValidacaoChamado } from "./validacaoPresidencia";
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -303,7 +303,8 @@ export default function PainelDistribuicao() {
   const posicaoFila = useMemo(() => posicoesFilaGlobal(chamados), [chamados]);
   const posicaoDev = useMemo(() => posicoesFilaDev(chamados), [chamados]);
 
-  const pendentesGestao = useMemo(() => chamados.filter(aguardandoGestorSistemas).length, [chamados]);
+  // Fila do Gestor de Sistemas: entregues (falta concluir) + confirmados (falta finalizar) — 18/11/2026.
+  const pendentesGestao = useMemo(() => chamados.filter(pendenteDoGestorSistemas).length, [chamados]);
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -311,7 +312,7 @@ export default function PainelDistribuicao() {
     const ateTs = fAte ? new Date(fAte + "T23:59:59").getTime() : null;
     const lista = chamados.filter((c) => {
       if (aba === "treinamento") { if (!treinosPendentes[c.id]) return false; }
-      else if (aba === "pendente_conclusao") { if (!aguardandoGestorSistemas(c)) return false; }
+      else if (aba === "pendente_conclusao") { if (!pendenteDoGestorSistemas(c)) return false; }
       else if (aba === "fila" ? !chamadoAtivo(c.status) : c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
@@ -578,8 +579,9 @@ export default function PainelDistribuicao() {
                   <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={reordenar}>
                   <SortableContext items={visiveis.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                   {/* Concluído não tem mais o que distribuir: abre a tela de execução (chat, horas e o "Finalizar chamado" do Gestor de Sistemas), igual à do dev. Pedido do Pablo, 10/11/2026. */}
+                  {/* Pendente do Gestor de Sistemas também abre a execução, não a distribuição: ali ele vê tudo (chat, histórico, PR) e conclui ou devolve ao dev com motivo. Pedido do Pablo, 18/11/2026. */}
                   {visiveis.map((c) => (
-                    <LinhaArrastavel key={c.id} id={c.id} habilitado={arrastando} className="cursor-pointer" onClick={() => nav(c.status === "concluido" ? `/app/sistemas/chamados/${c.id}` : `/app/sistemas/chamados/${c.id}/coordenar`)}>
+                    <LinhaArrastavel key={c.id} id={c.id} habilitado={arrastando} className="cursor-pointer" onClick={() => nav(abreNaExecucao(c) ? `/app/sistemas/chamados/${c.id}` : `/app/sistemas/chamados/${c.id}/coordenar`)}>
                     {(alca) => (<>
                       <TableCell className="text-center">
                         {ABAS_FILA_DEV.includes(aba) && posicaoDev[c.id] ? (

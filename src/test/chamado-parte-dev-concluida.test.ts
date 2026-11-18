@@ -68,8 +68,10 @@ describe("botão Concluir chamado", () => {
   it("outro membro do time que não é gestor também vê cinza", () => {
     expect(botaoConcluir(depoisDoMerge, false, "coordenador")).toBe("parte_dev_concluida");
   });
-  it("o Gestor de Sistemas segue com o botão de concluir", () => {
-    expect(botaoConcluir(depoisDoMerge, true, "iury")).toBe("concluir");
-    expect(botaoConcluir(depoisDoMerge, true, "dev")).toBe("concluir");
+  it("o Gestor de Sistemas também vê o cinza (o verde Concluir tarefa vem em cima)", () => {
+    // 18/11/2026: o gestor também vê o cinza — e o verde "Concluir tarefa"
+    // em cima (podeConcluirTarefa, em chamado-fila-gestor-sistemas.test.ts).
+    expect(botaoConcluir(depoisDoMerge, true, "iury")).toBe("parte_dev_concluida");
+    expect(botaoConcluir(depoisDoMerge, true, "dev")).toBe("parte_dev_concluida");
   });
 });

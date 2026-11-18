@@ -17,13 +17,13 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, botaoConcluir, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeFinalizarGestao,
+  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, botaoConcluir, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeConcluirTarefa, podeDevolverAoDev, podeFinalizarGestao,
 } from "./validacaoPresidencia";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil, ArrowRightLeft } from "lucide-react";
+import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck, Pencil, ArrowRightLeft, Undo2 } from "lucide-react";
 import { fmtHorasGastas, lerHorasGastas, podeEditarHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
@@ -71,6 +71,9 @@ export default function ExecutarChamado() {
   const [motivo, setMotivo] = useState("");
   const [excluindoOpen, setExcluindoOpen] = useState(false);
   const [reabrindoOpen, setReabrindoOpen] = useState(false);
+  // Gestor de Sistemas devolve ao dev, com motivo (mig 20261118210000).
+  const [devolvendoOpen, setDevolvendoOpen] = useState(false);
+  const [motivoDevolucao, setMotivoDevolucao] = useState("");
   const [transferindoOpen, setTransferindoOpen] = useState(false); // dev pede transferência (mig 20261112190000)
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
@@ -267,6 +270,24 @@ export default function ExecutarChamado() {
     setAgindo(null);
     if (error) { toast({ title: "Erro ao finalizar", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Chamado finalizado", description: "Agora ele está de fato concluído." });
+    invalidar();
+  };
+
+  /** Gestor de Sistemas devolve ao dev (mig 20261118210000): limpa a entrega,
+   *  grava o motivo no histórico e avisa o responsável. Status não muda. */
+  const devolverAoDev = async () => {
+    const m = motivoDevolucao.trim();
+    if (!m) { toast({ title: "Informe o que ainda precisa ser feito", variant: "destructive" }); return; }
+    if (agindo) return;
+    setAgindo("devolver");
+    // Sem `as any` (catraca do lint): a RPC ainda não está nos tipos gerados.
+    const rpcSemTipo = supabase.rpc.bind(supabase) as unknown as
+      (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+    const { error } = await rpcSemTipo("chamado_devolver_ao_dev", { p_chamado_id: id, p_motivo: m });
+    setAgindo(null);
+    if (error) { toast({ title: "Erro ao solicitar atualizações", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Atualizações solicitadas ao desenvolvedor", description: "Ele foi avisado do que ainda precisa ser feito." });
+    setDevolvendoOpen(false); setMotivoDevolucao("");
     invalidar();
   };
 
@@ -626,6 +647,19 @@ export default function ExecutarChamado() {
                     cinza e parado — verde dava a entender que ainda faltava
                     concluir (17/11/2026, Pablo, SIS-2026-0919 / PR #1312).
                     O Gestor de Sistemas segue com o botão verde. */}
+                {/* 18/11/2026 (Pablo): o Gerente/Gestor de Sistemas vê o
+                    "Concluir tarefa" verde EM CIMA do cinza — o cinza mostra
+                    que o dev já fez a parte dele; o verde conclui de fato
+                    (é quando o solicitante vê o chamado concluído). */}
+                {podeConcluirTarefa(chamado, canGestorSistemas) && (
+                  <Button
+                    className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
+                    disabled={!!agindo}
+                    onClick={pedirConclusao}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir tarefa"}
+                  </Button>
+                )}
                 {botaoConcluir(chamado, canGestorSistemas, user?.id) === "parte_dev_concluida" ? (
                   <Button
                     variant="outline"
@@ -709,6 +743,20 @@ export default function ExecutarChamado() {
                   <ArrowRightLeft className="h-4 w-4 text-primary" /> Pedir transferência para outro dev
                 </Button>
               )}
+              {/* Pendente de quem pode concluir chamados: além do "Concluir
+                  tarefa", ele pede mais atualizações ao dev — o que ainda
+                  precisa ser feito antes de concluir (18/11/2026, Pablo).
+                  Logo abaixo de "Pedir transferência para outro dev". */}
+              {podeDevolverAoDev(chamado, canGestorSistemas) && (
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-2 transition-transform active:scale-95"
+                  disabled={!!agindo}
+                  onClick={() => setDevolvendoOpen(true)}
+                >
+                  <Undo2 className="h-4 w-4 text-primary" /> {agindo === "devolver" ? "Enviando…" : "Solicitar mais atualizações"}
+                </Button>
+              )}
               {canAprovar && !chamadoEncerrado(chamado.status) && (
                 <Button variant="outline" className="w-full justify-start gap-2 text-destructive transition-transform active:scale-95" onClick={() => setReprovando(true)}>
                   <XCircle className="h-4 w-4" /> Reprovar chamado
@@ -732,6 +780,24 @@ export default function ExecutarChamado() {
           )}
         </div>
       </div>
+
+      <Dialog open={devolvendoOpen} onOpenChange={setDevolvendoOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Solicitar mais atualizações</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Informe ao desenvolvedor o que mais precisa ser feito antes de concluir. O chamado volta para ele
+            continuar e ele é avisado. O solicitante não vê esta mensagem — só o time.
+          </p>
+          <Textarea rows={4} autoFocus placeholder="O que ainda precisa ser feito ou corrigido"
+            value={motivoDevolucao} onChange={(e) => setMotivoDevolucao(e.target.value)} />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDevolvendoOpen(false)}>Cancelar</Button>
+            <Button disabled={!motivoDevolucao.trim() || agindo === "devolver"} onClick={devolverAoDev}>
+              <Undo2 className="mr-2 h-4 w-4" /> Enviar ao desenvolvedor
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={reprovando} onOpenChange={setReprovando}>
         <DialogContent>
