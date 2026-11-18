@@ -70,6 +70,7 @@ import {
 } from "./shared";
 import { podeReabrirNfCancelada } from "./reabrirCancelada";
 import { ItensNfEditor } from "./ItensNfEditor";
+import { itemRowParaForm } from "./itemRowParaForm";
 import { FaltasPorDiasSecao } from "./FaltasPorDiasSecao";
 import {
   LinhaFaltaDias,
@@ -1416,7 +1417,15 @@ function DetalhesNfDialog({
   // [SEM-CHAMADO] (pedido do usuário): informativo de Mão de Obra em
   // destaque — vlr_mao_obra já é persistido por item (calculos.ts), só
   // faltava o total da nota aqui na visualização.
-  const vlrMaoObraTotal = useMemo(() => itens.reduce((s, it) => s + (Number(it.vlr_mao_obra) || 0), 0), [itens]);
+  // Itens expandidos no detalhe (somente leitura): conversão e cálculo iguais aos do Relatório de Serviços (NotasConcluidasTab).
+  const [expandidosItens, setExpandidosItens] = useState<Set<number>>(new Set());
+  const itensForm = useMemo(() => itens.map(itemRowParaForm), [itens]);
+  const pctFiscaisNf = nf ? pctFiscaisDaNf(nf) : null;
+  const itensCalculados = useMemo(
+    () => (pctFiscaisNf ? itensForm.map((it) => calcularItem(it, pctEfetivo(it, pctFiscaisNf))) : []),
+    [itensForm, pctFiscaisNf],
+  );
+  const totaisItens = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
   // Nota importada da planilha legada traz retenção em valor mas percentual 0
   // salvo — os rótulos "(x% s/ bruto)" derivam do total (ver pctFiscaisDaNf).
   const pctNf = nf ? pctFiscaisDaNf(nf) : PCT_FISCAIS_ZERO;
@@ -1547,98 +1556,25 @@ function DetalhesNfDialog({
               </div>
             </section>
 
-            <section className="rounded-xl border bg-card p-3 space-y-3">
-              <div className="text-sm font-semibold">Itens / Postos</div>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="min-w-[160px] px-2">Posto / Identificação</TableHead>
-                      <TableHead className="min-w-[110px] px-2">Contrato Exec.</TableHead>
-                      <TableHead className="min-w-[110px] px-2">Vlr Bruto</TableHead>
-                      <TableHead className="min-w-[110px] px-2">Vlr Líquido</TableHead>
-                      <TableHead className="w-8 px-1" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {itens.map((it) => (
-                      <TableRow key={it.id}>
-                        <TableCell className="px-2 py-1 text-sm font-medium">{it.identificacao}</TableCell>
-                        <TableCell className="px-2 py-1 text-sm">{fmtMoney(it.valor_contrato_exec)}</TableCell>
-                        <TableCell className="px-2 py-1 text-sm">{fmtMoney(it.vlr_bruto)}</TableCell>
-                        <TableCell className="px-2 py-1 text-sm font-medium">{fmtMoney(it.vlr_liquido)}</TableCell>
-                        <TableCell className="px-1 py-1">
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="Ver cálculo">
-                                <Calculator className="h-4 w-4 text-muted-foreground" />
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-80 text-sm space-y-1.5">
-                              <p className="font-semibold mb-1">Detalhamento — {it.identificacao}</p>
-                              <Linha label="Vlr Contrato Exec." valor={it.valor_contrato_exec} />
-                              <Linha label="Total Descontos" valor={-it.total_descontos} />
-                              <Linha label="Vlr Bruto" valor={it.vlr_bruto} destaque />
-                              <Linha label="Vlr Mão de Obra" valor={it.vlr_mao_obra} />
-                              <div className="border-t pt-1.5 space-y-1">
-                                <Linha label={`ISSQN (${fmtPct(pctNf.issqn_pct)} s/ bruto)`} valor={-it.issqn} />
-                                <Linha
-                                  label={`INSS (${INSS_CATEGORIAS[it.inss_categoria].label}, ${fmtPct(INSS_CATEGORIAS[it.inss_categoria].pct)} s/ mão de obra)`}
-                                  valor={-it.inss}
-                                />
-                                <Linha label={`IR (${fmtPct(pctNf.ir_pct)} s/ bruto)`} valor={-it.ir} />
-                                <Linha label={`COFINS (${fmtPct(pctNf.cofins_pct)} s/ bruto)`} valor={-it.cofins} />
-                                <Linha label={`PIS (${fmtPct(pctNf.pis_pct)} s/ bruto)`} valor={-it.pis} />
-                                <Linha label={`CSLL (${fmtPct(pctNf.csll_pct)} s/ bruto)`} valor={-it.csll} />
-                              </div>
-                              <Linha label="Vlr Líquido" valor={it.vlr_liquido} destaque />
-                            </PopoverContent>
-                          </Popover>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="flex flex-wrap gap-4 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
-                <span>
-                  <span className="text-muted-foreground">Bruto total: </span>
-                  <span className="font-medium">{fmtMoney(nf.vlr_bruto_total)}</span>
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-0.5 font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
-                  Mão de Obra: {fmtMoney(vlrMaoObraTotal)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">ISSQN ({fmtPct(pctNf.issqn_pct)}): </span>
-                  {fmtMoney(nf.issqn_total)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">INSS: </span>
-                  {fmtMoney(nf.inss_total)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">IR ({fmtPct(pctNf.ir_pct)}): </span>
-                  {fmtMoney(nf.ir_total)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">COFINS ({fmtPct(pctNf.cofins_pct)}): </span>
-                  {fmtMoney(nf.cofins_total)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">PIS ({fmtPct(pctNf.pis_pct)}): </span>
-                  {fmtMoney(nf.pis_total)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">CSLL ({fmtPct(pctNf.csll_pct)}): </span>
-                  {fmtMoney(nf.csll_total)}
-                </span>
-                <span>
-                  <span className="text-muted-foreground">Líquido total: </span>
-                  <span className="font-semibold">{fmtMoney(nf.vlr_liquido_total)}</span>
-                </span>
-              </div>
-            </section>
+            {/* Itens / Postos: mesma visão do Relatório de Serviços (somente leitura), com a seta para expandir cada item e ver VA, VT, faltas, descontos,
+                categoria de risco e retenção própria. Antes só mostrava a linha retraída com o cálculo no popover. */}
+            <ItensNfEditor
+              itens={itensForm}
+              itensCalculados={itensCalculados}
+              totais={totaisItens}
+              pctFiscais={pctFiscaisNf}
+              postosVigentes={[]}
+              contratoId={nf.contrato_id}
+              expandidos={expandidosItens}
+              mostrarPosEmissao
+              readOnly
+              onUpdateItem={() => {}}
+              onAddItem={() => {}}
+              onRemoveItem={() => {}}
+              onToggleExpandido={(i) => setExpandidosItens((exp) => { const p = new Set(exp); if (p.has(i)) p.delete(i); else p.add(i); return p; })}
+              onSelecionarPostos={() => {}}
+              onQtdColaboradoresChange={() => {}}
+            />
 
             <section className="rounded-xl border bg-card p-3 space-y-3">
               <div className="text-sm font-semibold">Anexos (PDF/XML da nota)</div>
