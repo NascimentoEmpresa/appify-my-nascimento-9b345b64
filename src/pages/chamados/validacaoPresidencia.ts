@@ -173,6 +173,20 @@ export const aguardandoGestorConcluir = (
 ) => parteDevConcluida(c);
 
 /**
+ * Fila do Gestor de Sistemas — aba "Pendente de conclusão" do Painel de
+ * Distribuição (18/11/2026, Pablo: "todos que estiverem como pendente do
+ * gestor devem aparecer aqui, se não, onde o gestor vai concluir?").
+ * Antes a aba só tinha os já concluídos e confirmados (falta FINALIZAR); os
+ * entregues pelo dev ou pelo merge da PR (falta CONCLUIR) não apareciam.
+ * Concluído e ainda sem a confirmação do solicitante NÃO entra: aí quem deve
+ * é o solicitante.
+ */
+export const pendenteDoGestorSistemas = (
+  c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">
+    & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+) => aguardandoGestorConcluir(c) || aguardandoGestorSistemas(c);
+
+/**
  * O que o botão "Concluir chamado" faz para este usuário (17/11/2026, Pablo):
  *   · "entregar" — ainda não entregue: o responsável (mesmo sendo Gestor de
  *     Sistemas) entrega ao gestor; o chamado fica pendente, não concluído;

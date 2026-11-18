@@ -32,7 +32,7 @@ import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { hrefNaLista } from "@/lib/chamados/navegacaoLista";
 import { AvisoPendenciasGestao } from "./ReaberturaTransferenciaChamado";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
-import { aguardandoGestorSistemas, desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
+import { desenvolvedorDaValidacao, pendenteDoGestorSistemas, type ValidacaoChamado } from "./validacaoPresidencia";
 import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -303,7 +303,8 @@ export default function PainelDistribuicao() {
   const posicaoFila = useMemo(() => posicoesFilaGlobal(chamados), [chamados]);
   const posicaoDev = useMemo(() => posicoesFilaDev(chamados), [chamados]);
 
-  const pendentesGestao = useMemo(() => chamados.filter(aguardandoGestorSistemas).length, [chamados]);
+  // Fila do Gestor de Sistemas: entregues (falta concluir) + confirmados (falta finalizar) — 18/11/2026.
+  const pendentesGestao = useMemo(() => chamados.filter(pendenteDoGestorSistemas).length, [chamados]);
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -311,7 +312,7 @@ export default function PainelDistribuicao() {
     const ateTs = fAte ? new Date(fAte + "T23:59:59").getTime() : null;
     const lista = chamados.filter((c) => {
       if (aba === "treinamento") { if (!treinosPendentes[c.id]) return false; }
-      else if (aba === "pendente_conclusao") { if (!aguardandoGestorSistemas(c)) return false; }
+      else if (aba === "pendente_conclusao") { if (!pendenteDoGestorSistemas(c)) return false; }
       else if (aba === "fila" ? !chamadoAtivo(c.status) : c.status !== aba) return false;
       if (fCategoria !== "todas" && !c.categorias.includes(fCategoria)) return false;
       if (fPrioridade !== "todas" && c.prioridade !== fPrioridade) return false;
