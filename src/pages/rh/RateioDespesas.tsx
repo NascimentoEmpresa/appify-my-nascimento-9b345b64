@@ -324,9 +324,8 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
             valor: aj ?? 0, ajustado: aj != null,
           };
         }),
-        criterio,
       ),
-    [valor, basesEfetivas, ajustes, criterio],
+    [valor, basesEfetivas, ajustes],
   );
   const resumo = resumirRateio(valor, itens);
   const totalBase = basesEfetivas.reduce((a, b) => a + (b.base || 0), 0);
@@ -861,9 +860,8 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           <p className="text-xs text-muted-foreground">
             {criterio === "consultas" ? (
               <>
-                Como a coluna amarela da planilha do RH: cada contrato paga <b>valor ÷ total de consultas × consultas do contrato</b>,
-                arredondado linha a linha. Importe a planilha (colunas CONTRATOS / FATURAMENTO / Consultas) ou digite as consultas abaixo.
-                Se o arredondamento deixar sobra de centavo, ela vai para o contrato com mais consultas, para fechar com o valor da fatura.
+                Como a coluna amarela da planilha do RH: cada contrato paga <b>valor ÷ total de consultas × consultas do contrato</b>.
+                Importe a planilha (colunas CONTRATOS / FATURAMENTO / Consultas) ou digite as consultas abaixo.
               </>
             ) : (
               <>

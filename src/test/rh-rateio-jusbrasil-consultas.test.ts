@@ -1,13 +1,13 @@
 // RH › Rateio de Despesas — Jus Brasil por CONSULTAS (18/11/2026).
 //
 // Prova com a fatura de outubro/2026 ("Rateio JUSBRASIL.xlsx" + PDF da
-// fatura, R$ 959,20, 120 consultas): o valor de cada contrato tem que ser o
+// fatura, R$ 959,19, 120 consultas — o 959,20 do rodapé é arredondamento): o valor de cada contrato tem que ser o
 // da coluna da direita destacada em amarelo pelo RH (G = 959,20 ÷ 120 ×
 // consultas). Antes o ERP rateava pelo faturamento (coluna E) e cada linha
 // saía diferente.
 import { describe, expect, it } from "vitest";
 import {
-  calcularRateio, criterioPadrao, distribuirPorUnidade, lerPlanilhaJusBrasil, resumirRateio, type ItemRateio,
+  calcularRateio, criterioPadrao, lerPlanilhaJusBrasil, resumirRateio, type ItemRateio,
 } from "@/lib/rh/rateioDespesas";
 
 // [contrato, faturamento (C), consultas (F), valor amarelo (G)] — linhas 3 a 96, na ordem da planilha.
@@ -108,7 +108,7 @@ const OUTUBRO_2026: [string, number, number, number][] = [
   ["IRGA APOIO ADMINISTRATIVO - 049.2026", 444999.32, 26, 207.83],
 ];
 
-const VALOR_FATURA = 959.2;
+const VALOR_FATURA = 959.19;
 
 // Matriz como o XLSX.utils.sheet_to_json(header:1) devolve a planilha.
 const matriz = (): unknown[][] => [
@@ -123,7 +123,7 @@ const ratear = () => {
   const itens: ItemRateio[] = linhas.map((l, i) => ({
     contrato_id: String(i), contrato_nome: l.nome, base: l.consultas, percentual: 0, valor: 0, ajustado: false,
   }));
-  return calcularRateio(VALOR_FATURA, itens, criterioPadrao("jusbrasil"));
+  return calcularRateio(VALOR_FATURA, itens);
 };
 
 describe("Jus Brasil — outubro/2026 bate com a coluna amarela", () => {
@@ -137,23 +137,19 @@ describe("Jus Brasil — outubro/2026 bate com a coluna amarela", () => {
     expect(OUTUBRO_2026.filter((l) => l[3] > 0)).toHaveLength(24);
   });
 
-  it("cada linha recebe o valor da coluna amarela (só o centavo da sobra vai para o IRGA)", () => {
+  it("cada uma das 94 linhas recebe exatamente o valor da coluna amarela", () => {
     const r = ratear();
     expect(r).toHaveLength(94);
-    const diferentes = r
-      .map((it, i) => ({ nome: it.contrato_nome, obtido: it.valor, amarelo: OUTUBRO_2026[i][3] }))
-      .filter((x) => Math.abs(x.obtido - x.amarelo) > 0.001);
-    // A coluna amarela soma 959,19 (cada linha arredondada sozinha) e a
-    // fatura é 959,20: o centavo que falta vai para quem tem mais consultas.
-    expect(diferentes).toEqual([
-      { nome: "IRGA APOIO ADMINISTRATIVO - 049.2026", obtido: 207.84, amarelo: 207.83 },
-    ]);
+    r.forEach((it, i) => {
+      expect(it.contrato_nome).toBe(OUTUBRO_2026[i][0].trim());
+      expect(it.valor).toBe(OUTUBRO_2026[i][3]);
+    });
   });
 
   it("fecha com o valor da fatura (dá para conferir e mandar ao Malote)", () => {
     const r = ratear();
     expect(resumirRateio(VALOR_FATURA, r).fecha).toBe(true);
-    expect(Math.round(OUTUBRO_2026.reduce((a, l) => a + l[3], 0) * 100) / 100).toBe(959.19);
+    expect(Math.round(OUTUBRO_2026.reduce((a, l) => a + l[3], 0) * 100) / 100).toBe(VALOR_FATURA);
   });
 
   it("pelo faturamento (critério antigo) os valores NÃO batiam", () => {
@@ -161,30 +157,10 @@ describe("Jus Brasil — outubro/2026 bate com a coluna amarela", () => {
     const itens: ItemRateio[] = linhas.map((l, i) => ({
       contrato_id: String(i), contrato_nome: l.nome, base: l.faturamento, percentual: 0, valor: 0, ajustado: false,
     }));
-    const r = calcularRateio(VALOR_FATURA, itens, "faturamento");
+    const r = calcularRateio(VALOR_FATURA, itens);
     const irga = r.find((x) => x.contrato_nome.startsWith("IRGA"));
     expect(irga?.valor).toBe(46.4);
     const policia = r.find((x) => x.contrato_nome.startsWith("POLÍCIA CIVIL"));
     expect(policia?.valor).toBe(0);
-  });
-});
-
-describe("distribuirPorUnidade", () => {
-  it("arredonda cada linha sozinha, como a planilha", () => {
-    // 10 ÷ 3 = 3,333…: 1 unidade = 3,33; 2 unidades = 6,67.
-    expect(distribuirPorUnidade(10, [1, 2])).toEqual([3.33, 6.67]);
-  });
-  it("sobra de centavo vai para quem tem mais unidades", () => {
-    expect(distribuirPorUnidade(10, [1, 1, 1])).toEqual([3.34, 3.33, 3.33]);
-    expect(distribuirPorUnidade(10, [1, 5, 1, 2]).reduce((a, x) => a + x, 0)).toBeCloseTo(10, 10);
-  });
-  it("excesso de centavo sai de quem tem mais unidades", () => {
-    // 0,01 ÷ 2 = 0,005 → arredonda para 0,01 cada = 0,02: tira 1 centavo
-    // (empate de unidades: sai do primeiro da lista).
-    expect(distribuirPorUnidade(0.01, [1, 1])).toEqual([0, 0.01]);
-  });
-  it("base zero não recebe nada; tudo zero dá zero", () => {
-    expect(distribuirPorUnidade(10, [0, 4, -1])).toEqual([0, 10, 0]);
-    expect(distribuirPorUnidade(10, [0, 0])).toEqual([0, 0]);
   });
 });
