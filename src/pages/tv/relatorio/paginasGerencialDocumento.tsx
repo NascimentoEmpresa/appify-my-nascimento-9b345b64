@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, CircleSlash, Info as IconeInfo, MapPin, Target, UserCheck, type LucideIcon } from "lucide-react";
 import {
-  dadosDoGrafico, ehSerieNoTempo, formatarValor, graficoDo, indicadoresDaTela, indicadoresDaTv, nomeCurto, placar, resultadoDoCard,
-  situacao, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type PainelGerencial, type Situacao, type VisualGerencial,
+  CORES_EQUIPE, dadosDoGrafico, ehSerieNoTempo, formatarMetaEquipe, formatarValor, graficoDo, indicadoresDaTela, indicadoresDaTv, nomeCurto, placar, resultadoDoCard,
+  situacao, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type MetaEquipe, type PainelGerencial, type Situacao, type VisualGerencial,
 } from "@/lib/tv/gerencial";
 import { FaixaGerencial, STATUS, useTamanho } from "./paginasGerencialPainel";
 
@@ -44,11 +44,13 @@ export function TelaDocumento({ p, cor, chave, visual, paginas, pagina, duracaoM
     <div className="flex h-full w-full flex-col" style={{ color: COR.texto }}>
       <FaixaGerencial cor={cor} sobre={`Painel gerencial · ${p.painel?.diretoria ?? ""}`} titulo={`TV ${p.painel?.titulo ?? ""}`} pergunta={p.painel?.pergunta} placarTv={pl} />
       <div className="flex min-h-0 flex-1 flex-col" style={{ padding: "20px 32px 14px", gap: 12 }}>
+        {chave === "equipe" && p.equipe?.length ? <CorridaEquipe key={chave} equipe={p.equipe} /> : (
         <div key={chave} className="grid min-h-0 flex-1" style={{ gap: 16, gridTemplateColumns: "repeat(2,minmax(0,1fr))", gridTemplateRows: `repeat(${linhas},minmax(0,1fr))` }}>
           {itens.map((i, k) => (
             <Card key={i.codigo} i={i} largo={itens.length % 2 === 1 && k === itens.length - 1} onClick={onIndicador ? () => onIndicador(i) : undefined} />
           ))}
         </div>
+        )}
         <div className="flex shrink-0 items-center gap-5" style={{ height: 36, fontSize: 20, color: COR.suave }}>
           {paginas.length > 1 && <span className="font-extrabold tabular-nums" style={{ color: COR.texto }}>Tela {pagina + 1} de {paginas.length}</span>}
           <div className="relative h-2 min-w-0 flex-1 overflow-hidden rounded-full" style={{ background: paginas.length > 1 ? COR.trilho : "transparent" }}>
@@ -103,6 +105,79 @@ function Card({ i, largo, onClick }: { i: IndicadorGerencial; largo: boolean; on
     </div>
   );
 }
+
+/**
+ * "Desempenho da equipe — Meta por analista" com os CAVALINHOS (SIS-2026-0672,
+ * 15/10/2026), de volta em 18/11/2026: tinha ficado só no layout "dashboard"
+ * (CartaoEquipe, paginasGerencialDashboard.tsx) e sumiu da TV quando ela passou
+ * para os cards do documento. Aqui é uma tela própria do rodízio, no visual
+ * escuro: uma raia por pessoa, o cavalinho galopa do zero até o realizado ao
+ * entrar a tela, a bandeira na meta, e à direita a meta e o quanto falta.
+ * O dado é o mesmo: tvg_equipe_meta (editais "Ganhamos" da Capa de Edital).
+ */
+function CorridaEquipe({ equipe }: { equipe: MetaEquipe[] }) {
+  const lista = equipe.slice(0, 6);
+  const desde = lista[0]?.ganhos_desde ? new Date(`${lista[0].ganhos_desde}T12:00:00`).toLocaleDateString("pt-BR") : "";
+  // Larga do zero e corre até o realizado logo que a tela entra.
+  const [largou, setLargou] = useState(false);
+  useEffect(() => { const t = window.setTimeout(() => setLargou(true), 250); return () => window.clearTimeout(t); }, []);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: COR.fundoCard, border: `1px solid ${COR.borda}`, borderRadius: 20, padding: "18px 30px 14px", gap: 6 }}>
+      <div className="flex shrink-0 items-baseline" style={{ gap: 16 }}>
+        <p className="font-extrabold leading-tight" style={{ fontSize: 31 }}>Desempenho da equipe — Meta por analista</p>
+        <p className="ml-auto truncate font-semibold" style={{ fontSize: 20, color: COR.suave }}>Contratos ganhos na Capa de Edital desde {desde} · valor estimado ÷ prazo</p>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col justify-around">
+        {lista.map((m, k) => {
+          const c = m.cor || CORES_EQUIPE[k % CORES_EQUIPE.length];
+          const pct = Math.max(0, Math.min(100, Number(m.pct) || 0));
+          const falta = Math.max(0, Number(m.meta) - Number(m.realizado));
+          const batida = falta <= 0;
+          const iniciais = m.nome.split(/s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
+          const pos = largou ? pct : 0;
+          return (
+            <div key={m.id} className="flex items-center" style={{ gap: 20 }}>
+              {m.foto
+                ? <img src={m.foto} alt="" className="shrink-0 rounded-full object-cover" style={{ width: 64, height: 64, border: `3px solid ${c}` }} />
+                : <span className="flex shrink-0 items-center justify-center rounded-full font-black text-white" style={{ width: 64, height: 64, background: c, fontSize: 24 }}>{iniciais}</span>}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline" style={{ gap: 14 }}>
+                  <p className="truncate font-extrabold" style={{ fontSize: 26, lineHeight: 1.1 }}>{m.nome}</p>
+                  <p className="ml-auto shrink-0 font-semibold tabular-nums" style={{ fontSize: 20, color: COR.suave }}>
+                    <b style={{ color: c }}>{formatarMetaEquipe(m.realizado, m.tipo)}</b> · {Math.round(Number(m.pct) || 0)}% da meta · {m.contratos} ganho{m.contratos === 1 ? "" : "s"}
+                  </p>
+                </div>
+                {/* A raia: pista tracejada, o feito pintado, o cavalinho na ponta e a bandeira na meta. */}
+                <div className="relative" style={{ height: 18, marginTop: 30, marginRight: 34, borderRadius: 999, background: COR.trilho, backgroundImage: "repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 18px, transparent 18px 36px)" }}>
+                  <div style={{ width: `${pos}%`, height: "100%", borderRadius: 999, background: c, transition: "width 2.6s cubic-bezier(.2,.7,.3,1)" }} />
+                  <div className="absolute" style={{ left: `calc(${pos}% - 26px)`, top: -36, transition: "left 2.6s cubic-bezier(.2,.7,.3,1)" }}>
+                    <span className="tvd-cavalo" style={{ animationDelay: `${-k * 0.13}s` }}>🏇</span>
+                  </div>
+                  <span className="absolute" style={{ right: -34, top: -18, fontSize: 30, lineHeight: 1 }}>🏁</span>
+                </div>
+              </div>
+              <div className="shrink-0" style={{ width: 150 }}>
+                <p className="font-semibold" style={{ fontSize: 18, color: COR.suave, lineHeight: 1.2 }}>Meta</p>
+                <p className="font-black tabular-nums" style={{ fontSize: 24, lineHeight: 1.2 }}>{formatarMetaEquipe(m.meta, m.tipo)}</p>
+              </div>
+              <div className="shrink-0 rounded-2xl text-center" style={{ width: 170, padding: "6px 10px", background: "rgba(255,255,255,0.05)", border: `2px solid ${batida ? TOM.verde : c}` }}>
+                <p className="font-semibold" style={{ fontSize: 18, color: COR.suave, lineHeight: 1.2 }}>{batida ? "Meta" : "Faltam"}</p>
+                <p className="font-black tabular-nums" style={{ fontSize: 24, lineHeight: 1.2, color: batida ? TOM.verde : c }}>{batida ? "batida ✓" : formatarMetaEquipe(falta, m.tipo)}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <style>{CSS_CAVALO}</style>
+    </div>
+  );
+}
+// Galope: sobe e desce e inclina de leve (só transform: leve para a TV). O emoji olha para a esquerda; o scaleX(-1) vira para a meta.
+const CSS_CAVALO = `
+.tvd-cavalo { display: inline-block; font-size: 52px; line-height: 1; filter: drop-shadow(0 3px 3px rgba(0,0,0,.45)); animation: tvd-galope .42s ease-in-out infinite alternate; }
+@keyframes tvd-galope { from { transform: scaleX(-1) translateY(0) rotate(0deg); } to { transform: scaleX(-1) translateY(-7px) rotate(-6deg); } }
+@media (prefers-reduced-motion: reduce) { .tvd-cavalo { animation: none; transform: scaleX(-1); } }
+`;
 
 function Fato({ Icone, rotulo, texto, forte }: { Icone: LucideIcon; rotulo: string; texto: string | null | undefined; forte?: boolean }) {
   return (

@@ -392,11 +392,16 @@ export function paginasPainel(p: PainelGerencial, visual: VisualGerencial): { ch
   const n = indicadoresDaTv(p).length;
   const porTela = visualGerencial(visual).porTela;
   const telas = Math.max(1, Math.ceil(n / porTela));
-  return Array.from({ length: telas }, (_, k) => ({ chave: `painel-${k + 1}`, titulo: telas > 1 ? `Tela ${k + 1} de ${telas}` : "Indicadores" }));
+  const lista = Array.from({ length: telas }, (_, k) => ({ chave: `painel-${k + 1}`, titulo: telas > 1 ? `Tela ${k + 1} de ${telas}` : "Indicadores" }));
+  // 18/11/2026: a corrida da equipe (os cavalinhos, SIS-2026-0672) tinha ficado
+  // só no layout "dashboard"; com os cards do documento (SIS-2026-0635) ela
+  // sumiu da TV Licitações. Volta como uma tela a mais do rodízio.
+  if (p.equipe?.length) lista.push({ chave: "equipe", titulo: "Desempenho da equipe" });
+  return lista;
 }
 export function indicadoresDaTela(p: PainelGerencial, visual: VisualGerencial, chave: string): IndicadorGerencial[] {
   const itens = indicadoresDaTv(p);
-  const telas = paginasPainel(p, visual).length;
+  const telas = paginasPainel(p, visual).filter((x) => x.chave.startsWith("painel-")).length;
   const porTela = Math.ceil(itens.length / telas);
   const k = Math.max(0, Number(chave.replace("painel-", "")) - 1);
   return itens.slice(k * porTela, (k + 1) * porTela);

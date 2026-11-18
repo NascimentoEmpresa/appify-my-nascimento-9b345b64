@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ItemTv, TelaTv } from "@/lib/tv/tv";
 import { Alerta, Centro, Item, Ocioso } from "./TvPlayer";
+import { CamadaFiltroTv } from "./FiltroTv";
 
 // =====================================================================
 // /tv/previa — a tela de TV que a gestão desenha (Sistemas › TV's)
@@ -51,6 +52,7 @@ export default function TvPrevia() {
         : tela.modo === "relogio" ? <Ocioso nome={tela.nome} />
         : tela.modo === "pausada" ? <Centro titulo={tela.nome} sub="TV pausada no ERP" />
         : <Centro titulo={`${tela.nome} está offline`} sub={`A TV não fala com o ERP desde ${tela.visto}. Quando voltar, ela retoma a playlist sozinha.`} />}
+      {tela && tela.modo !== "offline" && <CamadaFiltroTv filtro={tela.filtro} />}
       {tela && tela.modo !== "offline" && tela.alerta && <Alerta key={tela.alerta.imagem ?? ""} texto={tela.alerta.texto} cor={tela.alerta.cor} imagem={tela.alerta.imagem} layout={tela.alerta.layout} />}
     </div>
   );

@@ -302,7 +302,8 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
       </Palco>
     );
   }
-  if (dados?.tipo === "gerencial" && atual && visual === "documento") {
+  // A corrida da equipe (cavalinhos) é desenhada no visual do documento em qualquer visual.
+  if (dados?.tipo === "gerencial" && atual && (visual === "documento" || atual === "equipe")) {
     return (
       <Palco fundo={fundoDoPainel(visual)}>
         <TelaDocumento p={dados} cor={cor} visual={visual} chave={atual} paginas={paginas}

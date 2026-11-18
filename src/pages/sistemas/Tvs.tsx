@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle, ArrowDown, ArrowUp, BarChart3, Maximize, Copy, Eye, EyeOff, Image as ImageIcon, Link2, ListVideo, Loader2, Megaphone, MonitorPlay, Power,
-  Pause, Play, Plus, RefreshCw, Trash2, Tv, Type, Upload, Video, Clapperboard, Globe, Radio, SkipBack, SkipForward, ChevronLeft, ChevronRight,
+  Pause, Play, Plus, RefreshCw, Sparkles, Trash2, Tv, Type, Upload, Video, Clapperboard, Globe, Radio, SkipBack, SkipForward, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -21,11 +21,11 @@ import { useContratosRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import {
   MENU_TVS, enviarMidia, urlMidia, useAtualizarTv, useGerarLinkTv, useCriarAlerta, useEncerrarAlerta, useExcluirItem, useExcluirPlaylist,
   useMoverItem, useParearTv, useRecarregarTv, useRemoverTv, useSalvarItem, useSalvarPlaylist, useTvAlertas, useTvAoVivo, useTvDispositivos,
-  useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
+  useTvPlaylists, useCatalogoTv, useTvFiltro, useDefinirFiltroTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, agoraServidor, aoVivoFresco, corAviso, duracaoTotal, expandirPlaylist, fimDoAviso, haQuanto, itensAlcancaveis, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
-  urlValida, youtubeEmbed, type ItemTv, type LayoutAviso, type TelaTv, type TipoItem,
+  FILTROS_TV, LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, agoraServidor, aoVivoFresco, corAviso, duracaoTotal, expandirPlaylist, fimDoAviso, haQuanto, itensAlcancaveis, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  urlValida, youtubeEmbed, type FiltroTv, type ItemTv, type LayoutAviso, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
 import { PAINEIS_DO_DOCUMENTO, VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
@@ -74,15 +74,18 @@ export default function Tvs() {
     <div className="space-y-4">
       <PageHeader title="TV's" subtitle="Tudo o que passa nas TVs da empresa: conexão, playlists e avisos" module="Sistemas" breadcrumb={["TV's"]} />
       <AcessoGate menu={MENU_TVS} acao="visualizar" fallback={<Card className="p-6 text-sm text-muted-foreground">Você não tem liberação para esta tela.</Card>}>
-        <Tabs defaultValue="tvs">
+        {/* ?tab=filtros etc. abre direto na aba (18/11/2026). */}
+        <Tabs defaultValue={new URLSearchParams(window.location.search).get("tab") ?? "tvs"}>
           <TabsList>
             <TabsTrigger value="tvs" className="gap-1.5"><Tv className="h-4 w-4" /> TVs {tvs.data && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{online}/{tvs.data.length} online</Badge>}</TabsTrigger>
             <TabsTrigger value="playlists" className="gap-1.5"><ListVideo className="h-4 w-4" /> Playlists</TabsTrigger>
             <TabsTrigger value="aviso" className="gap-1.5"><Megaphone className="h-4 w-4" /> Aviso geral</TabsTrigger>
+            <TabsTrigger value="filtros" className="gap-1.5"><Sparkles className="h-4 w-4" /> Filtros</TabsTrigger>
           </TabsList>
           <TabsContent value="tvs"><AbaTvs tvs={tvs.data ?? []} carregando={tvs.isLoading} playlists={playlists.data ?? []} /></TabsContent>
           <TabsContent value="playlists"><AbaPlaylists playlists={playlists.data ?? []} carregando={playlists.isLoading} tvs={tvs.data ?? []} /></TabsContent>
           <TabsContent value="aviso"><AbaAviso tvs={tvs.data ?? []} /></TabsContent>
+          <TabsContent value="filtros"><AbaFiltros tvs={tvs.data ?? []} /></TabsContent>
         </Tabs>
       </AcessoGate>
     </div>
@@ -1214,6 +1217,65 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
           ))}
         </Card>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Filtros de tela (18/11/2026, mig 20261119060000): uma camada por cima de
+ * TODAS as TVs ao mesmo tempo — por enquanto só o Filtro de Natal. É global
+ * (TV_CONFIG), não por TV: "ao adicionar, todas as TVs ficam com esse filtro".
+ * A TV recebe no ping (até 20 min); "Recarregar todas" faz chegar antes.
+ */
+function AbaFiltros({ tvs }: { tvs: TvDispositivo[] }) {
+  const filtro = useTvFiltro();
+  const definir = useDefinirFiltroTv();
+  const recarregar = useRecarregarTv();
+  const ativo = filtro.data ?? null;
+  const [olhando, setOlhando] = useState<FiltroTv>(FILTROS_TV[0].valor);
+  // Prévia: a TV Licitações com o filtro por cima, desenhada pelo próprio player.
+  const telaPrevia = useMemo<TelaTv>(() => ({
+    modo: "item", filtro: olhando, chave: `filtro|${olhando}`,
+    item: { id: "previa-filtro", tipo: "relatorio", titulo: null, url: null, arquivo: null, texto: null, cor: null, duracao_seg: 60, relatorio: "ger-licitacoes", rel_visual: "documento" },
+  }), [olhando]);
+
+  const trocar = async (v: FiltroTv | null) => {
+    try {
+      await definir.mutateAsync(v);
+      toast.success(v ? `${FILTROS_TV.find((x) => x.valor === v)?.nome} ligado em todas as TVs — entra em até 20 min (ou use Recarregar todas).` : "Filtro desligado em todas as TVs — sai em até 20 min.");
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <Card className="space-y-3 p-4">
+        <div>
+          <p className="font-semibold">Filtros de tela</p>
+          <p className="text-xs text-muted-foreground">Uma camada por cima do que passa em <b>todas as TVs</b>, sem esconder os números. Só um filtro fica ligado por vez.</p>
+        </div>
+        {FILTROS_TV.map((x) => (
+          <div key={x.valor} className={`flex items-start gap-3 rounded-lg border p-3 ${olhando === x.valor ? "border-primary" : ""}`} onClick={() => setOlhando(x.valor)}>
+            <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{x.nome} {ativo === x.valor && <Badge className="ml-1 h-5 bg-green-600 px-1.5 text-[10px]">No ar</Badge>}</p>
+              <p className="text-xs text-muted-foreground">{x.descricao}</p>
+            </div>
+            <AcessoGate menu={MENU_TVS} acao="alterar" fallback={<Switch checked={ativo === x.valor} disabled />}>
+              <Switch checked={ativo === x.valor} disabled={definir.isPending || filtro.isLoading} onCheckedChange={(on) => trocar(on ? x.valor : null)} />
+            </AcessoGate>
+          </div>
+        ))}
+        <AcessoGate menu={MENU_TVS} acao="alterar">
+          <Button size="sm" variant="outline" disabled={!tvs.length || recarregar.isPending}
+            onClick={() => window.confirm(`Recarregar as ${tvs.length} TVs para o filtro entrar já?`) && recarregar.mutateAsync(tvs.map((t) => t.id)).then(() => toast.success("Comando enviado — as TVs recarregam em até 20 min."))}>
+            <RefreshCw className="mr-1 h-3.5 w-3.5" /> Recarregar todas
+          </Button>
+        </AcessoGate>
+      </Card>
+      <Card className="p-4">
+        <Label className="text-xs">Prévia — TV Licitações com o filtro</Label>
+        <div className="mt-1"><QuadroTv tela={telaPrevia} rotulo="Prévia do filtro" /></div>
+      </Card>
     </div>
   );
 }

@@ -65,6 +65,15 @@ describe("cards do documento (mig 20261109001000)", () => {
     expect(primeira[0].codigo).toBe("c6");
     expect(indicadoresDaTela(p, "documento", "painel-2")).toHaveLength(3);
   });
+  it("com meta por pessoa, a corrida da equipe (cavalinhos) entra como tela a mais sem mexer na divisão dos cards", () => {
+    const itens = Array.from({ length: 7 }, (_, k) => ind({ codigo: `c${k}`, ordem: k }));
+    const equipe = [{ id: "1", nome: "Ana", foto: null, cor: null, tipo: "valor" as const, meta: 100, ganhos_desde: "2026-09-01", realizado: 40, contratos: 1, valor_mensal: 40, pct: 40, itens: [] }];
+    const p: PainelGerencial = { painel: { slug: "ger-licitacoes", titulo: "", diretoria: "", pergunta: "" }, indicadores: itens, equipe };
+    expect(paginasPainel(p, "documento").map((x) => x.chave)).toEqual(["painel-1", "painel-2", "equipe"]);
+    expect(indicadoresDaTela(p, "documento", "painel-1")).toHaveLength(4);
+    expect(indicadoresDaTela(p, "documento", "painel-2")).toHaveLength(3);
+    expect(paginasPainel(p, "dashboard")).toEqual([{ chave: "dashboard", titulo: "Dashboard" }]);
+  });
   it("só mês vira linha; contrato nunca", () => {
     expect(ehSerieNoTempo([{ nome: "01/2026" }, { nome: "02/2026" }])).toBe(true);
     expect(ehSerieNoTempo([{ nome: "jan" }, { nome: "fev" }])).toBe(true);
