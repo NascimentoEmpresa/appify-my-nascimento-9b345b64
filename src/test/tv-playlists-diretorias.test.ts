@@ -3,12 +3,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { painelGerencial } from "@/lib/tv/gerencial";
 
-// Playlists TV Diretoria ADM e TV Diretor Operacional (mig 20261119110000):
+// Playlists TV Diretoria ADM e TV Diretor Operacional (mig 20261119150000):
 // no modelo da Presidência, cada uma inclui só as playlists dos setores da
 // sua diretoria. O teste lê a lista direto da migration — se alguém mexer
 // nela, a separação por diretoria continua conferida aqui.
 
-const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261119110000_tv_playlists_diretoria_adm_e_operacional.sql"), "utf8");
+const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261119150000_tv_playlists_diretoria_adm_e_operacional.sql"), "utf8");
 const incluidas = (nome: string): string[] => {
   const m = sql.match(new RegExp(`\\('${nome}',[\\s\\S]*?ARRAY\\[([^\\]]*)\\]`));
   if (!m) throw new Error(`playlist ${nome} não achada na migration`);
