@@ -1,0 +1,38 @@
+SERVIDOR DA EMPRESA - servidornascimento2 (192.168.100.59)
+Configurado em 18/11/2026. Copia de: infra/servidor-local/LEIA-ME.txt (repositorio)
+
+PARA QUE SERVE
+  Guarda os backups CIFRADOS do ERP que saem da nuvem (banco1 e banco2).
+  Os .gpg so abrem com a chave privada GPG do Eduardo - ela NAO fica aqui.
+
+/dados                      1,5 TB ESPELHADO (NVMe + HD WD Red). Se um disco
+                            queimar, o outro tem tudo.
+/dados/erp/
+  backups/banco1/           copias que vieram do banco1
+  backups/banco2/           copias que vieram do banco2
+      erp-cluster-AAAAMMDD-HHMM.tar.gz.gpg   banco + papeis, 1 por dia (365 dias)
+      anexos-AAAAMMDD-HHMM.tar.gz.gpg        todos os anexos, 1 por semana (12 copias)
+  recibos/banco1|banco2/    "recebi este arquivo, tamanho e sha256" - devolvido
+                            para a nuvem; so com recibo a nuvem apaga a dela
+  logs/puxar-backups.log    o que cada execucao fez (ok / FALHOU)
+
+QUANDO RODA
+  Todo dia 05:00 (Brasilia): puxa da nuvem e devolve os recibos.
+  Todo dia 08:30 (Brasilia), nos nos da nuvem: apagam o que ja tem recibo
+  (banco com mais de 3 dias; anexos, menos o mais novo).
+
+COMANDOS UTEIS
+  tail -n 30 /dados/erp/logs/puxar-backups.log     ultimo resultado
+  systemctl list-timers puxar-backups.timer        proxima execucao
+  sudo systemctl start puxar-backups               rodar agora (de noite!)
+  sudo lvs -a -o name,size,sync_percent,devices ubuntu-vg   saude do espelho
+  df -h /dados                                     espaco
+  du -sh /dados/erp/backups/*                      tamanho por no
+
+ONDE FICAM AS PECAS
+  /usr/local/sbin/puxar-backups                    o script
+  /etc/systemd/system/puxar-backups.{service,timer}
+  /var/lib/erpcopia/.ssh/leitura, recibos          chaves (restritas nos nos)
+  usuario erpcopia                                 conta de servico que faz a copia (sem login)
+
+RESTAURAR UM BACKUP: docs/restaurar-backup.md no repositorio.

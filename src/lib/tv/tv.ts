@@ -122,7 +122,16 @@ export interface EstadoTv {
   comando?: "recarregar" | null;
   itens?: ItemTv[];
   alerta?: AlertaNaTv | null;
+  /** Filtro de tela de TODAS as TVs (TV_CONFIG, mig 20261119060000). */
+  filtro?: FiltroTv | null;
 }
+
+/** Filtros de tela: camada por cima do que a TV mostra. Filtro novo = ampliar aqui, o CHECK da TV_CONFIG e o FiltroTv.tsx. */
+export type FiltroTv = "natal";
+export const FILTROS_TV: { valor: FiltroTv; nome: string; descricao: string }[] = [
+  { valor: "natal", nome: "Filtro de Natal", descricao: "Neve leve, estrelinhas piscando e o bigodinho de Natal passeando pelos cantos da tela." },
+];
+export const ehFiltroTv = (v: unknown): v is FiltroTv => FILTROS_TV.some((f) => f.valor === v);
 
 /** Aviso geral como o tv_estado entrega (inicio/imagem/duracao_seg: mig 20261028000020; layout: mig 20261028000021). */
 export interface AlertaNaTv { id: string; texto: string; cor: string; fim: string; inicio?: string; imagem?: string | null; duracao_seg?: number | null; layout?: LayoutAviso | null }
@@ -228,7 +237,7 @@ export const corAviso = (c: string | null | undefined) => (c && /^#([0-9a-f]{3}|
 // aviso geral por cima; pausada; relógio quando não há nada).
 
 /** O que uma tela de TV mostra (o iframe /tv/previa desenha). `chave` muda = remonta (vídeo recomeça, relatório reconsulta). */
-export type TelaTv = { chave: string; alerta?: { texto: string; cor: string; imagem?: string | null; layout?: LayoutAviso | null } | null } & (
+export type TelaTv = { chave: string; filtro?: FiltroTv | null; alerta?: { texto: string; cor: string; imagem?: string | null; layout?: LayoutAviso | null } | null } & (
   | { modo: "item"; item: ItemTv; inicioS?: number }
   | { modo: "relogio"; nome: string }
   | { modo: "pausada"; nome: string }

@@ -119,6 +119,21 @@ Deno.serve(async (req) => {
         if (error || !data?.signedUrl) throw new Error(error?.message ?? "Não foi possível abrir a ficha.");
         return json({ url: data.signedUrl });
       }
+      // DSS — Diálogo Semanal de Segurança (SIS-2026-0891, mig 20261119100000):
+      // abrir grava o acesso; assinar exige ter aberto e o DSS valer hoje.
+      case "dss_lista":
+        return json(await rpc("col_dss_lista", { p_emp: emp }));
+      case "dss_abrir":
+        return json(await rpc("col_dss_abrir", { p_emp: emp, p_dss: uuid(body.dss_id) }));
+      case "dss_assinar":
+        return json(await rpc("col_dss_assinar", { p_emp: emp, p_dss: uuid(body.dss_id), p_ip: ip, p_ua: ua }));
+      case "dss_arquivo": {
+        const path = await rpc("col_dss_arquivo_path", { p_emp: emp, p_dss: uuid(body.dss_id) });
+        if (!path || typeof path !== "string") return json({ error: "Material não encontrado." }, 404);
+        const { data, error } = await sb.storage.from("sst-dss").createSignedUrl(path, 120);
+        if (error || !data?.signedUrl) throw new Error(error?.message ?? "Não foi possível abrir o material.");
+        return json({ url: data.signedUrl });
+      }
       case "cursos":
         return json(await rpc("col_cursos", { p_emp: emp }));
       case "curso":

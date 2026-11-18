@@ -327,18 +327,63 @@ export interface SaldoInicialConciliacao {
   ano: number;
   valor: number;
   updated_at: string;
+  // SIS-2026-0942: cadastro substituído fica com ativo = false (some da conciliação, a linha continua guardada)
+  ativo?: boolean | null;
+  inativado_em?: string | null;
+  inativado_por?: string | null;
+  motivo_inativacao?: string | null;
 }
 
 const KEY_SALDO_INICIAL = "conciliacao_saldo_inicial";
 
+// A tabela não está em types.ts (gerado fora do repo): um único ponto sem tipo para o saldo inicial, em vez de um `as any` por chamada
+// (SIS-2026-0942 — a catraca do lint conta cada `any`).
+const tabelaSaldoInicial = () => (supabase as any).from("financeiro_conciliacao_saldo_inicial");
+
+async function buscarSaldosIniciais(): Promise<SaldoInicialConciliacao[]> {
+  const { data, error } = await tabelaSaldoInicial().select("*").order("ano");
+  if (error) throw error;
+  return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
+}
+
 export function useSaldosIniciaisConciliacao() {
   return useQuery({
     queryKey: [KEY_SALDO_INICIAL],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").select("*").order("ano");
+    queryFn: buscarSaldosIniciais,
+    // SIS-2026-0942: quem usa este hook (cartões, saldo do sistema, totais) só enxerga o que vale na conciliação. Os retirados ficam em
+    // useSaldosIniciaisRetirados, para o histórico. Filtra no cliente (e não com .eq) para a tela não quebrar antes da migration rodar.
+    select: (linhas: SaldoInicialConciliacao[]) => linhas.filter((s) => s.ativo !== false),
+  });
+}
+
+/** SIS-2026-0942: saldos iniciais retirados da conciliação (conta substituída). Mesmo cache da consulta acima, outro recorte. */
+export function useSaldosIniciaisRetirados() {
+  return useQuery({
+    queryKey: [KEY_SALDO_INICIAL],
+    queryFn: buscarSaldosIniciais,
+    select: (linhas: SaldoInicialConciliacao[]) => linhas.filter((s) => s.ativo === false),
+  });
+}
+
+/**
+ * SIS-2026-0942: retira (ou devolve) saldos iniciais da conciliação pela condição do cadastro. Não apaga nada: a linha fica com valor, data,
+ * quem retirou e o motivo. Devolver só religa o `ativo` e mantém a data/motivo da última retirada como rastro (o gatilho no banco recusa
+ * mudar o valor ou apagar um saldo retirado sem devolvê-lo antes).
+ */
+export function useRetirarSaldoInicialConciliacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { ids: string[]; retirar: boolean; motivo?: string }) => {
+      if (input.ids.length === 0) return;
+      const { data: auth } = await supabase.auth.getUser();
+      const agora = new Date().toISOString();
+      const dados = input.retirar
+        ? { ativo: false, inativado_em: agora, inativado_por: auth.user?.id ?? null, motivo_inativacao: input.motivo?.trim() || null, updated_by: auth.user?.id ?? null, updated_at: agora }
+        : { ativo: true, updated_by: auth.user?.id ?? null, updated_at: agora };
+      const { error } = await tabelaSaldoInicial().update(dados).in("id", input.ids);
       if (error) throw error;
-      return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
     },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_SALDO_INICIAL] }),
   });
 }
 
@@ -350,12 +395,11 @@ export function useSalvarSaldoInicialConciliacao() {
       const chave = { empresa_id: input.empresaId, banco_id: input.bancoId, conta: input.conta, ano: input.ano };
       // Valor em branco = remove a base (volta a "não informado").
       if (input.valor == null) {
-        const { error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").delete().match(chave);
+        const { error } = await tabelaSaldoInicial().delete().match(chave);
         if (error) throw error;
         return;
       }
-      const { error } = await (supabase as any)
-        .from("financeiro_conciliacao_saldo_inicial")
+      const { error } = await tabelaSaldoInicial()
         .upsert({ ...chave, valor: input.valor, updated_by: auth.user?.id ?? null, updated_at: new Date().toISOString() }, { onConflict: "empresa_id,banco_id,conta,ano" });
       if (error) throw error;
     },

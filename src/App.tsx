@@ -256,6 +256,8 @@ import ContratoTreinamentos from "./pages/treinamentos/contratos/ContratoTreinam
 import TreinamentoContratoPagina from "./pages/treinamentos/contratos/TreinamentoContrato";
 import RelatorioTreinamentoContrato from "./pages/treinamentos/contratos/RelatorioTreinamento";
 import RelatoriosTreinamentosContrato from "./pages/treinamentos/contratos/RelatoriosTreinamentosContrato";
+import DssPainel from "./pages/treinamentos/dss/DssPainel";
+import DssDetalhe from "./pages/treinamentos/dss/DssDetalhe";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
@@ -355,6 +357,7 @@ import CursoColaborador from "./pages/colaborador/CursoColaborador";
 import CertificadoColaborador from "./pages/colaborador/CertificadoColaborador";
 import HistoricoColaborador from "./pages/colaborador/HistoricoColaborador";
 import EpisColaborador from "./pages/colaborador/EpisColaborador";
+import DssColaboradorLista, { DssColaboradorLeitura } from "./pages/colaborador/DssColaborador";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
@@ -589,6 +592,8 @@ const App = () => (
             <Route path="treinamentos/:cursoId/certificado" element={<CertificadoColaborador />} />
             <Route path="historico" element={<HistoricoColaborador />} />
             <Route path="epis" element={<EpisColaborador />} />
+            <Route path="dss" element={<DssColaboradorLista />} />
+            <Route path="dss/:dssId" element={<DssColaboradorLeitura />} />
           </Route>
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
@@ -1161,6 +1166,9 @@ const App = () => (
             <Route path="treinamentos/contratos/treinamento/:id" element={<TreinamentoContratoPagina />} />
             <Route path="treinamentos/contratos/treinamento/:id/relatorio" element={<RelatorioTreinamentoContrato />} />
             <Route path="treinamentos/contratos/:empresa/:filial" element={<ContratoTreinamentos />} />
+            {/* DSS — Diálogo Semanal de Segurança (SIS-2026-0891, menu treinamentos_dss). */}
+            <Route path="treinamentos/dss" element={<DssPainel />} />
+            <Route path="treinamentos/dss/:id" element={<DssDetalhe />} />
             <Route path="treinamentos/alunos" element={<TrnAlunosLista />} />
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}

@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type AlertaNaTv, type EstadoTv, type ItemTv, type LayoutAviso } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
+import { CamadaFiltroTv } from "./FiltroTv";
 import { criarVideoReserva, deslocamentoAntiEstatica, manterTelaAcordada, PASSO_ANTI_ESTATICA_MS, rotuloTelaAcordada, type ModoTelaAcordada } from "@/lib/tv/telaAcordada";
 import { criarRecargaSegura } from "@/lib/tv/recargaSegura";
 
@@ -276,6 +277,8 @@ export default function TvPlayer() {
       {!estado ? <Centro titulo="Conectando ao ERP…" sub={erro ?? undefined} />
         : !estado.pareada ? <Pareamento codigo={estado.codigo ?? "------"} erro={erro} />
         : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} aoMostrar={reportar} />}
+      {/* Filtro de tela de todas as TVs (mig 20261119060000): por cima da playlist, embaixo do aviso geral. */}
+      {estado?.pareada && <CamadaFiltroTv filtro={estado.filtro} />}
       {estado?.pareada && alerta && <Alerta key={alerta.id} texto={alerta.texto} cor={alerta.cor} imagem={alerta.imagem} layout={alerta.layout} />}
       {erro && estado?.pareada && <div className="absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-white/70">sem conexão — tentando de novo</div>}
     </div>
