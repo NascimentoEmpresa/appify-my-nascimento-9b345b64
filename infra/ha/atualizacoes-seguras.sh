@@ -17,6 +17,11 @@
 #      seguranca para ganhar disponibilidade.
 #    - proibe o needrestart de reiniciar patroni/etcd/postgres sozinho. Quem
 #      derruba um no do cluster e uma pessoa, numa hora escolhida.
+#    - idem para docker/containerd (13/11/2026, 04:00 BRT): o needrestart
+#      reiniciou o containerd por causa da libc6, o Docker caiu junto e a pilha
+#      da API (Kong/Auth/REST/Storage) do banco1 nao voltou -- ~5 h de 502 sem
+#      CORS para quem caia naquele IP. Ver
+#      docs/incidentes/2026-11-13-api-banco1-fora.md.
 #    - separa as janelas em uma hora por no, para nunca coincidirem.
 #    - mantem o reinicio automatico de maquina DESLIGADO.
 #
@@ -38,6 +43,8 @@ $nrconf{override_rc} = {
     qr(^etcd\.service$)      => 0,
     qr(^postgresql.*)        => 0,
     qr(^wg-quick@.*)         => 0,
+    qr(^docker\.service$)    => 0,
+    qr(^containerd\.service$) => 0,
 };
 CFG
 
@@ -64,4 +71,4 @@ CFG
 $S systemctl daemon-reload
 $S systemctl restart apt-daily-upgrade.timer
 echo "  janela desta maquina: $($S systemctl list-timers apt-daily-upgrade.timer --all 2>/dev/null | awk 'NR==2{print $1,$2,$3}')"
-echo "  needrestart: patroni, etcd, postgres e wg-quick protegidos"
+echo "  needrestart: patroni, etcd, postgres, wg-quick, docker e containerd protegidos"

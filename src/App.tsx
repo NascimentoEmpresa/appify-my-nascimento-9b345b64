@@ -323,6 +323,7 @@ import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
 import SstExamesToxicologicos from "./pages/sst/ExamesToxicologicos";
 import SstAcidentes from "./pages/sst/Acidentes";
 import SstIncidentes from "./pages/sst/Incidentes";
+import SstCalcadosOrtopedicos from "./pages/sst/CalcadosOrtopedicos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -1217,6 +1218,8 @@ const App = () => (
             {/* SST — Acidentes de Trabalho: registro, CAT e controle (SIS-2026-0889, mig 20261117220000). */}
             <Route path="sst/acidentes" element={<SstAcidentes />} />
             <Route path="sst/incidentes" element={<SstIncidentes />} />
+            {/* SST — Calçados Ortopédicos: laudo e andamento do pedido do encarregado (SIS-2026-0888, mig 20261118200000). */}
+            <Route path="sst/calcados-ortopedicos" element={<SstCalcadosOrtopedicos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />

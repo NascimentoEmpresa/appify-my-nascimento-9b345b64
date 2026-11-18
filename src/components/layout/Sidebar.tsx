@@ -58,6 +58,7 @@ import {
   MessageCircle,
   FlaskConical,
   Siren,
+  Footprints,
   Bot,
   ShieldCheck,
   Shirt,
@@ -1484,6 +1485,8 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Laudos de EPI", to: "/app/sst/laudos", icon: FileCheck2 },
         { label: "Controle de CA", to: "/app/sst/controle-ca", icon: ShieldAlert },
+        // SIS-2026-0888: o pedido nasce em Solicitar Materiais; aqui é o acompanhamento do SST.
+        { label: "Calçados Ortopédicos", to: "/app/sst/calcados-ortopedicos", icon: Footprints, novoDesde: "2026-11-18" },
       ],
     },
     {
