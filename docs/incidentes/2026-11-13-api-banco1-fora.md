@@ -45,7 +45,7 @@ recriar nada).
 | `restart: always` nos 5 containers | `infra/failover/docker-compose.cluster.yml` | **aplicado** nos 2 nós com `docker update --restart=always` (sem recriar; horário de início dos containers inalterado) |
 | Healthcheck real em Auth/REST/Storage/Functions | compose | pendente — exige recriar containers, fazer nó a nó em janela |
 | `live-restore` no Docker | `/etc/docker/daemon.json` | pendente — exige reload do daemon |
-| Sonda blackbox **por nó** no Alloy + alertas (API de um nó fora > 1 min, "sem dados" = falha) | `infra/observabilidade/config.alloy` | pendente |
+| Sonda blackbox **por nó** no Alloy + alertas (API de um nó fora > 1 min, "sem dados" = falha) | `infra/observabilidade/config.alloy` | sonda **aplicada** nos 2 nós em 18/11 ~00:12 UTC (reload, sem reinício; 8 alvos `up` em cada nó; backup `/etc/alloy/config.alloy.bak-20261117`). Alertas: criar no Grafana conforme `infra/observabilidade/README.md` §4 |
 | Balanceador / DNS com health check na frente dos 2 IPs | DNS hoje no Registro.br (sem health check) | pendente — decidir entre Cloudflare e HAProxy+VIP |
 | Watchdog limitado (`docker compose up -d --no-recreate`) | — | pendente |
 
