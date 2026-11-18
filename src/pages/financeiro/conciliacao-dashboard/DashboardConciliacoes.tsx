@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
 import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes, useSalvarSaldoFinalManual } from "@/hooks/useGerarResumoConciliacao";
-import { explicarFluxoXExtrato, registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, totaisDoExtrato, totaisFluxoDosBancosConciliados, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { explicarFluxoXExtrato, grupoSoDeSaldoInicial, registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, totaisDoExtrato, totaisFluxoDosBancosConciliados, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TabelaConferenciaPorConta } from "./TabelaConferenciaPorConta";
@@ -27,7 +27,9 @@ import {
   useConciliacoesFluxoCaixaSalvas,
   useDivergenciasTratadas,
   useExcluirConciliacaoFluxoCaixa,
+  useRetirarSaldoInicialConciliacao,
   useSaldosIniciaisConciliacao,
+  useSaldosIniciaisRetirados,
   useSalvarSaldoInicialConciliacao,
 } from "@/hooks/useConciliacaoFluxoCaixa";
 
@@ -88,6 +90,11 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const { data: linhasFluxo = [] } = useFluxoCaixaCombinado();
   const { data: iniciais = [] } = useSaldosIniciaisConciliacao();
   const salvarInicial = useSalvarSaldoInicialConciliacao();
+  // SIS-2026-0942: saldo inicial de conta substituída sai da conciliação pelo cadastro (ativo = false) e fica listado à parte como histórico.
+  const { data: retirados = [] } = useSaldosIniciaisRetirados();
+  const retirarInicial = useRetirarSaldoInicialConciliacao();
+  const [retirando, setRetirando] = useState<{ ids: string[]; rotulo: string; valor: number } | null>(null);
+  const [motivoRetirada, setMotivoRetirada] = useState("");
   const carregarSaldos = useCarregarSaldoFinalConciliacoes();
 
   const hoje = new Date();
@@ -108,6 +115,27 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const excluirConciliacao = useExcluirConciliacaoFluxoCaixa();
   const [excluindo, setExcluindo] = useState<{ id: string; rotulo: string } | null>(null);
   const [motivoExclusao, setMotivoExclusao] = useState("");
+  async function confirmarRetirada() {
+    if (!retirando) return;
+    if (motivoRetirada.trim().length < 5) { toast.error("Informe o motivo da retirada."); return; }
+    try {
+      await retirarInicial.mutateAsync({ ids: retirando.ids, retirar: true, motivo: motivoRetirada.trim() });
+      toast.success("Conta retirada da conciliação. O saldo continua guardado em \"Retirados da conciliação\".");
+      setRetirando(null);
+      setMotivoRetirada("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível retirar a conta da conciliação.");
+    }
+  }
+  async function devolverRetirado(id: string) {
+    try {
+      await retirarInicial.mutateAsync({ ids: [id], retirar: false });
+      toast.success("Saldo devolvido à conciliação.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível devolver o saldo à conciliação.");
+    }
+  }
+
   async function confirmarExclusao() {
     if (!excluindo) return;
     if (motivoExclusao.trim().length < 5) { toast.error("Informe o motivo da exclusão."); return; }
@@ -180,6 +208,21 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
     return [...m.entries()].sort((a, b) => empresaNome(a[0].split("|")[0]).localeCompare(empresaNome(b[0].split("|")[0])) || bancoNome(a[0].split("|")[1]).localeCompare(bancoNome(b[0].split("|")[1])));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todosSaldos, saldosFiltrados, empresas, bancos]);
+
+  // SIS-2026-0942: todos os meses de cada grupo (sem o filtro de período), para decidir se o cartão só existe pelo saldo inicial.
+  const mesesDoGrupoInteiro = useMemo(() => {
+    const m = new Map<string, SaldoMensal[]>();
+    for (const s of todosSaldos) {
+      const k = `${s.empresaId}|${s.bancoId}|${s.contaBancoId ?? ""}`;
+      m.set(k, [...(m.get(k) ?? []), s]);
+    }
+    return m;
+  }, [todosSaldos]);
+  const rotuloSaldoInicial = (i: { empresa_id: string; banco_id: string; conta: string }) => {
+    const conta = rotulosDeConta.get(i.conta) ?? i.conta;
+    return `${empresaNome(i.empresa_id)} · ${bancoNome(i.banco_id)}${conta ? ` · ${conta}` : ""}`;
+  };
+  const retiradosFiltrados = retirados.filter((i) => (empresaId === TODAS || i.empresa_id === empresaId) && (bancoValido === TODAS || i.banco_id === bancoValido));
 
   // Conciliações salvas antes do saldo final do extrato: relê o .OFX guardado de cada uma.
   // Aceita "0", "270,22", "1.234,56" ou "270.22". Vazio apaga e volta a "não informado".
@@ -791,6 +834,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
           const salvo = doGrupo.filter((i) => i.ano === ano).reduce((t, i) => t + i.valor, 0);
           const campo = rascunhoBase[chave] ?? (doGrupo.length ? String(salvo).replace(".", ",") : "");
           const conta = meses.find((m) => m.conta)?.conta;
+          const podeRetirar = doGrupo.length > 0 && grupoSoDeSaldoInicial(mesesDoGrupoInteiro.get(chave) ?? meses);
           return (
             <Card key={chave}>
               <CardHeader className="pb-2">
@@ -811,6 +855,19 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                       </Button>
                     </span>
                   </AcessoGate>
+                  {podeRetirar && (
+                    <AcessoGate menu="conciliacao-fluxo-caixa" acao="alterar">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-xs font-normal text-muted-foreground"
+                        title="Conta substituída: sai da conciliação pelo cadastro, sem apagar o saldo (fica em Retirados da conciliação)"
+                        onClick={() => { setMotivoRetirada(""); setRetirando({ ids: doGrupo.map((i) => i.id), rotulo: `${empresaNome(eId)} · ${bancoNome(bId)}${conta ? ` · ${conta}` : ""}`, valor: salvo }); }}
+                      >
+                        Retirar da conciliação
+                      </Button>
+                    </AcessoGate>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
@@ -899,9 +956,69 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
             </Card>
           );
         })}
+        {retiradosFiltrados.length > 0 && (
+          <details className="rounded-md border bg-muted/20 p-3 text-xs">
+            <summary className="cursor-pointer text-sm font-medium">Retirados da conciliação ({retiradosFiltrados.length})</summary>
+            <p className="mt-2 text-muted-foreground">
+              Contas substituídas: não abrem cartão, não ficam pendentes e não entram no saldo do sistema. O saldo continua guardado aqui, com quem retirou e o motivo.
+            </p>
+            <table className="mt-2 w-full">
+              <thead>
+                <tr className="border-b text-left text-muted-foreground">
+                  <th className="px-2 py-1">Conta</th>
+                  <th className="px-2 py-1">Saldo anterior de janeiro</th>
+                  <th className="px-2 py-1 text-right">Valor</th>
+                  <th className="px-2 py-1">Retirada em</th>
+                  <th className="px-2 py-1">Motivo</th>
+                  <th className="px-2 py-1" />
+                </tr>
+              </thead>
+              <tbody>
+                {retiradosFiltrados.map((i) => (
+                  <tr key={i.id} className="border-b last:border-0">
+                    <td className="px-2 py-1">{rotuloSaldoInicial(i)}</td>
+                    <td className="px-2 py-1">{i.ano}</td>
+                    <td className="px-2 py-1 text-right">{fmtBRL(i.valor)}</td>
+                    <td className="px-2 py-1">{i.inativado_em ? isoParaBR(i.inativado_em.slice(0, 10)) : traco}</td>
+                    <td className="px-2 py-1">{i.motivo_inativacao ?? traco}</td>
+                    <td className="px-2 py-1 text-right">
+                      <AcessoGate menu="conciliacao-fluxo-caixa" acao="alterar">
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={retirarInicial.isPending} onClick={() => void devolverRetirado(i.id)}>
+                          Devolver à conciliação
+                        </Button>
+                      </AcessoGate>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
       </div>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={!!retirando} onOpenChange={(o) => { if (!o) setRetirando(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retirar {retirando?.rotulo} da conciliação?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Use quando a conta foi substituída por outro cadastro. O cartão deixa de aparecer e de ficar pendente, mas nada é apagado: o saldo anterior
+              {retirando ? ` de ${fmtBRL(retirando.valor)}` : ""} fica em "Retirados da conciliação", com seu nome e o motivo, e pode ser devolvido.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div>
+            <Label className="text-xs">Motivo da retirada *</Label>
+            <Input value={motivoRetirada} onChange={(e) => setMotivoRetirada(e.target.value)} placeholder="Ex.: substituída pela Sicredi HAGG 119." />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button disabled={retirarInicial.isPending || motivoRetirada.trim().length < 5} onClick={() => void confirmarRetirada()}>
+              {retirarInicial.isPending ? "Retirando…" : "Retirar da conciliação"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!excluindo} onOpenChange={(o) => { if (!o) setExcluindo(null); }}>
         <AlertDialogContent>
