@@ -98,10 +98,33 @@ escolha os `grafanacloud-grpnascimento-prom` e `-logs` → **Import**.
 O painel abre em "últimas 24 h". A linha **tracejada cinza** é a mesma hora de
 **ontem**. Para ver a semana, troque o período no canto superior direito.
 
-### 4. Alertas (direto para o seu Discord, por DM)
+### 4. Alertas (e-mail + DM do Discord)
 
-**Alerting → Contact points → Add**: tipo **Discord**, cole o webhook. Depois
-**Alerting → Alert rules → New alert rule**, uma para cada linha:
+**Para onde vão (18/11/2026).** Até essa data a política raiz apontava para o
+contato `empty` e NENHUM alerta saía do Grafana — nem os 7 do grupo
+`producao` (o "Disco > 85%" estava disparando havia dias sem avisar ninguém).
+Agora:
+
+- Política: rota filha `grafana_folder = ERP` → contato **`eduardo`** (espera
+  30 s, agrupa por pasta+alerta, repete a cada 4 h). A raiz continua `empty`,
+  para os alertas automáticos do knowledge-graph não virarem ruído.
+- Contato `eduardo`, duas integrações:
+  - **e-mail** para `analisededados@haggltda.com.br` (o Grafana Cloud só
+    aceita e-mail de membro da organização);
+  - **webhook** → `POST .../actions/workflows/alerta_grafana.yml/dispatches`
+    com payload customizado (`{"ref":"main","inputs":{"alerta": <JSON de
+    .Status e .Alerts>}}`) e `Authorization: Bearer <token do GitHub>`. O
+    workflow `.github/workflows/alerta_grafana.yml` manda a **DM** pelo bot —
+    alerta de infra vai por DM, nunca no canal coletivo. Não passa pelo
+    cluster, então avisa justamente quando a API está fora.
+- Token do GitHub: *fine-grained*, só este repositório, só **Actions: Read and
+  write**. Ele vive DENTRO do contato no Grafana; trocar = editar o webhook do
+  contato `eduardo` (campo de credencial) e revogar o antigo.
+- Testar: Actions → "Alerta do Grafana por DM" → Run workflow com `alerta`
+  vazio (só o trecho GitHub → Discord), ou **Test** na integração webhook do
+  contato `eduardo` (caminho inteiro).
+
+As regras, em **Alerting → Alert rules → New alert rule**, uma para cada linha:
 
 | Nome | Fonte | Consulta | Dispara quando |
 |---|---|---|---|
