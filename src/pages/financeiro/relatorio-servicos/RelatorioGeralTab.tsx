@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
-import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio, retencoesPorContrato, IMPOSTOS_RETIDOS } from "./totais";
+import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio, retencoesPorContrato, retencoesDaNf, descontosDaNf, IMPOSTOS_RETIDOS } from "./totais";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
 import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, pendenciaContaVinculada, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
@@ -235,13 +235,22 @@ export default function RelatorioGeralTab() {
     setBusca("");
   }
 
+  // SIS-2026-0867: descontos antes/depois da nota, somados dos itens já carregados em lote. Sem os itens carregados (ou NF sem itens) não há valor a mostrar.
+  function descontosDoItens(nfId: string) {
+    const itens = itensPorNf?.get(nfId);
+    return itens ? descontosDaNf(itens) : null;
+  }
+  const descMoney = (v: number | undefined) => (v === undefined ? "—" : fmtMoney(v));
+
   function exportarExcel() {
     if (linhas.length === 0) {
       toast.error("Não há registros para exportar com os filtros atuais.");
       return;
     }
     import("xlsx").then((XLSX) => {
-      const exportRows = linhas.map((nf) => ({
+      const exportRows = linhas.map((nf) => {
+        const desc = descontosDoItens(nf.id);
+        return {
         Empresa: empresaPorId.get(nf.empresa_id) ?? nf.empresa?.nome_fantasia ?? nf.empresa?.razao_social ?? "-",
         Contrato: nf.contrato?.nome ?? "-",
         Competência: competenciaCurta(nf.competencia),
@@ -260,6 +269,17 @@ export default function RelatorioGeralTab() {
         COFINS: nf.cofins_total,
         PIS: nf.pis_total,
         CSLL: nf.csll_total,
+        "Total de impostos": retencoesDaNf(nf),
+        "Faltas (antes)": desc ? desc.antes.faltas : "",
+        "Postos não impl. (antes)": desc ? desc.antes.postosNaoImplementados : "",
+        "Multas (antes)": desc ? desc.antes.multas : "",
+        "Glosas (antes)": desc ? desc.antes.glosas : "",
+        "Outros desc. (antes)": desc ? desc.antes.outros : "",
+        "Total desc. antes da NF": desc ? desc.antes.total : "",
+        "Multas (após)": desc ? desc.depois.multas : "",
+        "Glosas (após)": desc ? desc.depois.glosas : "",
+        "Outros desc. (após)": desc ? desc.depois.outros : "",
+        "Total desc. após a NF": desc ? desc.depois.total : "",
         "Desconto conta vinculada": nf.desconto_conta_vinculada,
         "Recebido conta vinculada": nf.conta_vinculada_valor_recebido ?? 0,
         "Data recebimento conta vinculada": fmtDate(nf.conta_vinculada_data_recebimento ?? null),
@@ -270,7 +290,8 @@ export default function RelatorioGeralTab() {
         "Valor pendente": valorPendenteNf(nf, itensPorNf?.get(nf.id) ?? []),
         Observações: nf.observacoes ?? "",
         Status: STATUS_LABEL[statusDaNota(nf)],
-      }));
+        };
+      });
       const ws = XLSX.utils.json_to_sheet(exportRows);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Relatório Geral");
@@ -452,6 +473,17 @@ export default function RelatorioGeralTab() {
                 <TableHead className="text-center bg-sky-50 dark:bg-sky-950/20">COFINS</TableHead>
                 <TableHead className="text-center bg-sky-50 dark:bg-sky-950/20">PIS</TableHead>
                 <TableHead className="text-center bg-sky-50 dark:bg-sky-950/20">CSLL</TableHead>
+                <TableHead className="text-center bg-sky-100 dark:bg-sky-950/40 font-semibold">Total Impostos</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Faltas (antes)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Postos não impl. (antes)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Multas (antes)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Glosas (antes)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Outros desc. (antes)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Total desc. antes da NF</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Multas (após)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Glosas (após)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Outros desc. (após)</TableHead>
+                <TableHead className="text-center bg-rose-50 dark:bg-rose-950/20">Total desc. após a NF</TableHead>
                 <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinc. Descontado</TableHead>
                 <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinc. Recebido</TableHead>
                 <TableHead className="text-center bg-amber-50 dark:bg-amber-950/20">Conta Vinc. Pendência</TableHead>
@@ -466,11 +498,12 @@ export default function RelatorioGeralTab() {
             <TableBody>
               {!isLoading && linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={podeExcluir ? 27 : 26} className="text-center text-muted-foreground py-10">{verLixeira ? "A lixeira está vazia." : "Nenhum registro encontrado com os filtros atuais."}</TableCell>
+                  <TableCell colSpan={podeExcluir ? 38 : 37} className="text-center text-muted-foreground py-10">{verLixeira ? "A lixeira está vazia." : "Nenhum registro encontrado com os filtros atuais."}</TableCell>
                 </TableRow>
               )}
               {linhas.map((nf: NfEmissaoRow) => {
                 const status = statusDaNota(nf);
+                const desc = descontosDoItens(nf.id);
                 return (
                   <TableRow key={nf.id}>
                     {podeExcluir && (
@@ -498,6 +531,17 @@ export default function RelatorioGeralTab() {
                     <TableCell className="text-center whitespace-nowrap bg-sky-50/50 dark:bg-sky-950/10">{fmtMoney(nf.cofins_total)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-sky-50/50 dark:bg-sky-950/10">{fmtMoney(nf.pis_total)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-sky-50/50 dark:bg-sky-950/10">{fmtMoney(nf.csll_total)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-sky-100/60 dark:bg-sky-950/20 font-semibold">{fmtMoney(retencoesDaNf(nf))}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.antes.faltas)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.antes.postosNaoImplementados)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.antes.multas)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.antes.glosas)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.antes.outros)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10 font-semibold">{descMoney(desc?.antes.total)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.depois.multas)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.depois.glosas)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10">{descMoney(desc?.depois.outros)}</TableCell>
+                    <TableCell className="text-center whitespace-nowrap bg-rose-50/50 dark:bg-rose-950/10 font-semibold">{descMoney(desc?.depois.total)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10">{fmtMoney(nf.desconto_conta_vinculada)}</TableCell>
                     <TableCell className="text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10">{fmtMoney(nf.conta_vinculada_valor_recebido ?? 0)}</TableCell>
                     <TableCell className={cn("text-center whitespace-nowrap bg-amber-50/50 dark:bg-amber-950/10 font-medium", pendenciaContaVinculada(nf) > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>{fmtMoney(pendenciaContaVinculada(nf))}</TableCell>
