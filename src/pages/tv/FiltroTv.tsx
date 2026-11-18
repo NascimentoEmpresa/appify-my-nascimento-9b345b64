@@ -15,7 +15,7 @@ import type { FiltroTv } from "@/lib/tv/tv";
 //     página); nada de canvas em loop nem biblioteca;
 //   · neve pequena e translúcida; estrelinhas e brilhos só nas bordas, longe
 //     dos números;
-//   · o bigodinho fica pequeno espiando pela borda, troca de lugar a cada ~40 s (timer
+//   · o bigodinho alterna: espia pela borda ~20 s e aparece inteiro num canto ~10 s (timer
 //     local, sem rede) e balança de leve;
 //   · anima sempre, mesmo com prefers-reduced-motion (ver CSS_NATAL);
 //   · pisca-pisca colorido no topo da tela.
@@ -34,18 +34,21 @@ function pseudo(n: number): number {
 }
 
 /**
- * Onde o bigodinho aparece: ESPIANDO pelas bordas laterais, com mais da metade
- * fora da tela, para ficar só na margem. No canto de baixo inteiro ele cobria
- * "Meta/Onde/Causa/Dono" dos cards (teste de 18/11/2026 na TV Licitações).
- * Longe do cabeçalho (relógio e placar). Largura do mascote ≈ 12vh (2:3 de 18vh).
+ * Onde o bigodinho aparece, em roteiro fixo (18/11/2026):
+ *   · ESPIANDO pela borda lateral (~20 s), metade fora da tela, só na margem —
+ *     de corpo inteiro no canto ele cobre "Meta/Onde/Causa/Dono" e os valores
+ *     das barras;
+ *   · DE CORPO INTEIRO num canto de baixo (~10 s), para ser visto: o Pablo,
+ *     com o print, "personagem quase não tá aparecendo". Curto, para não
+ *     tapar número por muito tempo.
+ * Altura 24vh → largura ≈ 16vh (imagem 2:3). Longe do cabeçalho (relógio e placar).
  */
-const CANTOS: React.CSSProperties[] = [
-  { left: "-6.4vh", bottom: "8vh", transform: "rotate(12deg)" },
-  { right: "-6.4vh", bottom: "8vh", transform: "rotate(-12deg)" },
-  { left: "-6.4vh", bottom: "46vh", transform: "rotate(14deg)" },
-  { right: "-6.4vh", bottom: "46vh", transform: "rotate(-14deg)" },
+const PARADAS: { estilo: React.CSSProperties; ms: number }[] = [
+  { estilo: { right: "0.4vw", bottom: "-1vh" }, ms: 10_000 },
+  { estilo: { right: "-7.5vh", bottom: "40vh", transform: "rotate(-10deg)" }, ms: 20_000 },
+  { estilo: { left: "0.4vw", bottom: "-1vh" }, ms: 10_000 },
+  { estilo: { left: "-7.5vh", bottom: "40vh", transform: "rotate(10deg)" }, ms: 20_000 },
 ];
-const TROCA_CANTO_MS = 40_000;
 
 function FiltroNatal() {
   const flocos = useMemo(() => Array.from({ length: 60 }, (_, k) => ({
@@ -77,19 +80,17 @@ function FiltroNatal() {
     };
   }), []);
 
-  const [canto, setCanto] = useState(() => Math.floor(Math.random() * CANTOS.length));
+  const [parada, setParada] = useState(0);
   const [visivel, setVisivel] = useState(true);
   useEffect(() => {
     let troca: number | undefined;
-    const t = window.setInterval(() => {
+    // Some (0,8 s), troca de lugar e volta; cada parada tem o seu tempo. Só timer local, sem rede.
+    const t = window.setTimeout(() => {
       setVisivel(false);
-      troca = window.setTimeout(() => {
-        setCanto((c) => (c + 1 + Math.floor(Math.random() * (CANTOS.length - 1))) % CANTOS.length);
-        setVisivel(true);
-      }, 900);
-    }, TROCA_CANTO_MS);
-    return () => { window.clearInterval(t); window.clearTimeout(troca); };
-  }, []);
+      troca = window.setTimeout(() => { setParada((p) => (p + 1) % PARADAS.length); setVisivel(true); }, 900);
+    }, PARADAS[parada].ms);
+    return () => { window.clearTimeout(t); window.clearTimeout(troca); };
+  }, [parada]);
 
   return (
     <div aria-hidden className="tvf-natal pointer-events-none absolute inset-0 overflow-hidden" style={{ zIndex: 40 }}>
@@ -115,7 +116,7 @@ function FiltroNatal() {
           <svg viewBox="0 0 24 24" width="100%" height="100%"><path fill="currentColor" d="M12 0 L14 10 L24 12 L14 14 L12 24 L10 14 L0 12 L10 10 Z" /></svg>
         </span>
       ))}
-      <div className="tvf-bigodinho-lugar" style={{ ...CANTOS[canto], opacity: visivel ? 1 : 0 }}>
+      <div className="tvf-bigodinho-lugar" style={{ ...PARADAS[parada].estilo, opacity: visivel ? 1 : 0 }}>
         <img src={bigodinhoNatal} alt="" className="tvf-bigodinho" draggable={false} />
       </div>
       <style>{CSS_NATAL}</style>
@@ -132,7 +133,7 @@ const CSS_NATAL = `
 .tvf-natal .tvf-floco { position: absolute; top: -12px; display: block; will-change: transform; animation-name: tvf-cair; animation-timing-function: linear; animation-iteration-count: infinite; }
 .tvf-natal .tvf-floco-miolo { display: block; width: 100%; height: 100%; border-radius: 9999px; background: #fff; box-shadow: 0 0 8px 1px rgba(255,255,255,.9); animation-name: tvf-balancar-floco; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-direction: alternate; }
 .tvf-natal .tvf-estrela { position: absolute; display: block; filter: drop-shadow(0 0 4px currentColor); animation-name: tvf-piscar; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
-.tvf-natal .tvf-bigodinho-lugar { position: absolute; height: 18vh; transition: opacity .8s ease; }
+.tvf-natal .tvf-bigodinho-lugar { position: absolute; height: 24vh; transition: opacity .8s ease; }
 .tvf-natal .tvf-bigodinho { height: 100%; width: auto; transform-origin: 50% 100%; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); animation: tvf-wiggle 2.6s ease-in-out infinite; }
 @keyframes tvf-cair { from { transform: translate3d(0, -2vh, 0); } to { transform: translate3d(0, 104vh, 0); } }
 @keyframes tvf-balancar-floco { from { transform: translateX(-14px); } to { transform: translateX(14px); } }
