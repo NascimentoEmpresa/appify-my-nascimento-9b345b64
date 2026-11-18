@@ -199,14 +199,22 @@ export const abreNaExecucao = (
 ) => c.status === "concluido" || pendenteDoGestorSistemas(c);
 
 /**
- * "Devolver ao desenvolvedor" (mig 20261118210000): só o Gestor de Sistemas,
- * só com a parte do dev entregue e o chamado não encerrado. ESPELHA a RPC
- * chamado_devolver_ao_dev — o motivo obrigatório é conferido no diálogo e lá.
+ * "Solicitar mais atualizações" (migs 20261118210000 e 20261118230000): só
+ * quem pode concluir chamados (Gestor de Sistemas / "Pode concluir
+ * chamados"), em dois momentos:
+ *   · parte do dev entregue e o chamado ainda não concluído;
+ *   · chamado concluído que o gestor ainda NÃO finalizou (confirmado ou não
+ *     pelo solicitante) — 18/11/2026, Pablo, no SIS-2026-0934: "em produção
+ *     não aparece o botão". Aí o chamado volta para 'em_andamento'.
+ * ESPELHA a RPC chamado_devolver_ao_dev. gestao_finalizada_em não lido
+ * (undefined) não libera o concluído.
  */
 export const podeDevolverAoDev = (
-  c: Pick<Chamado, "status"> & Partial<Pick<Chamado, "desenvolvimento_entregue_em">>,
+  c: Pick<Chamado, "status">
+    & Partial<Pick<Chamado, "desenvolvimento_entregue_em" | "gestao_finalizada_em">>,
   ehGestorSistemas: boolean,
-) => ehGestorSistemas && aguardandoGestorConcluir(c);
+) => ehGestorSistemas && (aguardandoGestorConcluir(c)
+  || (c.status === "concluido" && c.gestao_finalizada_em === null));
 
 /**
  * O que o botão "Concluir chamado" faz para este usuário (17/11/2026, Pablo):
