@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeFinalizarGestao,
+  acaoAoConcluir, aguardandoGestorConcluir, aguardandoGestorSistemas, botaoConcluir, CONFIRMA_CONCLUIR_PENDENTE_GESTOR, podeFinalizarGestao,
 } from "./validacaoPresidencia";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -37,6 +37,7 @@ import { podeDecidir } from "@/lib/chamados/reabertura";
 import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
 import {
   SITUACOES_PRAZO, mudouNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, rotuloPrazo, situacaoPrazo,
+  ROTULO_AGUARDANDO_GESTOR, ROTULO_PARTE_DEV_CONCLUIDA,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
 import { NavegacaoListaChamados } from "./NavegacaoListaChamados";
@@ -326,7 +327,7 @@ export default function ExecutarChamado() {
               <span className={`flex items-center gap-1.5 rounded-full ${flash ? "animate-status-flash" : ""}`}>
                 <SeloConfirmacao chamado={chamado} />
                 <SeloDesenvolvimento chamado={chamado} />
-                <StatusBadge status={chamado.status} />
+                <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} />
               </span>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -461,14 +462,20 @@ export default function ExecutarChamado() {
                 <Select value={chamado.status} onValueChange={(v) => (v === "concluido" && chamado.status !== "concluido"
                   ? pedirConclusao()
                   : mudarStatus(v, `Status alterado para ${STATUS_CHAMADO[v]?.label ?? v}`, "status"))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  {/* Entregue ao gestor, o status segue 'em_andamento' no banco —
+                      mas "Em andamento" aqui confundia (17/11/2026, Pablo). */}
+                  <SelectTrigger>
+                    {aguardandoGestorConcluir(chamado)
+                      ? <SelectValue>{ROTULO_AGUARDANDO_GESTOR}</SelectValue>
+                      : <SelectValue />}
+                  </SelectTrigger>
                   <SelectContent>
                     {["aberto", "em_andamento", "aguardando_retorno", "concluido"].map((v) => (
                       <SelectItem key={v} value={v}>{STATUS_CHAMADO[v].label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              ) : <StatusBadge status={chamado.status} />}
+              ) : <StatusBadge status={chamado.status} entregueEm={chamado.desenvolvimento_entregue_em} />}
             </div>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Responsável</p>
@@ -615,13 +622,28 @@ export default function ExecutarChamado() {
                     <PlayCircle className="h-4 w-4" /> Iniciar desenvolvimento
                   </Button>
                 )}
-                <Button
-                  className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
-                  disabled={!!agindo}
-                  onClick={pedirConclusao}
-                >
-                  <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
-                </Button>
+                {/* Parte do dev já entregue (merge da PR ou clique do dev):
+                    cinza e parado — verde dava a entender que ainda faltava
+                    concluir (17/11/2026, Pablo, SIS-2026-0919 / PR #1312).
+                    O Gestor de Sistemas segue com o botão verde. */}
+                {botaoConcluir(chamado, canGestorSistemas, user?.id) === "parte_dev_concluida" ? (
+                  <Button
+                    variant="outline"
+                    className="w-full cursor-default justify-start gap-2 border-muted-foreground/30 bg-muted text-muted-foreground hover:bg-muted hover:text-muted-foreground disabled:opacity-100"
+                    disabled
+                    title="Falta o Gestor de Sistemas concluir o chamado"
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> {ROTULO_PARTE_DEV_CONCLUIDA}
+                  </Button>
+                ) : (
+                  <Button
+                    className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
+                    disabled={!!agindo}
+                    onClick={pedirConclusao}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
+                  </Button>
+                )}
                 </>
               )}
               {/* Mesmo "Abrir PR" da fila do Painel do Desenvolvedor: GitHub já
