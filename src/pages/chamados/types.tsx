@@ -10,6 +10,7 @@ import {
   parteDevConcluida, prazoVencido, ROTULO_AGUARDANDO_GESTOR, ROTULO_PARTE_DEV_CONCLUIDA, situacaoDesenvolvimento,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ehTela, indiceDasTelas, rotuloModulo } from "@/lib/chamados/arvoreModulos";
+import { concluidoSemRetorno, ROTULO_CONCLUIDO_SEM_RETORNO } from "@/lib/chamados/prazoRetorno";
 
 // ---- Opções (options de select / checkbox) --------------------------
 export const CATEGORIAS = [
@@ -439,7 +440,15 @@ export function StatCard({
  * "Em andamento" — só nas telas do time (o solicitante segue vendo o status).
  * 17/11/2026, Pablo (SIS-2026-0919 depois do merge da PR #1312).
  */
-export function StatusBadge({ status, entregueEm }: { status: string; entregueEm?: string | null }) {
+export function StatusBadge({ status, entregueEm, semRetorno }: { status: string; entregueEm?: string | null; semRetorno?: boolean | null }) {
+  // Concluído pela rotina de falta de retorno (mig 20261119030000): texto exato.
+  if (concluidoSemRetorno({ status, concluido_sem_retorno: semRetorno })) {
+    return (
+      <Badge variant="outline" className="border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">
+        {ROTULO_CONCLUIDO_SEM_RETORNO}
+      </Badge>
+    );
+  }
   if (parteDevConcluida({ status, desenvolvimento_entregue_em: entregueEm })) {
     return (
       <Badge variant="outline" className="border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">
@@ -457,9 +466,11 @@ export function StatusBadge({ status, entregueEm }: { status: string; entregueEm
  * confirma. `paraSolicitante` troca o texto para "sua confirmação".
  */
 export function SeloConfirmacao({ chamado, paraSolicitante = false }: {
-  chamado: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em">; paraSolicitante?: boolean;
+  chamado: Pick<Chamado, "status" | "conclusao_confirmada_em" | "gestao_finalizada_em"> & Partial<Pick<Chamado, "concluido_sem_retorno">>; paraSolicitante?: boolean;
 }) {
   if (chamado.status !== "concluido") return null;
+  // Falta de retorno não é entrega: nada a confirmar nem a finalizar (mig 20261119030000).
+  if (concluidoSemRetorno(chamado)) return null;
   // Solicitante já confirmou: falta o Gestor de Sistemas finalizar (mig 20261110009000).
   if (chamado.conclusao_confirmada_em) {
     if (chamado.gestao_finalizada_em !== null) return null; // undefined = coluna não lida → não acusa

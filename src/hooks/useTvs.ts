@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { FOLGA_AVISO_S, ajustarDefasagem, medirDefasagem, type AoVivoTv, type LayoutAviso, type TipoItem } from "@/lib/tv/tv";
+import { FOLGA_AVISO_S, ajustarDefasagem, medirDefasagem, type AoVivoTv, type FiltroTv, type LayoutAviso, type TipoItem } from "@/lib/tv/tv";
 
 // =====================================================================
 // Sistemas › TV's — gestão (mig 20261007000012). Tabelas TV_* com RLS por
@@ -213,3 +213,19 @@ export function useCatalogoTv() {
     },
   });
 }
+
+// ---- Filtros de tela (18/11/2026, mig 20261119060000) ---------------------
+// Config GLOBAL (TV_CONFIG, uma linha): o filtro vale para todas as TVs e
+// chega a elas no tv_estado. Banco ainda sem a migration → null (sem filtro),
+// e o Ligar mostra o erro da RPC.
+export const useTvFiltro = () => useQuery({
+  queryKey: [K, "filtro"], staleTime: 15_000, retry: false,
+  queryFn: async (): Promise<FiltroTv | null> => {
+    const { data, error } = await sb.from("TV_CONFIG").select("filtro_ativo").eq("id", 1).maybeSingle();
+    if (error) return null;
+    return (data?.filtro_ativo as FiltroTv | null) ?? null;
+  },
+});
+
+export const useDefinirFiltroTv = () => useMut(async (filtro: FiltroTv | null) =>
+  ok(await sb.rpc("tv_definir_filtro", { p_filtro: filtro })));

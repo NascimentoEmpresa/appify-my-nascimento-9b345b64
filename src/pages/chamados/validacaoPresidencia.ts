@@ -12,6 +12,7 @@
 // =====================================================================
 import type { Chamado } from "./types";
 import { parteDevConcluida } from "@/lib/chamados/prazoDesenvolvimento";
+import { concluidoSemRetorno, ROTULO_CONCLUIDO_SEM_RETORNO } from "@/lib/chamados/prazoRetorno";
 
 /** Espelho do CHECK de etapa na tabela (mig 20260930000266). */
 export const ETAPAS_VALIDACAO = {
@@ -463,8 +464,10 @@ export function montarLinhaDoTempo(
 }
 
 /** Rótulo curto da situação atual — o que aparece no botão "Status". */
-export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em"> & Partial<Pick<Chamado, "gestao_finalizada_em" | "desenvolvimento_entregue_em">>, v: ValidacaoChamado | null | undefined): string {
+export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em"> & Partial<Pick<Chamado, "gestao_finalizada_em" | "desenvolvimento_entregue_em" | "concluido_sem_retorno">>, v: ValidacaoChamado | null | undefined): string {
   if (c.status === "reprovado") return "Reprovado";
+  // Falta de retorno (mig 20261119030000): não é entrega, não passa pelo gestor.
+  if (concluidoSemRetorno(c)) return ROTULO_CONCLUIDO_SEM_RETORNO;
   if (c.status === "cancelado") return "Cancelado";
   // Concluído pelo time e ainda sem a confirmação (quando já dá para confirmar).
   if (conclusaoAguardandoConfirmacao(c) && avaliacaoLiberada(v).liberada) return "Aguardando confirmação do solicitante";
