@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
-import { Banknote, Briefcase, CheckCircle2, Clock, FileText, Landmark, PiggyBank, Printer, Search, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { Banknote, Briefcase, CheckCircle2, Clock, Download, FileText, Landmark, PiggyBank, Printer, Search, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -25,8 +25,14 @@ import { DetalheIndicadorDialog, type IndicadorGerencial } from "./fluxo-caixa-g
 import { AssinaturaRegra } from "@/pages/malote/AssinaturaRegra";
 import { PendentesPanel } from "./fluxo-caixa-gerencial/PendentesPanel";
 import { DespesasPanel } from "./fluxo-caixa-gerencial/DespesasPanel";
+import { ANALISE_VAZIA } from "./fluxo-caixa-gerencial/analiseDespesas";
 import { EmprestimosAplicacoesPanel } from "./fluxo-caixa-gerencial/EmprestimosAplicacoesPanel";
-import { fluxoPorNatureza } from "./fluxo-caixa-gerencial/emprestimosAplicacoes";
+import { detalheAplicacoes, emprestimosPorInstituicao, fluxoPorNatureza } from "./fluxo-caixa-gerencial/emprestimosAplicacoes";
+import { AnaliseGerencialPanel } from "./fluxo-caixa-gerencial/AnaliseGerencialPanel";
+import { analiseMensal, resumoGerencial } from "./fluxo-caixa-gerencial/analiseGerencial";
+import { montarPlanilhasGerencial } from "./fluxo-caixa-gerencial/exportarGerencial";
+import { useAnaliseDespesasGerencial } from "@/hooks/useAnaliseDespesasGerencial";
+import { baixarExcel } from "@/pages/financeiro/conciliacao-servicos/exportarExcel";
 import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { carteiraPendente, type ContratoParaPendentes } from "./fluxo-caixa-gerencial/pendentes";
 import { vencimentoDaNota } from "./fluxo-caixa-gerencial/vencimento";
@@ -125,6 +131,22 @@ export default function FluxoCaixaGerencial() {
     }),
     [serieNf, fluxo.por_mes, contas, movimentos, aplicacoes, resgates, historico, filtro.empresaId],
   );
+  const analise = useMemo(() => analiseMensal(natureza, new Map(serieNf.map((p) => [p.mes, p.liquido]))), [natureza, serieNf]);
+  const { data: despesasAnalise } = useAnaliseDespesasGerencial(filtro, "pagamento");
+
+  // Exportação completa: um arquivo com os demonstrativos e os detalhamentos de onde vêm os números.
+  async function exportarTudo() {
+    const periodo = { ini: filtro.ini, fim: filtro.fim, empresaId: filtro.empresaId };
+    await baixarExcel(
+      montarPlanilhasGerencial({
+        geradoEm: new Date(), filtro: filtroNotas, rotuloEmpresa: filtro.empresaId ? nomeEmpresa(filtro.empresaId) : "Todas", kpis: kNotas, despesasPagas: fluxo.despesas_pagas, malotePago: fluxo.malote_pago,
+        analiseMensal: analise, resumo: resumoGerencial(analise), notasDoRecorte: detalheNotas, notasRecebidas: detalheRecebidas, pendentes: carteira,
+        despesas: despesasAnalise ?? ANALISE_VAZIA, emprestimos: emprestimosPorInstituicao(contas, movimentos, nomeBanco, periodo, hojeIso).contas,
+        aplicacoes: detalheAplicacoes(aplicacoes, periodo, hojeIso).linhas, natureza, empresaNome: nomeEmpresa, contratoNome: nomeContrato,
+      }),
+      `fluxo-caixa-gerencial-${filtro.ini}-a-${filtro.fim}.xlsx`,
+    );
+  }
   const concMalote = conciliacaoMalote(fluxo.despesas_pagas, fluxo.malote_pago);
   const pctMalote = concMalote.pctMalote;
 
@@ -145,7 +167,7 @@ export default function FluxoCaixaGerencial() {
           breadcrumb={["Gestão Financeira", "Fluxo de Caixa Gerencial"]}
           title="Fluxo de Caixa Gerencial"
           subtitle="Controle de faturamento, recebimentos, despesas, empréstimos, aplicações financeiras, malote e projeções."
-          actions={<Button variant="outline" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>}
+          actions={<div className="flex items-center gap-2"><Button variant="outline" onClick={() => void exportarTudo()}><Download className="mr-2 h-4 w-4" /> Exportar tudo (Excel)</Button><Button variant="outline" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" /> Imprimir</Button></div>}
         />
 
         {/* Filtros */}
@@ -373,6 +395,9 @@ export default function FluxoCaixaGerencial() {
 
         {/* Empréstimos e aplicações (etapa 4) */}
         <EmprestimosAplicacoesPanel contas={contas} movimentos={movimentos} aplicacoes={aplicacoes} nomeBanco={nomeBanco} filtro={{ ini: filtro.ini, fim: filtro.fim, empresaId: filtro.empresaId }} referencia={hojeIso} natureza={natureza} />
+
+        {/* Análises gerenciais (etapa 4) */}
+        <AnaliseGerencialPanel pontos={analise} />
 
         {/* Necessidade de caixa */}
         <Card>
