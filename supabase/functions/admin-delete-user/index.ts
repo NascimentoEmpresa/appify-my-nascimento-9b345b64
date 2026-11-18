@@ -30,6 +30,27 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+// Auditoria sensível (18/11/2026): esta função roda com service_role, então
+// os gatilhos do banco gravam auth.uid() NULL ("Sistema"). Aqui fica registrado
+// QUEM pediu, para a aba Configurações do ERP › Auditoria sensível. Falhar aqui
+// não desfaz a ação — só perde o rastro (e avisa no log).
+async function registrarAuditoria(
+  admin: ReturnType<typeof createClient>,
+  ator: string,
+  acao: string,
+  alvo: string,
+  detalhes: Record<string, unknown> = {},
+) {
+  try {
+    const { error } = await admin.rpc("auditoria_registrar_acao_admin", {
+      _ator: ator, _acao: acao, _alvo: alvo, _detalhes: detalhes,
+    });
+    if (error) console.error("auditoria_registrar_acao_admin", acao, error.message);
+  } catch (e) {
+    console.error("auditoria_registrar_acao_admin", acao, e instanceof Error ? e.message : String(e));
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -167,6 +188,8 @@ Deno.serve(async (req) => {
 
     // `falhas` só vem preenchido se algum gatilho de guarda barrou uma tabela;
     // o perfil já saiu, mas o admin precisa saber que sobrou resíduo.
+    await registrarAuditoria(admin, callerId, "excluir_usuario", targetId);
+
     const falhas = (relatorio as { falhas?: unknown[] } | null)?.falhas ?? [];
     return jsonResponse({ ok: true, relatorio, avisos: falhas });
   } catch (e) {
