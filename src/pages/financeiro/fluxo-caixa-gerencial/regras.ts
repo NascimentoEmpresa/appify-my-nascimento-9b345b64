@@ -1,6 +1,6 @@
 import type { NfEmissaoItemRow, NfEmissaoRow } from "@/hooks/useNfEmissao";
 import type { AplicacaoFinanceiraLinha, AplicacaoFinanceiraResgateCaixa, AplicacaoHistoricoImportado } from "@/hooks/useAplicacaoFinanceira";
-import { foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
+import { foraDoRelatorio, naoContabilizaKpi, valorPendenteNf } from "@/pages/financeiro/nf-emissao/shared";
 import { kpisDoDashboard } from "@/pages/financeiro/relatorio-servicos/kpisDashboard";
 import { kpisAplicacoes } from "@/pages/financeiro/aplicacao-financeira/kpis";
 import { saldoPorConta, estaAtivo, type ContaGarantida, type MovimentoContaGarantida } from "@/pages/financeiro/conta-garantida/regras";
@@ -12,9 +12,14 @@ import { saldoPorConta, estaAtivo, type ContaGarantida, type MovimentoContaGaran
 //   · empréstimos → Conta Garantida (limite contratado; saldo devedor = resgates − amortizações);
 //   · aplicações → Aplicações Financeiras (mesma função da tela, kpisAplicacoes).
 
+/** SIS-2026-XXXX (etapa 1): data que define QUAIS notas entram no faturamento (bruto, líquido, pendente). O recebimento é SEMPRE pela data de pagamento. */
+export type TipoDataGerencial = "emissao" | "competencia";
+
 export interface FiltroGerencial {
   ini: string; // YYYY-MM-DD
   fim: string;
+  /** padrão: emissão */
+  tipoData?: TipoDataGerencial;
   empresaId: string; // "" = todas
   contratoId: string; // "" = todos
 }
@@ -57,7 +62,26 @@ export function notasDoPeriodo(nfs: NfEmissaoRow[], f: FiltroGerencial): NfEmiss
     if (foraDoRelatorio(n)) return false;
     if (f.empresaId && n.empresa_id !== f.empresaId) return false;
     if (f.contratoId && n.contrato_id !== f.contratoId) return false;
-    return noPeriodo(n.data_emissao, f.ini, f.fim);
+    return noPeriodo(dataDoFaturamento(n, f), f.ini, f.fim);
+  });
+}
+
+/** Data usada para enquadrar a nota no faturamento: emissão (padrão) ou competência. */
+export function dataDoFaturamento(n: Pick<NfEmissaoRow, "data_emissao" | "competencia">, f: Pick<FiltroGerencial, "tipoData">): string | null {
+  return f.tipoData === "competencia" ? n.competencia : n.data_emissao;
+}
+
+/**
+ * Notas que RECEBERAM dinheiro no período: data de pagamento dentro do período e valor pago > 0, qualquer que seja a emissão ou a competência.
+ * (Hipótese do Ruan para o "recebido zerado": o KPI só somava o pago das notas EMITIDAS no período, e no mês corrente elas ainda não foram pagas.)
+ * Nota cancelada/substituída não conta, como no Dashboard do Relatório de Serviços.
+ */
+export function notasRecebidasNoPeriodo(nfs: NfEmissaoRow[], f: FiltroGerencial): NfEmissaoRow[] {
+  return nfs.filter((n) => {
+    if (foraDoRelatorio(n) || naoContabilizaKpi(n)) return false;
+    if (f.empresaId && n.empresa_id !== f.empresaId) return false;
+    if (f.contratoId && n.contrato_id !== f.contratoId) return false;
+    return Number(n.valor_pago) > 0 && noPeriodo(n.data_pagamento, f.ini, f.fim);
   });
 }
 
@@ -71,8 +95,10 @@ export interface KpisNotas {
   pctPendenteDoLiquido: number;
 }
 
-export function kpisNotas(notas: NfEmissaoRow[], itensPorNf: Map<string, NfEmissaoItemRow[]> | undefined): KpisNotas {
+export function kpisNotas(notas: NfEmissaoRow[], itensPorNf: Map<string, NfEmissaoItemRow[]> | undefined, recebidasNoPeriodo?: NfEmissaoRow[]): KpisNotas {
   const k = kpisDoDashboard(notas, itensPorNf);
+  // SIS-2026-XXXX: com `recebidasNoPeriodo` o recebido é o que ENTROU no período (data de pagamento); sem ele, vale o pago das notas do recorte (comportamento antigo).
+  if (recebidasNoPeriodo) k.recebido = recebidasNoPeriodo.reduce((s, n) => s + (Number(n.valor_pago) || 0), 0);
   // líquido: mesma exclusão do Dashboard (Cancelada/Substituída não contam)
   const liquido = arred(notas.filter((n) => !naoContabilizaKpi(n)).reduce((s, n) => s + (Number(n.vlr_liquido_total) || 0), 0));
   return {
@@ -86,6 +112,48 @@ export function kpisNotas(notas: NfEmissaoRow[], itensPorNf: Map<string, NfEmiss
   };
 }
 
+// ── Detalhamento dos indicadores (SIS-2026-XXXX) ───────────────────────────
+export interface LinhaDetalheNota {
+  id: string;
+  numero: string;
+  empresaId: string;
+  contratoId: string;
+  competencia: string;
+  emissao: string | null;
+  pagamento: string | null;
+  bruto: number;
+  liquido: number;
+  pago: number;
+  pendente: number;
+}
+
+/** Uma linha por nota (sem cancelada/substituída) com os valores que compõem Bruto, Líquido, Recebido e Pendente. Somando a coluna dá o KPI. */
+export function linhasDetalheNotas(notas: NfEmissaoRow[], itensPorNf: Map<string, NfEmissaoItemRow[]> | undefined): LinhaDetalheNota[] {
+  return notas
+    .filter((n) => !naoContabilizaKpi(n))
+    .map((n) => ({
+      id: n.id, numero: n.numero_nf ?? "—", empresaId: n.empresa_id, contratoId: n.contrato_id, competencia: n.competencia, emissao: n.data_emissao, pagamento: n.data_pagamento,
+      bruto: arred(Number(n.vlr_bruto_total) || 0), liquido: arred(Number(n.vlr_liquido_total) || 0), pago: arred(Number(n.valor_pago) || 0),
+      pendente: arred(valorPendenteNf(n, itensPorNf?.get(n.id) ?? [])),
+    }))
+    .sort((a, b) => (b.emissao ?? "").localeCompare(a.emissao ?? "") || a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+}
+
+export interface ConciliacaoMalote {
+  malote: number;
+  /** despesas pagas que NÃO vieram do Malote (Débito Automático, fatura de cartão, planilha importada...) */
+  demais: number;
+  pctMalote: number; // 0..1
+  /** o Malote já está DENTRO das despesas pagas: nunca pode passar do total (senão haveria duplicidade) */
+  ok: boolean;
+}
+
+/** Conciliação das despesas do Malote com o total de despesas pagas: Total = Malote + demais origens; Malote maior que o total indica duplicidade. */
+export function conciliacaoMalote(despesasPagas: number, malotePago: number): ConciliacaoMalote {
+  const ok = malotePago <= despesasPagas + 0.005;
+  return { malote: arred(malotePago), demais: arred(Math.max(despesasPagas - malotePago, 0)), pctMalote: despesasPagas > 0 ? malotePago / despesasPagas : 0, ok };
+}
+
 export interface PontoMensal { mes: string; bruto: number; liquido: number; recebido: number }
 
 /** Série dos 12 meses: bruto/líquido por mês de emissão e recebido por mês de pagamento. Respeita Empresa/Contrato, mas não o período. */
@@ -96,8 +164,9 @@ export function serieNotas(nfs: NfEmissaoRow[], f: FiltroGerencial): PontoMensal
     if (foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
     if (f.empresaId && n.empresa_id !== f.empresaId) continue;
     if (f.contratoId && n.contrato_id !== f.contratoId) continue;
-    if (n.data_emissao) {
-      const p = mapa.get(mesDe(n.data_emissao));
+    const dataFat = dataDoFaturamento(n, f);
+    if (dataFat) {
+      const p = mapa.get(mesDe(dataFat));
       if (p) { p.bruto += Number(n.vlr_bruto_total) || 0; p.liquido += Number(n.vlr_liquido_total) || 0; }
     }
     if (n.data_pagamento && Number(n.valor_pago) > 0) {
