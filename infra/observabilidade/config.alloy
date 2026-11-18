@@ -46,11 +46,77 @@ prometheus.exporter.postgres "banco" {
   enabled_collectors = ["database", "locks", "replication", "replication_slot", "stat_bgwriter", "stat_database", "long_running_transactions"]
 }
 
+// ── sonda da API POR NÓ (incidente de 13/11/2026) ───────────────────────────
+// Naquele dia a API do banco1 ficou ~5 h fora e o Grafana não viu: Kong parado
+// não gera log, e o alerta de 5xx somava os dois nós — só enxergava os 200 do
+// banco2. Aqui cada nó testa a API dos DOIS nós pela internet, entrando pelo
+// IP de cada um (SNI e Host = o domínio, igual ao navegador), e a sua própria
+// pilha por dentro. Resultado: probe_success{alvo, checagem}, rotulado também
+// com `no` (quem testou). Nó inteiro fora continua sendo visto pelo outro.
+// Sem chave nenhuma: auth/storage/functions têm rota aberta no Kong, e o
+// preflight é respondido pelo plugin de CORS do Kong.
+// IPs: os mesmos de infra/ha/expor-api-https.sh (BANCO1/BANCO2).
+prometheus.exporter.blackbox "api" {
+  config = "{ modules: { publica: { prober: http, timeout: 5s, http: { preferred_ip_protocol: ip4, valid_status_codes: [200], headers: { Host: api.grpnascimento.com.br }, tls_config: { server_name: api.grpnascimento.com.br } } }, cors: { prober: http, timeout: 5s, http: { method: OPTIONS, preferred_ip_protocol: ip4, valid_status_codes: [200], headers: { Host: api.grpnascimento.com.br, Origin: 'https://app.grpnascimento.com.br', Access-Control-Request-Method: POST }, tls_config: { server_name: api.grpnascimento.com.br }, fail_if_header_not_matches: [ { header: Access-Control-Allow-Origin, regexp: '.+' } ] } }, local: { prober: http, timeout: 5s, http: { preferred_ip_protocol: ip4, valid_status_codes: [200] } } } }"
+
+  target {
+    name    = "auth_banco1"
+    address = "https://216.238.120.171/auth/v1/health"
+    module  = "publica"
+    labels  = {"alvo" = "banco1", "checagem" = "auth"}
+  }
+  target {
+    name    = "auth_banco2"
+    address = "https://172.237.48.8/auth/v1/health"
+    module  = "publica"
+    labels  = {"alvo" = "banco2", "checagem" = "auth"}
+  }
+  target {
+    name    = "cors_banco1"
+    address = "https://216.238.120.171/rest/v1/rpc/sistema_saude"
+    module  = "cors"
+    labels  = {"alvo" = "banco1", "checagem" = "cors"}
+  }
+  target {
+    name    = "cors_banco2"
+    address = "https://172.237.48.8/rest/v1/rpc/sistema_saude"
+    module  = "cors"
+    labels  = {"alvo" = "banco2", "checagem" = "cors"}
+  }
+  target {
+    name    = "storage_banco1"
+    address = "https://216.238.120.171/storage/v1/status"
+    module  = "publica"
+    labels  = {"alvo" = "banco1", "checagem" = "storage"}
+  }
+  target {
+    name    = "storage_banco2"
+    address = "https://172.237.48.8/storage/v1/status"
+    module  = "publica"
+    labels  = {"alvo" = "banco2", "checagem" = "storage"}
+  }
+  // Por dentro, sem o Caddy: separa "Caddy sem Kong" (o 502 de 13/11) de
+  // "PostgREST fora". O alvo é o próprio nó.
+  target {
+    name    = "kong_local"
+    address = "http://127.0.0.1:8000/auth/v1/health"
+    module  = "local"
+    labels  = {"alvo" = sys.env("NO"), "checagem" = "kong_local"}
+  }
+  target {
+    name    = "rest_local"
+    address = "http://127.0.0.1:3001/ready"
+    module  = "local"
+    labels  = {"alvo" = sys.env("NO"), "checagem" = "rest_local"}
+  }
+}
+
 prometheus.scrape "nos" {
   targets = array.concat(
     prometheus.exporter.unix.maquina.targets,
     prometheus.exporter.cadvisor.containers.targets,
     prometheus.exporter.postgres.banco.targets,
+    prometheus.exporter.blackbox.api.targets,
     [
       {"__address__" = "127.0.0.1:3001", "job" = "postgrest"},
       {"__address__" = sys.env("IP_TUNEL") + ":8008", "job" = "patroni"},
