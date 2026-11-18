@@ -14,6 +14,11 @@ const ASSINATURAS: Record<string, Assinatura> = {
     resumo: "Conciliação Financeira ampliada: 24 indicadores em 4 fontes (indisponível ≠ zero), detalhamento até a nota, impostos/descontos, conta vinculada, filtros, Excel e tratativas com histórico",
     onde: "src/pages/financeiro/conciliacao-servicos/ (indicadores.ts, regras.ts, tratativas.ts) e textos em infos.tsx",
   },
+  "SIS-2026-0926": {
+    chamado: "SIS-2026-0926", desde: "18/11/2026",
+    resumo: "coluna Reserva Empresa (R$) no Resumo Mensal com Sócios do Fechamento da Empresa, ao lado de Obras Adm: o valor vem do Fechamento dos Sócios (competência fechada = gravado; aberta = percentual × Resultado do Período), sem digitar de novo e fora das despesas, retiradas, investimentos e obras",
+    onde: "reservaDoMesParaEmpresa / calcularReserva (src/pages/controladoria/fechamento-socios/regras.ts) e a coluna em FechamentoEmpresa.tsx",
+  },
   "SIS-2026-0927": {
     chamado: "SIS-2026-0927", desde: "17/11/2026",
     resumo: "unificar 2+ lançamentos (Malote/Débito Automático) de um mesmo pagamento bancário numa linha só; os originais ficam guardados e some só da leitura; rateio por classificação e centro de custo fecha sempre com o total; só a Controladoria; histórico completo",
