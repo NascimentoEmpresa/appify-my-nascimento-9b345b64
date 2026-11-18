@@ -74,3 +74,19 @@ Se `CHAMADO_HEADLESS` não estiver setada (uso manual, interativo): siga o
 fluxo normal de plan mode, incluindo `ExitPlanMode` ao final pra pedir
 aprovação do desenvolvedor — nesse caso o arquivo também fica em
 `~/.claude/plans/`, o que já é o comportamento padrão conhecido do Claude Code.
+
+## 5. Nome da sessão
+
+No uso interativo, a sessão já é renomeada para o número do chamado no
+momento em que `/chamado <numero>` é digitado — quem faz isso é um hook
+`UserPromptSubmit` local do desenvolvedor (campo `sessionTitle`, mesmo efeito
+do `/rename`), não este comando. Não peça pra ele rodar `/rename`.
+
+## 6. Depois que a PR do chamado for aberta
+
+Só no uso interativo (nunca com `CHAMADO_HEADLESS=1`): quando a PR deste
+chamado for aberta nesta sessão — por você ou pelo desenvolvedor, fora de
+rascunho ou em rascunho — rode o comando `/explicacao-chamado $ARGUMENTS`
+(ferramenta Skill, `explicacao-chamado`) e entregue a explicação pro
+usuário final sem esperar ele pedir. Se a PR ainda estiver em rascunho,
+a explicação sai com o aviso de que ainda não está no ar.
