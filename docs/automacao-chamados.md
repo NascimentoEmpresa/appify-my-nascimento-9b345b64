@@ -24,6 +24,7 @@ iterativo) — preservando a janela do Claude pro que só ele faz bem.
 | `.claude/commands/chamado.md` (comando de planejamento) | ✅ Pronto |
 | `.claude/commands/codex-executar.md` (handoff pro Codex) | ✅ Pronto |
 | `.claude/commands/chamados-pendentes.md` (lista o que aguarda revisão) | ✅ Pronto |
+| `.claude/commands/explicacao-chamado.md` (explica a entrega pro usuário final) | ✅ Pronto |
 | `worker/src/chamadosDev.js` (disparo automático) | ✅ Escrito e plugado no ciclo — **falta testar com chamado real** |
 | Codex CLI headless | ✅ Validado na prática (ver abaixo) |
 | Claude Code headless plan mode | ✅ Validado na prática (ver abaixo) |
@@ -271,6 +272,10 @@ Cenário real: chamado direcionado às 08:00, você abre o VSCode às 09:00.
   prontos aguardando revisão (com tempo de espera e se há pergunta em aberto),
   e marca como obsoleto o que já foi concluído/redirecionado.
 - Pra tocar um deles: `/codex-executar <numero>`.
+- Depois da PR aberta: `/explicacao-chamado <numero>` monta a explicação pro
+  usuário final (telas, links, passo a passo, de onde vem cada informação,
+  dúvidas comuns). Roda sozinho no fim do `/chamado`/`/codex-executar` e
+  pode ser chamado a qualquer hora pra responder dúvida de usuário.
 
 **O worker precisa estar rodando na hora em que o chamado chega.** Se o PC
 estava desligado ou o terminal fechado, o chamado não é percebido — e, por
