@@ -20,7 +20,7 @@ import { TabelaConferenciaPorConta } from "./TabelaConferenciaPorConta";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
 import { useContasBanco, useContasDosLancamentos } from "@/hooks/useContasBanco";
-import { comContaBanco, rotuloConta } from "@/lib/contaBanco";
+import { comContaBanco, empresaDaContaNoLancamento, rotuloConta } from "@/lib/contaBanco";
 import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import {
@@ -158,7 +158,10 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const { data: contasDosLancamentos } = useContasDosLancamentos();
   const linhasComConta = useMemo(() => comContaBanco(linhasFluxo, contasDosLancamentos ?? new Map()), [linhasFluxo, contasDosLancamentos]);
   const rotulosDeConta = useMemo(() => new Map(contasBanco.map((c) => [c.id, rotuloConta(c)] as [string, string])), [contasBanco]);
-  const todosSaldos = useMemo(() => saldosMensais(linhasComConta, iniciais, salvas, undefined, rotulosDeConta), [linhasComConta, iniciais, salvas, rotulosDeConta]);
+  // SIS-2026-0942: na conferência de saldo, lançamento ligado a uma conta conta para a empresa DONA da conta (fatia de rateio paga por ela).
+  // Só aqui: os totais de movimentação abaixo seguem a empresa do Fluxo, para continuar batendo com o Fluxo de Caixa e a Auditoria.
+  const linhasParaSaldo = useMemo(() => empresaDaContaNoLancamento(linhasComConta, contasBanco), [linhasComConta, contasBanco]);
+  const todosSaldos = useMemo(() => saldosMensais(linhasParaSaldo, iniciais, salvas, undefined, rotulosDeConta), [linhasParaSaldo, iniciais, salvas, rotulosDeConta]);
 
   // Banco e conta só das opções que existem para a empresa escolhida.
   const bancosDaEmpresa = useMemo(() => {

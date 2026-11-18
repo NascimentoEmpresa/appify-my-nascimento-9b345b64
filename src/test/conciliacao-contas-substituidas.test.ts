@@ -8,6 +8,7 @@ import {
   type LinhaFluxoSaldo,
   type SaldoInicialConta,
 } from "@/lib/conciliacaoDashboard";
+import { empresaDaContaNoLancamento } from "@/lib/contaBanco";
 
 // SIS-2026-0942: conta substituída sai da Conciliação Bancária pela condição do cadastro (ativo = false), nunca por saldo zero,
 // e sem apagar o histórico.
@@ -103,5 +104,31 @@ describe("grupoSoDeSaldoInicial (quando oferecer 'Retirar da conciliação')", (
     const retiraveis = [...porGrupo.entries()].filter(([, m]) => grupoSoDeSaldoInicial(m)).map(([k]) => k).sort();
     expect(retiraveis).toHaveLength(4);
     expect(retiraveis).not.toContain(`${HAGG}|${SICREDI}|${C119}`);
+  });
+});
+
+describe("empresaDaContaNoLancamento (cartão SN · Sicredi · 119 — HAGG 119)", () => {
+  const contas = [{ id: C119, empresa_id: HAGG }];
+  const fatura = (p: Partial<LinhaFluxoSaldo>) => linha({ data_pagamento: "2026-10-15", tipo: "saida", conta_banco_id: C119, descricao: "Fatura SICREDI 119 10/2026", ...p });
+
+  it("a fatia da SN numa fatura paga pela HAGG 119 conta no cartão da HAGG 119, e o cartão SN · 119 não abre", () => {
+    const linhas = [fatura({ valor: 1000 }), fatura({ empresa_id: SN, valor: 623.84 })];
+    const r = saldosMensais(empresaDaContaNoLancamento(linhas, contas), [], []);
+    expect(grupos(r)).toEqual([`${HAGG}|${SICREDI}|${C119}`]);
+    expect(r[0].saidas).toBe(1623.84); // o débito inteiro da fatura saiu da HAGG 119
+  });
+
+  it("não mexe em linha sem conta, de conta desconhecida ou da própria dona; sem troca devolve o mesmo array", () => {
+    const semConta = [linha({ empresa_id: SN, conta_banco_id: null }), linha({ empresa_id: SN, conta_banco_id: "outra" }), linha({ conta_banco_id: C119 })];
+    expect(empresaDaContaNoLancamento(semConta, contas)).toBe(semConta);
+    expect(empresaDaContaNoLancamento(semConta, [])).toBe(semConta);
+  });
+
+  it("a SN · Sicredi sem conta (a 748 / 1190000000173904, que fica) continua com seus próprios lançamentos", () => {
+    const linhas = [linha({ empresa_id: SN, conta_banco_id: null, valor: 50 }), fatura({ empresa_id: SN, valor: 623.84 })];
+    const r = saldosMensais(empresaDaContaNoLancamento(linhas, contas), [], []);
+    const sn = r.filter((s) => s.empresaId === SN);
+    expect(sn.every((s) => !s.contaBancoId)).toBe(true);
+    expect(sn.reduce((t, s) => t + s.entradas, 0)).toBe(50);
   });
 });

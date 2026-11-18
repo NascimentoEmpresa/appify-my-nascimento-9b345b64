@@ -34,6 +34,28 @@ export function comContaBanco<T extends LinhaComChaveDeConta>(linhas: T[], atrib
   });
 }
 
+/**
+ * SIS-2026-0942: uma conta é de UMA empresa. Lançamento de outra empresa ligado a ela (fatia de rateio de uma despesa paga por essa conta,
+ * ex.: a parte da SN na "Fatura SICREDI 119 10/2026", paga pela HAGG 119) saiu dessa conta: na conferência de saldo conta para a empresa
+ * dona da conta. Sem isso, a fatia abria um cartão "SN · Sicredi · 119 — HAGG 119", de uma conta que a SN não tem, para sempre pendente.
+ * Conta desconhecida (não carregada) não mexe na linha. Sem nenhuma troca devolve o mesmo array.
+ */
+export function empresaDaContaNoLancamento<T extends { empresa_id: string | null; conta_banco_id?: string | null }>(
+  linhas: T[],
+  contas: Pick<ContaBanco, "id" | "empresa_id">[],
+): T[] {
+  if (contas.length === 0) return linhas;
+  const donaDaConta = new Map(contas.map((c) => [c.id, c.empresa_id]));
+  let trocou = false;
+  const saida = linhas.map((l) => {
+    const dona = l.conta_banco_id ? donaDaConta.get(l.conta_banco_id) : undefined;
+    if (!dona || dona === l.empresa_id) return l;
+    trocou = true;
+    return { ...l, empresa_id: dona };
+  });
+  return trocou ? saida : linhas;
+}
+
 /** Contas ativas do banco e das empresas escolhidas ("Todas" não filtra por empresa). */
 export function contasDaConciliacao(contas: ContaBanco[], bancoId: string, todasEmpresas: boolean, empresaIds: string[]): ContaBanco[] {
   if (!bancoId) return [];
