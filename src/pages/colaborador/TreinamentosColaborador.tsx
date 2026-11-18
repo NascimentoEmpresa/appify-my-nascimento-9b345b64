@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Award, Bell, CalendarDays, GraduationCap, Lock, Megaphone, PlayCircle } from "lucide-react";
+import { Award, Bell, CalendarDays, GraduationCap, Lock, Megaphone, PlayCircle, ShieldCheck } from "lucide-react";
 import { urlMidia } from "@/hooks/useTreinamentosPlataforma";
 import { fmtData, fmtDataHora, useCursosColaborador, useMarcarNotificacoesLidas, type CursoAluno } from "@/hooks/useColaboradorPortal";
 import { Carregando, Chip, Erro, Secao, Vazio } from "./ui";
@@ -157,10 +157,14 @@ function Cabecalho({ sub }: { sub?: string }) {
   return (
     <div className="flex items-center gap-3">
       <div className="grid h-11 w-11 place-items-center rounded-xl bg-accent/10 text-accent"><GraduationCap className="h-6 w-6" /></div>
-      <div>
+      <div className="min-w-0 flex-1">
         <h1 className="font-display text-xl font-bold leading-tight">Meus treinamentos</h1>
         {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
       </div>
+      {/* DSS (SIS-2026-0891): a barra de baixo já tem 6 itens; o DSS entra por aqui e pelo Início. */}
+      <Link to="/colaborador/dss" className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-primary">
+        <ShieldCheck className="h-4 w-4" /> DSS
+      </Link>
     </div>
   );
 }
