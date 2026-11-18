@@ -1,4 +1,4 @@
-import { AlertTriangle, Sun, Sunset, Clock } from "lucide-react";
+import { AlertTriangle, CalendarX, Sun, Sunset, Clock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -7,12 +7,14 @@ import {
   HORARIO_TURNO,
   LABEL_TURNO,
   conflitoNaAgenda,
+  disponibilidadeDoVeiculo,
   formatarData,
   hojeISO,
   type Agendamento,
   type Turno,
   type VeiculoFrota,
 } from "@/hooks/useAgendamentoVeiculos";
+import { descreverPeriodo, periodoVigenteOuFuturo, porqueIndisponivel } from "@/lib/veiculos/indisponibilidade";
 
 interface Props {
   veiculo: VeiculoFrota;
@@ -36,6 +38,12 @@ const ORDEM_TURNOS: Turno[] = ["manha", "tarde", "dia_todo"];
 export function PassoDataTurno({ veiculo, agendamentos, dataInicio, dataFim, turno, chegadaPrevista, onMudar }: Props) {
   const conflito = conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
   const periodoInvalido = !!dataInicio && !!dataFim && dataFim < dataInicio;
+  // Indisponibilidade do Patrimônio é um período (SIS-2026-0930): o carro só
+  // é recusado se as datas pedidas caírem dentro dele. O período é mostrado
+  // desde o começo, para a pessoa escolher a data já sabendo.
+  const periodoVeiculo = periodoVigenteOuFuturo(veiculo, hojeISO());
+  const naData = disponibilidadeDoVeiculo(veiculo, dataInicio, dataFim);
+  const bloqueioNaData = !periodoInvalido && !!dataInicio && !naData.disponivel;
   const erroChegada = chegadaPrevista ? validarChegadaPrevista(chegadaPrevista, { data_inicio: dataInicio, turno }) : null;
 
   return (
@@ -46,6 +54,16 @@ export function PassoDataTurno({ veiculo, agendamentos, dataInicio, dataFim, tur
           Quando você precisa do <span className="font-medium text-foreground">{veiculo.nome}</span>?
         </p>
       </div>
+
+      {periodoVeiculo && !bloqueioNaData && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+          <CalendarX className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span>
+            {porqueIndisponivel(veiculo)} {descreverPeriodo(periodoVeiculo)} — só esses dias ficam bloqueados.
+            Fora deles, o {veiculo.nome} agenda normalmente.
+          </span>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
@@ -147,6 +165,9 @@ export function PassoDataTurno({ veiculo, agendamentos, dataInicio, dataFim, tur
 
       {periodoInvalido && (
         <Aviso texto="A data de retorno não pode ser anterior à data de saída." />
+      )}
+      {bloqueioNaData && naData.detalhe && (
+        <Aviso texto={`O ${veiculo.nome} não pode ser agendado nessas datas. ${naData.detalhe} Escolha outra data ou outro veículo.`} />
       )}
       {!periodoInvalido && conflito && (
         <Aviso

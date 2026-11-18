@@ -323,6 +323,7 @@ import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
 import SstExamesToxicologicos from "./pages/sst/ExamesToxicologicos";
 import SstAcidentes from "./pages/sst/Acidentes";
 import SstIncidentes from "./pages/sst/Incidentes";
+import SstCalcadosOrtopedicos from "./pages/sst/CalcadosOrtopedicos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -415,6 +416,8 @@ import RemetentesEmail from "./pages/email/RemetentesEmail";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
 import WhatsAppDashboard from "./pages/whatsapp/WhatsAppDashboard";
+import WhatsAppAtendimento from "./pages/whatsapp/WhatsAppAtendimento";
+import WhatsAppAtendimentoBase from "./pages/whatsapp/WhatsAppAtendimentoBase";
 import Reunioes from "./pages/central-servicos/reunioes/Reunioes";
 import ReuniaoDetalhe from "./pages/central-servicos/reunioes/ReuniaoDetalhe";
 import ConducaoReuniao from "./pages/central-servicos/reunioes/ConducaoReuniao";
@@ -704,6 +707,9 @@ const App = () => (
             <Route path="whatsapp/chatbot" element={<WhatsAppChatbot />} />
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
+            {/* SIS-2026-0929: atendimento dos supervisores (canal corporativo, protocolo, I.A com base aprovada) */}
+            <Route path="whatsapp/atendimento" element={<WhatsAppAtendimento />} />
+            <Route path="whatsapp/atendimento/base" element={<WhatsAppAtendimentoBase />} />
             <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
             <Route path="central-servicos/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />
             <Route path="encarregados/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />
@@ -1212,6 +1218,8 @@ const App = () => (
             {/* SST — Acidentes de Trabalho: registro, CAT e controle (SIS-2026-0889, mig 20261117220000). */}
             <Route path="sst/acidentes" element={<SstAcidentes />} />
             <Route path="sst/incidentes" element={<SstIncidentes />} />
+            {/* SST — Calçados Ortopédicos: laudo e andamento do pedido do encarregado (SIS-2026-0888, mig 20261118200000). */}
+            <Route path="sst/calcados-ortopedicos" element={<SstCalcadosOrtopedicos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />

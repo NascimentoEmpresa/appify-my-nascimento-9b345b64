@@ -48,6 +48,7 @@ import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcament
 import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
 import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
 import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
+import { RatearUnificacaoDialog, UnificacaoDetalheDialog } from "./fluxo-caixa/UnificacaoDialogs";
 import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
@@ -102,6 +103,8 @@ const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   importacao_historica: "financeiro-fluxo-caixa-gestao",
   // SIS-2026-0798: como Aplicação Financeira, só se gerencia (estorna) pela própria tela; aqui a entrada só satisfaz o tipo exaustivo.
   conta_garantida: "conta-garantida",
+  // SIS-2026-0927: não se exclui direto (desfaz-se a unificação, com motivo); entra aqui só para satisfazer o tipo exaustivo.
+  unificado: "financeiro-fluxo-caixa-unificar",
 };
 
 interface FiltrosExport {
@@ -156,6 +159,7 @@ const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   aplicacao_financeira: "Aplicação Financeira",
   importacao_historica: "Importação (planilha)",
   conta_garantida: "Conta Garantida",
+  unificado: "Lançamento unificado",
 };
 
 // SIS-2026-0413 (complemento): a tabela renderizava todas as linhas
@@ -329,6 +333,10 @@ export default function FluxoCaixaGestao() {
   const [itemRatear, setItemRatear] = useState<{ linha: LinhaParaRatear; refazendo: boolean } | null>(null);
   // SIS-2026-0712: histórico da linha (duplo clique na linha ou botão de histórico).
   const [itemHistorico, setItemHistorico] = useState<FluxoCaixaMaloteLinha | null>(null);
+  // SIS-2026-0927: linha unificada abre a composição (originais, rateio e histórico) em vez do histórico de ajustes.
+  const [unificacaoAberta, setUnificacaoAberta] = useState<string | null>(null);
+  const [unificacaoRatear, setUnificacaoRatear] = useState<string | null>(null);
+  const abrirHistorico = (l: FluxoCaixaMaloteLinha) => (l.origem === "unificado" ? setUnificacaoAberta(l.despesa_id) : setItemHistorico(l));
 
   const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [excluindo, setExcluindo] = useState(false);
@@ -1399,7 +1407,7 @@ export default function FluxoCaixaGestao() {
                   const situacaoLinha = situacaoFluxo(l, hoje);
                   return (
                   <>
-                  <TableRow key={chave} onDoubleClick={() => setItemHistorico(l)}>
+                  <TableRow key={chave} onDoubleClick={() => abrirHistorico(l)}>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center gap-1">
                         {massaAtiva && (
@@ -1533,7 +1541,7 @@ export default function FluxoCaixaGestao() {
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-foreground"
                         title="Ver histórico do lançamento"
-                        onClick={() => setItemHistorico(l)}
+                        onClick={() => abrirHistorico(l)}
                       >
                         <History className="h-3.5 w-3.5" />
                       </Button>
@@ -1557,6 +1565,17 @@ export default function FluxoCaixaGestao() {
                           onClick={() => navigate(l.origem === "malote" ? `/app/malote/despesa/${l.despesa_id}` : "/app/financeiro/gestao-financeira/debito-automatico")}
                         >
                           {l.origem === "malote" ? "Ver no Malote" : "Ver no Débito"}
+                        </Button>
+                      ) : l.origem === "unificado" ? (
+                        // SIS-2026-0927: linha unificada não se edita nem se exclui aqui: abre a composição (rateio, originais, histórico e desfazer).
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap p-0 text-xs"
+                          title="Ver originais, rateio e histórico; refazer o rateio ou desfazer a unificação"
+                          onClick={() => setUnificacaoAberta(l.despesa_id)}
+                        >
+                          Ver unificação
                         </Button>
                       ) : l.origem === "aplicacao_financeira" ? (
                         <Button
@@ -2015,6 +2034,8 @@ export default function FluxoCaixaGestao() {
         onClose={() => setItemRatear(null)}
       />
       <HistoricoLinhaDialog linha={itemHistorico} onClose={() => setItemHistorico(null)} />
+      <UnificacaoDetalheDialog unificacaoId={unificacaoAberta} onClose={() => setUnificacaoAberta(null)} onRatear={(id) => { setUnificacaoAberta(null); setUnificacaoRatear(id); }} />
+      <RatearUnificacaoDialog unificacaoId={unificacaoRatear} onClose={() => setUnificacaoRatear(null)} />
 
       {/* Lixeira — itens excluídos das origens (inclusive importadas da planilha), cada um com Restaurar */}
       <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>

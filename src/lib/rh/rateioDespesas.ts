@@ -13,6 +13,17 @@
 //     linhas 90–96 (Veranópolis Recep., UFRGS ASB 030/2026, CEITEC, IRGA):
 //     esses quatro contratos recebiam rateio POR CIMA do total (107,6%).
 //     Aqui o total é a soma de todos os contratos — sempre fecha 100%.
+//     ⚠ 18/11/2026 — o critério do Jus Brasil passou a ser CONSULTAS. Na
+//     fatura de outubro/2026 ("Rateio JUSBRASIL.xlsx" + PDF da fatura) o RH
+//     destacou em amarelo a coluna G (valor ÷ total de consultas × consultas
+//     do contrato: 959,20 ÷ 120 = 7,99 por consulta) — é ESSE o valor que cada
+//     contrato paga. O ERP seguia rateando pelo faturamento (coluna E), e
+//     os valores saíam outros (ex.: IRGA 46,40 em vez de 207,83; contratos
+//     sem faturamento mas com consultas, como Polícia Civil 066/2026, saíam
+//     zerados). Faturamento continua disponível na tela como alternativa.
+//     A fatura de out/2026 é 959,19 (o 959,20 do rodapé da planilha é
+//     arredondamento): com esse valor, o maior resto de distribuirCentavos
+//     dá exatamente a coluna amarela nas 94 linhas — sem regra especial.
 //   · SENIOR — pela quantidade de colaboradores TRABALHANDO por contrato
 //     (EMPREGADOS, o mesmo contrato de RH › Ativos/Contratos).
 //   · FGTS, Bullla, seguro, BSF, gratificação PCD, mensalidade SEEAC e, desde
@@ -42,7 +53,7 @@ export type TipoRateio =
 export type CriterioRateio = "faturamento" | "consultas" | "colaboradores" | "pdf";
 
 export const TIPOS_RATEIO: { tipo: TipoRateio; rotulo: string; criterio: CriterioRateio }[] = [
-  { tipo: "jusbrasil", rotulo: "Jus Brasil", criterio: "faturamento" },
+  { tipo: "jusbrasil", rotulo: "Jus Brasil", criterio: "consultas" },
   { tipo: "senior", rotulo: "Senior", criterio: "colaboradores" },
   { tipo: "fgts", rotulo: "FGTS", criterio: "pdf" },
   { tipo: "bullla", rotulo: "Bullla", criterio: "pdf" },

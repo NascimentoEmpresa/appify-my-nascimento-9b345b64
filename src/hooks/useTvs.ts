@@ -64,7 +64,10 @@ export const useTvPlaylists = () => useQuery({
   // criado por outra pessoa não pode ficar de fora até alguém recarregar a tela.
   queryKey: [K, "playlists"], staleTime: 30_000,
   queryFn: async (): Promise<TvPlaylist[]> => {
-    const { data, error } = await sb.from("TV_PLAYLIST").select("id, nome, descricao, itens:TV_ITEM(*)").order("nome");
+    // 18/11/2026: a ligação vai NOMEADA. A FK de inclui_playlist_id (mig
+    // 20261118140000) deixou duas ligações TV_PLAYLIST→TV_ITEM, o PostgREST
+    // respondeu PGRST201 e a tela mostrou "Nenhuma playlist" (mig 20261118150000).
+    const { data, error } = await sb.from("TV_PLAYLIST").select("id, nome, descricao, itens:TV_ITEM!TV_ITEM_playlist_id_fkey(*)").order("nome");
     if (error) throw error;
     return (data ?? []).map((p: TvPlaylist) => ({ ...p, itens: [...(p.itens ?? [])].sort((a, b) => a.ordem - b.ordem) }));
   },

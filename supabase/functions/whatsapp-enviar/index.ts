@@ -7,6 +7,8 @@
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID (SUPABASE_URL / ANON já existem).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+// SIS-2026-0929: responde pelo número do canal da conversa (WA_CANAL).
+import { numeroDaConversa } from "../_shared/whatsapp-canal.ts";
 import { descobrirWaba } from "../_shared/whatsapp-waba.ts";
 import { barradoPorMarketing, primeiroNome, statusNaMeta, utilityAprovado } from "../_shared/whatsapp-saudacao.ts";
 
@@ -166,13 +168,14 @@ Deno.serve(async (req) => {
   if (!conversa) return json({ error: "conversa não encontrada ou sem acesso" }, 403);
   const { data: contato } = await db.from("WA_CONTATO").select("wa_id").eq("id", conversa.contato_id).maybeSingle();
   if (!contato) return json({ error: "contato não encontrado" }, 404);
+  const numero = await numeroDaConversa(db, conversaId, PHONE_NUMBER_ID);
 
   // Reação: não gera mensagem nova, só marca a existente. A Meta responde com
   // um wamid próprio que não interessa guardar — o que importa é o emoji na
   // mensagem alvo, que é o que a tela desenha.
   if (reagirA) {
     const emoji = String(body.reagir?.emoji ?? "").trim(); // vazio = remover
-    const resR = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+    const resR = await fetch(`${GRAPH}/${numero}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -290,7 +293,7 @@ Deno.serve(async (req) => {
     form.append("messaging_product", "whatsapp");
     form.append("type", mime);
     form.append("file", new File([arquivo], filename, { type: mime }));
-    const up = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/media`, {
+    const up = await fetch(`${GRAPH}/${numero}/media`, {
       method: "POST", headers: { Authorization: `Bearer ${WA_TOKEN}` }, body: form,
     });
     const upData = await up.json().catch(() => ({}));
@@ -328,7 +331,7 @@ Deno.serve(async (req) => {
     : { messaging_product: "whatsapp", to: contato.wa_id, type: "text", text: { body: textoEnviado } };
 
   let waId: string | null = null;
-  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+  const res = await fetch(`${GRAPH}/${numero}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(mensagemGraph),
