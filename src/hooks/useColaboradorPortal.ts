@@ -191,6 +191,14 @@ export interface CertificadoPendenteAssinatura {
   ultima_assinatura: AssinaturaColaborador | null;
 }
 
+/** DSS — Diálogo Semanal de Segurança (SIS-2026-0891): espelha col_dss_lista / col_dss_abrir. */
+export interface DssColaborador {
+  id: string; tema: string; semana_ref: string; disponivel_de: string; disponivel_ate: string | null;
+  vigente: boolean; tem_arquivo: boolean; acessado_em: string | null; assinado_em: string | null;
+  origem: "portal" | "papel" | null; assinatura_hash: string | null;
+}
+export interface DssColaboradorAberto extends DssColaborador { conteudo: string; arquivo_nome: string | null; contrato: string }
+
 // ── Queries ─────────────────────────────────────────────────────────────
 
 export function usePerfilColaborador() {
@@ -237,6 +245,33 @@ export function useHistoricoColaborador() {
     queryKey: ["colaborador", "historico"],
     queryFn: () => chamarPortal<HistoricoColaborador>("historico"),
     retry: false,
+  });
+}
+
+export function useDssColaborador() {
+  return useQuery({
+    queryKey: ["colaborador", "dss"],
+    queryFn: () => chamarPortal<DssColaborador[]>("dss_lista"),
+    retry: false,
+  });
+}
+
+/** Abrir o DSS grava o primeiro acesso — por isso não revalida sozinho. */
+export function useAbrirDssColaborador(dssId: string | undefined) {
+  return useQuery({
+    queryKey: ["colaborador", "dss", dssId],
+    queryFn: () => chamarPortal<DssColaboradorAberto>("dss_abrir", { dss_id: dssId }),
+    enabled: !!dssId,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+export function useAssinarDssColaborador(dssId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chamarPortal<{ ok: boolean; assinado_em: string; hash: string; origem: string }>("dss_assinar", { dss_id: dssId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["colaborador", "dss"] }),
   });
 }
 

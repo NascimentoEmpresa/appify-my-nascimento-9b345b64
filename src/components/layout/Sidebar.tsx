@@ -900,6 +900,15 @@ const treinamentosModule: ModuleDef = {
       ],
     },
     {
+      // DSS — Diálogo Semanal de Segurança (SIS-2026-0891, mig 20261119100000):
+      // o SST publica, o colaborador lê e assina no Portal do Colaborador.
+      label: "Segurança",
+      defaultOpen: true,
+      items: [
+        { label: "DSS – Diálogo Semanal", to: "/app/treinamentos/dss", icon: ShieldCheck },
+      ],
+    },
+    {
       label: "Alunos",
       defaultOpen: true,
       items: [
