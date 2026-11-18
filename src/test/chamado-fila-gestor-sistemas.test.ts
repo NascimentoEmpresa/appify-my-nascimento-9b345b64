@@ -48,6 +48,16 @@ describe("aba Pendente de conclusão abre a execução e o gestor decide (18/11/
     expect(podeDevolverAoDev(entregue, true)).toBe(true);
     expect(podeDevolverAoDev(entregue, false)).toBe(false);
     expect(podeDevolverAoDev(base, true)).toBe(false);
-    expect(podeDevolverAoDev({ ...entregue, status: "concluido" }, true)).toBe(false);
+  });
+  it("concluído e ainda não finalizado: também dá para pedir mais atualizações (SIS-2026-0934)", () => {
+    const confirmado = { ...base, status: "concluido", conclusao_confirmada_em: "2026-11-18T07:53:00Z" };
+    expect(podeDevolverAoDev(confirmado, true)).toBe(true);
+    expect(podeDevolverAoDev({ ...base, status: "concluido" }, true)).toBe(true);
+    expect(podeDevolverAoDev(confirmado, false)).toBe(false);
+  });
+  it("finalizado, cancelado ou coluna não lida: não", () => {
+    expect(podeDevolverAoDev({ ...base, status: "concluido", gestao_finalizada_em: "2026-11-18T10:00:00Z" }, true)).toBe(false);
+    expect(podeDevolverAoDev({ ...base, status: "cancelado", desenvolvimento_entregue_em: "2026-11-17T18:00:00Z" }, true)).toBe(false);
+    expect(podeDevolverAoDev({ status: "concluido" }, true)).toBe(false);
   });
 });
