@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import * as tus from "tus-js-client";
 import { supabase } from "@/integrations/supabase/client";
-import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
+import { enviarArquivo } from "@/lib/uploadRetomavel";
 import {
   BUCKET_TRN, type Aluno, type Assinatura, type AlunoLista, type Aula, type Aviso, type Categoria, type Certificado,
   type CertificadoModelo, type Comentario, type Curso, type CursoLista, type Dashboard, type Evento,
@@ -57,30 +56,13 @@ export async function uploadMidia(
 ): Promise<string> {
   const limpo = file.name.replace(/[^\w.-]+/g, "_");
   const path = `${pasta}/${Date.now()}-${limpo}`;
-  const tipo = file.type || tipoPelaExtensao(file.name);
-  if (file.size <= 6 * 1024 * 1024) {
-    const { error } = await supabase.storage.from(BUCKET_TRN).upload(path, file, { contentType: tipo, upsert: false });
-    if (error) throw error;
-    onProgresso?.(100, file.size, file.size);
-    return path;
-  }
-  const { data: sessao } = await supabase.auth.getSession();
-  const token = sessao.session?.access_token;
-  if (!token) throw new Error("Sessão expirada. Entre de novo para enviar o arquivo.");
-  await new Promise<void>((resolve, reject) => {
-    const up = new tus.Upload(file, {
-      endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
-      chunkSize: 6 * 1024 * 1024,
-      retryDelays: [0, 3000, 5000, 10000, 20000],
-      uploadDataDuringCreation: true,
-      removeFingerprintOnSuccess: true,
-      headers: { authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
-      metadata: { bucketName: BUCKET_TRN, objectName: path, contentType: tipo, cacheControl: "3600" },
-      onError: (e) => reject(new Error(mensagemTus(e))),
-      onProgress: (enviado, total) => onProgresso?.(Math.round((enviado / total) * 100), enviado, total),
-      onSuccess: () => resolve(),
-    });
-    up.start();
+  // O TUS (e a correção do endereço dos pedaços no cluster) mora em
+  // src/lib/uploadRetomavel.ts desde 18/11/2026 — o editor de Treinamentos
+  // usa o mesmo caminho.
+  await enviarArquivo(BUCKET_TRN, path, file, {
+    contentType: file.type || tipoPelaExtensao(file.name),
+    onProgresso,
+    limiteBytes: 500 * 1024 * 1024,
   });
   return path;
 }
@@ -94,13 +76,6 @@ export function tipoPelaExtensao(nome: string): string {
     png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
   };
   return tipos[ext] ?? "application/octet-stream";
-}
-
-function mensagemTus(e: Error): string {
-  const m = e?.message ?? "";
-  if (/413|too large|Payload/i.test(m)) return "Arquivo maior que o limite (500 MB).";
-  if (/401|403|row-level|Unauthorized/i.test(m)) return "Sem permissão para enviar arquivos nos Treinamentos.";
-  return "Não deu para enviar o arquivo: " + m.slice(0, 200);
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────
