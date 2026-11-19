@@ -113,15 +113,17 @@ BEGIN
       (9, 'Aplicação para férias e 13º', 'Aplicação para férias e 13º', 14300.00, 'Projeção!K41', 'célula com fórmula na planilha: =$S41');
 
   -- Toda rubrica da planilha tem que existir (por nome, ignorando acento/
-  -- caixa). Se alguém renomeou uma, a carga para aqui em vez de entrar pela
-  -- metade.
+  -- caixa). Se alguém renomeou uma, a carga NÃO entra (nem pela metade) e
+  -- avisa — WARNING e não EXCEPTION para não travar a fila de migrations do
+  -- time (guardião M6); reaplicar à mão depois de corrigir o nome.
   SELECT string_agg(DISTINCT x.rubrica, ', ') INTO v_faltando
     FROM _osc_0956 x
    WHERE NOT EXISTS (SELECT 1 FROM public."OSC_RUBRICA" r
                       WHERE r.parceria_id = v_par
                         AND public.osc_normalizar(r.nome) = public.osc_normalizar(x.rubrica));
   IF v_faltando IS NOT NULL THEN
-    RAISE EXCEPTION 'SIS-2026-0956: rubrica(s) da planilha sem cadastro na OSC: %', v_faltando;
+    RAISE WARNING 'SIS-2026-0956: rubrica(s) da planilha sem cadastro na OSC: % — nada importado.', v_faltando;
+    RETURN;
   END IF;
 
   -- Competências: fechadas, realizado = histórico importado.
