@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calcularVencimento, contarPainel, diasParaVencer, erroConfig, erroMesesContrato, nomeContrato, ordenar,
   motivoAfastamento, ordenarAfastados, pendenciasParaRealizar, periodicidadeMeses, rotuloPeriodicidade, somarMeses,
-  statusComAfastamento, statusPeriodico, type ItemPeriodico,
+  statusComAfastamento, statusPeriodico, casaBusca, empresaDoItem, funcaoDoItem, type ItemPeriodico,
 } from "@/lib/sst/asoPeriodico";
 
 const HOJE = "2026-11-14";
@@ -199,5 +199,35 @@ describe("afastados fora das pendências (SIS-2026-0886)", () => {
     const l = [item({ nome: "C", afastamento: af(null) }), item({ nome: "B", afastamento: af("2027-02-01") }), item({ nome: "A", afastamento: af("2026-12-10") })]
       .sort(ordenarAfastados).map((i) => i.nome);
     expect(l).toEqual(["A", "B", "C"]);
+  });
+});
+
+// SIS-2026-0886 parte 2 (mig 20261119200000): função e empresa do vínculo.
+describe("empresa e função na lista (SIS-2026-0886, parte 2)", () => {
+  it("empresa pelo código da Senior, na régua das telas de RH", () => {
+    expect(empresaDoItem({ empresa_codigo: "1", empresa_nome: "HAGG SERVICOS LTDA" })).toBe("HAGG");
+    expect(empresaDoItem({ empresa_codigo: "2", empresa_nome: null })).toBe("SN");
+    expect(empresaDoItem({ empresa_codigo: "3", empresa_nome: null })).toBe("CANAÃ");
+    expect(empresaDoItem({ empresa_codigo: "5", empresa_nome: null })).toBe("NH");
+  });
+  it("sem código conhecido: cai no nome da empresa; sem nada, traço", () => {
+    expect(empresaDoItem({ empresa_codigo: "9", empresa_nome: "NH SERVICOS" })).toBe("NH");
+    expect(empresaDoItem({ empresa_codigo: "9", empresa_nome: "OUTRA LTDA" })).toBe("OUTRA LTDA");
+    expect(empresaDoItem({ empresa_codigo: null, empresa_nome: null })).toBe("—");
+    expect(empresaDoItem({})).toBe("—"); // RPC antiga, sem as chaves
+  });
+  it("função: o cargo da Senior, ou o aviso quando falta", () => {
+    expect(funcaoDoItem({ cargo: "Servente" })).toBe("Servente");
+    expect(funcaoDoItem({ cargo: null })).toBe("Sem função na Senior");
+    expect(funcaoDoItem({ cargo: "  " })).toBe("Sem função na Senior");
+  });
+  it("busca acha por empresa (sigla ou nome) e por função", () => {
+    const i = item({ nome: "Maria", cargo: "Copeira", empresa_codigo: "2", empresa_nome: "SN SERVICOS" });
+    expect(casaBusca(i, "sn")).toBe(true);
+    expect(casaBusca(i, "servicos")).toBe(true);
+    expect(casaBusca(i, "copeira")).toBe(true);
+    expect(casaBusca(i, "maria")).toBe(true);
+    expect(casaBusca(i, "")).toBe(true);
+    expect(casaBusca(i, "hagg")).toBe(false);
   });
 });

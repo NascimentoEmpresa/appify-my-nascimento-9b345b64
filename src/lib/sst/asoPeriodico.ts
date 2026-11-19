@@ -19,7 +19,13 @@
 // (status "Afastado", cartão próprio). Agendado e realizado continuam no
 // status deles. Férias e atestado NÃO tiram ninguém. Cálculo na hora, nada
 // gravado: a Senior voltou a "Trabalhando" → volta para a lista sozinho.
+//
+// Parte 2 do mesmo chamado (mig 20261119200000): função e EMPRESA do vínculo
+// em destaque, na busca e no filtro — o SST deixa a plataforma da Zielo e
+// pede os periódicos pelo ERP.
 // =====================================================================
+
+import { empresaDe } from "@/lib/rh/colaboradoresUtils";
 
 /** Padrões do chamado — valem enquanto a configuração não carregou. */
 export const DIAS_AVISO = 60;
@@ -151,6 +157,27 @@ export interface ItemPeriodico {
   ultimo_periodico: CicloPeriodico | null;
   /** SIS-2026-0886: preenchido só para quem está afastado hoje por um dos três motivos. */
   afastamento?: AfastamentoPeriodico | null;
+  /** SIS-2026-0886 parte 2 (mig 20261119200000): numemp da Senior ("1", "2"...) e o nome dela. */
+  empresa_codigo?: string | null;
+  empresa_nome?: string | null;
+}
+
+/**
+ * Empresa do vínculo como as telas de RH mostram (HAGG, SN, CANAÃ, NH): a
+ * mesma régua de src/lib/rh/colaboradoresUtils.ts (empresaDe). "—" sem dado.
+ */
+export const empresaDoItem = (i: Pick<ItemPeriodico, "empresa_codigo" | "empresa_nome">): string =>
+  empresaDe({ Empresa: i.empresa_codigo ?? "", "Nome da Empresa": i.empresa_nome ?? "" });
+
+/** Função para exibição: o "Título do Cargo" da Senior, ou o aviso de que falta. */
+export const funcaoDoItem = (i: Pick<ItemPeriodico, "cargo">): string => i.cargo?.trim() || "Sem função na Senior";
+
+/** Busca da lista: nome, empresa, contrato, função e clínica. */
+export function casaBusca(i: ItemPeriodico, busca: string): boolean {
+  const q = busca.trim().toLowerCase();
+  if (!q) return true;
+  return [i.nome, empresaDoItem(i), i.empresa_nome, nomeContrato(i), i.cargo, i.ciclo?.clinica]
+    .some((v) => String(v ?? "").toLowerCase().includes(q));
 }
 
 export const hojeIso = (d = new Date()): string =>
