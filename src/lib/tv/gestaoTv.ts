@@ -48,6 +48,18 @@ export interface DadosPrePainelTv {
 
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 export const rotuloMesTv = (m: string) => `${MESES[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
+
+/**
+ * Competência da TV do Financeiro: SEMPRE o mês anterior ao de hoje ("YYYY-MM"),
+ * porque o mês corrente nunca está completo (Pablo, 20/11/2026). Em janeiro,
+ * dezembro do ano anterior. É a mesma conta de tv_financeiro_dados()
+ * (mig 20261120130000) — quem calcula de verdade é o banco; isto documenta e
+ * testa a regra.
+ */
+export function competenciaFinanceiroTv(hoje: Date = new Date()): string {
+  const d = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 export const brlTv = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 /** "R$ 1,2 mi" / "R$ 350 mil" para caber no card. */
