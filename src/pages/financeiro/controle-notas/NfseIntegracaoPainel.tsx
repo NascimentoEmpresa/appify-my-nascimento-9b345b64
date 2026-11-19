@@ -10,10 +10,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NfEmissaoRow } from "@/hooks/useNfEmissao";
 import { abrirDocumentoNfse, AmbienteNfse, EstadoNfse, ParametrosNfse, SolicitacaoNfse, useConfiguracaoNfse, useReprocessarNfse, useSolicitacoesNfse, useSolicitarNfse } from "@/hooks/useNfseIntegracao";
+import { useDadosContratoNfse, useParametrosServicoNfse } from "@/hooks/useNfseParametrizacao";
 import { fmtMoney } from "../nf-emissao/shared";
 import { validarParametrosNfse } from "./validarParametrosNfse";
 import { MunicipioNfseCampo } from "./MunicipioNfseCampo";
 import { PisCofinsNfseEditor } from "./PisCofinsNfseEditor";
+import { aplicarParametroServico, CST_PIS_COFINS, preencherDoCadastro } from "./parametrosFiscaisNfse";
 
 const ESTADOS: Record<EstadoNfse, string> = {
   pendente: "Na fila", processando: "Processando", aguardando: "Aguardando a prefeitura",
@@ -28,7 +30,7 @@ function parametrosIniciais(nf: NfEmissaoRow): ParametrosNfse {
     cst_pis_cofins: "", retencao_pis_cofins: nf.csll_total > 0 ? "3" : "1",
     ibs_cst: "", ibs_classificacao: "", ibs_indicador_operacao: "", consumidor_final: "", tipo_operacao: "", tipo_ente_governamental: "",
     tributos_aproximados_federais: "0.00", tributos_aproximados_estaduais: "0.00", tributos_aproximados_municipais: "0.00", confirmacao_fiscal: false,
-    informar_imovel: false, imovel: { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", inscricao: "" },
+    item_lc116: "", atualizar_cadastro_contrato: true, informar_imovel: false, imovel: { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", inscricao: "" },
     tomador: { documento: "", nome: "", inscricao_municipal: "", municipio: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", email: "" },
   };
 }
@@ -50,6 +52,12 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
   const [ambiente, setAmbiente] = useState<AmbienteNfse>("homologacao");
   const configuracoes = useConfiguracaoNfse(nf.empresa_id);
   const configuracao = configuracoes.data?.find(c => c.ambiente === ambiente);
+  // SIS-2026-0941: a parametrização é do município real (produção); em
+  // homologação o emissor de testes é outro, mas o teste deve usar os mesmos códigos.
+  const municipioParametrizacao = configuracoes.data?.find(c => c.ambiente === "producao")?.municipio_emissor ?? "";
+  const servicos = useParametrosServicoNfse(municipioParametrizacao);
+  const dadosContrato = useDadosContratoNfse(nf.contrato_id);
+  const servicosAtivos = (servicos.data ?? []).filter(s => s.ativo);
   const producao = ambiente === "producao";
   const rotuloAmbiente = producao ? "produção" : "homologação";
   const liberado = !producao || Boolean(configuracao?.habilitado && (!configuracao.nf_piloto_id || configuracao.nf_piloto_id === nf.id));
@@ -83,7 +91,14 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
     try { await reprocessar.mutateAsync({ id, descartar }); toast.success(descartar ? "Solicitação descartada antes do envio." : "Solicitação devolvida à fila."); }
     catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Não foi possível atualizar a solicitação."); }
   }
-  function preparar(base = atual?.dados.parametros || parametrosIniciais(nf)) {
+  // Preparação nova puxa o cadastro (contrato + item de serviço). Pedido
+  // anterior reaproveitado — inclusive "Corrigir dados" — fica como estava:
+  // nada é escolhido pelo usuário sem ele ver (regra do SIS-2026-0841).
+  function preparar(anterior?: ParametrosNfse) {
+    const reaproveitado = anterior ?? atual?.dados.parametros;
+    const base = reaproveitado ?? preencherDoCadastro(parametrosIniciais(nf), {
+      dados: dadosContrato.data, servicos: servicosAtivos, codigoServicoNota: nf.codigo_servico, nota: nf,
+    });
     setParametros({ ...base, serie: configuracao?.serie ? String(configuracao.serie) : base.serie,
       data_competencia: base.data_competencia ?? nf.competencia,
       municipio_emissor: configuracao?.municipio_emissor || (producao ? "" : "3542404"),
@@ -126,7 +141,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
       </div>
     </div>)}
     {!existeAtiva && nf.status === "enviada" && !consulta.isError && !consulta.isLoading && liberado && <AcessoGate menu="financeiro-nfse" acao="incluir">
-      <Button type="button" variant="outline" disabled={configuracoes.isLoading || percentuaisPendentes} onClick={() => { if (editando) setEditando(false); else preparar(); }}>
+      <Button type="button" variant="outline" disabled={configuracoes.isLoading || servicos.isLoading || dadosContrato.isLoading || percentuaisPendentes} onClick={() => { if (editando) setEditando(false); else preparar(); }}>
         <ChevronDown className="mr-2 h-4 w-4" />{editando ? `Fechar preparação de ${rotuloAmbiente}` : `Preparar emissão em ${rotuloAmbiente}`}
       </Button>
     </AcessoGate>}
@@ -148,6 +163,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         {parametros.opcao_simples === "3" && <Escolha titulo="Apuração do Simples Nacional" valor={parametros.regime_apuracao} alterar={v => salvarCampo("regime_apuracao",v)} opcoes={[["1","Federais e municipal pelo SN"],["2","Federais pelo SN, ISS fora do SN"],["3","Federais e municipal fora do SN"]]} />}
       </fieldset>
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Tomador</legend>
+        {!atual && dadosContrato.data && <p className="text-sm text-muted-foreground md:col-span-3">Preenchido pelo cadastro deste contrato na Parametrização Fiscal, atualizado em {new Date(dadosContrato.data.atualizado_em).toLocaleDateString("pt-BR")}. Confira e corrija o que tiver mudado.</p>}
         <Campo titulo="CPF/CNPJ" valor={parametros.tomador.documento} alterar={v => salvarTomador("documento",v)} maximo={18} />
         <Campo titulo="Nome / razão social" valor={parametros.tomador.nome} alterar={v => salvarTomador("nome",v)} maximo={150} />
         <MunicipioNfseCampo titulo="Município" codigo={parametros.tomador.municipio} alterar={v => salvarTomador("municipio",v)} />
@@ -161,6 +177,13 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Campo titulo="E-mail" valor={parametros.tomador.email} alterar={v => salvarTomador("email",v)} obrigatorio={false} tipo="email" maximo={80} />
       </fieldset>
       <fieldset className="grid gap-3 md:grid-cols-3"><legend className="mb-3 font-medium">Serviço e retenções</legend>
+        {servicosAtivos.length > 0 && <>
+          <Escolha titulo="Item de serviço (LC 116)" valor={parametros.item_lc116 ?? ""} obrigatorio={false}
+            opcoes={servicosAtivos.map(s => [s.item_lc116, s.descricao ? `${s.item_lc116} — ${s.descricao}` : s.item_lc116])}
+            alterar={v => { const linha = servicosAtivos.find(s => s.item_lc116 === v);
+              setParametros(p => linha ? aplicarParametroServico(p, linha) : { ...p, item_lc116: v, confirmacao_fiscal: false, confirmacao_producao: false }); }} />
+          <p className="text-sm text-muted-foreground md:col-span-2">Ao escolher o item, o código nacional, a NBS, o código do serviço na prefeitura e os campos de IBS/CBS são preenchidos pela Parametrização Fiscal. Confira antes de solicitar; os campos continuam editáveis.</p>
+        </>}
         <Campo titulo="Código nacional do serviço" valor={parametros.codigo_tributacao} alterar={v => salvarCampo("codigo_tributacao",v)} maximo={8} />
         <Campo titulo="NBS" valor={parametros.codigo_nbs} alterar={v => salvarCampo("codigo_nbs",v)} maximo={13} />
         <Campo titulo="Código do serviço na prefeitura" valor={parametros.codigo_integracao_municipal ?? ""} alterar={v => salvarCampo("codigo_integracao_municipal",v)} obrigatorio={exigeCodigoPrefeitura} maximo={20} />
@@ -170,8 +193,8 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
         <Campo titulo="Alíquota do ISS (%)" valor={parametros.aliquota_iss} alterar={v => salvarCampo("aliquota_iss",v)} tipo="number" />
         <Escolha titulo="Retenção do ISS" valor={parametros.iss_retido} alterar={v => salvarCampo("iss_retido",v)} opcoes={[["1","Não retido"],["2","Retido pelo tomador"]]} />
         {(Number(nf.pis_total) + Number(nf.cofins_total)) > 0 && <>
-          <Campo titulo="CST de PIS/COFINS" valor={parametros.cst_pis_cofins} alterar={v => salvarCampo("cst_pis_cofins",v)} maximo={2} />
-          <p className="text-sm text-muted-foreground md:col-span-2">Informe os dois dígitos confirmados pelo responsável fiscal, incluindo o zero inicial. O código consta no grupo PIS/COFINS do XML de uma nota anterior.</p>
+          <Escolha titulo="CST de PIS/COFINS" valor={parametros.cst_pis_cofins} alterar={v => salvarCampo("cst_pis_cofins",v)} opcoes={CST_PIS_COFINS} />
+          <p className="text-sm text-muted-foreground md:col-span-2">Escolha a situação tributária confirmada pelo responsável fiscal — a mesma lista do portal da prefeitura. Não é preenchida automaticamente.</p>
           <Escolha titulo="Contribuições retidas" valor={parametros.retencao_pis_cofins} alterar={v => salvarCampo("retencao_pis_cofins",v)} opcoes={[["1","PIS/COFINS retidos"],["3","PIS/COFINS/CSLL retidos"],["4","PIS/COFINS retidos, CSLL não retido"]]} />
         </>}
         <Label className="grid gap-2 md:col-span-3">Descrição do serviço<Textarea required maxLength={2000} rows={4} value={parametros.descricao} onChange={e => salvarCampo("descricao",e.target.value)} /></Label>
@@ -198,6 +221,7 @@ function Painel({ nf, alteracoesPendentes }: { nf: NfEmissaoRow; alteracoesPende
           <Campo titulo="Inscrição imobiliária, se houver" valor={parametros.imovel?.inscricao ?? ""} alterar={v => salvarImovel("inscricao",v)} obrigatorio={false} maximo={30} />
         </div>}
       </fieldset>
+      {producao && <Label className="flex items-start gap-3 font-normal"><Checkbox checked={parametros.atualizar_cadastro_contrato !== false} onCheckedChange={v => setParametros(p => ({ ...p, atualizar_cadastro_contrato: v === true }))} /><span>Quando a prefeitura autorizar, guardar este tomador, as retenções e o item de serviço no cadastro deste contrato para as próximas notas. Desmarque em nota avulsa para outro tomador.</span></Label>}
       <Label className="flex items-start gap-3 font-normal"><Checkbox checked={parametros.confirmacao_fiscal} onCheckedChange={v => salvarCampo("confirmacao_fiscal",v === true)} /><span>Revisei os dados fiscais, as retenções e a série liberada.</span></Label>
       {producao && <Label className="flex items-start gap-3 font-normal"><Checkbox checked={parametros.confirmacao_producao === true} onCheckedChange={v => setParametros(p => ({ ...p, confirmacao_producao: v === true }))} /><span>Autorizo a emissão de uma nota fiscal real em produção para esta preparação.</span></Label>}
       <Button type="submit" disabled={solicitar.isPending || !parametros.confirmacao_fiscal || (producao && !parametros.confirmacao_producao) || !liberado || alteracoesPendentes || percentuaisPendentes}><Send className="mr-2 h-4 w-4" />{solicitar.isPending ? "Registrando..." : `Solicitar emissão em ${rotuloAmbiente}`}</Button>

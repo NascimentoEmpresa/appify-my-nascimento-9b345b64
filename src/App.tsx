@@ -218,6 +218,7 @@ import ValidacaoPosPagamento from "./pages/financeiro/ValidacaoPosPagamento";
 import ConciliacaoBancaria from "./pages/financeiro/ConciliacaoBancaria";
 import EmissaoNF from "./pages/financeiro/nf-emissao/EmissaoNF";
 import ControleNotas from "./pages/financeiro/controle-notas/ControleNotas";
+import ParametrizacaoFiscal from "./pages/financeiro/controle-notas/ParametrizacaoFiscal";
 import InicioControleNotas from "./pages/financeiro/nf-emissao/InicioControleNotas";
 import Lancamentos from "./pages/contabil/Lancamentos";
 import PlanoContas from "./pages/contabil/PlanoContas";
@@ -1030,7 +1031,8 @@ const App = () => (
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
-            <Route path="financeiro/osc-canaa" element={<OscCanaa />} />
+            {/* lazy sem <Suspense> quebrava a tela para todos ("Sistema temporariamente indisponível"), 18/11/2026 */}
+            <Route path="financeiro/osc-canaa" element={<Suspense fallback={null}><OscCanaa /></Suspense>} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
             <Route path="financeiro/gestao-financeira/cartao-credito/classificar" element={<ClassificarLancamentos />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
@@ -1046,6 +1048,7 @@ const App = () => (
             <Route path="financeiro/emissao-nf" element={<InicioControleNotas />} />
             <Route path="financeiro/emissao-nf/cadastro" element={<EmissaoNF />} />
             <Route path="financeiro/emissao-nf/controle-notas" element={<ControleNotas />} />
+            <Route path="financeiro/emissao-nf/parametrizacao-fiscal" element={<ParametrizacaoFiscal />} />
             {/* Fiscal */}
             <Route path="fiscal" element={<Fiscal />} />
             {/* Contábil */}

@@ -60,7 +60,10 @@ export function QuadroBeneficios({ resposta, carregando, acao, compacto, titulo 
           <p className="text-xs text-muted-foreground">
             {resposta?.origem === "contrato"
               ? "Preenchido automaticamente pela Convenção Coletiva vinculada ao contrato."
-              : "Preenchido automaticamente pela CCT vinculada na Planilha de Custo."}
+              : resposta?.origem === "sindicato"
+                // SIS-2026-0933: só a Planilha de Custo monta esta origem.
+                ? `Vínculo automático: CCT com o mesmo sindicato do posto.${resposta.fora_da_vigencia ? " Atenção: a data de vigência do posto está fora do período desta CCT." : ""}`
+                : "Preenchido automaticamente pela CCT vinculada na Planilha de Custo."}
           </p>
           {!compacto && <p className="text-[11px] text-muted-foreground/80">Os valores vêm do cadastro da convenção do posto; ajustes são feitos lá, pela Licitação.</p>}
         </div>
@@ -112,7 +115,9 @@ export function QuadroBeneficios({ resposta, carregando, acao, compacto, titulo 
                   </p>
                   <p className="text-[11.5px] text-muted-foreground">
                     {/* Convenção do contrato (mig 20261113100500) vale para todos os postos dele. */}
-                    {resposta?.origem === "contrato" ? "Fonte: Convenção Coletiva do contrato (Licitações › Contratos)" : "Fonte: Planilha de Custo (Licitações)"}
+                    {resposta?.origem === "contrato" ? "Fonte: Convenção Coletiva do contrato (Licitações › Contratos)"
+                      : resposta?.origem === "sindicato" ? "Fonte: Convenções Coletivas (Licitações) — mesmo sindicato do posto"
+                      : "Fonte: Planilha de Custo (Licitações)"}
                   </p>
                   {q.usadas.map((r, i) => <LinhaOrigem key={r.id} r={r} principal={i === 0} />)}
                 </div>

@@ -133,6 +133,8 @@ Após a retomada, a DPS 9 foi bloqueada antes do envio por `cst_pis_cofins: "0"`
 Quando há valores de PIS/COFINS, a tela passa a exigir dois dígitos antes de
 registrar a solicitação. O enquadramento é confirmado pelo responsável fiscal;
 não preencher, completar com zero ou substituir automaticamente esse código.
+(Desde o SIS-2026-0941 o campo é uma lista, ainda sem escolha automática; ver
+"Parametrização Fiscal e tomador por contrato".)
 Na conferência completa desse pedido, `tipo_operacao: "0"` e
 `tipo_ente_governamental: "0"` também eram incompatíveis com o XSD. A tela
 valida os domínios de 1 a 5 e de 1 a 4, respectivamente, aceitando vazio nos
@@ -277,6 +279,9 @@ confirmar o enquadramento da prestação atual no portal ou com o responsável
 fiscal. Após publicar a correção, usar **Preparar emissão em produção** na
 mesma preparação apta, informar o código confirmado, revisar e confirmar uma
 nova solicitação/DPS. Preservar a tentativa rejeitada e não retransmiti-la.
+(Desde o SIS-2026-0941 o código confirmado fica no cadastro de Parametrização
+Fiscal e entra quando o usuário escolhe o item de serviço; ver a seção
+"Parametrização Fiscal e tomador por contrato".)
 
 O ensaio desta correção usa XML e assinaturas locais, sem criar pedido nem
 transmitir outra DPS fiscal.
@@ -481,6 +486,48 @@ O município de incidência é determinado pelo provedor a partir do serviço e
 local de prestação informados; não se copia automaticamente o município do
 prestador para o tomador ou para a prestação. Situações fora desse recorte
 devem permanecer no portal até a próxima etapa da integração.
+
+## Parametrização Fiscal e tomador por contrato — SIS-2026-0941
+
+**Mudança de regra pedida pelo Financeiro.** Nas seções acima, o código do
+serviço na prefeitura e os demais enquadramentos eram confirmados nota a nota,
+sem escolha automática. Desde o SIS-2026-0941, a confirmação passa a ser o
+**cadastro** feito e mantido pelo próprio Financeiro em
+**Financeiro → Controle de Notas → Parametrização Fiscal**
+(`/app/financeiro/emissao-nf/parametrizacao-fiscal`, menu
+`financeiro-nfse-parametros`). O sistema continua sem adivinhar: só preenche
+quando o usuário escolhe o item de serviço, todos os campos seguem editáveis
+na nota e "Revisei os dados fiscais" continua obrigatório. O worker e a DPS
+não mudaram.
+
+- **Códigos de serviço** (`NFSE_PARAMETRO_SERVICO`): por município emissor e
+  item da LC 116, guarda código nacional, NBS, código do serviço na prefeitura
+  (`cIntContrib`), CST e classificação de IBS/CBS e indicador da operação.
+  Carga inicial de Triunfo: 07.10 (071002 / 118031000 / 8121400 / 020201),
+  17.05 (170501 / 118012100 / 8111700 / 100301) e 07.11 (071102 / 118067000 /
+  8111700 / 100301), todos com CST 000 e classificação 000001. No painel, o
+  seletor **Item de serviço (LC 116)** preenche esses seis campos; a
+  preparação nova já chega com o item da própria nota (Emissão de NF) ou, se
+  não houver, com o último usado no contrato. Em homologação valem os códigos
+  do município de produção.
+- **CST de PIS/COFINS** virou lista (00 a 09, nomes do layout nacional e do
+  portal) e **continua sem preenchimento automático**: é escolhido em cada nota.
+- **Tomador por contrato** (`NFSE_DADOS_CONTRATO`): tomador, local da
+  prestação, consumidor final, ente governamental, retenção do ISS,
+  contribuições retidas e último item. A preparação nova do contrato chega
+  preenchida; as retenções só entram quando combinam com os valores salvos da
+  preparação. O cadastro se atualiza **só quando a prefeitura autoriza** uma
+  nota de produção do contrato (gatilho em `NFSE_SOLICITACAO`), salvo se a
+  caixa "guardar este tomador…" for desmarcada (nota avulsa). Pedido feito
+  antes de uma edição manual não a desfaz, e uma falha do gatilho vira aviso
+  no log, sem impedir o registro do resultado fiscal.
+- **Pedido anterior reaproveitado** ("Corrigir dados" ou nova tentativa após
+  rejeição) **não** puxa o cadastro: segue com os dados do pedido.
+
+A carga inicial do tomador copiou a nota de produção autorizada mais recente
+**de cada contrato** — nunca de outro contrato. A prova está em
+`supabase/tests/sis_2026_0941_parametrizacao.sql` (PostgreSQL 18 descartável
+`nfse_0941_teste`).
 
 ## Volume de notas na fila
 

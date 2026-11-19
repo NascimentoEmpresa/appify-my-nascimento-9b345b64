@@ -4,10 +4,16 @@ import type { ReactNode } from "react";
 import { NfseIntegracaoPainel } from "@/pages/financeiro/controle-notas/NfseIntegracaoPainel";
 import type { NfEmissaoRow } from "@/hooks/useNfEmissao";
 import type { ParametrosNfse, SolicitacaoNfse } from "@/hooks/useNfseIntegracao";
+import type { DadosContratoNfse, ParametroServicoNfse } from "@/hooks/useNfseParametrizacao";
 import { parametrosNfse } from "./fixtures/parametrosNfse";
 const estado = vi.hoisted(() => ({ habilitado: false, piloto: null as string | null, enviar: vi.fn(async (_parametros: ParametrosNfse) => "solicitacao"),
   salvarPercentuais: vi.fn(async (_dados: unknown) => undefined),
-  solicitacoes: [] as SolicitacaoNfse[], reprocessar: vi.fn(async (_dados: { id: string; descartar?: boolean }) => undefined), erro: vi.fn(), permitirIncluir: true }));
+  solicitacoes: [] as SolicitacaoNfse[], reprocessar: vi.fn(async (_dados: { id: string; descartar?: boolean }) => undefined), erro: vi.fn(), permitirIncluir: true,
+  servicos: [] as ParametroServicoNfse[], dadosContrato: null as DadosContratoNfse | null, municipioPedido: [] as (string | undefined)[] }));
+vi.mock("@/hooks/useNfseParametrizacao", () => ({
+  useParametrosServicoNfse: (municipio?: string) => { estado.municipioPedido.push(municipio); return { data: estado.servicos, isLoading: false }; },
+  useDadosContratoNfse: () => ({ data: estado.dadosContrato, isLoading: false }),
+}));
 vi.mock("@/hooks/useIBGEMunicipios", () => ({ useIBGEMunicipios: () => ({ municipios: [], isLoading: false, erro: false, recarregar: vi.fn() }) }));
 vi.mock("@/hooks/useNfEmissao", () => ({ useItensNfEmissao: () => ({ data: [{ id: "item", vlr_bruto: 100, pis: 0, cofins: 0, vlr_liquido: 82.2 }], isLoading: false, isError: false }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: estado.erro } }));
@@ -31,7 +37,8 @@ beforeAll(() => vi.stubGlobal("ResizeObserver", class {
 }));
 afterAll(() => vi.unstubAllGlobals());
 afterEach(() => { cleanup(); estado.habilitado = false; estado.piloto = null; estado.enviar.mockClear();
-  estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.salvarPercentuais.mockReset(); estado.permitirIncluir = true; });
+  estado.solicitacoes = []; estado.reprocessar.mockReset(); estado.erro.mockClear(); estado.salvarPercentuais.mockReset(); estado.permitirIncluir = true;
+  estado.servicos = []; estado.dadosContrato = null; estado.municipioPedido = []; });
 function selecionarProducao() { fireEvent.change(screen.getByLabelText("Ambiente fiscal"), { target: { value: "producao" } }); }
 describe("Painel NFS-e: escolha do ambiente fiscal", () => {
   it("permite acompanhar várias notas em segundo plano sem apresentar fila como autorização", () => {
@@ -227,5 +234,93 @@ describe("Painel NFS-e: escolha do ambiente fiscal", () => {
     await waitFor(()=>expect(estado.enviar).toHaveBeenCalledOnce());
     expect(estado.enviar.mock.calls[0][0]).toMatchObject({codigo_integracao_municipal:"8111700",codigo_municipal:"",confirmacao_producao:true});
     expect(estado.reprocessar).not.toHaveBeenCalled();
+  });
+});
+
+// SIS-2026-0941: parametrização fiscal por código de serviço e cadastro do tomador por contrato.
+const servico = (item: string, codigo: string, nbs: string, prefeitura: string, indicador: string): ParametroServicoNfse => ({
+  id: item, municipio_emissor: "4322004", item_lc116: item, descricao: `Serviço ${item}`, codigo_tributacao: codigo, codigo_nbs: nbs,
+  codigo_integracao_municipal: prefeitura, ibs_cst: "000", ibs_classificacao: "000001", ibs_indicador_operacao: indicador, ativo: true,
+  atualizado_em: "2026-11-19T10:00:00Z", atualizado_por: null });
+const SERVICOS_TRIUNFO = [servico("17.05", "170501", "118012100", "8111700", "100301"), servico("07.10", "071002", "118031000", "8121400", "020201")];
+const DADOS_CONTRATO: DadosContratoNfse = { contrato_id: "contrato", tomador_documento: "15126437003088", tomador_nome: "UNIVERSIDADE FEDERAL",
+  tomador_inscricao_municipal: "", tomador_municipio: "4322004", tomador_cep: "95840000", tomador_logradouro: "Rua do Campus", tomador_numero: "10",
+  tomador_complemento: "", tomador_bairro: "Centro", tomador_email: "nf@exemplo.gov.br", local_prestacao: "4322004", consumidor_final: "1",
+  tipo_ente_governamental: "1", iss_retido: "2", retencao_pis_cofins: "1", item_lc116: "07.10", origem_solicitacao_id: "dps-anterior",
+  atualizado_em: "2026-11-18T12:00:00Z", atualizado_por: null };
+const revisarProducao = () => {
+  fireEvent.click(screen.getByRole("checkbox",{name:"Revisei os dados fiscais, as retenções e a série liberada."}));
+  fireEvent.click(screen.getByRole("checkbox",{name:"Autorizo a emissão de uma nota fiscal real em produção para esta preparação."}));
+};
+describe("Painel NFS-e: parametrização fiscal (SIS-2026-0941)", () => {
+  it("nota nova puxa o tomador do contrato e os códigos do item da própria preparação; trocar o item troca os códigos", async () => {
+    estado.habilitado = true; estado.servicos = SERVICOS_TRIUNFO; estado.dadosContrato = DADOS_CONTRATO;
+    render(<NfseIntegracaoPainel nf={{ ...nota, contrato_id: "contrato", codigo_servico: "17.05" } as NfEmissaoRow} alteracoesPendentes={false} />);
+    expect(estado.municipioPedido).toContain("4322004");
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    expect(screen.getByLabelText("CPF/CNPJ")).toHaveValue("15.126.437/0030-88");
+    expect(screen.getByLabelText("Nome / razão social")).toHaveValue("UNIVERSIDADE FEDERAL");
+    expect(screen.getByLabelText("CEP")).toHaveValue("95840-000");
+    expect(screen.getByText(/Preenchido pelo cadastro deste contrato/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Item de serviço (LC 116)")).toHaveValue("17.05");
+    expect(screen.getByLabelText("Código nacional do serviço")).toHaveValue("170501");
+    expect(screen.getByLabelText("NBS")).toHaveValue("118012100");
+    expect(screen.getByLabelText("Código do serviço na prefeitura")).toHaveValue("8111700");
+    expect(screen.getByLabelText("CST de IBS/CBS")).toHaveValue("000");
+    expect(screen.getByLabelText("Classificação tributária de IBS/CBS")).toHaveValue("000001");
+    expect(screen.getByLabelText("Indicador da operação")).toHaveValue("100301");
+    expect(screen.getByLabelText("Retenção do ISS")).toHaveValue("2");
+    expect(screen.getByLabelText("Consumidor final")).toHaveValue("1");
+    expect(screen.getByLabelText("Tipo de ente governamental, se aplicável")).toHaveValue("1");
+    revisarProducao();
+    fireEvent.change(screen.getByLabelText("Item de serviço (LC 116)"), { target: { value: "07.10" } });
+    expect(screen.getByLabelText("Código nacional do serviço")).toHaveValue("071002");
+    expect(screen.getByLabelText("Código do serviço na prefeitura")).toHaveValue("8121400");
+    expect(screen.getByLabelText("Indicador da operação")).toHaveValue("020201");
+    const botao = screen.getByRole("button",{name:"Solicitar emissão em produção"});
+    expect(botao).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("NBS"), { target: { value: "118031001" } });
+    revisarProducao(); fireEvent.submit(botao.closest("form")!);
+    await waitFor(() => expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({ item_lc116: "07.10", codigo_tributacao: "071002", codigo_nbs: "118031001",
+      atualizar_cadastro_contrato: true, tomador: { documento: "15.126.437/0030-88", cep: "95840000" } });
+  });
+  it("sem item na preparação usa o último item do contrato e permite não atualizar o cadastro em nota avulsa", async () => {
+    estado.habilitado = true; estado.servicos = SERVICOS_TRIUNFO; estado.dadosContrato = DADOS_CONTRATO;
+    render(<NfseIntegracaoPainel nf={{ ...nota, contrato_id: "contrato", codigo_servico: null } as unknown as NfEmissaoRow} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    expect(screen.getByLabelText("Item de serviço (LC 116)")).toHaveValue("07.10");
+    const cadastro = screen.getByRole("checkbox", { name: /guardar este tomador/ });
+    expect(cadastro).toBeChecked(); fireEvent.click(cadastro);
+    revisarProducao(); fireEvent.submit(screen.getByRole("button",{name:"Solicitar emissão em produção"}).closest("form")!);
+    await waitFor(() => expect(estado.enviar).toHaveBeenCalledOnce());
+    expect(estado.enviar.mock.calls[0][0]).toMatchObject({ atualizar_cadastro_contrato: false });
+  });
+  it("pedido anterior reaproveitado não puxa o cadastro, mesmo existindo um", () => {
+    estado.habilitado = true; estado.servicos = SERVICOS_TRIUNFO; estado.dadosContrato = DADOS_CONTRATO;
+    estado.solicitacoes = [{ id:"rejeitada",ambiente:"producao",estado:"rejeitada",serie:1041,numero_dps:2,
+      atualizado_em:"2026-11-11T18:06:00Z",envio_iniciado_em:"2026-11-11T18:05:00Z",mensagem:"P5006",dados:{parametros:parametrosNfse()} } as SolicitacaoNfse];
+    render(<NfseIntegracaoPainel nf={{ ...nota, contrato_id: "contrato", codigo_servico: "17.05" } as NfEmissaoRow} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    expect(screen.getByLabelText("Nome / razão social")).toHaveValue("TOMADOR DE TESTES");
+    expect(screen.getByLabelText("Código do serviço na prefeitura")).toHaveValue("");
+    expect(screen.getByLabelText("Item de serviço (LC 116)")).toHaveValue("");
+    expect(screen.queryByText(/Preenchido pelo cadastro deste contrato/)).not.toBeInTheDocument();
+  });
+  it("CST de PIS/COFINS é lista do portal e nunca vem escolhido", () => {
+    estado.habilitado = true; estado.servicos = SERVICOS_TRIUNFO; estado.dadosContrato = DADOS_CONTRATO;
+    render(<NfseIntegracaoPainel nf={{ ...nota, contrato_id: "contrato", codigo_servico: "17.05", pis_total: 0.65, cofins_total: 3 } as NfEmissaoRow} alteracoesPendentes={false} />);
+    selecionarProducao(); fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em produção"}));
+    const cst = screen.getByLabelText("CST de PIS/COFINS");
+    expect(cst.tagName).toBe("SELECT"); expect(cst).toHaveValue("");
+    expect(screen.getByRole("option", { name: "01 — Operação tributável com alíquota básica" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "06 — Operação tributável a alíquota zero" })).toBeInTheDocument();
+  });
+  it("não oferece guardar o cadastro em homologação e funciona sem parametrização cadastrada", () => {
+    render(<NfseIntegracaoPainel nf={{ ...nota, contrato_id: "contrato" } as NfEmissaoRow} alteracoesPendentes={false} />);
+    fireEvent.click(screen.getByRole("button",{name:"Preparar emissão em homologação"}));
+    expect(screen.queryByLabelText("Item de serviço (LC 116)")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /guardar este tomador/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Código nacional do serviço")).toHaveValue("");
   });
 });
