@@ -1491,6 +1491,8 @@ const sstModule: ModuleDef = {
         { label: "ASO Periódico", to: "/app/sst/aso-periodico", icon: CalendarClock },
         // A fila do exame sobre os casos do Controle de Afastamentos — não é cadastro novo.
         { label: "ASO de Retorno ao Trabalho", to: "/app/sst/aso-retorno", icon: UserCheck },
+        // SIS-2026-0816: o histórico da planilha de exames clínicos — corrige o vencimento do periódico.
+        { label: "ASOs Realizados (histórico)", to: "/app/sst/asos-realizados", icon: History, novoDesde: "2026-11-21" },
       ],
     },
     {
@@ -1513,6 +1515,8 @@ const sstModule: ModuleDef = {
         { label: "Exames Toxicológicos", to: "/app/sst/exames-toxicologicos", icon: FlaskConical },
         { label: "Acidentes de Trabalho", to: "/app/sst/acidentes", icon: Siren },
         { label: "Incidentes", to: "/app/sst/incidentes", icon: FileText },
+        // SIS-2026-0816: matriz de NRs por contrato/função e as turmas presenciais (eram planilhas).
+        { label: "Treinamentos Obrigatórios (NR)", to: "/app/sst/treinamentos-nr", icon: GraduationCap, novoDesde: "2026-11-21" },
       ],
     },
   ],

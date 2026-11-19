@@ -74,6 +74,10 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   // 11/11/2026 (mig 20261111190000): o modelo "TV Recrutamento e Seleção",
   // animado, girando os contratos (src/lib/tv/recPainelTv.ts).
   { slug: "rec-painel", titulo: "Recrutamento e Seleção", paginas: 1, semFiltros: true },
+  // SIS-2026-0816 (mig 20261121110000): a TV do SST — treinamentos NR, ASOs,
+  // afastamentos/atestados e acidentes, os 4 blocos girando dentro do item
+  // (src/lib/tv/sstPainelTv.ts).
+  { slug: "sst-painel", titulo: "SST — Painel gerencial", paginas: 1, semFiltros: true },
   // 11/11/2026 (mig 20261111220000): salários e benefícios × Planilha de Custo, por contrato.
   { slug: "rh-salarios", titulo: "RH — Salários e benefícios × orçamento", paginas: 1, semFiltros: true },
   // 11/11/2026 (mig 20261111230000): as TVs de gestão (src/lib/tv/gestaoTv.ts).

@@ -30,6 +30,13 @@
 // Agendados e Realizados (antes só saía das pendências); continua visível no
 // cartão "Afastados" e no filtro "Todos". O MEI sai já no banco
 // (mig 20261120150000, sst_aso_per_eh_mei) — nem chega à lista.
+//
+// 21/11/2026 (SIS-2026-0816, mig 20261121100000): o card mostrava 778
+// vencidos, quase todos "Estimado pela admissão" de gente que já tinha feito
+// o exame — registrado só na planilha de exames clínicos. O histórico
+// importado em SST › ASOs Realizados (SST_ASO_HISTORICO) virou a 5ª fonte de
+// sst_aso_per_ultimos: ASO ligado a um colaborador e não demissional move o
+// vencimento. O tipo continua um dos de sempre (admissional, periódico…).
 // =====================================================================
 
 import { empresaDe } from "@/lib/rh/colaboradoresUtils";
