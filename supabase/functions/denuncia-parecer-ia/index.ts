@@ -11,6 +11,14 @@
 //     Comitê ("Resumo objetivo", "Resultado", ...), no estilo da célula —
 //     regras e conferência em _shared/denuncia-parecer-ia.ts. Campo da
 //     Presidência sem decisão registrada sai como PROPOSTA, dito no texto.
+//   · "minuta" (19/11/2026): Termo de Abertura, Roteiro de entrevistas ou
+//     Parecer Conclusivo, a partir do dossiê E do conteúdo dos anexos
+//     (PDF com texto, .docx, texto e imagens — imagem só no Gemini). Só o
+//     relator do caso, a Presidência e quem tem `comite_etica_documentos`
+//     (RPC canal_denuncia_documento_pode_redigir). Também não grava: o
+//     relator revisa e salva em CANAL_DENUNCIA_DOCUMENTO. EXCEÇÃO à regra
+//     abaixo de "nenhum anexo é lido": aqui o conteúdo é lido, mas só dos
+//     anexos NÃO sensíveis que o próprio login baixa pelo storage.
 //
 // POR QUE NÃO GUARDA O RESUMO (diferente de chamado-parecer-ia)
 //   O que cada um enxerga numa denúncia é diferente: a Presidência não lê as
@@ -39,6 +47,10 @@
 // Edge Function, nunca em arquivo.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { campoPorId, montarPedidoCampo, validarCampo } from "../_shared/denuncia-parecer-ia.ts";
+import {
+  type AnexoLido, LIMITES_ANEXO, REGRAS_MINUTA, blocoAnexos, conferirMinuta, distribuirOrcamento,
+  leituraDoAnexo, minutaPorId, montarPedidoMinuta, textoDeDocxXml,
+} from "../_shared/denuncia-minuta-ia.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -72,7 +84,17 @@ function provedores(): Provedor[] {
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[]):
+type Parte = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+type Mensagem = { role: string; content: string | Parte[] };
+
+/** Só o Gemini lê imagem; para o Groq a mensagem vira texto e a imagem sai. */
+const paraProvedor = (prov: Provedor, messages: Mensagem[]) => (prov.nome === "gemini" ? messages : messages.map((m) => (
+  typeof m.content === "string" ? m : {
+    role: m.role,
+    content: m.content.map((p) => (p.type === "text" ? p.text : "(imagem não enviada: o provedor reserva não lê imagens)")).join("\n"),
+  })));
+
+async function chamarIA(provs: Provedor[], messages: Mensagem[]):
   Promise<{ texto?: string; provedor?: string; modelo?: string; erro?: string; status?: number }> {
   let ultimo: { erro: string; status: number } = { erro: "Não foi possível falar com a IA agora.", status: 502 };
   for (const prov of provs) {
@@ -80,7 +102,7 @@ async function chamarIA(provs: Provedor[], messages: { role: string; content: st
       const r = await fetch(prov.url, {
         method: "POST",
         headers: { Authorization: `Bearer ${prov.chave}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: prov.modelo, temperature: 0.2, messages }),
+        body: JSON.stringify({ model: prov.modelo, temperature: 0.2, messages: paraProvedor(prov, messages) }),
       }).catch(() => { console.error("IA rede", prov.nome); return null; });
       if (r && r.ok) {
         const dados = await r.json().catch(() => null);
@@ -238,9 +260,9 @@ async function montarDossie(supa: ReturnType<typeof createClient>, denunciaId: s
   const anexos = (anx.data ?? []) as Linha[];
   s.push(`\n## Evidências e documentos (${anexos.length}) — só a lista; o conteúdo dos arquivos não foi lido`);
   if (!anexos.length) s.push("- Nenhum arquivo.");
-  for (const a of anexos) {
-    if (a.sensivel) { s.push(`- Existe um anexo sigiloso (${leg(a.categoria)}, enviado em ${dataBr(a.created_at)}).`); continue; }
-    s.push(`- ${corta(a.nome_arquivo, 200)} — ${leg(a.categoria)}${a.origem ? `, origem ${leg(a.origem)}` : ""}, em ${dataBr(a.created_at)}` +
+  for (const [i, a] of anexos.entries()) {
+    if (a.sensivel) { s.push(`- [Anexo ${i + 1}] Existe um anexo sigiloso (${leg(a.categoria)}, enviado em ${dataBr(a.created_at)}).`); continue; }
+    s.push(`- [Anexo ${i + 1}] ${corta(a.nome_arquivo, 200)} — ${leg(a.categoria)}${a.origem ? `, origem ${leg(a.origem)}` : ""}, em ${dataBr(a.created_at)}` +
       (a.descricao ? `; descrição: ${corta(a.descricao, 300)}` : ""));
   }
 
@@ -282,6 +304,91 @@ async function montarDossie(supa: ReturnType<typeof createClient>, denunciaId: s
   }
 
   return { texto: s.join("\n"), protocolo: String(den.protocolo ?? ""), decidida: !!den.decisao_em };
+}
+
+// ------------------------------------------------------------ anexos (modo minuta)
+
+const BUCKET = "denuncia-evidencias";
+
+function base64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function textoDoPdf(bytes: Uint8Array): Promise<string> {
+  const { getDocumentProxy, extractText } = await import("https://esm.sh/unpdf@0.12.1");
+  const pdf = await getDocumentProxy(bytes);
+  const { text } = await extractText(pdf, { mergePages: true });
+  return Array.isArray(text) ? text.join("\n") : String(text ?? "");
+}
+
+async function textoDoDocx(bytes: Uint8Array): Promise<string> {
+  const { unzipSync, strFromU8 } = await import("https://esm.sh/fflate@0.8.2");
+  const arquivos = unzipSync(bytes, { filter: (f: { name: string }) => f.name === "word/document.xml" });
+  const xml = arquivos["word/document.xml"];
+  return xml ? textoDeDocxXml(strFromU8(xml)) : "";
+}
+
+/**
+ * Lê os anexos que ESTE login enxerga (RLS da tabela e do storage, com o JWT
+ * dele). Sensível nunca é lido. Nada do conteúdo vai para log: os erros daqui
+ * viram só um aviso por anexo ("não foi possível ler").
+ */
+async function lerAnexos(supa: ReturnType<typeof createClient>, denunciaId: string): Promise<{ lidos: AnexoLido[]; imagens: Parte[] }> {
+  const { data } = await supa.from("CANAL_DENUNCIA_ANEXO")
+    .select("nome_arquivo, categoria, mime_type, tamanho_bytes, sensivel, storage_path")
+    .eq("denuncia_id", denunciaId).order("ordem");
+  const anexos = (data ?? []) as Linha[];
+  const lidos: AnexoLido[] = [];
+  const textos: string[] = [];
+  const imagens: Parte[] = [];
+  let lidosQtd = 0;
+
+  for (const [i, a] of anexos.entries()) {
+    const numero = i + 1;
+    const leitura = leituraDoAnexo(a as { nome_arquivo: string; mime_type: string; sensivel: boolean });
+    const item: AnexoLido = {
+      numero, leitura, categoria: String(a.categoria ?? "outro"),
+      // O nome de anexo sigiloso também não vai.
+      nome: a.sensivel ? "anexo sigiloso" : String(a.nome_arquivo ?? "arquivo"),
+    };
+    lidos.push(item); textos.push("");
+    if (a.sensivel) { item.aviso = "anexo sigiloso — não é enviado à I.A"; continue; }
+    if (leitura === "nenhuma") { item.aviso = "formato que a I.A não lê (áudio, vídeo, planilha ou outro)"; continue; }
+    if (lidosQtd >= LIMITES_ANEXO.maxArquivos) { item.aviso = "limite de arquivos lidos por minuta"; continue; }
+    const tamanho = Number(a.tamanho_bytes ?? 0);
+    const teto = leitura === "imagem" ? LIMITES_ANEXO.maxBytesImagem : LIMITES_ANEXO.maxBytesDocumento;
+    if (tamanho > teto) { item.aviso = "arquivo grande demais para leitura"; continue; }
+    if (leitura === "imagem" && imagens.length >= LIMITES_ANEXO.maxImagens) { item.aviso = "limite de imagens por minuta"; continue; }
+
+    const { data: blob, error } = await supa.storage.from(BUCKET).download(String(a.storage_path));
+    if (error || !blob) { item.aviso = "não foi possível baixar o arquivo"; continue; }
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (bytes.length > teto) { item.aviso = "arquivo grande demais para leitura"; continue; }
+    lidosQtd++;
+    try {
+      if (leitura === "imagem") {
+        const mime = String(a.mime_type || "image/jpeg");
+        imagens.push({ type: "text", text: `[Anexo ${numero}] (imagem)` });
+        imagens.push({ type: "image_url", image_url: { url: `data:${mime};base64,${base64(bytes)}` } });
+      } else if (leitura === "pdf") {
+        textos[i] = await textoDoPdf(bytes);
+        if (!textos[i].trim()) item.aviso = "PDF sem texto (digitalizado como imagem)";
+      } else if (leitura === "docx") {
+        textos[i] = await textoDoDocx(bytes);
+      } else {
+        textos[i] = new TextDecoder("utf-8").decode(bytes);
+      }
+    } catch {
+      console.error("minuta: falha ao ler anexo", leitura); // sem nome nem conteúdo
+      item.aviso = "não foi possível ler o arquivo";
+    }
+  }
+
+  const cortados = distribuirOrcamento(textos);
+  cortados.forEach((t, i) => { if (t) lidos[i].texto = t; });
+  return { lidos, imagens };
 }
 
 // ------------------------------------------------------------ prompts
@@ -330,7 +437,9 @@ Deno.serve(async (req) => {
     const corpo = await req.json().catch(() => ({}));
     const denunciaId = String(corpo?.denuncia_id ?? "").trim();
     if (!/^[0-9a-f-]{36}$/i.test(denunciaId)) return respostaJson({ error: "denuncia_id inválido." }, 400);
-    const modo = corpo?.modo === "chat" ? "chat" : corpo?.modo === "campo" ? "campo" : "resumo";
+    const modo = corpo?.modo === "chat" ? "chat" : corpo?.modo === "campo" ? "campo" : corpo?.modo === "minuta" ? "minuta" : "resumo";
+    const minuta = modo === "minuta" ? minutaPorId(corpo?.documento) : undefined;
+    if (modo === "minuta" && !minuta) return respostaJson({ error: "Tipo de minuta desconhecido." }, 400);
     const pergunta = String(corpo?.pergunta ?? "").trim().slice(0, 2000);
     if (modo === "chat" && !pergunta) return respostaJson({ error: "Escreva a pergunta." }, 400);
     const campo = modo === "campo" ? campoPorId(corpo?.campo) : undefined;
@@ -351,6 +460,35 @@ Deno.serve(async (req) => {
     if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
     const sistema = `${REGRAS}\n\n=== DOSSIÊ DA DENÚNCIA ${dossie.protocolo} ===\n${dossie.texto}\n=== FIM DO DOSSIÊ ===`;
+
+    if (minuta) {
+      // Minuta é do relator e da Presidência (e de quem tem
+      // comite_etica_documentos) — a mesma regra de quem salva o documento.
+      const { data: pode } = await supa.rpc("canal_denuncia_documento_pode_redigir", { _denuncia: denunciaId });
+      if (pode !== true) return respostaJson({ error: "Só o relator do caso e a Presidência geram documentos com a I.A." }, 403);
+
+      const { lidos, imagens } = await lerAnexos(supa, denunciaId);
+      const sistemaMinuta = `${REGRAS}\n${REGRAS_MINUTA}\n\n=== DOSSIÊ DA DENÚNCIA ${dossie.protocolo} ===\n${dossie.texto}\n\n${blocoAnexos(lidos)}\n=== FIM DO DOSSIÊ ===`;
+      const pedidoTexto = montarPedidoMinuta(minuta, String(corpo?.orientacao ?? ""));
+      const pedido: Mensagem[] = [
+        { role: "system", content: sistemaMinuta },
+        { role: "user", content: imagens.length ? [...imagens, { type: "text", text: pedidoTexto }] : pedidoTexto },
+      ];
+      let res = await chamarIA(provs, pedido);
+      if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+      let v = conferirMinuta(res.texto, minuta);
+      if (!v.ok) {
+        res = await chamarIA(provs, [...pedido, { role: "assistant", content: res.texto }, { role: "user", content: v.erro }]);
+        if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+        v = conferirMinuta(res.texto, minuta);
+        if (!v.ok) return respostaJson({ error: v.erro }, 502);
+      }
+      return respostaJson({
+        texto: v.texto, documento: minuta.id, provedor: res.provedor, modelo: res.modelo, gerado_em: new Date().toISOString(),
+        // Só nome/número e o motivo: a tela mostra o que foi lido e o que não.
+        anexos: lidos.map((a) => ({ numero: a.numero, nome: a.nome, lido: !a.aviso, aviso: a.aviso ?? null })),
+      });
+    }
 
     if (campo) {
       const pedido = [{ role: "system", content: sistema }, { role: "user", content: montarPedidoCampo(campo, dossie.decidida) }];
