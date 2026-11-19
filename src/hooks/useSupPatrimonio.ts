@@ -51,6 +51,10 @@ export interface Bem {
   categoria: Categoria;
   nome: string;
   identificador: string | null;
+  numero_serie: string | null;
+  placa_patrimonial: string | null;
+  manutencao_qr_token: string | null;
+  manutencao_qr_ativo: boolean;
   descricao: string | null;
   contrato_id: string | null;
   posto_id: string | null;
@@ -171,6 +175,8 @@ export function useSalvarBem() {
         categoria: b.categoria ?? "equipamento",
         nome: b.nome.trim(),
         identificador: b.identificador?.trim() || null,
+        numero_serie: b.categoria === "equipamento" ? b.numero_serie?.trim() || null : null,
+        placa_patrimonial: b.categoria === "equipamento" ? b.placa_patrimonial?.trim() || null : null,
         descricao: b.descricao || null,
         contrato_id: b.contrato_id || null,
         posto_id: b.contrato_id ? b.posto_id || null : null,
@@ -191,6 +197,33 @@ export function useSalvarBem() {
       toast.error(/uq_sup_patrim_identificador|duplicate/i.test(e?.message ?? "")
         ? "Já existe um bem com esse identificador."
         : e?.message ?? "Não foi possível salvar."),
+  });
+}
+
+export function useEmitirQrManutencao() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async ({ id, rotacionar = false }: { id: string; rotacionar?: boolean }) => {
+      const { data, error } = await sb.rpc("sup_patrimonio_qr_emitir", {
+        p_patrimonio_id: id, p_rotacionar: rotacionar,
+      });
+      if (error) throw error;
+      return data as string;
+    },
+    onSuccess: () => invalidar(),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Não foi possível gerar o QR."),
+  });
+}
+
+export function useRevogarQrManutencao() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await sb.rpc("sup_patrimonio_qr_revogar", { p_patrimonio_id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => { invalidar(); toast.success("QR revogado."); },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Não foi possível revogar o QR."),
   });
 }
 

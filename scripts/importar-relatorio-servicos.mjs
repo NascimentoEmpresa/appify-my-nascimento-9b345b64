@@ -212,9 +212,19 @@ async function main() {
     const csll = numero(row[COL.csll]);
     const faltas = numero(row[COL.faltas]);
     const postoNaoImplementado = numero(row[COL.postoNaoImplementado]);
-    const multas = numero(row[COL.multasAntes]) + numero(row[COL.multasDepois]);
-    const glosas = numero(row[COL.glosasAntes]) + numero(row[COL.glosasDepois]);
-    const outrosDescontos = numero(row[COL.outrosAntes]) + numero(row[COL.outrosDepois]);
+    // SIS-2026-0952: antes e depois da emissão vão para campos separados. A versão
+    // anterior somava as duas colunas no campo "antes" (os *_pos_emissao ainda não
+    // existiam) e 90 glosas/multas pós-emissão — quase todas UFRGS — apareceram como
+    // desconto anterior à nota, inflando o "a receber" (migration 20261120180000
+    // corrigiu as já importadas). Pós-emissão não mexe em bruto/líquido; só vale no
+    // pagamento, via descontos_pos_emissao_total do cabeçalho.
+    const multas = numero(row[COL.multasAntes]);
+    const glosas = numero(row[COL.glosasAntes]);
+    const outrosDescontos = numero(row[COL.outrosAntes]);
+    const multasPos = numero(row[COL.multasDepois]);
+    const glosasPos = numero(row[COL.glosasDepois]);
+    const outrosPos = numero(row[COL.outrosDepois]);
+    const descontosPosTotal = Math.round((multasPos + glosasPos + outrosPos) * 100) / 100;
     const valorPago = numero(row[COL.valorRecebido]);
 
     totalValorPago += valorPago;
@@ -254,12 +264,14 @@ async function main() {
       recebimento_extra: numero(row[COL.recebimentoExtra]),
       falta_receber: numero(row[COL.faltaReceber]),
       pago_a_mais: numero(row[COL.pagoAMais]),
+      descontos_pos_emissao_total: descontosPosTotal,
       _item: {
         ordem: 1,
         identificacao: texto(row[COL.variacao]),
         valor_contrato_exec: valorContratoExec,
         faltas, posto_nao_implementado: postoNaoImplementado,
         multas, glosas, outros_descontos: outrosDescontos,
+        multas_pos_emissao: multasPos, glosas_pos_emissao: glosasPos, outros_descontos_pos_emissao: outrosPos,
         qtd_colaboradores: 0,
         vlr_bruto: vlrBruto,
         vlr_liquido: vlrLiquido,
