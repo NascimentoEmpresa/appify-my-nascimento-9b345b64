@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
@@ -112,7 +113,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   const pendentesIds = useMemo(() => new Set(soAvaliacoes.map((p) => p.id)), [soAvaliacoes]);
   const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string; participante?: boolean } | null>(null);
   const [confirmarAlvo, setConfirmarAlvo] = useState<Pick<Chamado, "id" | "numero" | "status" | "responsavel_id" | "assunto"> | null>(null);
-  const [pagina, setPagina] = useState(1);
+  const [pagina, setPagina] = useEstadoPersistido(`chamados-meus:${base}`, "pagina", 1);
 
   const { data: stats } = useQuery({
     queryKey: ["chamados-meus-stats"],
@@ -176,8 +177,15 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   });
 
   // Padrão: só o que tem pendência (pedido do solicitante + Pablo, 13/11/2026).
-  const [visao, setVisao] = useState<Visao>("pendentes");
-  const [filtros, setFiltros] = useState<FiltrosMeusChamados>(FILTROS_VAZIOS);
+  // 19/11/2026: aba, busca, filtros e página ficam guardados na sessão da aba
+  // do navegador — "Abrir Novo Chamado" (e Acompanhar) trocam de rota e
+  // desmontam a lista; ao voltar tudo vinha zerado. Sobrevive a F5 também.
+  // Os filtros guardados são mesclados com FILTROS_VAZIOS para um campo
+  // novo no futuro não chegar `undefined` de um balde antigo.
+  const chaveSessao = `chamados-meus:${base}`;
+  const [visao, setVisao] = useEstadoPersistido<Visao>(chaveSessao, "visao", "pendentes");
+  const [filtrosGuardados, setFiltros] = useEstadoPersistido<FiltrosMeusChamados>(chaveSessao, "filtros", FILTROS_VAZIOS);
+  const filtros = useMemo(() => ({ ...FILTROS_VAZIOS, ...filtrosGuardados }), [filtrosGuardados]);
   const mudarFiltro = (patch: Partial<FiltrosMeusChamados>) => { setFiltros((f) => ({ ...f, ...patch })); setPagina(1); };
   const mudarVisao = (v: Visao) => { setVisao(v); setPagina(1); };
 
@@ -204,7 +212,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   // Marcação pessoal de revisão (SIS-2026-0938): só minha, fora da trava de
   // pendências — não entra em `motivos` nem em qtdPendentes.
   const { data: revisoes = {} } = useRevisoesChamados();
-  const [filtroRevisao, setFiltroRevisao] = useState<FiltroRevisao>("");
+  const [filtroRevisao, setFiltroRevisao] = useEstadoPersistido<FiltroRevisao>(chaveSessao, "revisao", "");
   const qtdRevisao = useMemo(
     () => contarRevisoes(chamados.map((c) => revisoes[c.id]?.estado ?? null)),
     [chamados, revisoes],
