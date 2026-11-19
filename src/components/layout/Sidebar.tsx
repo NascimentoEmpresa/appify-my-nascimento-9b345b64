@@ -1388,6 +1388,7 @@ const operacionalModule: ModuleDef = {
         // SIS-2026-0599: locais, cidades e cobertura do contrato que inicia.
         { label: "Início de Contrato", to: "/app/operacional/inicio-de-contrato", icon: Building2 },
         { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
+        { label: "Entrega de EPIs", to: "/app/operacional/entrega-epi", icon: ShieldCheck },
         // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
         // telas ficam em abas dentro dela; menu ope_efetividade.

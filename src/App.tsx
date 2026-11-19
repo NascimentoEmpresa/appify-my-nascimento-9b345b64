@@ -647,6 +647,7 @@ const App = () => (
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
+            <Route path="operacional/entrega-epi" element={<EntregasEpi menuCodigo="ope_epi_entregas" modulo="Operacional" />} />
             {/* Vieram do RH em 03/11/2026 (mig 20261103005100), mesmos códigos de menu. */}
             <Route path="operacional/colaboradores" element={<Colaboradores />} />
             {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
