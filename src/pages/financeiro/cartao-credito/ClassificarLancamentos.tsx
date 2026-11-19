@@ -15,6 +15,10 @@ import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { useItensParaClassificar, ItemParaClassificar } from "@/hooks/useCartaoFaturaRateio";
 import { RateioItemFaturaDialog } from "./RateioItemFaturaDialog";
+import { usePermissoes } from "@/context/PermissoesContext";
+import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
+import { chaveFatura } from "./faturaConsolidada";
+import { ConferenciaFatura, SeloConferenciaFatura } from "./ConferenciaFatura";
 
 type FiltroStatus = "" | "pendente" | "classificado";
 
@@ -46,6 +50,24 @@ export default function ClassificarLancamentos() {
   const [filtroCartaoId, setFiltroCartaoId] = useState(params.get("cartao") ?? "");
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>("");
   const [itemClassificar, setItemClassificar] = useState<ItemParaClassificar | null>(null);
+  const { can } = usePermissoes();
+  const podeAlterarFatura = can("alterar", "financeiro", "financeiro-cartao-credito");
+  const { data: faturasInformadas } = useFaturasInformadas();
+
+  // [SEM-CHAMADO] 19/11/2026: total da fatura (cartão × competência) somado de TODOS os itens, não dos filtrados — o filtro de
+  // Status ("só pendentes") não pode encolher o total que é comparado com o boleto (ver ConferenciaFatura).
+  const totalPorFatura = useMemo(() => {
+    const m = new Map<string, { qtd: number; total: number }>();
+    for (const i of itens) {
+      const k = `${i.cartao_id}|${i.competencia}`;
+      const t = m.get(k) ?? { qtd: 0, total: 0 };
+      t.qtd++;
+      t.total += Number(i.valor) || 0;
+      m.set(k, t);
+    }
+    for (const t of m.values()) t.total = Math.round(t.total * 100) / 100;
+    return m;
+  }, [itens]);
 
   // Opções do filtro de Cartão vêm do dataset INTEIRO (não do filtrado) —
   // mesmo padrão de CartaoCredito.tsx, pra não encolher a lista conforme
@@ -199,17 +221,36 @@ export default function ClassificarLancamentos() {
                     <p className="font-medium">{g.nomeCartao}</p>
                     <p className="text-xs text-muted-foreground font-normal">{competenciaLabel(g.competencia)}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <SeloConferenciaFatura
+                      soma={totalPorFatura.get(g.chave)?.total ?? 0}
+                      valorInformado={faturasInformadas?.get(chaveFatura(g.cartaoId, g.competencia))}
+                    />
                     {g.pendentes > 0 ? (
                       <Badge variant="outline">{g.pendentes} pendente{g.pendentes > 1 ? "s" : ""}</Badge>
                     ) : (
                       <Badge variant="secondary">Tudo classificado</Badge>
                     )}
-                    <span className="text-sm font-semibold whitespace-nowrap">{g.itens.length} {g.itens.length === 1 ? "item" : "itens"}</span>
+                    <span className="text-sm font-semibold whitespace-nowrap">
+                      {g.itens.length === (totalPorFatura.get(g.chave)?.qtd ?? 0)
+                        ? `${g.itens.length} ${g.itens.length === 1 ? "item" : "itens"}`
+                        : `${g.itens.length} de ${totalPorFatura.get(g.chave)?.qtd ?? 0} itens`}{" "}
+                      · {formatBRL(totalPorFatura.get(g.chave)?.total ?? 0)}
+                    </span>
                   </div>
                 </div>
               </AccordionTrigger>
               <AccordionContent>
+                <div className="flex flex-wrap items-center gap-2 px-1 pb-2 text-xs text-muted-foreground">
+                  <span>Total dos itens da fatura: <strong className="text-foreground">{formatBRL(totalPorFatura.get(g.chave)?.total ?? 0)}</strong></span>
+                  <ConferenciaFatura
+                    cartaoId={g.cartaoId}
+                    competencia={g.competencia}
+                    soma={totalPorFatura.get(g.chave)?.total ?? 0}
+                    valorInformado={faturasInformadas?.get(chaveFatura(g.cartaoId, g.competencia))}
+                    podeAlterar={podeAlterarFatura}
+                  />
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
