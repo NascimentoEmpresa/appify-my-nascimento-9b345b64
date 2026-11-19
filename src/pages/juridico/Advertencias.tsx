@@ -14,6 +14,7 @@ import {
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { RecebidoJuridico, RecebidosPresidencia } from "./CardsComiteEtica";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
 
 // =====================================================================
@@ -129,6 +130,14 @@ export default function Advertencias() {
   const podeAprovar = !!temAprovar;
   // Quem conclui com parecer: o Jurídico — e o aprovador também pode.
   const podeConcluir = souJuridico || podeAprovar;
+  // Comitê de Ética (SIS-2026-0957): os dois cards do fluxo. O supervisor
+  // entra nesta tela pelo menu advertencias_recebido_juridico (mesma rota)
+  // SEM o menu `advertencias`: para ele, a tela é só o card dele.
+  const { data: temAdvertencias, isLoading: carregandoAcesso } = useScreenAccess("advertencias", "visualizar");
+  const { data: temRecebidosPresidencia } = useScreenAccess("juridico_recebidos_presidencia", "visualizar");
+  const { data: temEncaminhar } = useScreenAccess("juridico_encaminhar_supervisor", "visualizar");
+  const { data: temRecebidoJuridico } = useScreenAccess("advertencias_recebido_juridico", "visualizar");
+  const soSupervisor = !carregandoAcesso && !temAdvertencias;
 
   const [rows, setRows] = useState<Adv[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,6 +147,8 @@ export default function Advertencias() {
   // Aprovação" vazia e parecia que a advertência tinha sumido.
   const [params] = useSearchParams();
   const abaDoLink = params.get("aba");
+  // ?card=presidencia|supervisor: o sino do fluxo do Comitê abre no card.
+  const cardDoLink = params.get("card");
   const [aba, setAba] = useState(abaDoLink && STATUS.includes(abaDoLink) ? abaDoLink : "Aguardando Aprovação");
   useEffect(() => { if (abaDoLink && STATUS.includes(abaDoLink)) setAba(abaDoLink); }, [abaDoLink]);
   const [busca, setBusca] = useState("");
@@ -165,7 +176,9 @@ export default function Advertencias() {
   const load = useCallback(async () => {
     setLoading(true);
     const [{ data }, { data: anx }, { data: coms }] = await Promise.all([
-      db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("*").order("created_at", { ascending: false }),
+      // As que nasceram de decisão da Presidência (canal_denuncia_id) ficam no
+      // card "Recebidos da presidência" — sigilo da denúncia (SIS-2026-0957).
+      db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("*").is("canal_denuncia_id", null).order("created_at", { ascending: false }),
       db.from("SISTEMA_SOLICITACOES_ANEXOS").select("entidade_id").eq("modulo", "advertencia").limit(5000),
       db.from("SISTEMA_COMENTARIOS").select("entidade_id, anexos").eq("modulo", "advertencia").neq("anexos", "[]").limit(5000),
     ]);
@@ -260,6 +273,24 @@ export default function Advertencias() {
     </div>
   );
 
+  // Os cards do Comitê de Ética (SIS-2026-0957), no topo da tela.
+  const cardsComite = (
+    <>
+      {temRecebidosPresidencia && <RecebidosPresidencia podeEncaminhar={!!temEncaminhar} abrirPorLink={cardDoLink === "presidencia"} />}
+      {temRecebidoJuridico && <RecebidoJuridico tambemJuridico={!!temRecebidosPresidencia} abrirPorLink={cardDoLink === "supervisor"} />}
+    </>
+  );
+
+  // Supervisor sem o menu `advertencias`: a fila comum não é dele — só o card.
+  if (soSupervisor) {
+    return (
+      <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px", background: "#f5f7fb" }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171", marginBottom: 12 }}>⚠️ Advertências</div>
+        {cardsComite}
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#f5f7fb" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 16, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", gap: 12, flexWrap: "wrap" }}>
@@ -285,6 +316,7 @@ export default function Advertencias() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
+        {cardsComite}
         {/* Filtros — recortam KPIs, abas, lista e dashboard. "Filtros · Contratos"
             é o mesmo do Recrutamento; os outros usam o mesmo dropdown. */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: chips.length ? 8 : 12 }}>

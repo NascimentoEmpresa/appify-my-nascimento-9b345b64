@@ -19,6 +19,12 @@
 //     relator revisa e salva em CANAL_DENUNCIA_DOCUMENTO. EXCEÇÃO à regra
 //     abaixo de "nenhum anexo é lido": aqui o conteúdo é lido, mas só dos
 //     anexos NÃO sensíveis que o próprio login baixa pelo storage.
+//   · "encaminhamento" (SIS-2026-0957): o resumo do parecer da Presidência
+//     que vai ao Jurídico junto com a medida aprovada, para ele redigir a
+//     advertência padrão. Só quem decide pela Presidência (RPC
+//     cetica_pode_decidir). Regras e conferência em
+//     _shared/denuncia-encaminhamento-ia.ts. Também não grava: a presidente
+//     revisa e grava ao aprovar (RPC cetica_medida_decidir).
 //
 // POR QUE NÃO GUARDA O RESUMO (diferente de chamado-parecer-ia)
 //   O que cada um enxerga numa denúncia é diferente: a Presidência não lê as
@@ -51,6 +57,7 @@ import {
   type AnexoLido, LIMITES_ANEXO, REGRAS_MINUTA, blocoAnexos, conferirMinuta, distribuirOrcamento,
   leituraDoAnexo, minutaPorId, montarPedidoMinuta, textoDeDocxXml,
 } from "../_shared/denuncia-minuta-ia.ts";
+import { REGRAS_ENCAMINHAMENTO, conferirEncaminhamento, montarPedidoEncaminhamento } from "../_shared/denuncia-encaminhamento-ia.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -437,7 +444,10 @@ Deno.serve(async (req) => {
     const corpo = await req.json().catch(() => ({}));
     const denunciaId = String(corpo?.denuncia_id ?? "").trim();
     if (!/^[0-9a-f-]{36}$/i.test(denunciaId)) return respostaJson({ error: "denuncia_id inválido." }, 400);
-    const modo = corpo?.modo === "chat" ? "chat" : corpo?.modo === "campo" ? "campo" : corpo?.modo === "minuta" ? "minuta" : "resumo";
+    const modo = corpo?.modo === "chat" ? "chat" : corpo?.modo === "campo" ? "campo" : corpo?.modo === "minuta" ? "minuta"
+      : corpo?.modo === "encaminhamento" ? "encaminhamento" : "resumo";
+    const medidaId = String(corpo?.medida_id ?? "").trim();
+    if (modo === "encaminhamento" && !/^[0-9a-f-]{36}$/i.test(medidaId)) return respostaJson({ error: "medida_id inválido." }, 400);
     const minuta = modo === "minuta" ? minutaPorId(corpo?.documento) : undefined;
     if (modo === "minuta" && !minuta) return respostaJson({ error: "Tipo de minuta desconhecido." }, 400);
     const pergunta = String(corpo?.pergunta ?? "").trim().slice(0, 2000);
@@ -460,6 +470,36 @@ Deno.serve(async (req) => {
     if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
     const sistema = `${REGRAS}\n\n=== DOSSIÊ DA DENÚNCIA ${dossie.protocolo} ===\n${dossie.texto}\n=== FIM DO DOSSIÊ ===`;
+
+    if (modo === "encaminhamento") {
+      const { data: pode } = await supa.rpc("cetica_pode_decidir");
+      if (pode !== true) return respostaJson({ error: "Só a Presidência gera o resumo para o Jurídico." }, 403);
+      // A medida e o parecer do ciclo pela RLS de quem pediu.
+      const { data: med } = await supa.from("COMITE_ETICA_MEDIDA")
+        .select("medida_rotulo, colaborador_nome, contrato_texto, denuncia_id, ciclo_id")
+        .eq("id", medidaId).maybeSingle();
+      if (!med || med.denuncia_id !== denunciaId) return respostaJson({ error: "Medida não encontrada nesta denúncia." }, 404);
+      const { data: ciclo } = await supa.from("COMITE_ETICA_PARECER_CICLO")
+        .select("parecer_texto").eq("id", med.ciclo_id).maybeSingle();
+      const pedido = [
+        { role: "system", content: `${REGRAS}\n${REGRAS_ENCAMINHAMENTO}\n\n=== DOSSIÊ DA DENÚNCIA ${dossie.protocolo} ===\n${dossie.texto}\n=== FIM DO DOSSIÊ ===` },
+        { role: "user", content: montarPedidoEncaminhamento({
+            medidaRotulo: String(med.medida_rotulo ?? ""),
+            colaborador: corpo?.colaborador ? String(corpo.colaborador).slice(0, 200) : med.colaborador_nome,
+            contrato: med.contrato_texto, parecer: ciclo?.parecer_texto, orientacao: String(corpo?.orientacao ?? ""),
+          }) },
+      ];
+      let res = await chamarIA(provs, pedido);
+      if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+      let v = conferirEncaminhamento(res.texto);
+      if (!v.ok) {
+        res = await chamarIA(provs, [...pedido, { role: "assistant", content: res.texto }, { role: "user", content: v.erro }]);
+        if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+        v = conferirEncaminhamento(res.texto);
+        if (!v.ok) return respostaJson({ error: v.erro }, 502);
+      }
+      return respostaJson({ texto: v.texto, provedor: res.provedor, modelo: res.modelo, gerado_em: new Date().toISOString() });
+    }
 
     if (minuta) {
       // Minuta é do relator e da Presidência (e de quem tem

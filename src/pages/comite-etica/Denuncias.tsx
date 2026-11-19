@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { db } from "./db";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -107,6 +107,17 @@ export default function DenunciasComiteEtica() {
       return (data ?? []) as Denuncia[];
     },
   });
+
+  // ?denuncia=<id> (SIS-2026-0957): os avisos do encaminhamento (devolvido
+  // pela Presidência, medida aplicada) abrem direto a ficha do caso.
+  const [params, setParams] = useSearchParams();
+  const denunciaDoLink = params.get("denuncia");
+  useEffect(() => {
+    if (!denunciaDoLink || !denuncias.length) return;
+    const d = denuncias.find((x) => x.id === denunciaDoLink);
+    if (d) setAlvo(d);
+    setParams((p) => { p.delete("denuncia"); return p; }, { replace: true });
+  }, [denunciaDoLink, denuncias, setParams]);
 
   const { data: slas = [] } = useQuery({
     queryKey: ["comite-etica-sla"],

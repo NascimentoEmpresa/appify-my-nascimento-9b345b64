@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Lock, LockOpen, Save, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { db } from "./db";
@@ -65,6 +66,7 @@ export function DocumentosInvestigacao({ denunciaId, relatorId }: { denunciaId: 
   const { user } = useAuth();
   const { can } = usePermissoes();
   const { toast } = useToast();
+  const qc = useQueryClient();
 
   const podeRedigir = podeRedigirDocumento({
     userId: user?.id, relatorId,
@@ -116,9 +118,16 @@ export function DocumentosInvestigacao({ denunciaId, relatorId }: { denunciaId: 
     setDocs((c) => ({ ...c, [tipo]: d }));
     setRascunho((c) => ({ ...c, [tipo]: d.conteudo }));
     setUsouIa((c) => ({ ...c, [tipo]: false }));
+    // SIS-2026-0957: Parecer Conclusivo final vai sozinho à Presidência (gatilho
+    // no banco); reaberto, retira o ciclo ainda sem decisão. O bloco do fluxo
+    // relê.
+    if (tipo === "parecer_conclusivo" && final !== undefined) {
+      qc.invalidateQueries({ queryKey: ["cetica-fluxo", denunciaId] });
+    }
     toast({
       title: final === true ? "Versão final registrada" : final === false ? "Documento reaberto para edição" : "Documento salvo",
-      description: `${TIPOS_DOCUMENTO.find((t) => t.id === tipo)?.rotulo} · versão ${d.versao}`,
+      description: `${TIPOS_DOCUMENTO.find((t) => t.id === tipo)?.rotulo} · versão ${d.versao}`
+        + (tipo === "parecer_conclusivo" && final === true ? " · enviado à Presidência" : ""),
     });
   };
 

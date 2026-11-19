@@ -17,6 +17,7 @@ import { BlocoAnexos, BlocoPresidencia, BlocoProvidencias } from "./BlocosApurac
 import { HistoricoDenuncia } from "./HistoricoDenuncia";
 import { ParecerIaDenuncia } from "./ParecerIaDenuncia";
 import { DocumentosInvestigacao } from "./DocumentosInvestigacao";
+import { FluxoMedidas } from "./FluxoMedidas";
 import { fmtData, fmtDataHora } from "./dossie";
 
 // =====================================================================
@@ -113,6 +114,11 @@ export default function FichaPresidencia({ denuncia: d, podeDecidir, podeVerSigi
           {/* Termo de Abertura e Parecer Conclusivo do relator; a Presidência
               também redige e gera minuta com a I.A. */}
           <DocumentosInvestigacao denunciaId={d.id} relatorId={d.apuracao_responsavel_id ?? null} />
+
+          {/* ------------------------- medidas: decidir e encaminhar (0957) */}
+          {/* Para cada medida do parecer: Desaprovar (volta ao Comitê) ou
+              Aprovar e encaminhar ao Jurídico, com o resumo pela I.A. */}
+          <FluxoMedidas denunciaId={d.id} statusDenuncia={d.status} modo="presidencia" podeDecidir={podeDecidir} />
 
           {/* ------------------------------------------------ parecer I.A */}
           {/* O mesmo card da ficha do Comitê. A função lê com o login da
