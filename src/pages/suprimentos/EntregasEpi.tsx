@@ -57,7 +57,12 @@ function baixarComprovante(entrega: EntregaEpi) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function EntregasEpi() {
+interface EntregasEpiProps {
+  menuCodigo?: "sup_epi_entregas" | "ope_epi_entregas";
+  modulo?: "Suprimentos" | "Operacional";
+}
+
+export default function EntregasEpi({ menuCodigo = "sup_epi_entregas", modulo = "Suprimentos" }: EntregasEpiProps = {}) {
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [termo, setTermo] = useState("");
@@ -149,9 +154,9 @@ export default function EntregasEpi() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Entrega de EPIs" module="Suprimentos" breadcrumb={["Entrega de EPIs"]}
+      <PageHeader title="Entrega de EPIs" module={modulo} breadcrumb={["Entrega de EPIs"]}
         subtitle="Da separação ao comprovante de recebimento, com histórico para SST e Jurídico."
-        actions={<AcessoGate menu="sup_epi_entregas" acao="alterar"><Button onClick={() => setAbrindo(true)}><FilePlus2 className="mr-2 h-4 w-4" /> Registrar entrega</Button></AcessoGate>} />
+        actions={<AcessoGate menu={menuCodigo} acao="alterar"><Button onClick={() => setAbrindo(true)}><FilePlus2 className="mr-2 h-4 w-4" /> Registrar entrega</Button></AcessoGate>} />
 
       <div className="grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-2 lg:grid-cols-5">
         <form className="flex gap-2 sm:col-span-2" onSubmit={(e) => { e.preventDefault(); setPagina(0); setTermo(busca.trim()); }}>
@@ -244,7 +249,7 @@ export default function EntregasEpi() {
               {selecionada.documentos.map((d) => <button key={d.id} className="block text-left text-sm text-primary underline" onClick={() => verDocumento(d.path)}>
                 {dataHoraEpi(d.anexado_em)} · {d.legivel ? "Legível" : "Ilegível"}{d.observacao ? ` · ${d.observacao}` : ""}
               </button>)}
-              <AcessoGate menu="sup_epi_entregas" acao="alterar"><div className="space-y-3 rounded border p-3">
+              <AcessoGate menu={menuCodigo} acao="alterar"><div className="space-y-3 rounded border p-3">
                 <div><Label>Foto ou PDF da ficha</Label><Input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} /></div>
                 <label className="flex items-center gap-2 text-sm"><Checkbox checked={legivel} onCheckedChange={(v) => setLegivel(v === true)} /> Documento legível</label>
                 <Textarea placeholder="Observação sobre a ficha" maxLength={500} value={observacao} onChange={(e) => setObservacao(e.target.value)} />
