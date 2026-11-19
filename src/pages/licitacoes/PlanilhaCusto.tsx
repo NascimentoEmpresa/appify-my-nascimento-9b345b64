@@ -30,9 +30,10 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useConvencoes, useReferenciaDoPosto, useVinculosPosto, vinculoDe } from "@/hooks/useConvencoes";
-import { identificacaoCct } from "@/lib/licitacoes/convencoes";
-import { VinculoPostoDialog } from "@/components/licitacoes/convencoes/VinculoPostoDialog";
+import { useConvencoes, useConvencoesDosContratos, useReferenciaDoPosto, useVinculosPosto, vinculoDe, type Convencao } from "@/hooks/useConvencoes";
+import { identificacaoCct, type RespostaReferencia } from "@/lib/licitacoes/convencoes";
+import { cctAutomaticaDoPosto, type CctAutomatica } from "@/lib/licitacoes/cctPorSindicato";
+import { VinculoPostoDialog, comoReferencia } from "@/components/licitacoes/convencoes/VinculoPostoDialog";
 import { QuadroBeneficios } from "@/components/licitacoes/convencoes/QuadroBeneficios";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -243,10 +244,23 @@ export default function PlanilhaCusto() {
   const [updateFromRow, setUpdateFromRow] = useState<PlanilhaCustoRow | undefined>();
   const [postosRow, setPostosRow] = useState<PlanilhaCustoRow | null>(null);
   // Convenções Coletivas (mig 20261027000930): vínculo posto → CCT/decreto.
-  const [vinculoAlvo, setVinculoAlvo] = useState<{ contrato_id: string | null; contrato: string; posto: string } | null>(null);
+  const [vinculoAlvo, setVinculoAlvo] = useState<{ contrato_id: string | null; contrato: string; posto: string; automatica?: CctAutomatica<Convencao> | null } | null>(null);
   const { data: vinculosPosto } = useVinculosPosto();
   const { data: convencoesLista = [] } = useConvencoes();
   const convencoesPorId = React.useMemo(() => new Map(convencoesLista.map((c) => [c.id, c])), [convencoesLista]);
+  // SIS-2026-0933: convenção do contrato > vínculo manual do posto > CCT
+  // automática pelo nome do sindicato do posto (src/lib/licitacoes/cctPorSindicato.ts).
+  // A automática não é gravada: CCT cadastrada depois liga sozinha.
+  const { data: convencoesDosContratos } = useConvencoesDosContratos();
+  const cctDaLinha = React.useCallback((r: PlanilhaCustoRow) => {
+    const doContrato = r.contrato_id ? convencoesDosContratos?.get(r.contrato_id) : undefined;
+    if (doContrato) return { origem: "contrato" as const, conv: convencoesPorId.get(doContrato.convencao_id) ?? null, vinculo: null, automatica: null };
+    const v = vinculoDe(vinculosPosto, r.contrato_id, r.posto);
+    if (v) return { origem: "posto" as const, conv: convencoesPorId.get(v.convencao_id) ?? null, vinculo: v, automatica: null };
+    const automatica = cctAutomaticaDoPosto(r, convencoesLista);
+    if (automatica) return { origem: "sindicato" as const, conv: automatica.convencao, vinculo: null, automatica };
+    return null;
+  }, [convencoesDosContratos, vinculosPosto, convencoesPorId, convencoesLista]);
   const { data: podeAlterarPlanilha = false } = useScreenAccess("planilha-custo", "alterar");
   const { data: podeIncluirPlanilha = false } = useScreenAccess("planilha-custo", "incluir");
   const podeVincular = podeAlterarPlanilha || podeIncluirPlanilha;
@@ -573,17 +587,30 @@ export default function PlanilhaCusto() {
                   <td className="px-4 py-3 text-center text-muted-foreground">{r.servico ?? "—"}</td>
                   <td className="px-4 py-3 text-center">
                     {/* Convenções Coletivas (mig 20261027000930): a CCT/decreto do POSTO. */}
+                    {/* SIS-2026-0933: + convenção do contrato e CCT automática pelo sindicato. */}
                     {(() => {
-                      const v = vinculoDe(vinculosPosto, r.contrato_id, r.posto);
-                      const conv = v ? convencoesPorId.get(v.convencao_id) : null;
-                      const extras = v ? new Set(Object.values(v.regras ?? {})).size : 0;
-                      if (v) {
+                      const cct = cctDaLinha(r);
+                      if (cct) {
+                        const { conv, vinculo: v, automatica } = cct;
+                        const extras = v ? new Set(Object.values(v.regras ?? {})).size : 0;
+                        const fora = !!automatica?.foraDaVigencia;
+                        const rotulo = (conv ? identificacaoCct(conv) || conv.decreto_numero : null) ?? "Vinculada";
+                        const titulo = [
+                          cct.origem === "contrato" ? "Convenção do contrato" : cct.origem === "sindicato" ? "Vínculo automático pelo sindicato do posto" : "Vinculada ao posto",
+                          conv?.contrato?.nome, conv?.sindicato,
+                          fora ? "data de vigência do posto fora do período desta CCT" : "",
+                          extras ? `+${extras} referência(s) por benefício` : "",
+                        ].filter(Boolean).join(" · ");
+                        const classe = cn("whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium",
+                          conv?.situacao === "pendente" || fora ? "bg-amber-100 text-amber-800" : "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
+                          cct.origem === "sindicato" && "border border-dashed border-current");
+                        const texto = <>{rotulo}{extras ? ` +${extras}` : ""}{fora ? " (fora da vigência)" : ""}</>;
+                        // Sem contrato do ERP não há onde gravar vínculo manual: só mostra.
+                        if (!r.contrato_id) return <span title={titulo} className={classe}>{texto}</span>;
                         return (
-                          <button onClick={() => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto })}
-                            title={[conv?.contrato?.nome, conv?.sindicato, extras ? `+${extras} referência(s) por benefício` : ""].filter(Boolean).join(" · ")}
-                            className={cn("whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium",
-                              conv?.situacao === "pendente" ? "bg-amber-100 text-amber-800" : "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300")}>
-                            {(conv ? identificacaoCct(conv) || conv.decreto_numero : null) ?? "Vinculada"}{extras ? ` +${extras}` : ""}
+                          <button onClick={() => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto, automatica })}
+                            title={titulo} className={classe}>
+                            {texto}
                           </button>
                         );
                       }
@@ -753,7 +780,8 @@ export default function PlanilhaCusto() {
               onClose={() => setViewId(null)}
               onEdit={() => { setViewId(null); openEdit(viewId); }}
               podeVincular={podeVincular}
-              onVincular={(r) => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto })}
+              automatica={(() => { const c = cctDaLinha(rows.find((r) => r.id === viewId)!); return c?.automatica ?? null; })()}
+              onVincular={(r) => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto, automatica: cctDaLinha(r)?.automatica ?? null })}
             />
           )}
         </DialogContent>
@@ -3474,18 +3502,31 @@ function ViewModal({
   onClose,
   onEdit,
   podeVincular,
+  automatica,
   onVincular,
 }: {
   row: PlanilhaCustoRow;
   onClose: () => void;
   onEdit: () => void;
   podeVincular: boolean;
+  /** SIS-2026-0933: CCT automática pelo sindicato (quando não há contrato nem vínculo do posto). */
+  automatica: CctAutomatica<Convencao> | null;
   onVincular: (row: PlanilhaCustoRow) => void;
 }) {
   // CCT / decreto do posto (mig 20261027000930): o mesmo vínculo da coluna
   // CCT da lista, aberto aqui dentro do posto.
   const referencia = useReferenciaDoPosto(row.contrato_id, row.posto);
   const vinculado = referencia.data?.status === "vinculado";
+  // SIS-2026-0933: o resolvedor do banco só conhece contrato + vínculo do
+  // posto; sem nenhum dos dois, o quadro mostra a CCT automática (montada
+  // aqui, no formato do resolvedor, com origem 'sindicato').
+  const resposta: RespostaReferencia | null | undefined = !vinculado && automatica
+    ? {
+        status: "vinculado", origem: "sindicato", fora_da_vigencia: automatica.foraDaVigencia,
+        contrato_id: row.contrato_id, posto: row.posto, principal_id: automatica.convencao.id, regras: {},
+        referencias: [comoReferencia(automatica.convencao)],
+      }
+    : referencia.data;
   const somaRemuneracao = row.salario + row.insalubridade + row.periculosidade + row.lideranca +
     row.adicional_noturno_reduzido + row.adicional_noturno + row.adicional_extra + row.dsr;
   const somaEncargos = row.decimo_terceiro + row.adicional_ferias + row.incidencia_enc_41 +
@@ -3573,18 +3614,18 @@ function ViewModal({
           {/* Conteúdo */}
           <div className="px-6 py-4 space-y-3">
 
-            {row.contrato_id ? (
+            {row.contrato_id || automatica ? (
               <QuadroBeneficios
-                resposta={referencia.data ?? { status: "sem_vinculo", posto: row.posto }}
-                carregando={referencia.isLoading}
+                resposta={resposta ?? { status: "sem_vinculo", posto: row.posto }}
+                carregando={referencia.isLoading && !automatica}
                 compacto
                 titulo="CCT / Decreto do posto"
-                acao={podeVincular ? (
+                acao={podeVincular && row.contrato_id ? (
                   <button
                     onClick={() => onVincular(row)}
                     className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium hover:bg-muted"
                   >
-                    {vinculado ? "Trocar CCT" : "Vincular CCT"}
+                    {vinculado || automatica ? "Trocar CCT" : "Vincular CCT"}
                   </button>
                 ) : undefined}
               />

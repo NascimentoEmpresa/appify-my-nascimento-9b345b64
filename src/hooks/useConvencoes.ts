@@ -311,6 +311,23 @@ export function useConvencaoDoContrato(contratoId: string | null | undefined) {
   });
 }
 
+/**
+ * Todas as convenções de contrato (SIS-2026-0933): a coluna CCT da Planilha
+ * de Custo decide linha a linha contrato > vínculo do posto > automática pelo
+ * sindicato — as duas primeiras na mesma ordem do resolvedor do banco.
+ */
+export function useConvencoesDosContratos() {
+  return useQuery({
+    queryKey: ["lic_contrato_convencao", "*"],
+    queryFn: async (): Promise<Map<string, ConvencaoDoContrato>> => {
+      const { data, error } = await sb.from("LIC_CONTRATO_CONVENCAO").select("contrato_id, convencao_id, decreto_id, atualizado_em");
+      // Banco ainda sem a tabela: nenhum contrato com convenção própria.
+      if (error) return new Map();
+      return new Map(((data ?? []) as ConvencaoDoContrato[]).map((c) => [c.contrato_id, c]));
+    },
+  });
+}
+
 /** Grava (ou tira, com convencao_id null) a convenção do contrato. */
 export function useSalvarConvencaoDoContrato() {
   const qc = useQueryClient();
@@ -325,6 +342,7 @@ export function useSalvarConvencaoDoContrato() {
     },
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ["lic_contrato_convencao", v.contratoId] });
+      qc.invalidateQueries({ queryKey: ["lic_contrato_convencao", "*"] });
       qc.invalidateQueries({ queryKey: ["lic_referencia_posto"] });
     },
   });

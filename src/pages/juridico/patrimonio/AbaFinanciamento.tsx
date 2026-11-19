@@ -28,6 +28,8 @@ import {
   pagamentosSemComprovante, tipoDoIndice, permissoesDaAba, aplicacaoDaCompetencia,
   type ParcelaFinanciamento, type PagamentoParcela, type LinhaResolvida, type Situacao, type EvolucaoSaldo,
 } from "./financiamento";
+import { ImportarDemonstrativoCaixa } from "./ImportarDemonstrativoCaixa";
+import { lerItemEvento, linhasDoDemonstrativo, TIPO_ITEM_EVENTO, type FinanciamentoCadastro } from "./demonstrativoCaixa";
 
 /**
  * O que o usuário pode fazer na aba, pela mesma régua da RLS: os dois
@@ -180,19 +182,26 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
   const [modalImp, setModalImp] = useState(false);
   const [textoImp, setTextoImp] = useState("");
   const [impProjetado, setImpProjetado] = useState(false);
+  // SIS-2026-0939: importador do demonstrativo da CAIXA em PDF.
+  const [modalPdf, setModalPdf] = useState(false);
+  const [eventos, setEventos] = useState<Array<{ id: number; dados: NonNullable<ReturnType<typeof lerItemEvento>> }>>([]);
   const [gravando, setGravando] = useState(false);
 
   // ── Carga ─────────────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
-    const [f, pg, ic] = await Promise.all([
+    const [f, pg, ic, ev] = await Promise.all([
       db.from("JUR_PATRIMONIO_FINANCIAMENTOS").select("*").eq("patrimonio_id", patrimonioId).order("id"),
       db.from("JUR_PATRIMONIO_PARCELA_PAGAMENTOS").select("*").eq("patrimonio_id", patrimonioId).order("data_pagamento").limit(5000),
       db.from("JUR_PATRIMONIO_INCC_APLICACOES").select("*").eq("patrimonio_id", patrimonioId).order("competencia").limit(2000),
+      // Eventos do contrato (moratória, incorporação, mudança de vencimento…)
+      // gravados pelo importador do demonstrativo no histórico do imóvel.
+      db.from("JUR_PATRIMONIO_ITENS").select("id, observacao").eq("patrimonio_id", patrimonioId).eq("kind", "historico").eq("tipo", TIPO_ITEM_EVENTO).limit(2000),
     ]);
     if (f.error) console.warn("financiamentos:", f.error.message);
     setFins((f.data ?? []) as Financiamento[]);
     setPagamentos((pg.data ?? []) as Pagamento[]);
     setIncc((ic.data ?? []) as AplicacaoInccLinha[]);
+    setEventos((ev.data ?? []).flatMap(i => { const d = lerItemEvento((i as { observacao?: string }).observacao); return d ? [{ id: (i as { id: number }).id, dados: d }] : []; }));
     setFinSel(atual => atual ?? ((f.data ?? [])[0]?.id ?? null));
   }, [db, patrimonioId]);
   useEffect(() => { carregar(); }, [carregar]);
@@ -219,6 +228,11 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
   const { filtradas, resumo, evolucao: evolPeriodo } = recortesDaAba(resolvidas, per, fSituacao, hoje());
   const saldo = saldoDeReferencia(doContrato, per, fin, hoje());
   const aplicacoes = historicoIncc(incc.filter(a => !fin || a.financiamento_id === fin.id));
+  const eventosDoContrato = eventos
+    .filter(e => !fin || e.dados.financiamento_id == null || Number(e.dados.financiamento_id) === fin.id)
+    .sort((a, b) => String(a.dados.data).localeCompare(String(b.dados.data)));
+  // Bloco que o importador grava nas observações do contrato (agência, prazo remanescente…).
+  const dadosDoDemonstrativo = linhasDoDemonstrativo(fin?.observacoes);
   const LIMITE = 120;
   const visiveis = verTodas ? filtradas : filtradas.slice(0, LIMITE);
 
@@ -624,6 +638,7 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
       )}
       <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
         {pode.novaParcela && <button className="jp-btn" onClick={() => abrirParc(null)} style={btn("#fff", COR.azul, "#dbe4f0")}>+ Parcela</button>}
+        {pode.importar && (fin ? pode.editarContrato : pode.cadastrarContrato) && <button className="jp-btn" onClick={() => setModalPdf(true)} title="Lê o Documento Descritivo do Crédito da CAIXA e preenche parcelas, contrato e eventos" style={btn(COR.azul, "#fff")}>⬆ Importar demonstrativo (PDF)</button>}
         {pode.importar && <button className="jp-btn" onClick={() => { setTextoImp(""); setImpProjetado(false); setModalImp(true); }} style={btn("#fff", COR.azul, "#dbe4f0")}>⬆ Importar composição</button>}
         <button className="jp-btn" onClick={exportarCsv} disabled={!filtradas.length} style={btn("#fff", COR.azul, "#dbe4f0")}>⬇ CSV</button>
       </div>
@@ -665,6 +680,11 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
         <Campo rotulo="Juros anuais efetivos" valor={pctAa(fin?.taxa_juros_efetiva_aa)} vazio="Não informado" />
         <Campo rotulo="Custo Efetivo Total (CET)" valor={pctAa(fin?.cet_aa)} vazio="Não informado" />
       </div>
+      {dadosDoDemonstrativo.length > 0 && (
+        <div style={{ fontSize: 12, color: "#475569", marginTop: 10, display: "flex", flexWrap: "wrap", gap: "2px 18px" }}>
+          {dadosDoDemonstrativo.map((l, i) => <span key={i}>{l}</span>)}
+        </div>
+      )}
       <div style={{ fontSize: 11.5, color: COR.claro, marginTop: 10 }}>
         Referência: {fmtDt(fin?.data_referencia) ?? "não informada"} · Indexador contratual: {fin?.indexador ?? "não informado"}
         {fin?.atualizado_por && ` · alterado por ${fin.atualizado_por}${fin.updated_at ? ` em ${fmtDt(fin.updated_at)}` : ""}`}
@@ -736,6 +756,22 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
         </>);
       })()}
     </div>
+
+    {/* Eventos do contrato (SIS-2026-0939): vêm do demonstrativo, não são parcelas. */}
+    {eventosDoContrato.length > 0 && (
+      <div style={caixa}>
+        <div style={{ ...tituloCaixa, marginBottom: 8 }}>Histórico do contrato — eventos</div>
+        {eventosDoContrato.map(e => (
+          <div key={e.id} style={{ display: "flex", gap: 12, fontSize: 12.5, padding: "6px 0", borderTop: "1px solid #f1f5f9", flexWrap: "wrap" }}>
+            <b style={{ minWidth: 84 }}>{fmtDt(e.dados.data)}</b>
+            <span style={{ flex: 1, minWidth: 200, color: COR.texto }}>{e.dados.descricao}</span>
+            {e.dados.valor_evento ? <span style={{ color: COR.cinza }}>Valor do evento: <b style={{ color: COR.texto }}>{money(e.dados.valor_evento)}</b></span> : null}
+            {e.dados.saldo_apos ? <span style={{ color: COR.cinza }}>Saldo após: <b style={{ color: COR.laranja }}>{money(e.dados.saldo_apos)}</b></span> : null}
+          </div>
+        ))}
+        <div style={{ fontSize: 11, color: COR.claro, marginTop: 6 }}>Moratórias, incorporações e alterações de vencimento informadas no demonstrativo. Não geram parcela nem lançamento.</div>
+      </div>
+    )}
 
     {/* Evolução do saldo no período */}
     {evolPeriodo && (
@@ -1001,6 +1037,15 @@ export function AbaFinanciamento({ db, patrimonioId, parcelas, brutas, autor, to
           </div>
         </div>
       </div>
+    )}
+
+    {/* ── Modal: demonstrativo CAIXA em PDF (SIS-2026-0939) ── */}
+    {modalPdf && (
+      <ImportarDemonstrativoCaixa
+        db={db} patrimonioId={patrimonioId} fins={fins as unknown as FinanciamentoCadastro[]} brutas={brutas} autor={autor} toast={toast} logHist={logHist}
+        subirArquivo={subirArquivo} fechar={() => setModalPdf(false)}
+        aoConcluir={async id => { await recarregarParcelas(); await carregar(); setFinSel(id); }}
+      />
     )}
 
     {/* ── Modal: importação ── */}
