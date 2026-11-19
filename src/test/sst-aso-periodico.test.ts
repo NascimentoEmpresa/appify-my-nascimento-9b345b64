@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   calcularVencimento, contarPainel, diasParaVencer, erroConfig, erroMesesContrato, nomeContrato, ordenar,
-  pendenciasParaRealizar, periodicidadeMeses, rotuloPeriodicidade, somarMeses, statusPeriodico, type ItemPeriodico,
+  motivoAfastamento, ordenarAfastados, pendenciasParaRealizar, periodicidadeMeses, rotuloPeriodicidade, somarMeses,
+  statusComAfastamento, statusPeriodico, type ItemPeriodico,
 } from "@/lib/sst/asoPeriodico";
 
 const HOJE = "2026-11-14";
@@ -113,7 +114,7 @@ describe("painel", () => {
       item({ status: "Aguardando agendamento" }), item({ status: "Agendado" }), item({ status: "Realizado/recebido" }),
       item({ status: "Em dia" }), item({ status: "Sem ASO" }),
     ];
-    expect(contarPainel(itens)).toEqual({ previstos: 6, proximos: 1, vencidos: 2, aguardando: 1, agendados: 1, realizados: 1 });
+    expect(contarPainel(itens)).toEqual({ previstos: 6, proximos: 1, vencidos: 2, aguardando: 1, agendados: 1, realizados: 1, afastados: 0 });
   });
 });
 
@@ -139,5 +140,64 @@ describe("marcar realizado/recebido", () => {
     expect(pendenciasParaRealizar({}, HOJE)).toEqual(["data da realização", "resultado (apto ou inapto)"]);
     expect(pendenciasParaRealizar({ realizado_em: "2026-11-15", resultado: "apto" }, HOJE)).toEqual(["data da realização não pode ser futura"]);
     expect(pendenciasParaRealizar({ realizado_em: HOJE, resultado: "inapto" }, HOJE)).toEqual([]);
+  });
+});
+
+// SIS-2026-0886 (mig 20261119190000): afastados por aposentadoria, benefício
+// do INSS ou licença-maternidade saem das pendências; férias continuam.
+describe("afastados fora das pendências (SIS-2026-0886)", () => {
+  it("cada motivo pedido é reconhecido pela situação da Senior", () => {
+    expect(motivoAfastamento("Aposentadoria por Invalidez")).toBe("aposentadoria");
+    expect(motivoAfastamento("Aposentado")).toBe("aposentadoria");
+    expect(motivoAfastamento("Auxílio Doença")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Aux. Doença Previdenciário")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Acidente de Trabalho")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Afastamento INSS")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Licença Maternidade")).toBe("licenca_maternidade");
+    expect(motivoAfastamento("Prorrogação Licença Maternidade")).toBe("licenca_maternidade");
+  });
+  it("férias, atestado, doença até 15 dias, paternidade, aviso e trabalhando continuam no periódico", () => {
+    for (const s of ["Férias", "FERIAS", "Atestado Médico", "Doença até 15 dias", "Licença Paternidade",
+      "Licença sem Remuneração", "Aviso Prévio", "Trabalhando", "", null, "Demitido", "Pedido Rescisão Indireta"]) {
+      expect(motivoAfastamento(s)).toBeNull();
+    }
+  });
+  it("afastado sai de vencido, próximo, aguardando, em dia e sem ASO", () => {
+    for (const s of ["Vencido", "Próximo do vencimento", "Aguardando agendamento", "Em dia", "Sem ASO"] as const) {
+      expect(statusComAfastamento(s, true)).toBe("Afastado");
+    }
+  });
+  it("agendado e realizado de um afastado continuam no status deles", () => {
+    expect(statusComAfastamento("Agendado", true)).toBe("Agendado");
+    expect(statusComAfastamento("Realizado/recebido", true)).toBe("Realizado/recebido");
+  });
+  it("fim do afastamento: sem afastamento, volta ao status calculado (nada gravado)", () => {
+    const vencido = { vencimento: "2026-01-01", ultimo_tipo: "admissional" as const, ciclo: null };
+    expect(statusComAfastamento(statusPeriodico(vencido, HOJE), true)).toBe("Afastado");
+    expect(statusComAfastamento(statusPeriodico(vencido, HOJE), false)).toBe("Vencido");
+    // ciclo solicitado durante o afastamento reaparece como aguardando no retorno
+    const comCiclo = { ...vencido, ciclo: { agendado_para: null } };
+    expect(statusComAfastamento(statusPeriodico(comCiclo, HOJE), true)).toBe("Afastado");
+    expect(statusComAfastamento(statusPeriodico(comCiclo, HOJE), false)).toBe("Aguardando agendamento");
+  });
+  it("painel: afastado não conta nas pendências, só no cartão de afastados", () => {
+    const af = { motivo: "beneficio_inss" as const, situacao: "Auxílio Doença", desde: "2026-03-01", previsao_retorno: null, fonte: "senior" as const };
+    const p = contarPainel([
+      item({ status: "Vencido" }),
+      item({ status: "Afastado", afastamento: af }),
+      item({ status: "Agendado", afastamento: af }),
+      item({ status: "Próximo do vencimento" }),
+    ]);
+    expect(p.vencidos).toBe(1);
+    expect(p.proximos).toBe(1);
+    expect(p.agendados).toBe(1);
+    expect(p.previstos).toBe(3); // vencido + próximo + agendado; o "Afastado" não
+    expect(p.afastados).toBe(2);
+  });
+  it("afastados: previsão de retorno mais próxima primeiro, sem previsão por último", () => {
+    const af = (previsao_retorno: string | null) => ({ motivo: "licenca_maternidade" as const, situacao: null, desde: null, previsao_retorno, fonte: "controle_afastamentos" as const });
+    const l = [item({ nome: "C", afastamento: af(null) }), item({ nome: "B", afastamento: af("2027-02-01") }), item({ nome: "A", afastamento: af("2026-12-10") })]
+      .sort(ordenarAfastados).map((i) => i.nome);
+    expect(l).toEqual(["A", "B", "C"]);
   });
 });
