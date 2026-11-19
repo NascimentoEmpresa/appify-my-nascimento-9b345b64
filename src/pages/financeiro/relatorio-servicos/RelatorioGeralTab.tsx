@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/financeiro/KpiTile";
-import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, Trash2, RotateCcw, FileText, Wallet, Scale, Landmark, Receipt } from "lucide-react";
+import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, TrendingDown, Trash2, RotateCcw, FileText, Wallet, Scale, Landmark, Receipt } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -16,7 +16,8 @@ import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
-import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio, retencoesPorContrato, retencoesDaNf, descontosDaNf, IMPOSTOS_RETIDOS } from "./totais";
+import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio, retencoesPorContrato, retencoesDaNf, descontosDaNf, linhasDeDesconto, IMPOSTOS_RETIDOS } from "./totais";
+import { DescontosDetalheDialog } from "./DescontosDetalheDialog";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
 import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, pendenciaContaVinculada, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
@@ -223,6 +224,13 @@ export default function RelatorioGeralTab() {
     [linhas, retencaoCompetencia],
   );
 
+  // SIS-2026-0952: KPI "Total de Descontos" (antes + após a NF) das linhas filtradas; o clique abre o detalhamento com filtros próprios.
+  const [verDescontos, setVerDescontos] = useState(false);
+  const linhasDesconto = useMemo(() => linhasDeDesconto(linhas, itensPorNf), [linhas, itensPorNf]);
+  const totalDescontos = useMemo(() => Math.round(linhasDesconto.reduce((s, l) => s + l.valor, 0) * 100) / 100, [linhasDesconto]);
+  const nomeContrato = useMemo(() => (id: string) => contratoPorId.get(id)?.nome ?? "Contrato não encontrado", [contratoPorId]);
+  const nomeEmpresa = useMemo(() => (id: string) => empresaPorId.get(id) ?? "-", [empresaPorId]);
+
   function limparFiltros() {
     setFiltroEmpresa("");
     setFiltroCompetencia("");
@@ -327,6 +335,14 @@ export default function RelatorioGeralTab() {
         <KpiTile label="Pendência Conta Vinculada" valor={fmtMoney(kpis.pendenciaContaVinculada)} sub="Diferença entre o descontado e o recebido" icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
         <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} sub="Pago nas notas" icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
         <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kpis.pendente)} sub="A receber" icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+        <KpiTile
+          label="Total de Descontos"
+          valor={fmtMoney(totalDescontos)}
+          sub="Glosas, multas, faltas e outros · antes e após a NF · clique para detalhar"
+          icon={<TrendingDown />}
+          cor="amber"
+          onClick={() => setVerDescontos(true)}
+        />
       </div>
 
       <div className="card-elevated p-4 space-y-3 text-xs">
@@ -619,6 +635,15 @@ export default function RelatorioGeralTab() {
           )}
         </DialogContent>
       </Dialog>
+
+      <DescontosDetalheDialog
+        open={verDescontos}
+        onOpenChange={setVerDescontos}
+        linhas={linhasDesconto}
+        nomeContrato={nomeContrato}
+        nomeEmpresa={nomeEmpresa}
+        competenciaCurta={competenciaCurta}
+      />
 
       <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
         <AlertDialogContent>

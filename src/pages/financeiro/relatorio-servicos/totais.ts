@@ -158,6 +158,92 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
   };
 }
 
+// SIS-2026-0952: KPI "Total de Descontos" e seu detalhamento. Uma linha por nota × tipo × classificação (antes/após a NF), só com valor
+// diferente de zero. Entram faltas, postos não implementados, multas, glosas e outros (antes) e multas, glosas e outros (após) — os
+// mesmos de descontosDaNf. Desconto de conta vinculada NÃO entra: é retenção com KPI próprio. Cancelada/Substituída fora, como todos os KPIs.
+export type TipoDesconto = "faltas" | "posto_nao_implementado" | "multas" | "glosas" | "outros";
+export type ClassificacaoDesconto = "antes" | "apos";
+
+export const TIPOS_DESCONTO: { tipo: TipoDesconto; rotulo: string }[] = [
+  { tipo: "faltas", rotulo: "Faltas" },
+  { tipo: "posto_nao_implementado", rotulo: "Posto não implementado" },
+  { tipo: "multas", rotulo: "Multa" },
+  { tipo: "glosas", rotulo: "Glosa" },
+  { tipo: "outros", rotulo: "Outros descontos" },
+];
+export const ROTULO_CLASSIFICACAO: Record<ClassificacaoDesconto, string> = { antes: "Antes da NF", apos: "Após a NF" };
+
+export interface LinhaDesconto {
+  nfId: string;
+  empresaId: string;
+  contratoId: string;
+  competencia: string;
+  dataEmissao: string | null;
+  numeroNf: string | null;
+  tipo: TipoDesconto;
+  classificacao: ClassificacaoDesconto;
+  valor: number;
+}
+
+type NfParaDescontos = NfParaTotais & { id: string; empresa_id: string; data_emissao?: string | null; numero_nf?: string | null };
+
+export function linhasDeDesconto(nfs: NfParaDescontos[], itensPorNf: Map<string, ItemComDescontos[]> | undefined): LinhaDesconto[] {
+  const out: LinhaDesconto[] = [];
+  for (const n of nfs) {
+    if (naoContabilizaKpi(n)) continue;
+    const itens = itensPorNf?.get(n.id);
+    if (!itens || itens.length === 0) continue;
+    const d = descontosDaNf(itens);
+    const base = { nfId: n.id, empresaId: n.empresa_id, contratoId: n.contrato_id, competencia: n.competencia, dataEmissao: n.data_emissao ?? null, numeroNf: n.numero_nf ?? null };
+    const valores: [TipoDesconto, ClassificacaoDesconto, number][] = [
+      ["faltas", "antes", d.antes.faltas],
+      ["posto_nao_implementado", "antes", d.antes.postosNaoImplementados],
+      ["multas", "antes", d.antes.multas],
+      ["glosas", "antes", d.antes.glosas],
+      ["outros", "antes", d.antes.outros],
+      ["multas", "apos", d.depois.multas],
+      ["glosas", "apos", d.depois.glosas],
+      ["outros", "apos", d.depois.outros],
+    ];
+    for (const [tipo, classificacao, valor] of valores) if (valor !== 0) out.push({ ...base, tipo, classificacao, valor });
+  }
+  return out;
+}
+
+export interface ResumoDescontos {
+  total: number;
+  antes: number;
+  apos: number;
+  porTipo: { tipo: TipoDesconto; antes: number; apos: number; total: number }[];
+  porContrato: { contratoId: string; empresaId: string; notas: number; antes: number; apos: number; total: number }[];
+}
+
+export function resumoDescontos(linhas: LinhaDesconto[]): ResumoDescontos {
+  const tipos = new Map(TIPOS_DESCONTO.map((t) => [t.tipo, { tipo: t.tipo, antes: 0, apos: 0, total: 0 }]));
+  const contratos = new Map<string, { contratoId: string; empresaId: string; notas: Set<string>; antes: number; apos: number; total: number }>();
+  let antes = 0, apos = 0;
+  for (const l of linhas) {
+    const t = tipos.get(l.tipo)!;
+    t[l.classificacao] += l.valor;
+    t.total += l.valor;
+    let c = contratos.get(l.contratoId);
+    if (!c) { c = { contratoId: l.contratoId, empresaId: l.empresaId, notas: new Set(), antes: 0, apos: 0, total: 0 }; contratos.set(l.contratoId, c); }
+    c.notas.add(l.nfId);
+    c[l.classificacao] += l.valor;
+    c.total += l.valor;
+    if (l.classificacao === "antes") antes += l.valor; else apos += l.valor;
+  }
+  return {
+    total: r2(antes + apos),
+    antes: r2(antes),
+    apos: r2(apos),
+    porTipo: [...tipos.values()].map((t) => ({ ...t, antes: r2(t.antes), apos: r2(t.apos), total: r2(t.total) })),
+    porContrato: [...contratos.values()]
+      .map((c) => ({ contratoId: c.contratoId, empresaId: c.empresaId, notas: c.notas.size, antes: r2(c.antes), apos: r2(c.apos), total: r2(c.total) }))
+      .sort((a, b) => b.total - a.total),
+  };
+}
+
 // SIS-2026-0694: o filtro Contrato do Relatório Geral depende do filtro Empresa. O vínculo é o do cadastro (contrato.empresa_id).
 // Sem empresa escolhida, valem todos os contratos.
 export function contratosDaEmpresa<T extends { empresa_id: string }>(contratos: T[], empresaId: string): T[] {
