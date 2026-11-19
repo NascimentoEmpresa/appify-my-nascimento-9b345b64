@@ -117,3 +117,118 @@ describe("fluxo (RPC) e indicadores", () => {
     expect(saldoProjetado({ recebimentos: 100, pagamentos: 130 })).toBe(-30);
   });
 });
+
+// ── Etapa 1: tipo de data, recebido por data de pagamento, detalhamento e conciliação do Malote ─────────────────────────────────────────
+import { conciliacaoMalote, fluxoPorTipoData, linhasDetalheNotas, notasRecebidasNoPeriodo } from "@/pages/financeiro/fluxo-caixa-gerencial/regras";
+import { normalizarAnalise } from "@/pages/financeiro/fluxo-caixa-gerencial/analiseDespesas";
+
+describe("recebimentos pela data de pagamento (hipótese do 'recebido zerado')", () => {
+  // nota emitida em outubro e paga em novembro; nota emitida em novembro e ainda não paga
+  const paga = nf({ id: "p", data_emissao: "2026-10-20", competencia: "2026-10-01", data_pagamento: "2026-11-10", valor_pago: 800 } as Partial<NfEmissaoRow>);
+  const aberta = nf({ id: "a", data_emissao: "2026-11-05", competencia: "2026-11-01" } as Partial<NfEmissaoRow>);
+
+  it("antes: o recebido só somava o pago das notas EMITIDAS no período e saía zerado", () => {
+    const doRecorte = notasDoPeriodo([paga, aberta], f());
+    expect(kpisNotas(doRecorte, undefined).recebido).toBe(0);
+  });
+
+  it("agora: o recebido é o que ENTROU no período, de qualquer emissão ou competência", () => {
+    const recebidas = notasRecebidasNoPeriodo([paga, aberta], f());
+    expect(recebidas.map((n) => n.id)).toEqual(["p"]);
+    expect(kpisNotas(notasDoPeriodo([paga, aberta], f()), undefined, recebidas).recebido).toBe(800);
+  });
+
+  it("pagamento fora do período, valor zero, cancelada e filtros de empresa/contrato não entram", () => {
+    const foraDoPeriodo = nf({ id: "x", data_pagamento: "2026-12-02", valor_pago: 500 } as Partial<NfEmissaoRow>);
+    const semValor = nf({ id: "y", data_pagamento: "2026-11-02", valor_pago: 0 } as Partial<NfEmissaoRow>);
+    const cancelada = nf({ id: "z", status: "cancelada", data_pagamento: "2026-11-02", valor_pago: 300 } as Partial<NfEmissaoRow>);
+    const outraEmpresa = nf({ id: "w", empresa_id: "e2", data_pagamento: "2026-11-02", valor_pago: 100 } as Partial<NfEmissaoRow>);
+    expect(notasRecebidasNoPeriodo([foraDoPeriodo, semValor, cancelada], f())).toHaveLength(0);
+    expect(notasRecebidasNoPeriodo([outraEmpresa], f({ empresaId: "e1" }))).toHaveLength(0);
+    expect(notasRecebidasNoPeriodo([outraEmpresa], f({ empresaId: "e2" }))).toHaveLength(1);
+  });
+});
+
+describe("filtro 'Faturamento por' (emissão × competência)", () => {
+  const n = nf({ id: "c", data_emissao: "2026-12-03", competencia: "2026-11-01" } as Partial<NfEmissaoRow>);
+  it("por emissão (padrão) a nota de competência de novembro emitida em dezembro fica fora de novembro", () => {
+    expect(notasDoPeriodo([n], f())).toHaveLength(0);
+  });
+  it("por competência ela entra em novembro", () => {
+    expect(notasDoPeriodo([n], f({ tipoData: "competencia" })).map((x) => x.id)).toEqual(["c"]);
+  });
+  it("a série mensal acompanha a data escolhida", () => {
+    const nov = (tipo: "emissao" | "competencia") => serieNotas([n], f({ tipoData: tipo })).find((p) => p.mes === "2026-11")!.bruto;
+    expect(nov("emissao")).toBe(0);
+    expect(nov("competencia")).toBe(1000);
+  });
+});
+
+describe("filtro 'Faturamento por' = vencimento (etapa 3)", () => {
+  const n = nf({ id: "v", data_emissao: "2026-10-20", competencia: "2026-10-01" } as Partial<NfEmissaoRow>);
+  it("a nota entra no período do seu vencimento calculado", () => {
+    const resolverVencimento = () => "2026-11-19";
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento })).map((x) => x.id)).toEqual(["v"]);
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento: () => "2026-12-05" }))).toHaveLength(0);
+  });
+  it("sem vencimento calculável a nota não entra", () => {
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento", resolverVencimento: () => null }))).toHaveLength(0);
+    expect(notasDoPeriodo([n], f({ tipoData: "vencimento" }))).toHaveLength(0);
+  });
+});
+
+describe("competência nos indicadores de despesas (SIS-2026-0893)", () => {
+  const original = { despesas_pagas: 1000, qtd_despesas: 10, malote_pago: 600, por_mes: [{ mes: "2026-11", despesas: 1000 }], composicao: [{ nome: "Folha", valor: 1000 }], projecao: { d30: { recebimentos: 5, pagamentos: 7 }, d60: { recebimentos: 6, pagamentos: 8 }, d90: { recebimentos: 7, pagamentos: 9 } } };
+  const analise = normalizarAnalise({
+    total: 1500, qtd: 20, total_anterior: 900, periodo_anterior: { ini: "2026-10-01", fim: "2026-10-31" },
+    por_classificacao: [{ nome: "Folha", valor: 900, valor_anterior: 500 }, { nome: "Aluguel", valor: 600, valor_anterior: 400 }, { nome: "Zerada", valor: 0, valor_anterior: 50 }],
+    por_contrato: [], por_origem: [{ origem: "malote", valor: 1100, valor_anterior: 700 }, { origem: "debito_automatico", valor: 400, valor_anterior: 200 }],
+    por_mes: [{ mes: "2026-10", despesas: 900 }, { mes: "2026-11", despesas: 1500 }],
+  });
+
+  it("por pagamento (padrão) vale a função original, sem mexer em nada", () => {
+    expect(fluxoPorTipoData(original, analise, "pagamento")).toBe(original);
+    expect(fluxoPorTipoData(original, undefined, "competencia")).toBe(original);
+  });
+  it("por competência: total, quantidade, Malote, composição e série mensal vêm da análise", () => {
+    const f = fluxoPorTipoData(original, analise, "competencia");
+    expect(f).toMatchObject({ despesas_pagas: 1500, qtd_despesas: 20, malote_pago: 1100 });
+    expect(f.composicao.map((c) => c.nome)).toEqual(["Folha", "Aluguel"]); // quem só tinha valor no período anterior não entra
+    expect(f.por_mes).toEqual([{ mes: "2026-10", despesas: 900 }, { mes: "2026-11", despesas: 1500 }]);
+  });
+  it("a projeção 30/60/90 é sempre a da função original", () => {
+    expect(fluxoPorTipoData(original, analise, "competencia").projecao).toBe(original.projecao);
+  });
+  it("o Malote dentro das despesas continua conciliando (Malote ≤ total)", () => {
+    const f = fluxoPorTipoData(original, analise, "competencia");
+    expect(conciliacaoMalote(f.despesas_pagas, f.malote_pago).ok).toBe(true);
+  });
+  it("a série mensal vem do JSON do servidor (e vazia se o servidor ainda não devolve)", () => {
+    expect(normalizarAnalise({ por_mes: [{ mes: "2026-11", despesas: "10.5" }] }).por_mes).toEqual([{ mes: "2026-11", despesas: 10.5 }]);
+    expect(normalizarAnalise({}).por_mes).toEqual([]);
+  });
+});
+
+describe("detalhamento e conciliação (etapa 1)", () => {
+  it("a soma das linhas de detalhe fecha com o KPI de bruto e de líquido", () => {
+    const notas = notasDoPeriodo([nf({ id: "1" }), nf({ id: "2", vlr_bruto_total: 500, vlr_liquido_total: 450 } as Partial<NfEmissaoRow>)], f());
+    const linhas = linhasDetalheNotas(notas, undefined);
+    const k = kpisNotas(notas, undefined);
+    expect(linhas.reduce((s, l) => s + l.bruto, 0)).toBe(k.bruto);
+    expect(linhas.reduce((s, l) => s + l.liquido, 0)).toBe(k.liquido);
+  });
+
+  it("nota cancelada não aparece no detalhe", () => {
+    expect(linhasDetalheNotas([nf({ id: "c", status: "cancelada", valor_pago: 10, data_pagamento: "2026-11-02" } as Partial<NfEmissaoRow>)], undefined)).toHaveLength(0);
+  });
+
+  it("Malote já está dentro das despesas: total = Malote + demais origens", () => {
+    expect(conciliacaoMalote(1000, 600)).toEqual({ malote: 600, demais: 400, pctMalote: 0.6, ok: true });
+  });
+
+  it("Malote maior que o total das despesas indica duplicidade", () => {
+    const c = conciliacaoMalote(500, 700);
+    expect(c.ok).toBe(false);
+    expect(c.demais).toBe(0);
+  });
+});

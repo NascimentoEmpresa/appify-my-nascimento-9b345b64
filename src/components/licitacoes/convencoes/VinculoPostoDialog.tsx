@@ -37,7 +37,11 @@ export const comoReferencia = (c: Convencao): ReferenciaConvencao => ({
 });
 
 export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
-  alvo: { contrato_id: string | null; contrato: string; posto: string } | null;
+  alvo: {
+    contrato_id: string | null; contrato: string; posto: string;
+    /** SIS-2026-0933: CCT que o posto já usa sozinho pelo sindicato (sem vínculo gravado). */
+    automatica?: { convencao: Convencao; foraDaVigencia: boolean } | null;
+  } | null;
   onFechar: () => void;
   podeAlterar: boolean;
 }) {
@@ -133,6 +137,16 @@ export function VinculoPostoDialog({ alvo, onFechar, podeAlterar }: {
             Este contrato tem Convenção Coletiva própria (cadastro do contrato, em Licitações › Contratos): ela vale para
             <b> todos os postos</b> dele, e o vínculo deste posto não é usado enquanto ela estiver lá.{" "}
             <Link to={urlEditarConvencao(doContrato.convencao_id)} className="font-semibold underline">Editar a convenção</Link>
+          </p>
+        )}
+
+        {!doContrato && !atual && alvo?.automatica && (
+          <p className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+            Sem vínculo gravado, este posto já usa <b>automaticamente</b> a CCT{" "}
+            <b>{rotuloConvencao(alvo.automatica.convencao)}</b> ({vigenciaTxt(alvo.automatica.convencao.vigencia_inicio, alvo.automatica.convencao.vigencia_fim)}),
+            porque o sindicato do posto tem o mesmo nome do sindicato da convenção.
+            {alvo.automatica.foraDaVigencia && " A data de vigência do posto está fora do período desta CCT."}
+            {" "}Escolha abaixo só se este posto tiver de seguir outra convenção.
           </p>
         )}
 

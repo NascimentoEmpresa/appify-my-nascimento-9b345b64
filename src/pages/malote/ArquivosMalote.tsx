@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
@@ -31,6 +32,8 @@ import {
   useEmpresaPrimeiraLinhaRateio,
   useContratoPrimeiraLinhaRateio,
   useClassificacaoPrimeiraLinhaRateio,
+  useRateioLinhasEParcelasEmLote,
+  RateioLinha,
   MaloteDespesaRow,
   ItemLinhaMalote,
   OrigemDespesa,
@@ -224,6 +227,12 @@ export default function ArquivosMalote() {
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
+  // Rateio por linha (empresa/contrato/classificação/valor) só das despesas da página — no máximo 10, em lote.
+  const { data: rateioPorDespesa } = useRateioLinhasEParcelasEmLote(
+    visiveis.map((i) => ({ id: i.despesa.id, parcelado: false })),
+  );
+  const classificacaoNomePorId = useMemo(() => new Map(classificacoesTodas.map((c) => [c.id, c.nome])), [classificacoesTodas]);
+
   // "Exportar Excel" do mockup — CSV (abre direto no Excel), mesmo padrão
   // leve já usado em Financeiro (AnalisePeriodoTab), sem trazer lib nova só
   // pra isso. Lista os arquivos como link do Storage (é o que tem valor
@@ -398,6 +407,10 @@ export default function ArquivosMalote() {
                     setores={setoresResolvidos(item.despesa)}
                     empresaNome={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
+                    rateio={rateioPorDespesa?.get(item.despesa.id)?.linhas ?? []}
+                    empresasMap={empresasMap}
+                    contratosMap={contratosMap}
+                    classificacaoNomePorId={classificacaoNomePorId}
                   />
                 ))}
               </TableBody>
@@ -423,8 +436,24 @@ export default function ArquivosMalote() {
   );
 }
 
-function LinhaArquivo({ item, setores, empresaNome, nomeContrato }: { item: ItemLinhaMalote; setores: string[]; empresaNome?: string; nomeContrato?: string }) {
+const brl = (v: number | string) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+interface LinhaArquivoProps {
+  item: ItemLinhaMalote;
+  setores: string[];
+  empresaNome?: string;
+  nomeContrato?: string;
+  rateio: RateioLinha[];
+  empresasMap: Map<string, string>;
+  contratosMap: Map<string, string>;
+  classificacaoNomePorId: Map<string, string>;
+}
+
+function LinhaArquivo({ item, setores, empresaNome, nomeContrato, rateio, empresasMap, contratosMap, classificacaoNomePorId }: LinhaArquivoProps) {
   const { despesa, parcela } = item;
+  // Rateio = a despesa foi dividida em 2+ linhas (empresa/contrato/classificação). Sem isso, o valor total parecia ser só do 1º contrato.
+  const ehRateio = rateio.length > 1;
+  const [rateioAberto, setRateioAberto] = useState(false);
   const valor = parcela ? parcela.valor : despesa.valor_total;
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   const comprovante = parcela ? parcela.comprovante_pagamento_path : despesa.comprovante_pagamento_path;
@@ -439,13 +468,67 @@ function LinhaArquivo({ item, setores, empresaNome, nomeContrato }: { item: Item
         <p>{despesa.nome}</p>
         {despesa.motivo && <p className="text-xs text-muted-foreground">{despesa.motivo}</p>}
       </TableCell>
-      <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
+      <TableCell className="text-sm">
+        {despesa.classificacao?.nome ?? (ehRateio ? <span className="text-muted-foreground">Várias (ver rateio)</span> : "—")}
+      </TableCell>
       <TableCell className="text-sm">{setores.length ? setores.join(", ") : "—"}</TableCell>
       <TableCell className="text-sm">
-        <p>{empresaNome ?? "—"}</p>
-        {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
+        {ehRateio ? (
+          <div className="space-y-1">
+            <span className="inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+              Rateio em {rateio.length} linhas
+            </span>
+            <button type="button" onClick={() => setRateioAberto(true)} className="block text-xs text-primary hover:underline">
+              Ver rateio completo
+            </button>
+            <Dialog open={rateioAberto} onOpenChange={setRateioAberto}>
+              <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+                <DialogHeader>
+                  <DialogTitle>Rateio {despesa.numero} — {despesa.nome}</DialogTitle>
+                </DialogHeader>
+                <p className="text-xs text-muted-foreground">
+                  {rateio.length} linhas · total {brl(rateio.reduce((s, l) => s + Number(l.valor), 0))}
+                </p>
+                <div className="overflow-y-auto rounded-md border border-border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Empresa</TableHead>
+                        <TableHead>Contrato</TableHead>
+                        <TableHead>Classificação</TableHead>
+                        <TableHead className="text-right">Valor (R$)</TableHead>
+                        <TableHead className="text-right">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rateio.map((l, idx) => (
+                        <TableRow key={l.id ?? idx}>
+                          <TableCell className="text-xs">{empresasMap.get(l.empresa_id ?? "") ?? "—"}</TableCell>
+                          <TableCell className="text-xs">{l.contrato_id ? contratosMap.get(l.contrato_id) ?? "—" : "—"}</TableCell>
+                          <TableCell className="text-xs">{l.classificacao_id ? classificacaoNomePorId.get(l.classificacao_id) ?? "—" : "—"}</TableCell>
+                          <TableCell className="text-right text-xs">{brl(l.valor)}</TableCell>
+                          <TableCell className="text-right text-xs">
+                            {l.percentual != null ? `${Number(l.percentual).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%` : "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        ) : (
+          <>
+            <p>{empresaNome ?? "—"}</p>
+            {nomeContrato && <p className="text-xs text-muted-foreground">{nomeContrato}</p>}
+          </>
+        )}
       </TableCell>
-      <TableCell className="text-right text-sm">{Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</TableCell>
+      <TableCell className="text-right text-sm">
+        {brl(valor)}
+        {ehRateio && <p className="text-[11px] text-muted-foreground">total do rateio</p>}
+      </TableCell>
       <TableCell className="text-sm">{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
       <TableCell><ArquivoCell paths={despesa.arquivos ?? []} /></TableCell>
       <TableCell><ArquivoCell paths={comprovante ? [comprovante] : []} /></TableCell>

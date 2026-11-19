@@ -303,7 +303,13 @@ export interface RespostaReferencia {
    * na Planilha de Custo (contrato sem convenção própria). Retrato antigo de
    * vaga não tem o campo — é 'posto'.
    */
-  origem?: "contrato" | "posto";
+  origem?: "contrato" | "posto" | "sindicato";
+  /**
+   * SIS-2026-0933: só com origem 'sindicato' — montada pela Planilha de Custo
+   * (src/lib/licitacoes/cctPorSindicato.ts), nunca pelo banco. A data de
+   * vigência do posto cai fora do período da CCT escolhida.
+   */
+  fora_da_vigencia?: boolean;
   contrato_id?: string | null;
   posto?: string | null;
   principal_id?: string;

@@ -9,6 +9,11 @@ const ASSINATURAS: Record<string, Assinatura> = {
     resumo: "orçamento de contratos pelo EXECUTADO (faturado nas NFs do mês) a partir de 70% do executável da Planilha de Custo; antes disso, ou sem NF no mês corrente e nos futuros, pelo executável (previsto); mês passado sem NF = 0",
     onde: "LIMIAR_EXECUTADO / baseDoOrcamento / computarGruposContrato (src/hooks/useOrcamentoContratos.ts)",
   },
+  "SIS-2026-0893": {
+    chamado: "SIS-2026-0893", desde: "19/11/2026",
+    resumo: "Fluxo de Caixa Gerencial: recebido pela data de pagamento (não pela emissão da nota), faturamento por emissão/competência/vencimento, vencimento da NF (ajuste manual › prazo do contrato › emissão + 30), aging dos pendentes, despesas por contrato/classificação com comparativo, empréstimos e aplicações separados do fluxo operacional, análises mensais e projeção diária de caixa (motor)",
+    onde: "src/pages/financeiro/fluxo-caixa-gerencial/ (regras.ts, vencimento.ts, pendentes.ts, analiseDespesas.ts, emprestimosAplicacoes.ts, analiseGerencial.ts, projecaoDiaria.ts) e FluxoCaixaGerencial.tsx",
+  },
   "SIS-2026-0903": {
     chamado: "SIS-2026-0903", desde: "17/11/2026",
     resumo: "Conciliação Financeira ampliada: 24 indicadores em 4 fontes (indisponível ≠ zero), detalhamento até a nota, impostos/descontos, conta vinculada, filtros, Excel e tratativas com histórico",

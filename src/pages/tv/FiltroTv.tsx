@@ -57,7 +57,7 @@ function FiltroNatal() {
     queda: 9 + pseudo(k + 201) * 10,
     atraso: -pseudo(k + 301) * 19,
     balanco: 2.5 + pseudo(k + 401) * 2.5,
-    opacidade: 0.55 + pseudo(k + 501) * 0.4,
+    opacidade: 0.8 + pseudo(k + 501) * 0.2,
   })), []);
   // Pisca-pisca no topo da tela: lâmpadas coloridas acendendo em sequência.
   const lampadas = useMemo(() => Array.from({ length: 34 }, (_, k) => ({
@@ -129,9 +129,16 @@ const LAMPADAS = ["#ff3b3b", "#ffd23f", "#3ddc84", "#4aa8ff"];
 // 18/11/2026: a 1ª versão parava tudo com prefers-reduced-motion — e o PC do
 // Pablo (Windows com "efeitos de animação" desligado) via só estrelas paradas.
 // O filtro é decoração ligada de propósito na gestão: anima sempre.
+// 18/11/2026: em algumas TVs a neve saía PRETA. Floco branco fixo (#ffffff,
+// nada herdado do tema) + contorno azul-acinzentado fino, para ler também
+// em fundo claro (branco sobre branco sumia e sobrava só a borda escura);
+// sem will-change e com opacidade alta (navegador de TV fraco desenhava a
+// camada translúcida como um ponto preto); forced-color-adjust: none para o
+// alto contraste do Windows não trocar a cor.
 const CSS_NATAL = `
-.tvf-natal .tvf-floco { position: absolute; top: -12px; display: block; will-change: transform; animation-name: tvf-cair; animation-timing-function: linear; animation-iteration-count: infinite; }
-.tvf-natal .tvf-floco-miolo { display: block; width: 100%; height: 100%; border-radius: 9999px; background: #fff; box-shadow: 0 0 8px 1px rgba(255,255,255,.9); animation-name: tvf-balancar-floco; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-direction: alternate; }
+.tvf-natal { forced-color-adjust: none; }
+.tvf-natal .tvf-floco { position: absolute; top: -12px; display: block; animation-name: tvf-cair; animation-timing-function: linear; animation-iteration-count: infinite; }
+.tvf-natal .tvf-floco-miolo { display: block; width: 100%; height: 100%; border-radius: 9999px; background-color: #ffffff; box-shadow: 0 0 0 1px rgba(120,150,190,.45), 0 0 7px 1px rgba(255,255,255,.95); animation-name: tvf-balancar-floco; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-direction: alternate; }
 .tvf-natal .tvf-estrela { position: absolute; display: block; filter: drop-shadow(0 0 4px currentColor); animation-name: tvf-piscar; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
 .tvf-natal .tvf-bigodinho-lugar { position: absolute; height: 24vh; transition: opacity .8s ease; }
 .tvf-natal .tvf-bigodinho { height: 100%; width: auto; transform-origin: 50% 100%; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); animation: tvf-wiggle 2.6s ease-in-out infinite; }
