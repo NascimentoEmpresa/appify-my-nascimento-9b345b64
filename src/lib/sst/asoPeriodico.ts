@@ -13,6 +13,12 @@
 // ("SST_ASO_PERIODICO_CONTRATO", semeada com UFFS = 12 meses), com padrão de
 // 24 meses para o resto. A janela de "próximo do vencimento" também virou
 // configuração ("SST_ASO_PERIODICO_CONFIG"); 60 dias é só o padrão.
+//
+// 18/11/2026 (SIS-2026-0886, mig 20261119190000): afastado por
+// aposentadoria, benefício do INSS ou licença-maternidade sai das pendências
+// (status "Afastado", cartão próprio). Agendado e realizado continuam no
+// status deles. Férias e atestado NÃO tiram ninguém. Cálculo na hora, nada
+// gravado: a Senior voltou a "Trabalhando" → volta para a lista sozinho.
 // =====================================================================
 
 /** Padrões do chamado — valem enquanto a configuração não carregou. */
@@ -47,12 +53,53 @@ export type StatusAsoPeriodico =
   | "Agendado"
   | "Realizado/recebido"
   | "Em dia"
-  | "Sem ASO";
+  | "Sem ASO"
+  | "Afastado";
 
 /** Ordem da tela: o que pede ação primeiro. */
 export const STATUS_PERIODICO: StatusAsoPeriodico[] = [
-  "Vencido", "Próximo do vencimento", "Aguardando agendamento", "Agendado", "Realizado/recebido", "Em dia", "Sem ASO",
+  "Vencido", "Próximo do vencimento", "Aguardando agendamento", "Agendado", "Realizado/recebido", "Em dia", "Sem ASO", "Afastado",
 ];
+
+/** Motivos que tiram do periódico (SIS-2026-0886). Férias e atestado não estão aqui de propósito. */
+export type MotivoAfastamento = "aposentadoria" | "beneficio_inss" | "licenca_maternidade";
+
+export const ROTULO_MOTIVO_AFASTAMENTO: Record<MotivoAfastamento, string> = {
+  aposentadoria: "Aposentadoria",
+  beneficio_inss: "Benefício do INSS",
+  licenca_maternidade: "Licença-maternidade",
+};
+
+export interface AfastamentoPeriodico {
+  motivo: MotivoAfastamento;
+  /** Situação da Senior como veio ("Auxílio Doença", "Licença Maternidade"...). */
+  situacao: string | null;
+  desde: string | null;
+  /** Do Controle de Afastamentos; null quando não há previsão. */
+  previsao_retorno: string | null;
+  fonte: "senior" | "controle_afastamentos";
+}
+
+/**
+ * Situação da Senior → motivo que tira do periódico. Espelho de
+ * sst_aso_per_motivo_afastamento (mig 20261119190000). null = continua.
+ */
+export function motivoAfastamento(situacao: string | null | undefined): MotivoAfastamento | null {
+  const s = (situacao ?? "").trim().toUpperCase();
+  if (!s || s === "TRABALHANDO") return null;
+  if (/AVISO/.test(s) || /^(DEMIT|DESLIG|RESCIS)/.test(s)) return null;
+  if (/F[EÉ]RIAS/.test(s)) return null;
+  if (/(APOSENT|INVALIDEZ)/.test(s)) return "aposentadoria";
+  if (/MATERN/.test(s)) return "licenca_maternidade";
+  if (/ATEST/.test(s)) return null;
+  if (/(AT[EÉ]\s*15|15\s*DIAS|PRIMEIROS)/.test(s)) return null;
+  if (/(AUX|DOEN|INSS|BENEF|ACIDENT|PREVID)/.test(s)) return "beneficio_inss";
+  return null;
+}
+
+/** Afastado fica fora das pendências; agendado e realizado continuam no status deles. */
+export const statusComAfastamento = (status: StatusAsoPeriodico, afastado: boolean): StatusAsoPeriodico =>
+  afastado && status !== "Agendado" && status !== "Realizado/recebido" ? "Afastado" : status;
 
 export type TipoUltimoAso = "admissional" | "periodico" | "retorno" | "troca_funcao" | "admissao_estimada";
 
@@ -102,6 +149,8 @@ export interface ItemPeriodico {
   status: StatusAsoPeriodico;
   ciclo: CicloPeriodico | null;
   ultimo_periodico: CicloPeriodico | null;
+  /** SIS-2026-0886: preenchido só para quem está afastado hoje por um dos três motivos. */
+  afastamento?: AfastamentoPeriodico | null;
 }
 
 export const hojeIso = (d = new Date()): string =>
@@ -177,7 +226,7 @@ export function statusPeriodico(p: {
 export const diasParaVencer = (p: Pick<ItemPeriodico, "vencimento">, hoje: string): number | null =>
   p.vencimento ? diasEntre(hoje, p.vencimento) : null;
 
-export type ChavePainel = "previstos" | "proximos" | "vencidos" | "aguardando" | "agendados" | "realizados";
+export type ChavePainel = "previstos" | "proximos" | "vencidos" | "aguardando" | "agendados" | "realizados" | "afastados";
 
 export const PAINEL: { chave: ChavePainel; titulo: string; status: StatusAsoPeriodico[] }[] = [
   { chave: "previstos", titulo: "Periódicos previstos", status: ["Vencido", "Próximo do vencimento", "Aguardando agendamento", "Agendado", "Realizado/recebido"] },
@@ -188,10 +237,22 @@ export const PAINEL: { chave: ChavePainel; titulo: string; status: StatusAsoPeri
   { chave: "realizados", titulo: "Realizados/recebidos", status: ["Realizado/recebido"] },
 ];
 
-export function contarPainel(itens: Pick<ItemPeriodico, "status">[]): Record<ChavePainel, number> {
-  const r = { previstos: 0, proximos: 0, vencidos: 0, aguardando: 0, agendados: 0, realizados: 0 } as Record<ChavePainel, number>;
-  for (const i of itens) for (const p of PAINEL) if (p.status.includes(i.status)) r[p.chave]++;
+/** Cartão à parte (não é pendência): todo afastado, inclusive agendado ou realizado. */
+export const CARTAO_AFASTADOS = { chave: "afastados" as const, titulo: "Afastados (fora das pendências)" };
+
+export function contarPainel(itens: Pick<ItemPeriodico, "status" | "afastamento">[]): Record<ChavePainel, number> {
+  const r: Record<ChavePainel, number> = { previstos: 0, proximos: 0, vencidos: 0, aguardando: 0, agendados: 0, realizados: 0, afastados: 0 };
+  for (const i of itens) {
+    for (const p of PAINEL) if (p.status.includes(i.status)) r[p.chave]++;
+    if (i.afastamento) r.afastados++;
+  }
   return r;
+}
+
+/** Afastados: previsão de retorno mais próxima primeiro (é quem o SST vai precisar chamar); sem previsão por último. */
+export function ordenarAfastados(a: ItemPeriodico, b: ItemPeriodico): number {
+  return (a.afastamento?.previsao_retorno ?? "9999").localeCompare(b.afastamento?.previsao_retorno ?? "9999")
+    || a.nome.localeCompare(b.nome);
 }
 
 /** Contrato para filtro e exibição: o identificado, senão a filial da Senior. */

@@ -18,9 +18,9 @@ import {
 } from "@/hooks/useAsoPeriodico";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  DIAS_AVISO, PAINEL, PERIODICIDADE_PADRAO_MESES, ROTULO_TIPO, STATUS_PERIODICO, calcularVencimento, contarPainel,
-  diasParaVencer, erroConfig, erroMesesContrato, fmtData, hojeIso, nomeContrato, ordenar, pendenciasParaRealizar,
-  rotuloPeriodicidade,
+  CARTAO_AFASTADOS, DIAS_AVISO, PAINEL, PERIODICIDADE_PADRAO_MESES, ROTULO_MOTIVO_AFASTAMENTO, ROTULO_TIPO, STATUS_PERIODICO,
+  calcularVencimento, contarPainel, diasParaVencer, erroConfig, erroMesesContrato, fmtData, hojeIso, nomeContrato, ordenar,
+  ordenarAfastados, pendenciasParaRealizar, rotuloPeriodicidade,
   type ChavePainel, type CicloPeriodico, type ConfigAsoPeriodico, type ContratoPeriodicidade, type ItemPeriodico,
   type StatusAsoPeriodico,
 } from "@/lib/sst/asoPeriodico";
@@ -37,6 +37,11 @@ import { cn } from "@/lib/utils";
 // SIS-2026-0918 (mig 20261117020000): periodicidade por contrato e janela de
 // "próximo do vencimento" saem da configuração (botão "Configurar
 // vencimentos"), não mais de regra fixa no código.
+//
+// SIS-2026-0886 (mig 20261119190000): afastado por aposentadoria, benefício
+// do INSS ou licença-maternidade sai das pendências e dos cartões delas; o
+// cartão "Afastados (fora das pendências)" lista todos, com motivo e
+// previsão de retorno. Agendado/realizado de afastado segue no status dele.
 // =====================================================================
 
 const COR_STATUS: Record<StatusAsoPeriodico, string> = {
@@ -47,6 +52,7 @@ const COR_STATUS: Record<StatusAsoPeriodico, string> = {
   "Realizado/recebido": "bg-emerald-600 text-white",
   "Em dia": "bg-muted text-foreground",
   "Sem ASO": "bg-muted text-foreground",
+  Afastado: "bg-slate-500 text-white",
 };
 
 const PREVISTOS = PAINEL.find((p) => p.chave === "previstos")!.status;
@@ -73,13 +79,14 @@ export default function AsoPeriodico() {
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const doCartao = PAINEL.find((p) => p.chave === cartao)?.status;
+    const afastados = cartao === CARTAO_AFASTADOS.chave;
     return itens
-      .filter((i) => doCartao ? doCartao.includes(i.status)
+      .filter((i) => afastados ? !!i.afastamento : doCartao ? doCartao.includes(i.status)
         : status === "todos" || (status === "previstos" ? PREVISTOS.includes(i.status) : i.status === status))
       .filter((i) => contrato === "todos" || nomeContrato(i) === contrato)
       .filter((i) => !estimados || i.ultimo_tipo === "admissao_estimada")
       .filter((i) => !q || [i.nome, nomeContrato(i), i.cargo, i.ciclo?.clinica].some((v) => String(v ?? "").toLowerCase().includes(q)))
-      .sort(ordenar);
+      .sort(afastados ? ordenarAfastados : ordenar);
   }, [itens, cartao, busca, status, contrato, estimados]);
 
   return (
@@ -94,13 +101,17 @@ export default function AsoPeriodico() {
           </Button>
         } />
 
-      <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {PAINEL.map((p) => {
+      <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-7">
+        {[...PAINEL, CARTAO_AFASTADOS].map((p) => {
           const ativo = cartao === p.chave;
           return (
             <button key={p.chave} type="button" aria-pressed={ativo} onClick={() => setCartao(ativo ? null : p.chave)}
               className={cn("rounded-lg border bg-card p-3 text-left transition hover:border-primary", ativo && "border-primary ring-2 ring-primary/30",
-                p.chave === "vencidos" && painel.vencidos > 0 && "border-red-300 bg-red-50")}>
+                p.chave === "vencidos" && painel.vencidos > 0 && "border-red-300 bg-red-50",
+                p.chave === CARTAO_AFASTADOS.chave && "border-dashed")}
+              title={p.chave === CARTAO_AFASTADOS.chave
+                ? "Aposentadoria, benefício do INSS ou licença-maternidade: não entram nas pendências enquanto durar o afastamento. Férias e atestado continuam na lista."
+                : undefined}>
               <span className="block text-2xl font-bold">{painel[p.chave]}</span>
               <span className="block text-xs text-muted-foreground">{p.titulo}</span>
             </button>
@@ -145,7 +156,10 @@ export default function AsoPeriodico() {
           </TableBody>
         </Table>
       </Card>
-      <p className="text-xs text-muted-foreground">{visiveis.length} de {itens.length} colaborador(es) ativo(s).</p>
+      <p className="text-xs text-muted-foreground">
+        {visiveis.length} de {itens.length} colaborador(es) ativo(s).
+        {painel.afastados > 0 && ` ${painel.afastados} afastado(s) por aposentadoria, benefício do INSS ou licença-maternidade ficam fora das pendências e voltam sozinhos quando a Senior marcar o retorno.`}
+      </p>
 
       {aberto && <CicloDialog item={aberto} podeAlterar={podeAlterar} onFechar={() => setAberto(null)} />}
       {configAberta && <ConfigDialog config={config} podeAlterar={podeAlterar} onFechar={() => setConfigAberta(false)} />}
@@ -195,6 +209,17 @@ function Linha({ i, hoje, podeAlterar, onAbrir }: { i: ItemPeriodico; hoje: stri
       <TableCell>
         <Badge className={cn("whitespace-normal", COR_STATUS[i.status])}>{i.status}</Badge>
         {i.status === "Realizado/recebido" && i.ultimo_periodico?.resultado === "inapto" && <Badge variant="destructive" className="ml-1">Inapto</Badge>}
+        {i.afastamento && i.status !== "Afastado" && <Badge className={cn("ml-1", COR_STATUS.Afastado)}>Afastado</Badge>}
+        {i.afastamento && (
+          <span className="mt-1 block text-xs text-muted-foreground"
+            title={i.afastamento.fonte === "senior" ? `Situação na Senior: ${i.afastamento.situacao ?? "—"}` : "Pelo Controle de Afastamentos do SST"}>
+            {ROTULO_MOTIVO_AFASTAMENTO[i.afastamento.motivo] ?? i.afastamento.situacao}
+            {i.afastamento.desde ? ` desde ${fmtData(i.afastamento.desde)}` : ""}
+            <span className={cn("block", i.afastamento.previsao_retorno && i.afastamento.previsao_retorno < hoje && "font-medium text-amber-700")}>
+              {i.afastamento.previsao_retorno ? `retorno previsto ${fmtData(i.afastamento.previsao_retorno)}` : "sem previsão de retorno"}
+            </span>
+          </span>
+        )}
       </TableCell>
       <TableCell className="text-sm">
         {c ? (
@@ -206,7 +231,7 @@ function Linha({ i, hoje, podeAlterar, onAbrir }: { i: ItemPeriodico; hoje: stri
       </TableCell>
       <TableCell className="text-right">
         {(podeAlterar || i.status === "Realizado/recebido" || c) && (
-          <Button size="sm" variant={c || i.status === "Realizado/recebido" ? "outline" : "default"} onClick={onAbrir}>
+          <Button size="sm" variant={c || i.status === "Realizado/recebido" || i.status === "Afastado" ? "outline" : "default"} onClick={onAbrir}>
             {podeAlterar ? acao : "Ver"}
           </Button>
         )}
