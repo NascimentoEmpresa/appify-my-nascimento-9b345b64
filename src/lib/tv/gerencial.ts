@@ -503,6 +503,6 @@ export function aplicarNumerosDaTv(
 const TV_PROPRIA: Record<string, string[]> = {
   "ger-operacional": ["ope-contratos"], "ger-supply": ["sup-painel"], "ger-recrutamento": ["rec-painel"],
   "ger-rh": ["rh-salarios"], "ger-financeiro": ["fin-painel"], "ger-controladoria": ["ctl-painel"], "ger-presidencia": ["pre-painel"],
-  "ger-licitacoes": ["licitacoes"], "ger-treinamento": ["treinamentos"],
+  "ger-licitacoes": ["licitacoes"], "ger-treinamento": ["treinamentos"], "ger-sst": ["sst-painel"],
 };
 export const relatoriosDaTv = (slug: string): string[] => [slug, ...(TV_PROPRIA[slug] ?? [])];

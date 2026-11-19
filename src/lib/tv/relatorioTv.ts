@@ -26,6 +26,7 @@ import type { PainelBiTv } from "@/pages/tv/relatorio/paginasBi";
 import type { DadosOpeContratosTv } from "@/lib/tv/opeContratosTv";
 import type { DadosSupPainelTv } from "@/lib/tv/supPainelTv";
 import type { DadosRecPainelTv } from "@/lib/tv/recPainelTv";
+import type { DadosSstPainelTv } from "@/lib/tv/sstPainelTv";
 import type { DadosRhSalariosTv } from "@/lib/tv/rhSalariosTv";
 import type { DadosCtlPainelTv, DadosFinPainelTv, DadosPrePainelTv } from "@/lib/tv/gestaoTv";
 
@@ -42,6 +43,7 @@ export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "fin-painel") return "#047857";
   if (slug === "ctl-painel") return "#1e3a8a";
   if (slug === "pre-painel") return "#7c2d12";
+  if (slug === "sst-painel") return "#047857"; // SST (SIS-2026-0816)
   const ger = painelGerencial(slug);
   if (ger) return ger.cor; // TVs gerenciais (mig 20261012000001)
 
@@ -101,6 +103,8 @@ export type DadosRelTv =
   | ({ tipo: "sup-painel"; contrato: null } & DadosSupPainelTv)
   /** Recrutamento e Seleção (item "rec-painel", mig 20261111190000). */
   | ({ tipo: "rec-painel"; contrato: null } & DadosRecPainelTv)
+  /** TV do SST (item "sst-painel", SIS-2026-0816, mig 20261121110000). */
+  | ({ tipo: "sst-painel"; contrato: null } & DadosSstPainelTv)
   /** RH: salários e benefícios × orçamento (item "rh-salarios", mig 20261111220000). */
   | ({ tipo: "rh-salarios"; contrato: null } & DadosRhSalariosTv)
   /** Financeiro, Controladoria e Presidência (mig 20261111230000). */
@@ -205,6 +209,9 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
     case "rec-painel":
       // Idem: os blocos de contratos (10 s) giram dentro de TelaRecPainel.
       return [{ chave: "rec-painel", titulo: "Recrutamento e Seleção" }];
+    case "sst-painel":
+      // Idem: os 4 blocos (20 s cada) giram dentro de TelaSstPainel.
+      return [{ chave: "sst-painel", titulo: "SST" }];
     case "rh-salarios":
       return [{ chave: "rh-salarios", titulo: "Salários e benefícios × orçamento" }];
     case "fin-painel":
