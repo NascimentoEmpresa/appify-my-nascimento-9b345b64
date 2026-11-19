@@ -105,8 +105,8 @@ export function AlteracaoEmMassaBar({
       const fora = selecionadas.length - vinculaveis.length;
       toast.success(`${n} lançamento(s) ${destinoId === "__remover" ? "sem vínculo com imóvel" : "vinculado(s) ao imóvel"}${fora > 0 ? `; ${fora} ficaram de fora (cartão, aplicação ou conta garantida não são gastos de imóvel)` : ""}.`);
       onSelecionadas(new Set());
-    } catch (e: any) {
-      toast.error(e?.message ?? "Não foi possível vincular ao imóvel.");
+    } catch (e) {
+      toast.error((e as { message?: string } | null)?.message ?? "Não foi possível vincular ao imóvel.");
     }
   }
 
