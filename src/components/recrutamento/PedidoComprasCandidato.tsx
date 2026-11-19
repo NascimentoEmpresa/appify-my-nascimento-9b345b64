@@ -1,14 +1,22 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, PackageCheck, PackageX, RefreshCw } from "lucide-react";
+import { Ban, ExternalLink, Loader2, PackageCheck, PackageX, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
+import { ESTILO_STATUS, useSolicitarCancelamentoRecrutamento } from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido, type PedidoParaBaixa } from "@/components/suprimentos/ModalBaixaPedido";
+import { SolicitarCancelamentoPedido } from "@/components/suprimentos/SolicitarCancelamentoPedido";
+import {
+  pedidoAceitaSolicitacaoCancelamento,
+  rotuloCategoriaCancelamento,
+  type CategoriaCancelamentoPedido,
+  type DadosCancelamentoPedido,
+} from "@/lib/suprimentos/cancelamentoPedido";
+import { toast } from "sonner";
 
 // =====================================================================
 // O pedido de materiais do candidato, aberto pelo "Compras" do kanban
@@ -29,7 +37,7 @@ interface PedidoCandidato {
   dispensado: boolean; dispensa_motivo: string | null; obs_rh: string | null;
   compras_ok: boolean | null; compras_por: string | null; compras_em: string | null; compras_obs: string | null;
   compras_visto_em: string | null; compras_visto_por: string | null;
-  pedido: (PedidoParaBaixa & {
+  pedido: (PedidoParaBaixa & DadosCancelamentoPedido & {
     created_at: string; contrato_nome: string | null; posto_nome: string | null; funcao_nome: string | null;
     historico: { acao: string; status_anterior: string | null; status_novo: string | null; observacao: string | null; por: string | null; em: string; campo: string | null }[];
   }) | null;
@@ -56,14 +64,17 @@ export function PedidoComprasCandidato({ candidatoId, nome, onFechar }: { candid
   const { can } = usePermissoes();
   const podeAtualizar = can("alterar", undefined, "sup_pedidos_materiais");
   const podeAbrirFila = can("visualizar", undefined, "sup_pedidos_materiais");
+  const podeSolicitarCancelamento = can("alterar", undefined, "recrutamento_gestao");
   const { data, isLoading, error, refetch, isFetching } = usePedidoCandidato(candidatoId);
   const [baixa, setBaixa] = useState<PedidoParaBaixa | null>(null);
+  const [cancelamentoAberto, setCancelamentoAberto] = useState(false);
+  const solicitarCancelamento = useSolicitarCancelamentoRecrutamento();
   const p = data?.pedido ?? null;
   const est = p ? ESTILO_STATUS[p.status] : null;
 
   return (
     <>
-      <Dialog open={!!candidatoId && !baixa} onOpenChange={(v) => { if (!v) onFechar(); }}>
+      <Dialog open={!!candidatoId && !baixa && !cancelamentoAberto} onOpenChange={(v) => { if (!v && !cancelamentoAberto) onFechar(); }}>
         <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
@@ -109,6 +120,26 @@ export function PedidoComprasCandidato({ candidatoId, nome, onFechar }: { candid
                       {p.observacoes_solicitante && <p className="whitespace-pre-wrap sm:col-span-2"><span className="text-muted-foreground">Obs. do solicitante:</span> {p.observacoes_solicitante}</p>}
                     </div>
 
+                    {p.cancelamento_estado !== "NENHUM" && (
+                      <div className={`rounded-lg border px-3 py-2 ${
+                        p.cancelamento_estado === "SOLICITADO"
+                          ? "border-amber-200 bg-amber-50 text-amber-900"
+                          : p.cancelamento_estado === "RECUSADO"
+                            ? "border-rose-200 bg-rose-50 text-rose-900"
+                            : "border-slate-200 bg-slate-50 text-slate-700"
+                      }`}>
+                        <p className="font-semibold">
+                          {p.cancelamento_estado === "SOLICITADO" ? "Cancelamento aguardando o Suprimentos"
+                            : p.cancelamento_estado === "RECUSADO" ? "Cancelamento recusado"
+                              : "Cancelamento aprovado"}
+                        </p>
+                        {p.cancelamento_categoria && (
+                          <p>{rotuloCategoriaCancelamento(p.cancelamento_categoria)} · {p.cancelamento_detalhe}</p>
+                        )}
+                        {p.cancelamento_decisao_observacao && <p><b>Retorno:</b> {p.cancelamento_decisao_observacao}</p>}
+                      </div>
+                    )}
+
                     <div className="rounded-lg border">
                       <p className="border-b bg-muted/40 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Itens</p>
                       {(p.sup_pedido_item ?? []).map((i) => (
@@ -127,6 +158,9 @@ export function PedidoComprasCandidato({ candidatoId, nome, onFechar }: { candid
                             <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full bg-primary" />
                             <p className="font-medium">
                               {h.acao === "CRIADO" ? "Pedido criado"
+                                : h.acao === "CANCELAMENTO_SOLICITADO" ? "Cancelamento solicitado"
+                                : h.acao === "CANCELAMENTO_APROVADO" ? "Cancelamento aprovado"
+                                : h.acao === "CANCELAMENTO_RECUSADO" ? "Cancelamento recusado"
                                 : h.status_novo && h.status_novo !== h.status_anterior ? `${rotulo(h.status_anterior)} → ${rotulo(h.status_novo)}`
                                 : h.campo ? `Alterado: ${h.campo}` : h.acao}
                             </p>
@@ -151,6 +185,12 @@ export function PedidoComprasCandidato({ candidatoId, nome, onFechar }: { candid
                   {p && podeAtualizar && (
                     <Button size="sm" onClick={() => setBaixa(p)}><PackageCheck className="mr-1.5 h-4 w-4" /> Atualizar status / observação</Button>
                   )}
+                  {p && podeSolicitarCancelamento
+                    && pedidoAceitaSolicitacaoCancelamento(p.status, p.cancelamento_estado) && (
+                    <Button variant="destructive" size="sm" onClick={() => setCancelamentoAberto(true)}>
+                      <Ban className="mr-1.5 h-4 w-4" /> Solicitar cancelamento
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
@@ -163,6 +203,23 @@ export function PedidoComprasCandidato({ candidatoId, nome, onFechar }: { candid
         qc.invalidateQueries({ queryKey: ["rec-pedido-candidato", candidatoId] });
         qc.invalidateQueries({ queryKey: ["rec-pedidos-vaga"] });
       }} />
+
+      <SolicitarCancelamentoPedido
+        aberto={cancelamentoAberto}
+        protocolo={p?.pedido_id ?? null}
+        enviando={solicitarCancelamento.isPending}
+        onFechar={() => setCancelamentoAberto(false)}
+        onConfirmar={async (categoria: CategoriaCancelamentoPedido, detalhe: string) => {
+          if (!candidatoId) return;
+          try {
+            await solicitarCancelamento.mutateAsync({ candidatoId, categoria, detalhe });
+            toast.success("Solicitação enviada ao Suprimentos.");
+            setCancelamentoAberto(false);
+          } catch (erro: unknown) {
+            toast.error(erro instanceof Error ? erro.message : "Não foi possível solicitar o cancelamento.");
+          }
+        }}
+      />
     </>
   );
 }

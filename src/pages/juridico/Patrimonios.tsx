@@ -17,6 +17,8 @@ import {
 } from "./patrimonio/carteira";
 import { coordenadaValida } from "./patrimonio/geo";
 import { ExportarPatrimonios } from "./patrimonio/ExportarPatrimonios";
+import { ImoveisDetalhamento } from "./patrimonio/ImoveisDetalhamento";
+import { useIntegrantesFluxo } from "@/hooks/useFluxoCaixaMalote";
 import {
   PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
   podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
@@ -51,6 +53,7 @@ interface Patrimonio {
   reforcos_pagos?: number; reforcos_a_pagar?: number; valor_parcela?: number;
   qtd_parcelas?: number; parcelas_pagas?: number; parcelas_falta?: number;
   proxima_parcela?: string; anotacoes?: string; aba_origem?: string;
+  integrante_empregado_id?: number | null;
 }
 interface Obrigacao {
   id: number; patrimonio_id: number; categoria: string; descricao?: string; valor?: number;
@@ -134,7 +137,7 @@ export default function Patrimonios() {
   const [pagina, setPagina] = useState(1);
   const POR_PAGINA = 10;
   const [soPendentesTransf, setSoPendentesTransf] = useState(false);
-  const [viewPag, setViewPag] = useState<"painel" | "lista" | "contas" | "listagem">("lista");
+  const [viewPag, setViewPag] = useState<"painel" | "lista" | "contas" | "listagem" | "imoveis">("lista");
   // Listagem de Contas (05/11/2026): todas as contas numa lista só, com filtro.
   const [filtroListagem, setFiltroListagem] = useState<string>("abertas");
   const [buscaListagem, setBuscaListagem] = useState("");
@@ -148,6 +151,9 @@ export default function Patrimonios() {
   const [modalPat, setModalPat] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [pat, setPat] = useState({ ...PATRIM_RESET });
+  // SIS-2026-0911: integrante do imóvel. -1 = Empresa (mesma convenção do Fluxo de Caixa).
+  const { data: integrantesLista = [] } = useIntegrantesFluxo(true);
+  const nomeIntegrante = (id: number | null | undefined) => (id == null ? "—" : integrantesLista.find((i) => i.id === id)?.nome ?? "—");
 
   // drawer
   const [sel, setSel] = useState<Patrimonio | null>(null);
@@ -289,6 +295,7 @@ export default function Patrimonios() {
       longitude: txt(p.longitude),
       classificacao: txt(p.classificacao),
       matricula: txt(p.matricula),
+      integrante_empregado_id: txt(p.integrante_empregado_id),
       especie_escritura: txt(p.especie_escritura),
       situacao_pagamento: txt(p.situacao_pagamento),
     } as typeof PATRIM_RESET);
@@ -316,6 +323,7 @@ export default function Patrimonios() {
         : {}),
       classificacao: pat.classificacao || null,
       matricula: pat.matricula || null,
+      integrante_empregado_id: pat.integrante_empregado_id === "" || pat.integrante_empregado_id == null ? null : Number(pat.integrante_empregado_id),
       especie_escritura: pat.especie_escritura || null,
       situacao_pagamento: pat.situacao_pagamento || null,
       updated_at: new Date().toISOString(),
@@ -859,7 +867,13 @@ export default function Patrimonios() {
           <button className="jp-btn" onClick={() => { setViewPag("contas"); setPagina(1); }} style={{ background: viewPag === "contas" ? "#0f3171" : "#fff", color: viewPag === "contas" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "contas" ? "#0f3171" : "#e2e8f0") }}>📑 Lançamento de Contas</button>
           <button className="jp-btn" onClick={() => { setViewPag("painel"); setPagina(1); }} style={{ background: viewPag === "painel" ? "#0f3171" : "#fff", color: viewPag === "painel" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "painel" ? "#0f3171" : "#e2e8f0") }}>📊 Painel</button>
           <button className="jp-btn" onClick={() => { setViewPag("listagem"); setPagina(1); }} style={{ background: viewPag === "listagem" ? "#0f3171" : "#fff", color: viewPag === "listagem" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "listagem" ? "#0f3171" : "#e2e8f0") }}>📋 Listagem de Contas</button>
+          <button className="jp-btn" onClick={() => { setViewPag("imoveis"); setPagina(1); }} style={{ background: viewPag === "imoveis" ? "#0f3171" : "#fff", color: viewPag === "imoveis" ? "#fff" : "#64748b", border: "1px solid " + (viewPag === "imoveis" ? "#0f3171" : "#e2e8f0") }}>🏠 Imóveis Detalhamento</button>
         </div>
+
+        {/* ── IMÓVEIS DETALHAMENTO (SIS-2026-0911) ── */}
+        {viewPag === "imoveis" && (
+          <ImoveisDetalhamento imoveis={pats.filter(p => p.tipo !== "Veículo" && p.tipo !== "Equipamento")} nomeIntegrante={nomeIntegrante} />
+        )}
 
         {/* ── PAINEL (dashboard) ── */}
         {viewPag === "painel" && (<>
@@ -984,7 +998,7 @@ export default function Patrimonios() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
                   <thead>
                     <tr style={{ background: "#f8fafc", color: "#94a3b8", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px" }}>
-                      {["#", "Situação", "Próxima parcela", "Classificação", "Descrição", "Endereço", "Cidade", "Proprietário", "Escritura", "Matrícula", "Empresa que pagará", "Valor do contrato", "Valor que falta", "Possui escritura", "Valor estimado"].map(h => (
+                      {["#", "Situação", "Próxima parcela", "Classificação", "Descrição", "Endereço", "Cidade", "Proprietário", "Integrante", "Escritura", "Matrícula", "Empresa que pagará", "Valor do contrato", "Valor que falta", "Possui escritura", "Valor estimado"].map(h => (
                         <th key={h} style={{ textAlign: "left", padding: "9px 12px", fontWeight: 800 }}>{h}</th>
                       ))}
                     </tr>
@@ -1007,6 +1021,7 @@ export default function Patrimonios() {
                           <td style={{ padding: "10px 12px", color: "#475569", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }} title={p.localizacao || ""}>{p.localizacao || p.placa || "—"}</td>
                           <td style={{ padding: "10px 12px", color: "#475569" }}>{p.cidade || "—"}</td>
                           <td style={{ padding: "10px 12px", color: "#475569", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={p.proprietario || ""}>{p.proprietario || "—"}</td>
+                          <td style={{ padding: "10px 12px", color: "#475569" }}>{nomeIntegrante(p.integrante_empregado_id)}</td>
                           <td style={{ padding: "10px 12px", color: "#475569" }}>{p.especie_escritura || "—"}</td>
                           <td style={{ padding: "10px 12px", color: "#475569" }}>{p.matricula || "—"}</td>
                           <td style={{ padding: "10px 12px", color: "#475569" }}>{p.empresa_pagadora || "—"}</td>
@@ -1239,6 +1254,12 @@ export default function Patrimonios() {
               <div className="jp-fg"><label>Endereço</label><input className="jp-fi" value={pat.localizacao} onChange={e => setPat(v => ({ ...v, localizacao: e.target.value }))} placeholder="Digite o endereço completo" /></div>
               <div className="jp-fg"><label>Cidade</label><input className="jp-fi" value={pat.cidade} onChange={e => setPat(v => ({ ...v, cidade: e.target.value }))} placeholder="Cidade do patrimônio" /></div>
               <div className="jp-fg"><label>Proprietário</label><input className="jp-fi" value={pat.proprietario} onChange={e => setPat(v => ({ ...v, proprietario: e.target.value }))} placeholder="Digite o nome do proprietário" /></div>
+              <div className="jp-fg"><label>Integrante</label>
+                <select className="jp-fi" value={String(pat.integrante_empregado_id ?? "")} onChange={e => setPat(v => ({ ...v, integrante_empregado_id: e.target.value }))}>
+                  <option value="">Selecione</option>
+                  {integrantesLista.map(i => <option key={i.id} value={String(i.id)}>{i.nome}</option>)}
+                </select>
+              </div>
               <div className="jp-fg"><label>Matrícula</label><input className="jp-fi" value={pat.matricula} onChange={e => setPat(v => ({ ...v, matricula: e.target.value }))} placeholder="Digite a matrícula do imóvel" /></div>
               <div className="jp-fg"><label>Escritura</label>
                 <select className="jp-fi" value={pat.possui_escritura} onChange={e => setPat(v => ({ ...v, possui_escritura: e.target.value }))}>
