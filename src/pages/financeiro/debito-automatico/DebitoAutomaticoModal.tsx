@@ -24,7 +24,7 @@ import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { AnexosDebito } from "./AnexosDebito";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { CentroCustoSelect } from "../aplicacao-financeira/CentroCustoSelect";
-import { centroPadraoDaEmpresa } from "../aplicacao-financeira/centroCusto";
+import { centroPadraoDaEmpresa, ehBancoContaVinculada, ehMovimentacaoFinanceira, erroCentroContaVinculada } from "../aplicacao-financeira/centroCusto";
 import { ParcelaCalculada, gerarParcelasAutomaticas, somaParcelas, validarParcelas } from "./parcelas";
 
 // SIS-2026-0256: um modal só cobre os 3 tipos de lançamento (Débito
@@ -166,6 +166,22 @@ export function DebitoAutomaticoModal({
   const permiteParcelar = !editando && tipoOrigem === "debito_automatico";
   const parcelando = permiteParcelar && parcelar;
 
+  // SIS-2026-0829: saída de CONTA VINCULADA (banco de saída/do lançamento com "Conta Vinculada" no nome) só aceita o centro de custo MOVIMENTAÇÃO FINANCEIRA.
+  const nomeDoBanco = (id: string) => bancos.find((b) => b.id === id)?.nome;
+  const saidaContaVinculada = tipoOrigem === "movimentacao_financeira"
+    ? ehBancoContaVinculada(nomeDoBanco(bancoSaidaId))
+    : tipoOrigem === "debito_automatico" && tipo === "saida" && ehBancoContaVinculada(nomeDoBanco(bancoId));
+  const nomeDoContrato = (id: string) => contratosERP.find((c) => c.id === id)?.nome;
+  useEffect(() => {
+    if (!open || !saidaContaVinculada) return;
+    if (tipoOrigem === "movimentacao_financeira") {
+      if (!ehMovimentacaoFinanceira(nomeDoContrato(contratoSaidaId) ?? "")) setContratoSaidaId(centroPadraoDaEmpresa(contratosERP, empresaSaidaId));
+    } else if (!ehMovimentacaoFinanceira(nomeDoContrato(contratoId) ?? "")) {
+      setContratoId(centroPadraoDaEmpresa(contratosERP, empresaId));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, saidaContaVinculada, tipoOrigem, contratoSaidaId, contratoId, empresaSaidaId, empresaId, contratosERP]);
+
   // Modo automático: divisão igual + um vencimento por mês a partir do 1º
   // vencimento (o campo de data). No manual a grade parte da mesma sugestão
   // e depois é editada à mão — só é refeita se o nº de parcelas mudar, pra
@@ -202,6 +218,8 @@ export function DebitoAutomaticoModal({
       if (!classificacaoId) return "Informe a Classificação.";
       if (!bancoSaidaId) return "Informe o Banco de Saída.";
       if (!bancoEntradaId) return "Informe o Banco de Entrada.";
+      const erroVinculadaSaida = erroCentroContaVinculada(nomeDoBanco(bancoSaidaId), nomeDoContrato(contratoSaidaId));
+      if (erroVinculadaSaida) return erroVinculadaSaida;
       // SIS-2026-0426: mesma empresa nos dois lados é normal (transferência
       // entre bancos da própria empresa) — só é inválido se banco também
       // for o mesmo, porque nesse caso seria a mesma conta se pagando.
@@ -222,6 +240,10 @@ export function DebitoAutomaticoModal({
       }
       if (!formaPagamento) return "Informe a Forma de Pagamento.";
       if (!bancoId) return "Informe o Banco.";
+      if (tipoOrigem === "debito_automatico" && tipo === "saida") {
+        const erroVinculada = erroCentroContaVinculada(nomeDoBanco(bancoId), nomeDoContrato(contratoId));
+        if (erroVinculada) return erroVinculada;
+      }
     }
     return null;
   }
@@ -441,7 +463,7 @@ export function DebitoAutomaticoModal({
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <CentroCustoSelect rotulo="Centro de Custo de Saída" empresaId={empresaSaidaId} value={contratoSaidaId} onChange={setContratoSaidaId} atualId={registroEditar?.tipo === "saida" ? registroEditar.contrato_id : registroParEditar?.contrato_id} />
+                <CentroCustoSelect rotulo="Centro de Custo de Saída" somenteMovimentacaoFinanceira={saidaContaVinculada} empresaId={empresaSaidaId} value={contratoSaidaId} onChange={setContratoSaidaId} atualId={registroEditar?.tipo === "saida" ? registroEditar.contrato_id : registroParEditar?.contrato_id} />
                 <CentroCustoSelect rotulo="Centro de Custo de Entrada" empresaId={empresaEntradaId} value={contratoEntradaId} onChange={setContratoEntradaId} atualId={registroEditar?.tipo === "entrada" ? registroEditar.contrato_id : registroParEditar?.contrato_id} />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -476,6 +498,9 @@ export function DebitoAutomaticoModal({
                   </SelectContent>
                 </Select>
               </div>
+              {saidaContaVinculada ? (
+                <CentroCustoSelect rotulo="Contrato (centro de custo)" somenteMovimentacaoFinanceira empresaId={empresaId} value={contratoId} onChange={setContratoId} />
+              ) : (
               <div>
                 <Label className="text-xs">Contrato</Label>
                 <Select value={contratoId || "nenhum"} onValueChange={(v) => setContratoId(v === "nenhum" ? "" : v)}>
@@ -486,6 +511,7 @@ export function DebitoAutomaticoModal({
                   </SelectContent>
                 </Select>
               </div>
+              )}
             </div>
           )}
 
