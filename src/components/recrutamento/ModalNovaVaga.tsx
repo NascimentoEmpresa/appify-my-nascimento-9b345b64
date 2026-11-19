@@ -25,6 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { SelectComBusca } from "@/components/ui/SelectComBusca";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 import { supabase } from "@/integrations/supabase/client";
@@ -1021,17 +1022,19 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {admissaoPeloContrato ? (<>
             <div className="nvg-fg">
               <label>Contrato <span style={{ color: "#dc2626" }}>*</span></label>
-              <select className="nvg-fi" value={vaga.contrato}
-                onChange={e => {
-                  const c = e.target.value;
+              {/* Com barra de pesquisa (19/11/2026): dezenas de contratos num
+                  <select> nativo obrigavam a rolar a lista inteira. */}
+              <SelectComBusca classeGatilho="nvg-fi" value={vaga.contrato}
+                opcoes={contratosFull.map(c => rotuloContrato(c))}
+                placeholder="— Selecione o contrato —"
+                placeholderBusca="Pesquisar por código ou nome…"
+                textoVazio="Nenhum contrato encontrado."
+                onChange={c => {
+                  if (c === vaga.contrato) return;
                   // Trocou o contrato: o cargo era do anterior.
                   setVaga(v => ({ ...v, contrato: c, cargo: "", posto_id: "", funcao_id: "" }));
                   setDecisaoQuant("");
-                }}>
-                <option value="">— Selecione o contrato —</option>
-                {vaga.contrato && !contratoEscolhido && <option value={vaga.contrato}>{vaga.contrato}</option>}
-                {contratosFull.map((c, i) => <option key={i} value={rotuloContrato(c)}>{rotuloContrato(c)}</option>)}
-              </select>
+                }} />
               <div style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}>Ao selecionar o contrato, aparecem os cargos vinculados a ele.</div>
             </div>
             <div className="nvg-fg">

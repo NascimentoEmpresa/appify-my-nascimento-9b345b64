@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { SelectComBusca } from "@/components/ui/SelectComBusca";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
@@ -1566,11 +1567,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               {admissao ? (<>
                 <div className="ini-fg">
                   <label>Contrato <span style={{ color: "#dc2626" }}>*</span></label>
-                  <select className="ini-fi" value={vaga.contrato}
-                    onChange={e => { const c = e.target.value; setDecisaoQuant(""); setVaga(v => ({ ...v, contrato: c, cargo: "", posto_id: "", funcao_id: "" })); }}>
-                    <option value="">— Selecione o contrato —</option>
-                    {contratosFull.map((c, i) => <option key={i} value={rotuloContrato(c)}>{rotuloContrato(c)}</option>)}
-                  </select>
+                  <SelectComBusca classeGatilho="ini-fi" value={vaga.contrato}
+                    opcoes={contratosFull.map(c => rotuloContrato(c))}
+                    placeholder="— Selecione o contrato —"
+                    placeholderBusca="Pesquisar por código ou nome…"
+                    textoVazio="Nenhum contrato encontrado."
+                    onChange={c => { if (c === vaga.contrato) return; setDecisaoQuant(""); setVaga(v => ({ ...v, contrato: c, cargo: "", posto_id: "", funcao_id: "" })); }} />
                   <div style={{ marginTop: 4, fontSize: 14, color: "#64748b" }}>Ao selecionar o contrato, aparecem os cargos vinculados a ele.</div>
                 </div>
                 <div className="ini-fg">
