@@ -20,7 +20,7 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   CARTAO_AFASTADOS, DIAS_AVISO, PAINEL, PERIODICIDADE_PADRAO_MESES, ROTULO_MOTIVO_AFASTAMENTO, ROTULO_TIPO, STATUS_PERIODICO,
   calcularVencimento, contarPainel, diasParaVencer, erroConfig, erroMesesContrato, fmtData, hojeIso, nomeContrato, ordenar,
-  casaBusca, empresaDoItem, funcaoDoItem, ordenarAfastados, pendenciasParaRealizar, rotuloPeriodicidade,
+  casaBusca, contaNoPainel, empresaDoItem, funcaoDoItem, ordenarAfastados, pendenciasParaRealizar, rotuloPeriodicidade,
   type ChavePainel, type CicloPeriodico, type ConfigAsoPeriodico, type ContratoPeriodicidade, type ItemPeriodico,
   type StatusAsoPeriodico,
 } from "@/lib/sst/asoPeriodico";
@@ -82,8 +82,9 @@ export default function AsoPeriodico() {
     const doCartao = PAINEL.find((p) => p.chave === cartao)?.status;
     const afastados = cartao === CARTAO_AFASTADOS.chave;
     return itens
-      .filter((i) => afastados ? !!i.afastamento : doCartao ? doCartao.includes(i.status)
-        : status === "todos" || (status === "previstos" ? PREVISTOS.includes(i.status) : i.status === status))
+      // SIS-2026-0918 (19/11): cartões e "Previstos" batem com a contagem — sem afastados.
+      .filter((i) => afastados ? !!i.afastamento : doCartao ? contaNoPainel(i) && doCartao.includes(i.status)
+        : status === "todos" || (status === "previstos" ? contaNoPainel(i) && PREVISTOS.includes(i.status) : i.status === status))
       .filter((i) => contrato === "todos" || nomeContrato(i) === contrato)
       .filter((i) => empresa === "todas" || empresaDoItem(i) === empresa)
       .filter((i) => !estimados || i.ultimo_tipo === "admissao_estimada")
@@ -163,7 +164,7 @@ export default function AsoPeriodico() {
       </Card>
       <p className="text-xs text-muted-foreground">
         {visiveis.length} de {itens.length} colaborador(es) ativo(s).
-        {painel.afastados > 0 && ` ${painel.afastados} afastado(s) por aposentadoria, benefício do INSS ou licença-maternidade ficam fora das pendências e voltam sozinhos quando a Senior marcar o retorno.`}
+        {painel.afastados > 0 && ` ${painel.afastados} afastado(s) por aposentadoria, benefício do INSS ou licença-maternidade ficam fora da contagem dos periódicos (veja no cartão "Afastados") e voltam sozinhos quando a Senior marcar o retorno. MEI não entra na lista.`}
       </p>
 
       {aberto && <CicloDialog item={aberto} podeAlterar={podeAlterar} onFechar={() => setAberto(null)} />}

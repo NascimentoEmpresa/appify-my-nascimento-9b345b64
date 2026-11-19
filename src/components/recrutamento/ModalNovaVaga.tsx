@@ -25,6 +25,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { SelectComBusca } from "@/components/ui/SelectComBusca";
+import { opcoesDeCargo, valorCargoSelecionado } from "@/lib/recrutamento/cargosDoContrato";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
 import { buscarCustoDoPosto, insalubridadeDoCusto, beneficiosDoCusto, notaDoCusto, AVISO_SEM_POSTO, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 import { supabase } from "@/integrations/supabase/client";
@@ -552,7 +554,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   const [cargosDoQuadro, setCargosDoQuadro] = useState<string[]>([]);
   const contratoEscolhido = contratosFull.find(c => rotuloContrato(c) === vaga.contrato) ?? null;
   const filialDoContrato = String(contratoEscolhido?.Filial ?? "").trim();
-  const usarCargosDoQuadro = admissaoPeloContrato && !!vaga.contrato && !buscandoFuncoes && funcoesDoContrato.length === 0;
+    // Cargo = funções do contrato + posto da planilha SEM função (19/11/2026,
+  // UFFS REALEZA: "LAV. DE ROUPAS A MÁQUINA - REALEZA" sumia). Regra em
+  // src/lib/recrutamento/cargosDoContrato.ts.
+  const opcoesCargo = opcoesDeCargo(funcoesDoContrato, catListas.postos, vaga.contrato);
+  const usarCargosDoQuadro = admissaoPeloContrato && !!vaga.contrato && !buscandoFuncoes && opcoesCargo.length === 0;
   useEffect(() => {
     if (!usarCargosDoQuadro || !filialDoContrato) { setCargosDoQuadro([]); return; }
     let vivo = true;
@@ -565,8 +571,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       });
     return () => { vivo = false; };
   }, [usarCargosDoQuadro, filialDoContrato]);
-  // Função com o mesmo nome em dois postos: o posto entra no rótulo.
-  const nomesRepetidos = new Set(funcoesDoContrato.map(x => x.nome).filter((n, i, a) => a.indexOf(n) !== i));
 
   // Quem é o Gerente de Operações (vai no aviso da Admissão).
   const [gerentesOperacoes, setGerentesOperacoes] = useState<string[]>([]);
@@ -1021,36 +1025,36 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {admissaoPeloContrato ? (<>
             <div className="nvg-fg">
               <label>Contrato <span style={{ color: "#dc2626" }}>*</span></label>
-              <select className="nvg-fi" value={vaga.contrato}
-                onChange={e => {
-                  const c = e.target.value;
+              {/* Com barra de pesquisa (19/11/2026): dezenas de contratos num
+                  <select> nativo obrigavam a rolar a lista inteira. */}
+              <SelectComBusca classeGatilho="nvg-fi" value={vaga.contrato}
+                opcoes={contratosFull.map(c => rotuloContrato(c))}
+                placeholder="— Selecione o contrato —"
+                placeholderBusca="Pesquisar por código ou nome…"
+                textoVazio="Nenhum contrato encontrado."
+                onChange={c => {
+                  if (c === vaga.contrato) return;
                   // Trocou o contrato: o cargo era do anterior.
                   setVaga(v => ({ ...v, contrato: c, cargo: "", posto_id: "", funcao_id: "" }));
                   setDecisaoQuant("");
-                }}>
-                <option value="">— Selecione o contrato —</option>
-                {vaga.contrato && !contratoEscolhido && <option value={vaga.contrato}>{vaga.contrato}</option>}
-                {contratosFull.map((c, i) => <option key={i} value={rotuloContrato(c)}>{rotuloContrato(c)}</option>)}
-              </select>
+                }} />
               <div style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}>Ao selecionar o contrato, aparecem os cargos vinculados a ele.</div>
             </div>
             <div className="nvg-fg">
               <label>Cargo <span style={{ color: "#dc2626" }}>*</span></label>
               <select className="nvg-fi" disabled={!vaga.contrato}
-                value={vaga.funcao_id || (vaga.cargo ? "q:" + vaga.cargo : "")}
+                value={valorCargoSelecionado(vaga, opcoesCargo)}
                 onChange={e => {
                   const v = e.target.value;
                   setDecisaoQuant("");
                   if (v.startsWith("q:")) { setVaga(x => ({ ...x, cargo: v.slice(2), posto_id: "", funcao_id: "" })); return; }
-                  const fn = funcoesDoContrato.find(x => x.id === v);
-                  setVaga(x => ({ ...x, cargo: fn?.nome ?? "", posto_id: fn?.posto_id ?? "", funcao_id: fn?.id ?? "" }));
+                  const op = opcoesCargo.find(x => x.valor === v);
+                  setVaga(x => ({ ...x, cargo: op?.cargo ?? "", posto_id: op?.posto_id ?? "", funcao_id: op?.funcao_id ?? "" }));
                 }}>
                 <option value="">{!vaga.contrato ? "Selecione o contrato primeiro" : buscandoFuncoes ? "Carregando os cargos do contrato…" : "— Selecione o cargo —"}</option>
-                {funcoesDoContrato.map(fn => (
-                  <option key={fn.id} value={fn.id}>{fn.nome}{nomesRepetidos.has(fn.nome) ? ` — ${fn.posto_nome}` : ""}</option>
-                ))}
+                {opcoesCargo.map(op => <option key={op.valor} value={op.valor}>{op.rotulo}</option>)}
                 {usarCargosDoQuadro && cargosDoQuadro.map(c => <option key={c} value={"q:" + c}>{c}</option>)}
-                {vaga.cargo && !vaga.funcao_id && !cargosDoQuadro.includes(vaga.cargo) && <option value={"q:" + vaga.cargo}>{vaga.cargo}</option>}
+                {vaga.cargo && !vaga.funcao_id && !cargosDoQuadro.includes(vaga.cargo) && !valorCargoSelecionado(vaga, opcoesCargo).startsWith("p:") && <option value={"q:" + vaga.cargo}>{vaga.cargo}</option>}
               </select>
               <div style={{ marginTop: 4, fontSize: 13, color: usarCargosDoQuadro ? "#92400e" : "#64748b" }}>
                 {!vaga.contrato ? "Cargo carregado a partir da lista de cargos definidos para o contrato selecionado."

@@ -23,6 +23,13 @@
 // Parte 2 do mesmo chamado (mig 20261119200000): função e EMPRESA do vínculo
 // em destaque, na busca e no filtro — o SST deixa a plataforma da Zielo e
 // pede os periódicos pelo ERP.
+//
+// 19/11/2026 (SIS-2026-0918, retorno do solicitante — "retirados da
+// contagem dos periódicos" aposentadoria, aux. doença, licença-maternidade e
+// MEI): afastado sai de TODA a contagem do painel, inclusive Previstos,
+// Agendados e Realizados (antes só saía das pendências); continua visível no
+// cartão "Afastados" e no filtro "Todos". O MEI sai já no banco
+// (mig 20261120150000, sst_aso_per_eh_mei) — nem chega à lista.
 // =====================================================================
 
 import { empresaDe } from "@/lib/rh/colaboradoresUtils";
@@ -270,11 +277,15 @@ export const CARTAO_AFASTADOS = { chave: "afastados" as const, titulo: "Afastado
 export function contarPainel(itens: Pick<ItemPeriodico, "status" | "afastamento">[]): Record<ChavePainel, number> {
   const r: Record<ChavePainel, number> = { previstos: 0, proximos: 0, vencidos: 0, aguardando: 0, agendados: 0, realizados: 0, afastados: 0 };
   for (const i of itens) {
+    // Afastado (aposentadoria, INSS, licença-maternidade) só conta no próprio cartão.
+    if (i.afastamento) { r.afastados++; continue; }
     for (const p of PAINEL) if (p.status.includes(i.status)) r[p.chave]++;
-    if (i.afastamento) r.afastados++;
   }
   return r;
 }
+
+/** Entra nos números/filtros do painel (Previstos e os cinco status)? Afastado não. */
+export const contaNoPainel = (i: Pick<ItemPeriodico, "afastamento">): boolean => !i.afastamento;
 
 /** Afastados: previsão de retorno mais próxima primeiro (é quem o SST vai precisar chamar); sem previsão por último. */
 export function ordenarAfastados(a: ItemPeriodico, b: ItemPeriodico): number {

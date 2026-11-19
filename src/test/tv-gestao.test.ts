@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { brlCurto, ehContratoVermelho, pctRecebido, resumoPresidencia, tomMargem, tomNaoEmitido, type DadosPrePainelTv } from "@/lib/tv/gestaoTv";
+import { readFileSync } from "node:fs";
+import { brlCurto, competenciaFinanceiroTv, ehContratoVermelho, pctRecebido, resumoPresidencia, tomMargem, tomNaoEmitido, type DadosPrePainelTv } from "@/lib/tv/gestaoTv";
 import { paginasDoRelatorio } from "@/lib/tv/relatorioTv";
 import type { ContratoRpc } from "@/lib/operacional/indicadoresContratos";
 
@@ -65,5 +66,22 @@ describe("TVs de gestão", () => {
 
   it("cada item da playlist é uma página só", () => {
     expect(paginasDoRelatorio({ ...pre, tipo: "pre-painel", contrato: null })).toHaveLength(1);
+  });
+
+  it("Financeiro: competência é sempre o mês anterior (o corrente nunca está completo)", () => {
+    expect(competenciaFinanceiroTv(new Date(2026, 10, 19))).toBe("2026-10");
+    expect(competenciaFinanceiroTv(new Date(2026, 10, 1))).toBe("2026-10");
+    expect(competenciaFinanceiroTv(new Date(2026, 10, 30, 23, 59))).toBe("2026-10");
+    // Virada de ano: janeiro mostra dezembro do ano anterior.
+    expect(competenciaFinanceiroTv(new Date(2027, 0, 1))).toBe("2026-12");
+    expect(competenciaFinanceiroTv(new Date(2027, 0, 31))).toBe("2026-12");
+    expect(competenciaFinanceiroTv(new Date(2027, 2, 31))).toBe("2027-02");
+  });
+
+  it("Financeiro: o banco usa a mesma regra (mig 20261120130000)", () => {
+    const sql = readFileSync("supabase/migrations/20261120130000_tv_financeiro_competencia_mes_anterior.sql", "utf8");
+    const corpo = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.tv_financeiro_dados()"), sql.indexOf("NOTIFY pgrst"));
+    expect(corpo).toContain("v_comp := (date_trunc('month', hoje) - interval '1 month')::date;");
+    expect(corpo).not.toContain("SELECT max(competencia) INTO v_comp");
   });
 });
