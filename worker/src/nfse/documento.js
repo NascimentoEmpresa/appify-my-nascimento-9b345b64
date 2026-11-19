@@ -22,7 +22,9 @@ function exigir(condicao, mensagem) { if (!condicao) throw new ErroNfse('DADOS_I
 const digitos = valor => String(valor ?? '').replace(/[.\-/\s]/g, '');
 // P9022 da GOVBR: até quebras dentro da descrição devem sair antes da assinatura.
 const escapar = valor => String(valor).replace(/\r\n|[\r\n\t]/g, ' ').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
-const tag = (nome, valor) => `<${nome}>${escapar(valor)}</${nome}>`;
+// P9024: o provedor rejeita espaços no começo ou no fim de qualquer tag,
+// inclusive quando uma quebra de linha foi convertida em espaço por escapar().
+const tag = (nome, valor) => `<${nome}>${escapar(valor).trim()}</${nome}>`;
 function dataHoraEmissao(valor) {
   const instante = new Date(valor);
   exigir(typeof valor === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/i.test(valor) && Number.isFinite(instante.getTime()), 'Data e hora de emissão inválidas: informe o instante com fuso horário.');
@@ -129,7 +131,8 @@ function gerarDps(s) {
   const documento = digitos(t.documento);
   const identificacaoTomador = tag(documento.length === 14 ? 'CNPJ' : 'CPF',documento) +
     (String(t.inscricao_municipal ?? '').trim() ? tag('IM',String(t.inscricao_municipal).trim()) : '');
-  const endereco = `<end><endNac>${tag('cMun',digitos(t.municipio))}${tag('CEP',digitos(t.cep))}</endNac>${tag('xLgr',t.logradouro.trim())}${tag('nro',t.numero.trim())}${t.complemento ? tag('xCpl',t.complemento.trim()) : ''}${tag('xBairro',t.bairro.trim())}</end>`;
+  const complementoTomador = String(t.complemento ?? '').trim();
+  const endereco = `<end><endNac>${tag('cMun',digitos(t.municipio))}${tag('CEP',digitos(t.cep))}</endNac>${tag('xLgr',t.logradouro)}${tag('nro',t.numero)}${complementoTomador ? tag('xCpl',complementoTomador) : ''}${tag('xBairro',t.bairro)}</end>`;
   const regTrib = `<regTrib>${tag('opSimpNac',p.opcao_simples)}${p.opcao_simples === '3' ? tag('regApTribSN',p.regime_apuracao) : ''}${tag('regEspTrib',p.regime_especial)}</regTrib>`;
   const integracaoMunicipal = String(p.codigo_integracao_municipal ?? '').trim();
   const municipal = codigoMunicipal(p.codigo_municipal);
