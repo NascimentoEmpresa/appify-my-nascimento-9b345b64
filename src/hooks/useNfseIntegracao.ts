@@ -11,6 +11,11 @@ export interface ParametrosNfse {
   regime_especial: string;
   regime_apuracao: string;
   local_prestacao: string;
+  // SIS-2026-0941: item da LC 116 escolhido no painel (preenche os códigos
+  // pela Parametrização Fiscal) e se a autorização atualiza o cadastro do
+  // contrato. O worker ignora os dois; só o gatilho do banco lê o segundo.
+  item_lc116?: string;
+  atualizar_cadastro_contrato?: boolean;
   codigo_tributacao: string;
   codigo_municipal: string;
   codigo_integracao_municipal?: string;

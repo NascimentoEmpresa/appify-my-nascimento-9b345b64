@@ -449,6 +449,8 @@ const financeiroModule: ModuleDef = {
         { label: "Controle de Notas", to: "/app/financeiro/emissao-nf", icon: FileText },
         { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
         { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
+        // SIS-2026-0941: códigos fiscais por item de serviço e tomador por contrato
+        { label: "Parametrização Fiscal (NFS-e)", to: "/app/financeiro/emissao-nf/parametrizacao-fiscal", icon: Settings },
         { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
         // SIS-2026-0658: Sistema × Excel antigo, só leitura
         { label: "Conciliação da Origem (Serviços)", to: "/app/financeiro/relatorio-servicos/conciliacao-origem", icon: GitMerge },
