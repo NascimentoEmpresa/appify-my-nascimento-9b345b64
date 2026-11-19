@@ -830,7 +830,7 @@ CREATE POLICY cetica_ciclo_select ON public."COMITE_ETICA_PARECER_CICLO" FOR SEL
 DROP POLICY IF EXISTS cetica_medida_select ON public."COMITE_ETICA_MEDIDA";
 CREATE POLICY cetica_medida_select ON public."COMITE_ETICA_MEDIDA" FOR SELECT TO authenticated
   USING (public.canal_denuncia_documento_pode_ler(denuncia_id)
-         OR (status = 'aprovada' AND medida <> 'nenhuma' AND public.cetica_juridico_ve()));
+         OR (status = 'aprovada' AND medida <> 'nenhuma' AND (SELECT public.cetica_juridico_ve())));
 
 -- Item do supervisor: o próprio supervisor (do contrato), o Jurídico e quem
 -- enxerga o caso. Não tem conteúdo da denúncia — é a única tabela deste
@@ -838,14 +838,14 @@ CREATE POLICY cetica_medida_select ON public."COMITE_ETICA_MEDIDA" FOR SELECT TO
 DROP POLICY IF EXISTS cetica_sup_select ON public."COMITE_ETICA_MEDIDA_SUPERVISOR";
 CREATE POLICY cetica_sup_select ON public."COMITE_ETICA_MEDIDA_SUPERVISOR" FOR SELECT TO authenticated
   USING (public.cetica_sou_supervisor(contrato_id, supervisor_user_id)
-         OR public.cetica_juridico_ve()
+         OR (SELECT public.cetica_juridico_ve())
          OR public.canal_denuncia_documento_pode_ler(denuncia_id));
 
 -- Trilha: quem enxerga o caso; o Jurídico, a das medidas que recebeu.
 DROP POLICY IF EXISTS cetica_evento_select ON public."COMITE_ETICA_MEDIDA_EVENTO";
 CREATE POLICY cetica_evento_select ON public."COMITE_ETICA_MEDIDA_EVENTO" FOR SELECT TO authenticated
   USING (public.canal_denuncia_documento_pode_ler(denuncia_id)
-         OR (medida_id IS NOT NULL AND public.cetica_juridico_ve()
+         OR (medida_id IS NOT NULL AND (SELECT public.cetica_juridico_ve())
              AND EXISTS (SELECT 1 FROM public."COMITE_ETICA_MEDIDA" md
                           WHERE md.id = medida_id AND md.status = 'aprovada' AND md.medida <> 'nenhuma')));
 
@@ -856,13 +856,14 @@ CREATE POLICY cetica_evento_select ON public."COMITE_ETICA_MEDIDA_EVENTO" FOR SE
 DROP POLICY IF EXISTS adv_select ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
 CREATE POLICY adv_select ON public."SISTEMA_SOLICITACOES_ADVERTENCIA" FOR SELECT TO authenticated
 USING (
+  -- (SELECT ...) no que não depende da linha: avaliado uma vez (Guardião M1).
   CASE WHEN canal_denuncia_id IS NULL THEN
-    public.has_screen_access(auth.uid(), 'advertencias', 'visualizar'::app_acao)
-    OR solicitante_email = auth.email()
+    (SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'visualizar'::app_acao))
+    OR solicitante_email = (SELECT auth.email())
     OR public.eh_analista_advertencia(contrato_id)
   ELSE
-    public.cetica_juridico_ve()
-    OR solicitante_email = auth.email()
+    (SELECT public.cetica_juridico_ve())
+    OR solicitante_email = (SELECT auth.email())
     OR public.canal_denuncia_documento_pode_ler(canal_denuncia_id)
   END
 );
@@ -872,29 +873,29 @@ DROP POLICY IF EXISTS adv_insert ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
 CREATE POLICY adv_insert ON public."SISTEMA_SOLICITACOES_ADVERTENCIA" FOR INSERT TO authenticated
 WITH CHECK (
   canal_denuncia_id IS NULL
-  AND (solicitante_email = auth.email()
-       OR public.has_screen_access(auth.uid(), 'advertencias', 'incluir'::app_acao))
+  AND (solicitante_email = (SELECT auth.email())
+       OR (SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'incluir'::app_acao)))
 );
 
 DROP POLICY IF EXISTS adv_update ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
 CREATE POLICY adv_update ON public."SISTEMA_SOLICITACOES_ADVERTENCIA" FOR UPDATE TO authenticated
 USING (
   canal_denuncia_id IS NULL
-  AND (public.has_screen_access(auth.uid(), 'advertencias', 'alterar'::app_acao)
-       OR public.has_screen_access(auth.uid(), 'advertencias', 'aprovar'::app_acao)
+  AND ((SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'alterar'::app_acao))
+       OR (SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'aprovar'::app_acao))
        OR public.eh_analista_advertencia(contrato_id))
 )
 WITH CHECK (
   canal_denuncia_id IS NULL
-  AND (public.has_screen_access(auth.uid(), 'advertencias', 'alterar'::app_acao)
-       OR public.has_screen_access(auth.uid(), 'advertencias', 'aprovar'::app_acao)
+  AND ((SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'alterar'::app_acao))
+       OR (SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'aprovar'::app_acao))
        OR public.eh_analista_advertencia(contrato_id))
 );
 
 DROP POLICY IF EXISTS adv_delete ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
 CREATE POLICY adv_delete ON public."SISTEMA_SOLICITACOES_ADVERTENCIA" FOR DELETE TO authenticated
 USING (canal_denuncia_id IS NULL
-       AND public.has_screen_access(auth.uid(), 'advertencias', 'excluir'::app_acao));
+       AND (SELECT public.has_screen_access((SELECT auth.uid()), 'advertencias', 'excluir'::app_acao)));
 
 -- A presidente já decidiu: "já existe solicitação em aberto" não a trava, e
 -- o sino de "nova advertência para aprovar" não toca (o aviso é o daqui).
