@@ -93,6 +93,10 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   const contrato = item.rel_contrato_nome ?? null;
   const ok = <T,>({ data, error }: { data: T; error: { message: string } | null }) => { if (error) throw new Error(error.message); return data; };
 
+  // Visualizar TVs (20/11/2026, mig 20261120200000): o mesmo despacho que a
+  // TV recebe (tv_relatorio_item_dados), pela liberação da playlist.
+  if (item.via_visualizar) return ok(await rpc("tv_visualizar_relatorio", { p_item: item.id })) as DadosRelTv;
+
   if (ehPainelGerencial(item.relatorio)) {
     return { tipo: "gerencial", contrato: null, ...(ok(await rpc("tvg_painel", { p_painel: item.relatorio })) as PainelGerencial) };
   }

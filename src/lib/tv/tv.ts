@@ -27,6 +27,12 @@ export interface ItemTv {
   // Só na PRÉVIA da gestão (Sistemas › TV's): contrato do relatório, o nome
   // dele para o cabeçalho e o arquivo local ainda não enviado (blob:).
   rel_contrato?: string | null; rel_contrato_nome?: string | null; url_previa?: string | null;
+  /**
+   * Visualizar TVs (mig 20261120200000): o relatório vem pelo item gravado
+   * (tv_visualizar_relatorio), com a liberação da playlist — não pelas
+   * *_previa, que cobram a gestão das TVs ou a tela de origem.
+   */
+  via_visualizar?: boolean;
 }
 
 // ---- Relatórios na TV (mig 20261007000014) ----------------------------------
