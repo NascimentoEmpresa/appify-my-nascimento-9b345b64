@@ -83,6 +83,10 @@ export function useItensParaClassificar() {
               "malote_cartao_fatura(competencia, cartao_id, malote_cartao_credito(nome_cartao))",
           )
           .eq("status", "confirmado")
+          // Item excluído (lixeira do Fluxo) não é da fatura: sem este filtro a lista de competências e o Classificar
+          // somavam o item da lixeira e não batiam com o Fluxo (BB HAGG 09/2026: R$ 71.207,02 × R$ 69.997,02, 19/11/2026 —
+          // a parcela 4/10 da AZUL SEGUROS estava excluída). A view v_cartao_fatura_fluxo_caixa já filtra deleted_at.
+          .is("deleted_at", null)
           // SIS-2026-0751: valor <= 0 (pagamento da fatura anterior, estorno) não entra na fatura do Fluxo
           // nem tem o que ratear (o rateio exige valor >= 0) — fora da lista de classificação.
           .gt("valor", 0)
