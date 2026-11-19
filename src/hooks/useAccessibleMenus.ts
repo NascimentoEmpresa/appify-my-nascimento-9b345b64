@@ -166,9 +166,17 @@ export function rotaVisivelNoMenu(
   }
   // Favoritos e entradas salvas com o endereço antigo seguem a mesma
   // resolução do RouteGuard, mantendo a permissão do destino.
-  const code = matchMenuCode(rotaMovida(to) ?? to, access.routes);
-  if (!code || access.inactiveCodes.has(code)) return false;
-  return access.codes.has(code);
+  const destino = rotaMovida(to) ?? to;
+  const code = matchMenuCode(destino, access.routes);
+  if (code && !access.inactiveCodes.has(code) && access.codes.has(code)) return true;
+  // Outro menu ORIGINAL, ativo e já liberado da mesma rota também é porta
+  // (SIS-2026-0957): o supervisor entra em /app/juridico/advertencias pelo
+  // `advertencias_recebido_juridico`, sem o `advertencias` — o RouteGuard já
+  // deixa; sem isto, a tela abria pelo link do sino mas sumia da sidebar.
+  // Cópia não conta (governa só a posição dela) nem menu desativado.
+  return matchingMenuRoutes(destino, access.routes).some((r) =>
+    r.ativo && !r.pendente && !ehMenuDeCopia(r.codigo)
+    && !access.inactiveCodes.has(r.codigo) && access.codes.has(r.codigo));
 }
 
 export function matchMenuCode(pathname: string, routes: MenuRoute[]): string | null {
