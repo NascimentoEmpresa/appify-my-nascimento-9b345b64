@@ -19,6 +19,7 @@ import {
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
   ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel, derivarStatusVisiveis, type SituacaoPedido,
   type StatusComprovacao, type StatusVisivel,
+  useDecidirCancelamentoPedido,
   useRomaneios, useRemoverDoRomaneio, useCancelarRomaneio, useDespacharRomaneio,
   type RomaneioRetirada,
 } from "@/hooks/useSupPedidos";
@@ -51,6 +52,10 @@ import { calcularEnvioItens, despachadoSemRegistroDeSaida } from "@/lib/suprimen
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
 import { pedidoElegivelParaRomaneio, pedidoEmRomaneioAberto, validarSelecaoRomaneio } from "@/lib/suprimentos/romaneio";
 import { imprimirRomaneio } from "@/lib/suprimentos/romaneioImpressao";
+import {
+  rotuloCategoriaCancelamento,
+  type DadosCancelamentoPedido,
+} from "@/lib/suprimentos/cancelamentoPedido";
 
 /**
  * Pedidos de Materiais — fila operacional do Supply.
@@ -71,7 +76,7 @@ import { imprimirRomaneio } from "@/lib/suprimentos/romaneioImpressao";
 
 const sb = supabase as any;
 
-interface Pedido {
+interface Pedido extends DadosCancelamentoPedido {
   id: string; pedido_id: string; status: string; data_solicitacao: string;
   contrato_nome: string; posto_nome: string; funcao_nome: string;
   // Os ids da cascata não aparecem no card, mas a edição precisa deles: a
@@ -266,6 +271,7 @@ export default function PedidosMateriais() {
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
   const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
   const [fichaDe, setFichaDe] = useState<Pedido | null>(null);
+  const [decidindoCancelamento, setDecidindoCancelamento] = useState<Pedido | null>(null);
   const [selecionadosRomaneio, setSelecionadosRomaneio] = useState<Set<string>>(new Set());
   const [modalRomaneioAberto, setModalRomaneioAberto] = useState(false);
 
@@ -370,7 +376,10 @@ export default function PedidosMateriais() {
   // Contagens sobre TUDO que veio, não sobre a página filtrada — os cards
   // precisam refletir a fila inteira.
   const contagens = useMemo(() => {
-    const base: Record<string, number> = { TOTAL: pedidos.length };
+    const base: Record<string, number> = {
+      TOTAL: pedidos.length,
+      CANCELAMENTO_SOLICITADO: pedidos.filter((p) => p.cancelamento_estado === "SOLICITADO").length,
+    };
     for (const s of STATUS_VISIVEL) base[s] = 0;
     for (const p of pedidos) {
       for (const status of statusVisiveisPedido(p, situacoes?.get(p.id) ?? null)) {
@@ -404,6 +413,8 @@ export default function PedidosMateriais() {
           p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
           p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
           p.retirado_por_nome,
+          p.cancelamento_categoria, p.cancelamento_detalhe, p.cancelamento_solicitado_por_nome,
+          p.cancelamento_decisao_observacao,
           fmtDataBR(p.data_solicitacao), fmtDataBR(p.data_despachado),
           p.admissao ? "admissao admissão" : "",
           ...(p.sup_pedido_item ?? []).flatMap((i) => [i.nome_item, i.tamanho ?? ""]),
@@ -417,7 +428,9 @@ export default function PedidosMateriais() {
     const t = buscaAtrasada.trim().toLowerCase();
     return pedidos.filter((p) => {
       const statusVisiveis = statusVisiveisPedido(p, situacoes?.get(p.id) ?? null);
-      if (filtroStatus !== "TODOS" && !statusVisiveis.includes(filtroStatus as StatusVisivel)) return false;
+      if (filtroStatus === "CANCELAMENTO_SOLICITADO" && p.cancelamento_estado !== "SOLICITADO") return false;
+      if (filtroStatus !== "TODOS" && filtroStatus !== "CANCELAMENTO_SOLICITADO"
+        && !statusVisiveis.includes(filtroStatus as StatusVisivel)) return false;
       if (!t) return true;
       return (textoBusca.get(p.id) ?? "").includes(t);
     });
@@ -607,6 +620,13 @@ export default function PedidosMateriais() {
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <CardKpi rotulo="Total" valor={contagens.TOTAL} icone={Package} ativo={filtroStatus === "TODOS"} onClick={() => setFiltroStatus("TODOS")} />
+        <CardKpi
+          rotulo="Cancelamento solicitado"
+          valor={contagens.CANCELAMENTO_SOLICITADO}
+          icone={Ban}
+          ativo={filtroStatus === "CANCELAMENTO_SOLICITADO"}
+          onClick={() => setFiltroStatus(filtroStatus === "CANCELAMENTO_SOLICITADO" ? "TODOS" : "CANCELAMENTO_SOLICITADO")}
+        />
         {STATUS_VISIVEL.filter((s) => s !== "CANCELADO").map((s) => (
           <CardKpi
             key={s}
@@ -633,6 +653,7 @@ export default function PedidosMateriais() {
           <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="TODOS">Todos os status</SelectItem>
+            <SelectItem value="CANCELAMENTO_SOLICITADO">Cancelamento solicitado</SelectItem>
             {STATUS_VISIVEL.map((s) => (
               <SelectItem key={s} value={s}>{ESTILO_STATUS_VISIVEL[s].rotulo}</SelectItem>
             ))}
@@ -718,6 +739,7 @@ export default function PedidosMateriais() {
               onEtiqueta={() => setEtiquetaDe(p)}
               onFichaEpi={() => setFichaDe(p)}
               calcados={calcadosPorPedido.get(p.id)}
+              onDecidirCancelamento={() => setDecidindoCancelamento(p)}
               selecionadoRomaneio={selecionadosRomaneio.has(p.id)}
               onSelecionarRomaneio={() => alternarPedidoRomaneio(p.id)}
               rastreio={p.envio_rastreio ? situacoesCorreio[p.envio_rastreio.trim().toUpperCase()] : undefined}
@@ -762,6 +784,11 @@ export default function PedidosMateriais() {
       <ModalEditarPedido pedido={editandoDe} onFechar={() => setEditandoDe(null)} />
 
       <ModalHistorico pedido={historicoDe} onFechar={() => setHistoricoDe(null)} />
+
+      <ModalDecidirCancelamento
+        pedido={decidindoCancelamento}
+        onFechar={() => setDecidindoCancelamento(null)}
+      />
 
       <ModalFotosComprovacao pedidoId={fotosDe} onFechar={fecharFotos} />
 
@@ -1074,14 +1101,81 @@ function SeloCalcado({ calcado }: { calcado: CalcadoDoPedido }) {
   );
 }
 
+function ModalDecidirCancelamento({ pedido, onFechar }: { pedido: Pedido | null; onFechar: () => void }) {
+  const [observacao, setObservacao] = useState("");
+  const decidir = useDecidirCancelamentoPedido();
+
+  useEffect(() => { setObservacao(""); }, [pedido?.id]);
+
+  const enviar = async (aprovar: boolean) => {
+    if (!pedido) return;
+    if (!aprovar && observacao.trim().length < 5) {
+      toast.error("Informe o motivo da recusa com pelo menos 5 caracteres.");
+      return;
+    }
+    try {
+      await decidir.mutateAsync({
+        pedidoId: pedido.id,
+        aprovar,
+        observacao: observacao.trim() || null,
+      });
+      toast.success(aprovar ? "Cancelamento aprovado; reservas liberadas." : "Solicitação de cancelamento recusada.");
+      onFechar();
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível decidir o cancelamento.");
+    }
+  };
+
+  return (
+    <Dialog open={!!pedido} onOpenChange={(aberto) => { if (!aberto && !decidir.isPending) onFechar(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Analisar cancelamento de {pedido?.pedido_id}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2 text-sm">
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950">
+            <p><strong>Solicitado por:</strong> {pedido?.cancelamento_solicitado_por_nome ?? "—"}</p>
+            <p><strong>Origem:</strong> {pedido?.cancelamento_origem === "RECRUTAMENTO" ? "Recrutamento" : "Encarregado"}</p>
+            <p><strong>Motivo:</strong> {rotuloCategoriaCancelamento(pedido?.cancelamento_categoria)}</p>
+            <p className="mt-1 whitespace-pre-wrap">{pedido?.cancelamento_detalhe}</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="decisao-cancelamento">Observação da decisão</Label>
+            <Textarea
+              id="decisao-cancelamento"
+              value={observacao}
+              onChange={(evento) => setObservacao(evento.target.value)}
+              rows={3}
+              maxLength={1000}
+              placeholder="Obrigatória para recusar; opcional ao aprovar."
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Aprovar cancela o pedido e libera automaticamente qualquer reserva ativa. Pedidos já retirados ou despachados são recusados pelo banco.
+          </p>
+        </div>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button variant="outline" onClick={onFechar} disabled={decidir.isPending}>Voltar</Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => void enviar(false)} disabled={decidir.isPending}>Recusar</Button>
+            <Button variant="destructive" onClick={() => void enviar(true)} disabled={decidir.isPending}>
+              {decidir.isPending ? "Salvando…" : "Aprovar cancelamento"}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CardPedido({
   pedido: p, situacao, onStatus, onPrePedido, onLiberar, onEditar, onHistorico, onExcluir, onEtiqueta, onFichaEpi,
+  onDecidirCancelamento,
   rastreio, rastreioCarregando, selecionadoRomaneio, onSelecionarRomaneio, calcados,
 }: {
   pedido: Pedido;
   situacao: SituacaoPedido | null;
   onStatus: () => void; onPrePedido: () => void; onLiberar: () => void; onEditar: () => void;
   onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void; onFichaEpi: () => void;
+  onDecidirCancelamento: () => void;
   rastreio: SituacaoObjeto | undefined;
   rastreioCarregando: boolean;
   selecionadoRomaneio: boolean;
@@ -1367,6 +1461,19 @@ function CardPedido({
             <strong>Obs. de Compras:</strong> {p.observacao}
           </p>
         )}
+        {p.cancelamento_estado === "SOLICITADO" && (
+          <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+            <p className="font-semibold">Cancelamento solicitado por {p.cancelamento_solicitado_por_nome ?? "solicitante"}</p>
+            <p><strong>Origem:</strong> {p.cancelamento_origem === "RECRUTAMENTO" ? "Recrutamento" : "Encarregado"}</p>
+            <p><strong>Motivo:</strong> {rotuloCategoriaCancelamento(p.cancelamento_categoria)} · {p.cancelamento_detalhe}</p>
+          </div>
+        )}
+        {p.cancelamento_estado === "RECUSADO" && (
+          <div className="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-900">
+            <p className="font-semibold">Solicitação de cancelamento recusada</p>
+            {p.cancelamento_decisao_observacao && <p>{p.cancelamento_decisao_observacao}</p>}
+          </div>
+        )}
       </CardContent>
 
       {/* As ações não cabem numa linha só num card de duas/três colunas:
@@ -1374,6 +1481,13 @@ function CardPedido({
           ficha de EPI, etiqueta e exclusão embaixo. Grade de 6 para a linha
           de baixo caber 2 botões com texto + 2 só com ícone. */}
       <div className="grid grid-cols-6 gap-2 border-t p-3">
+        {p.cancelamento_estado === "SOLICITADO" && (
+          <AcessoGate menu="sup_pedidos_materiais" acao="alterar">
+            <Button size="sm" variant="destructive" className="col-span-6" onClick={onDecidirCancelamento}>
+              <Ban className="mr-1.5 h-3.5 w-3.5" /> Analisar cancelamento
+            </Button>
+          </AcessoGate>
+        )}
         {/*
           Em EM PREPARACAO a ação principal deixa de ser "mudar status na mão"
           e passa a ser conferir o estoque e montar o pré-pedido — é o passo
@@ -1669,6 +1783,9 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
                     : e.acao === "DECLARACAO" ? `Declaração ${e.observacao ?? ""} gerada`
                     : e.acao === "COMPROVACAO" ? "Comprovação de entrega recebida"
                     : e.acao === "RETIRADA" ? "Retirado para entrega (QR code)"
+                    : e.acao === "CANCELAMENTO_SOLICITADO" ? "Cancelamento solicitado"
+                    : e.acao === "CANCELAMENTO_APROVADO" ? "Cancelamento aprovado"
+                    : e.acao === "CANCELAMENTO_RECUSADO" ? "Cancelamento recusado"
                     : e.campo
                       ? (ROTULO_CAMPO[e.campo] ?? e.campo)
                       : e.status_anterior

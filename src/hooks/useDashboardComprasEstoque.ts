@@ -4,7 +4,10 @@ import type {
   DashboardComprasEstoqueDados,
   FiltroDashboardCompras,
 } from "@/lib/suprimentos/dashboardComprasEstoque";
-import { consolidarDashboardsCompras } from "@/lib/suprimentos/dashboardComprasEstoque";
+import {
+  anexarCancelamentosDashboard,
+  consolidarDashboardsCompras,
+} from "@/lib/suprimentos/dashboardComprasEstoque";
 
 export function useDashboardComprasEstoque(
   empresaIdOuIds: string | string[] | null | undefined,
@@ -34,7 +37,18 @@ export function useDashboardComprasEstoque(
           p_comprador: filtros.comprador,
         });
         if (error) throw error;
-        return data as DashboardComprasEstoqueDados;
+        const { data: cancelamentos, error: erroCancelamentos } = await cliente.rpc("sup_dashboard_cancelamentos", {
+          p_empresa_id: empresaId,
+          p_inicio: filtros.inicio,
+          p_fim: filtros.fim,
+          p_contrato_id: filtros.contratoId,
+          p_categoria: filtros.categoria,
+        });
+        if (erroCancelamentos) throw erroCancelamentos;
+        return anexarCancelamentosDashboard(
+          data as DashboardComprasEstoqueDados,
+          cancelamentos as Parameters<typeof anexarCancelamentosDashboard>[1],
+        );
       }));
       return consolidarDashboardsCompras(paineis);
     },

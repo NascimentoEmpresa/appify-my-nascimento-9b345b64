@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import type {
+  CategoriaCancelamentoPedido,
+  DadosCancelamentoPedido,
+} from "@/lib/suprimentos/cancelamentoPedido";
 
 /**
  * Pedidos de materiais — cascata do encarregado e fila operacional do Supply.
@@ -269,7 +273,7 @@ export interface SessaoExterna {
 export interface PedidoItem {
   nome: string; tipo: string; tamanho: string | null; quantidade: number; litros: string | null;
 }
-export interface MeuPedido {
+export interface MeuPedido extends DadosCancelamentoPedido {
   id: string; pedido_id: string; status: string; data_solicitacao: string;
   contrato_nome: string; posto_nome: string; funcao_nome: string;
   nome_colaborador: string; matricula_colaborador: string | null;
@@ -492,6 +496,90 @@ export function useMeusPedidos() {
       const { data, error } = await sb.rpc("sup_ext_meus_pedidos");
       if (error) throw error;
       return data ?? [];
+    },
+  });
+}
+
+export function useSolicitarCancelamentoEncarregado() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      pedidoId,
+      categoria,
+      detalhe,
+    }: {
+      pedidoId: string;
+      categoria: CategoriaCancelamentoPedido;
+      detalhe: string;
+    }) => {
+      const { data, error } = await sb.rpc("sup_ext_solicitar_cancelamento", {
+        p_pedido_id: pedidoId,
+        p_categoria: categoria,
+        p_detalhe: detalhe,
+      });
+      if (error) throw error;
+      return data as { pedido_id: string; estado: "SOLICITADO" };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sup_ext_meus_pedidos"] });
+      qc.invalidateQueries({ queryKey: ["sup_pedido"] });
+      qc.invalidateQueries({ queryKey: ["sup_pedido_historico"] });
+    },
+  });
+}
+
+export function useSolicitarCancelamentoRecrutamento() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      candidatoId,
+      categoria,
+      detalhe,
+    }: {
+      candidatoId: number;
+      categoria: CategoriaCancelamentoPedido;
+      detalhe: string;
+    }) => {
+      const { data, error } = await sb.rpc("rec_solicitar_cancelamento_pedido", {
+        p_candidato_id: candidatoId,
+        p_categoria: categoria,
+        p_detalhe: detalhe,
+      });
+      if (error) throw error;
+      return data as { pedido_id: string; estado: "SOLICITADO" };
+    },
+    onSuccess: (_data, variaveis) => {
+      qc.invalidateQueries({ queryKey: ["rec-pedido-candidato", variaveis.candidatoId] });
+      qc.invalidateQueries({ queryKey: ["rec-pedidos-vaga"] });
+      qc.invalidateQueries({ queryKey: ["sup_pedido"] });
+      qc.invalidateQueries({ queryKey: ["sup_pedido_historico"] });
+    },
+  });
+}
+
+export function useDecidirCancelamentoPedido() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      pedidoId,
+      aprovar,
+      observacao,
+    }: {
+      pedidoId: string;
+      aprovar: boolean;
+      observacao: string | null;
+    }) => {
+      const { data, error } = await sb.rpc("sup_decidir_cancelamento_pedido", {
+        p_pedido_id: pedidoId,
+        p_aprovar: aprovar,
+        p_observacao: observacao,
+      });
+      if (error) throw error;
+      return data as { pedido_id: string; estado: "APROVADO" | "RECUSADO"; status: string };
+    },
+    onSuccess: () => {
+      ["sup_pedido", "sup_pedido_historico", "sup_ext_meus_pedidos", "rec-pedido-candidato"]
+        .forEach((chave) => qc.invalidateQueries({ queryKey: [chave] }));
     },
   });
 }

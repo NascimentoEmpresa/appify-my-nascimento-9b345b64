@@ -7,12 +7,20 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
-  useMeusPedidos, apresentarStatusVisivel, fmtDataBR, type MeuPedido,
+  useMeusPedidos, useSolicitarCancelamentoEncarregado,
+  apresentarStatusVisivel, fmtDataBR, type MeuPedido,
 } from "@/hooks/useSupPedidos";
 import { ModalComprovacaoEntrega } from "@/components/suprimentos/ModalComprovacaoEntrega";
 import { PARAM_COMPROVAR, situacaoComprovacaoQr, type SituacaoComprovacaoQr } from "@/lib/suprimentos/comprovacaoQr";
-import { Search, Package, Plus, MessageSquare, Inbox, AlertTriangle, Camera, QrCode } from "lucide-react";
+import { Search, Package, Plus, MessageSquare, Inbox, AlertTriangle, Camera, QrCode, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { SolicitarCancelamentoPedido } from "@/components/suprimentos/SolicitarCancelamentoPedido";
+import {
+  pedidoAceitaSolicitacaoCancelamento,
+  rotuloCategoriaCancelamento,
+  type CategoriaCancelamentoPedido,
+} from "@/lib/suprimentos/cancelamentoPedido";
 
 /** Texto do aviso quando o pedido lido no QR não pode ser comprovado agora. */
 function textoAvisoQr(situacao: Exclude<SituacaoComprovacaoQr, "PREENCHER">, pedido: MeuPedido | undefined) {
@@ -56,7 +64,9 @@ export default function MeusPedidos() {
   const pedidoQr = searchParams.get(PARAM_COMPROVAR);
   const [avisoAberto, setAvisoAberto] = useState(!pedidoQr);
   const [comprovando, setComprovando] = useState<MeuPedido | null>(null);
+  const [cancelando, setCancelando] = useState<MeuPedido | null>(null);
   const [avisoQr, setAvisoQr] = useState<{ situacao: Exclude<SituacaoComprovacaoQr, "PREENCHER">; pedido?: MeuPedido } | null>(null);
+  const solicitarCancelamento = useSolicitarCancelamentoEncarregado();
 
   // Só decide com a lista carregada de verdade: com a consulta falhando,
   // "não encontrado" seria mentira. O parâmetro sai da URL depois de lido,
@@ -136,7 +146,14 @@ export default function MeusPedidos() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {filtrados.map((p) => <CardPedido key={p.id} pedido={p} onComprovar={() => setComprovando(p)} />)}
+          {filtrados.map((p) => (
+            <CardPedido
+              key={p.id}
+              pedido={p}
+              onComprovar={() => setComprovando(p)}
+              onSolicitarCancelamento={() => setCancelando(p)}
+            />
+          ))}
         </div>
       )}
 
@@ -179,11 +196,36 @@ export default function MeusPedidos() {
       </Dialog>
 
       <ModalComprovacaoEntrega pedido={comprovando} onFechar={() => setComprovando(null)} />
+
+      <SolicitarCancelamentoPedido
+        aberto={!!cancelando}
+        protocolo={cancelando?.pedido_id ?? null}
+        enviando={solicitarCancelamento.isPending}
+        onFechar={() => setCancelando(null)}
+        onConfirmar={async (categoria: CategoriaCancelamentoPedido, detalhe: string) => {
+          if (!cancelando) return;
+          try {
+            await solicitarCancelamento.mutateAsync({ pedidoId: cancelando.id, categoria, detalhe });
+            toast.success("Solicitação enviada ao Suprimentos.");
+            setCancelando(null);
+          } catch (erro: unknown) {
+            toast.error(erro instanceof Error ? erro.message : "Não foi possível solicitar o cancelamento.");
+          }
+        }}
+      />
     </div>
   );
 }
 
-function CardPedido({ pedido: p, onComprovar }: { pedido: MeuPedido; onComprovar: () => void }) {
+function CardPedido({
+  pedido: p,
+  onComprovar,
+  onSolicitarCancelamento,
+}: {
+  pedido: MeuPedido;
+  onComprovar: () => void;
+  onSolicitarCancelamento: () => void;
+}) {
   const pendente = p.status === "DESPACHADO" && p.comprovacao_status === "PENDENTE";
   const apresentacaoStatus = apresentarStatusVisivel(p.status, p.comprovacao_status);
   // O cabeçalho da lista fala a língua do pedido — pequeno toque do legado.
@@ -246,9 +288,35 @@ function CardPedido({ pedido: p, onComprovar }: { pedido: MeuPedido; onComprovar
           </div>
         )}
 
+        {p.cancelamento_estado !== "NENHUM" && (
+          <div className={cn(
+            "rounded-md border p-2 text-xs",
+            p.cancelamento_estado === "SOLICITADO" && "border-amber-300 bg-amber-50 text-amber-900",
+            p.cancelamento_estado === "RECUSADO" && "border-rose-300 bg-rose-50 text-rose-900",
+            p.cancelamento_estado === "APROVADO" && "border-slate-300 bg-slate-50 text-slate-700",
+          )}>
+            <p className="font-semibold">
+              {p.cancelamento_estado === "SOLICITADO" ? "Cancelamento aguardando o Suprimentos"
+                : p.cancelamento_estado === "RECUSADO" ? "Cancelamento recusado"
+                  : "Cancelamento aprovado"}
+            </p>
+            {p.cancelamento_categoria && (
+              <p>{rotuloCategoriaCancelamento(p.cancelamento_categoria)} · {p.cancelamento_detalhe}</p>
+            )}
+            {p.cancelamento_decisao_observacao && (
+              <p className="mt-1"><strong>Retorno:</strong> {p.cancelamento_decisao_observacao}</p>
+            )}
+          </div>
+        )}
+
         {pendente && (
           <Button className="w-full" onClick={onComprovar}>
             <Camera className="mr-2 h-4 w-4" /> Preencher comprovação de entrega
+          </Button>
+        )}
+        {pedidoAceitaSolicitacaoCancelamento(p.status, p.cancelamento_estado) && (
+          <Button variant="outline" className="w-full text-destructive" onClick={onSolicitarCancelamento}>
+            <Ban className="mr-2 h-4 w-4" /> Solicitar cancelamento
           </Button>
         )}
       </CardContent>
