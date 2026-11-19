@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SelectComBusca } from "@/components/ui/SelectComBusca";
+import { opcoesDeCargo, valorCargoSelecionado } from "@/lib/recrutamento/cargosDoContrato";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
@@ -621,7 +622,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [cargosDoQuadro, setCargosDoQuadro] = useState<string[]>([]);
   const contratoEscolhido = contratosFull.find(c => rotuloContrato(c) === vaga.contrato) ?? null;
   const filialDoContrato = String(contratoEscolhido?.Filial ?? "").trim();
-  const usarCargosDoQuadro = admissao && !!vaga.contrato && !buscandoFuncoes && funcoesDoContrato.length === 0;
+    // Cargo = funções do contrato + posto da planilha SEM função (19/11/2026,
+  // UFFS REALEZA: "LAV. DE ROUPAS A MÁQUINA - REALEZA" sumia). Regra em
+  // src/lib/recrutamento/cargosDoContrato.ts.
+  const opcoesCargo = opcoesDeCargo(funcoesDoContrato, catListas.postos, vaga.contrato);
+  const usarCargosDoQuadro = admissao && !!vaga.contrato && !buscandoFuncoes && opcoesCargo.length === 0;
   useEffect(() => {
     if (!usarCargosDoQuadro || !filialDoContrato) { setCargosDoQuadro([]); return; }
     let vivo = true;
@@ -632,7 +637,6 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       });
     return () => { vivo = false; };
   }, [usarCargosDoQuadro, filialDoContrato]);
-  const nomesRepetidos = new Set(funcoesDoContrato.map(x => x.nome).filter((n, i, a) => a.indexOf(n) !== i));
   // Quem é o Gerente de Operações (aviso da Admissão).
   const [gerentesOperacoes, setGerentesOperacoes] = useState<string[]>([]);
   useEffect(() => {
@@ -1578,15 +1582,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 <div className="ini-fg">
                   <label>Cargo <span style={{ color: "#dc2626" }}>*</span></label>
                   <select className="ini-fi" disabled={!vaga.contrato}
-                    value={vaga.funcao_id || (vaga.cargo ? "q:" + vaga.cargo : "")}
+                    value={valorCargoSelecionado(vaga, opcoesCargo)}
                     onChange={e => {
                       const v = e.target.value; setDecisaoQuant("");
                       if (v.startsWith("q:")) { setVaga(x => ({ ...x, cargo: v.slice(2), posto_id: "", funcao_id: "" })); return; }
-                      const fn = funcoesDoContrato.find(x => x.id === v);
-                      setVaga(x => ({ ...x, cargo: fn?.nome ?? "", posto_id: fn?.posto_id ?? "", funcao_id: fn?.id ?? "" }));
+                      const op = opcoesCargo.find(x => x.valor === v);
+                      setVaga(x => ({ ...x, cargo: op?.cargo ?? "", posto_id: op?.posto_id ?? "", funcao_id: op?.funcao_id ?? "" }));
                     }}>
                     <option value="">{!vaga.contrato ? "Selecione o contrato primeiro" : buscandoFuncoes ? "Carregando os cargos do contrato…" : "— Selecione o cargo —"}</option>
-                    {funcoesDoContrato.map(fn => <option key={fn.id} value={fn.id}>{fn.nome}{nomesRepetidos.has(fn.nome) ? ` — ${fn.posto_nome}` : ""}</option>)}
+                    {opcoesCargo.map(op => <option key={op.valor} value={op.valor}>{op.rotulo}</option>)}
                     {usarCargosDoQuadro && cargosDoQuadro.map(c => <option key={c} value={"q:" + c}>{c}</option>)}
                   </select>
                   <div style={{ marginTop: 4, fontSize: 14, color: usarCargosDoQuadro ? "#92400e" : "#64748b" }}>
