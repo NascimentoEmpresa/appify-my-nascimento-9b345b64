@@ -205,7 +205,7 @@ function Linha({ i, hoje, podeAlterar, onAbrir }: { i: ItemPeriodico; hoje: stri
         {fmtData(i.ultimo_aso)}
         {i.ultimo_tipo && (
           <span className={cn("block text-xs", i.ultimo_tipo === "admissao_estimada" ? "font-medium text-amber-700" : "text-muted-foreground")}
-            title={i.ultimo_tipo === "admissao_estimada" ? "Nenhum ASO registrado no ERP: conta da admissão da Senior. Registre o último periódico para corrigir." : undefined}>
+            title={i.ultimo_tipo === "admissao_estimada" ? "Nenhum ASO registrado no ERP: conta da admissão da Senior. Registre o último periódico, ou o ASO em SST › ASOs Realizados (onde também se importa a planilha de exames clínicos), para corrigir." : undefined}>
             {ROTULO_TIPO[i.ultimo_tipo]}
           </span>
         )}

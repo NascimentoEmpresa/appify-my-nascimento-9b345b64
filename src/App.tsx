@@ -326,6 +326,8 @@ import SstAfastamentos from "./pages/sst/Afastamentos";
 import SstControleAfastamentos from "./pages/sst/ControleAfastamentos";
 import SstExamesToxicologicos from "./pages/sst/ExamesToxicologicos";
 import SstAcidentes from "./pages/sst/Acidentes";
+import SstAsosRealizados from "./pages/sst/AsosRealizados";
+import SstTreinamentosNr from "./pages/sst/TreinamentosNr";
 import SstIncidentes from "./pages/sst/Incidentes";
 import SstCalcadosOrtopedicos from "./pages/sst/CalcadosOrtopedicos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
@@ -1235,6 +1237,10 @@ const App = () => (
             {/* SST — Acidentes de Trabalho: registro, CAT e controle (SIS-2026-0889, mig 20261117220000). */}
             <Route path="sst/acidentes" element={<SstAcidentes />} />
             <Route path="sst/incidentes" element={<SstIncidentes />} />
+            {/* SST — o que só existia em planilha (SIS-2026-0816, mig 20261121100000): histórico de
+                ASOs (alimenta o vencimento do ASO Periódico) e a matriz/turmas de treinamentos NR. */}
+            <Route path="sst/asos-realizados" element={<SstAsosRealizados />} />
+            <Route path="sst/treinamentos-nr" element={<SstTreinamentosNr />} />
             {/* SST — Calçados Ortopédicos: laudo e andamento do pedido do encarregado (SIS-2026-0888, mig 20261118200000). */}
             <Route path="sst/calcados-ortopedicos" element={<SstCalcadosOrtopedicos />} />
             {/* BI */}

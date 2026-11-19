@@ -22,6 +22,8 @@ import { TelaSupPainel } from "./relatorio/paginasSupPainel";
 import type { DadosSupPainelTv } from "@/lib/tv/supPainelTv";
 import { TelaRecPainel } from "./relatorio/paginasRecPainel";
 import type { DadosRecPainelTv } from "@/lib/tv/recPainelTv";
+import { TelaSstPainel } from "./relatorio/paginasSstPainel";
+import type { DadosSstPainelTv } from "@/lib/tv/sstPainelTv";
 import { TelaRhSalarios } from "./relatorio/paginasRhSalarios";
 import type { DadosRhSalariosTv } from "@/lib/tv/rhSalariosTv";
 import { TelaCtlPainel, TelaFinPainel, TelaPrePainel } from "./relatorio/paginasGestao";
@@ -133,6 +135,9 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   }
   if (item.relatorio === "rec-painel") {
     return { tipo: "rec-painel", contrato: null, ...(ok(await rpc("tv_recrutamento_previa")) as DadosRecPainelTv) };
+  }
+  if (item.relatorio === "sst-painel") {
+    return { tipo: "sst-painel", contrato: null, ...(ok(await rpc("tv_sst_painel_previa")) as DadosSstPainelTv) };
   }
   if (item.relatorio === "sup-painel") {
     return { tipo: "sup-painel", contrato: null, ...(ok(await rpc("tv_supply_previa")) as DadosSupPainelTv) };
@@ -289,6 +294,13 @@ export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndica
     return (
       <Palco fundo="#f5f3ff">
         <TelaRecPainel d={dados} atualizado={atualizado} />
+      </Palco>
+    );
+  }
+  if (dados?.tipo === "sst-painel") {
+    return (
+      <Palco fundo="#ecfdf5">
+        <TelaSstPainel d={dados} atualizado={atualizado} />
       </Palco>
     );
   }
