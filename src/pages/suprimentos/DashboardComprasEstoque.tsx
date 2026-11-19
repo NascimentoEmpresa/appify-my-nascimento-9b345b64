@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
+  Ban,
   BarChart3,
   Boxes,
   Clock3,
@@ -201,12 +202,14 @@ function TabelaCotacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
 
 function CardsSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const r = dados.resumo;
+  const cancelados = dados.cancelamentos?.total ?? 0;
   return (
     <>
       <CartaoIndicador titulo="Pedidos cadastrados" valor={formatarNumero(r.solicitacoes_total_geral)} icone={<FileText className="h-6 w-6" />} detalhe="total geral — igual a Pedidos de Materiais" />
       <CartaoIndicador titulo="Solicitações realizadas" valor={formatarNumero(r.solicitacoes)} icone={<FileText className="h-6 w-6" />} detalhe="no período selecionado" />
       <CartaoIndicador titulo="Despachadas" valor={formatarNumero(r.despachadas)} icone={<PackageCheck className="h-6 w-6" />} tom="green" detalhe={`${percentual(r.despachadas, r.solicitacoes)}% — entregues ou aguardando confirmação`} />
       <CartaoIndicador titulo="Pendentes" valor={formatarNumero(r.pendentes)} icone={<Clock3 className="h-6 w-6" />} tom="amber" detalhe="pedidos únicos; parcial entra aqui" />
+      <CartaoIndicador titulo="Cancelados" valor={formatarNumero(cancelados)} icone={<Ban className="h-6 w-6" />} tom="red" detalhe="cancelamentos aprovados no período" />
       <CartaoIndicador titulo="Tempo médio de atendimento" valor={`${formatarNumero(r.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} detalhe="da solicitação ao despacho" />
     </>
   );
@@ -385,6 +388,7 @@ function PainelExpedicoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
 function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const cotacoesMalote = dados.cotacoes_malote_por_comprador ?? [];
   const cotacoesLicitacao = dados.cotacoes_licitacao_por_comprador ?? [];
+  const cancelamentos = dados.cancelamentos ?? { total: 0, por_motivo: [], por_origem: [] };
   return (
     <>
       <div className="grid gap-3 xl:grid-cols-2">
@@ -393,6 +397,20 @@ function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }
         </PainelGrafico>
         <PainelGrafico titulo="Motivos das Pendências">
           {dados.motivos_pendencias.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.motivos_pendencias} layout="vertical" margin={{ left: 25, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={115} interval={0} tick={<TickCategoria maximo={24} />} /><Tooltip /><Bar dataKey="quantidade" name="Pendências" fill="#ef8888" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhuma pendência no período." />}
+        </PainelGrafico>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        <PainelGrafico
+          titulo="Cancelamentos por Motivo"
+          subtitulo="Pedidos cujo cancelamento foi aprovado pelo Suprimentos dentro do período selecionado."
+        >
+          {cancelamentos.por_motivo.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={cancelamentos.por_motivo} layout="vertical" margin={{ left: 25, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={160} interval={0} tick={<TickCategoria maximo={28} />} /><Tooltip /><Bar dataKey="quantidade" name="Cancelamentos" fill="#ef4444" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhum pedido cancelado no período." />}
+        </PainelGrafico>
+        <PainelGrafico
+          titulo="Origem das Solicitações de Cancelamento"
+          subtitulo="Quem iniciou o pedido de cancelamento que depois foi aprovado."
+        >
+          {cancelamentos.por_origem.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={cancelamentos.por_origem} dataKey="quantidade" nameKey="nome" innerRadius={58} outerRadius={92} paddingAngle={2}>{cancelamentos.por_origem.map((_, i) => <Cell key={i} fill={["#f97316", "#ef4444"][i % 2]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhuma solicitação aprovada no período." />}
         </PainelGrafico>
       </div>
       <div className="grid gap-3 xl:grid-cols-2">

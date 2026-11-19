@@ -379,7 +379,10 @@ export function ModalBaixaPedido({
                         recusa pelo modal. Aparece só para o pedido que já
                         está nele, senão o Select ficaria sem opção marcada. */}
                     {STATUS_PEDIDO
-                      .filter((s) => s !== "RETIRADO PARA ENTREGA" || pedido?.status === s)
+                      .filter((s) => (
+                        (s !== "RETIRADO PARA ENTREGA" && s !== "CANCELADO")
+                        || pedido?.status === s
+                      ))
                       .map((s) => (
                         <SelectItem key={s} value={s}>{ESTILO_STATUS[s].rotulo}</SelectItem>
                       ))}
