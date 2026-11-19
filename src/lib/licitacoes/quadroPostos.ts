@@ -25,8 +25,9 @@
 // duas contas que podem divergir — e a que a vaga usa na hora de gravar
 // continuaria sendo a de lá, então a daqui só enganaria quem preenche.
 import { avaliarPrazo, dataMinimaVaga, hojeIso, MIN_DIAS_ANTECEDENCIA, fmtBr } from "@/lib/recrutamento/vagaRegras";
-import { beneficiosDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
-import { herancaDaConvencao, percentualTexto, type RespostaReferencia } from "@/lib/licitacoes/convencoes";
+import {
+  herancaDaConvencao, identificacaoCct, montarQuadro, percentualTexto, vigenciaTxt, type RespostaReferencia,
+} from "@/lib/licitacoes/convencoes";
 
 export { dataMinimaVaga, MIN_DIAS_ANTECEDENCIA };
 
@@ -525,15 +526,21 @@ export function conferirQuadroComContrato(
 // postos saem dela (ver herancaDaConvencao em convencoes.ts), por cima do
 // que estiver na linha — inclusive do "Puxar da Planilha". É o que a tela
 // mostra e o que vai para contrato_quadro_salvar (e dali para as vagas).
+//
+// SIS-2026-0958 (19/11/2026): os BENEFÍCIOS saíram daqui. Eles passam a seguir
+// a regra de `beneficiosDaCct` (só com benefício na planilha, sem VT, sempre
+// editáveis) — a convenção do contrato continua sendo a CCT usada, mas pelo
+// preenchimento automático, que não passa por cima do que foi digitado. Os
+// percentuais seguem herdados e só leitura, como antes.
 export function aplicarHerancaNoQuadro(
   linhas: LinhaQuadroForm[],
-  h: { beneficios: string; insalubridade_pct: string; periculosidade_pct: string } | null | undefined,
+  h: { beneficios?: string; insalubridade_pct: string; periculosidade_pct: string } | null | undefined,
 ): LinhaQuadroForm[] {
   if (!h) return linhas;
   return linhas.map(l => (
-    l.beneficios === h.beneficios && l.insalubridade_pct === h.insalubridade_pct && l.periculosidade_pct === h.periculosidade_pct
+    l.insalubridade_pct === h.insalubridade_pct && l.periculosidade_pct === h.periculosidade_pct
       ? l
-      : { ...l, beneficios: h.beneficios, insalubridade_pct: h.insalubridade_pct, periculosidade_pct: h.periculosidade_pct }
+      : { ...l, insalubridade_pct: h.insalubridade_pct, periculosidade_pct: h.periculosidade_pct }
   ));
 }
 
@@ -563,6 +570,7 @@ export function aplicarHerancaNoQuadro(
 //   5. Benefícios: convenção do CONTRATO (já tratada por
 //      `aplicarHerancaNoQuadro`) > convenção vinculada ao POSTO na Planilha de
 //      Custo > benefícios da própria planilha (VT/VA/... em R$/mês).
+//      → SIS-2026-0958 trocou esta regra: ver `beneficiosDaCct`.
 //   6. Add. Líder, Add. Not. Reduzida, Add. Noturno, Horas Extras e DSR da
 //      planilha NÃO entram sozinhos em "Outros": na planilha eles são custo
 //      estimado do posto, não provento garantido de quem é contratado. A tela
@@ -589,8 +597,21 @@ export interface RemuneracaoPosto {
   lanche?: number | null;
   cesta_basica?: number | null;
   assistencia_medica?: number | null;
-  /** Saída de lic_referencia_do_posto_interno para o posto. */
+  /**
+   * Saída de lic_referencia_do_posto_interno para o posto (contrato > vínculo
+   * manual do posto) ou, sem nenhum dos dois, a CCT automática pelo sindicato
+   * (origem 'sindicato', SIS-2026-0958 — mig 20261121160000).
+   */
   referencia?: RespostaReferencia | null;
+  /** SIS-2026-0958: sindicato e serviço do posto na planilha. */
+  sindicato?: string | null;
+  servico?: string | null;
+  /**
+   * SIS-2026-0958: benefícios do bloco 4 da planilha com valor > 0, SEM o
+   * Transporte (VT) e sem as deduções — {"Aux. Alimentação": 27.15}. Banco
+   * sem a mig 20261121160000: ausente (cai em va/vr/lanche/cesta/assist.).
+   */
+  beneficios_planilha?: Record<string, number> | null;
 }
 
 /** Graus legais de insalubridade (NR-15). */
@@ -612,6 +633,120 @@ export interface PreenchimentoPosto {
   avisos: string[];
   /** Adicionais da planilha que podem ir para "Outros" com um clique. */
   adicionais: { descricao: string; valor: number }[];
+  /** SIS-2026-0958: por que os benefícios vieram (ou não) da CCT — vira a dica do campo. */
+  notaBeneficios?: string | null;
+}
+
+// ── Benefícios da CCT (SIS-2026-0958, 19/11/2026) ───────────────────────
+//
+// Pedido da Licitação, para as vagas que ELA abre (o quadro do contrato):
+//   1. O posto tem algum benefício preenchido na Planilha de Custo (VA,
+//      assiduidade, cesta…, FORA o VT)?
+//        sim → os benefícios vêm da CCT vinculada, como estão no cadastro
+//              dela, com valor e unidade ("R$ 27,15 / dia");
+//        não → nada é importado; quem preenche digita.
+//   2. Tem benefício na planilha mas não há CCT (posto/contrato sem vínculo,
+//      ou CCT não lançada) → aviso, e o campo fica para preencher à mão.
+//   3. O importado é sempre editável (vale também com convenção no contrato —
+//      até o SIS-2026-0958 ela deixava o campo só leitura).
+//   4. VT: nunca. Nem o valor nem o campo — outro chamado (decreto municipal).
+// A CCT é a do resolvedor do banco (contrato > vínculo manual do posto) ou,
+// sem nenhum dos dois, a automática pelo SINDICATO do posto (regra do
+// SIS-2026-0933, levada para o SQL na mig 20261121160000 com a data de hoje).
+// As vagas do Operacional/encarregados (Solicitação de Vaga) não passam por
+// aqui — continuam com o retrato rec_beneficios_congelar.
+
+/** Benefícios (fora VT) que a planilha tem para o posto: rótulo → R$. */
+export function beneficiosNaPlanilha(r: RemuneracaoPosto | null | undefined): Record<string, number> {
+  if (!r) return {};
+  const lista: [string, unknown][] = r.beneficios_planilha
+    ? Object.entries(r.beneficios_planilha)
+    // Banco sem a mig 20261121160000: só os que a RPC antiga devolvia.
+    : [["Aux. Alimentação", r.va], ["Aux. Refeição", r.vr], ["Aux. Lanche", r.lanche],
+       ["Cesta Básica", r.cesta_basica], ["Assist. Médica", r.assistencia_medica]];
+  const out: Record<string, number> = {};
+  for (const [rotulo, v] of lista) {
+    const n = positivoOuZero(v);
+    // VT nunca conta, nem se alguém o puser no mapa (SIS-2026-0958, item 4).
+    if (n > 0 && !/^(transporte|vt\b|vale[- ]transporte)/i.test(rotulo.trim())) out[rotulo] = n;
+  }
+  return out;
+}
+
+const NOME_ORIGEM_CCT: Record<string, string> = {
+  contrato: "vinculada ao contrato",
+  posto: "vinculada ao posto na Planilha de Custo",
+  sindicato: "pelo sindicato do posto",
+};
+
+export interface BeneficiosDaCct {
+  /** O texto do campo Benefícios, ou null quando não se importa nada. */
+  texto: string | null;
+  /** De onde veio o texto (dica embaixo do campo). */
+  origem: string | null;
+  /** Problema que impede (ou põe em dúvida) a integração — caixa amarela. */
+  aviso: string | null;
+  /** Por que não importou, quando não é problema (posto sem benefício na planilha). */
+  nota: string | null;
+}
+
+/**
+ * Os benefícios da CCT para a linha do quadro, pela regra do SIS-2026-0958.
+ * `hoje` (aaaa-mm-dd): a CCT vinculada que não cobre a data é importada com
+ * aviso — falta lançar a CCT nova.
+ */
+export function beneficiosDaCct(r: RemuneracaoPosto | null | undefined, hoje = hojeIso()): BeneficiosDaCct {
+  const vazio: BeneficiosDaCct = { texto: null, origem: null, aviso: null, nota: null };
+  if (!r) return vazio;
+  const naPlanilha = Object.keys(beneficiosNaPlanilha(r));
+  if (!naPlanilha.length) {
+    return { ...vazio, nota: "O posto não tem benefício (fora o VT) na Planilha de Custo — nada foi importado da CCT; preencha à mão se houver" };
+  }
+
+  const ref = r.referencia;
+  // Sem resposta do resolvedor: o posto veio da busca aproximada
+  // (rec_custo_do_posto, nome não casou) — não dá para dizer que falta CCT.
+  if (ref === undefined) {
+    return {
+      ...vazio,
+      aviso: `Benefícios não integrados: o posto "${r.posto}" não casou pelo nome com a Planilha de Custo do contrato, então a CCT dele não pôde ser buscada. Preencha à mão. Na planilha: ${naPlanilha.join(", ")}.`,
+    };
+  }
+  if (!ref || ref.status !== "vinculado") {
+    const sind = r.sindicato?.trim();
+    return {
+      ...vazio,
+      aviso: `Benefícios não integrados: o posto "${r.posto}" não tem CCT vinculada — nem no contrato, nem no posto (Planilha de Custo)`
+        + (sind ? `, nem CCT cadastrada com o sindicato "${sind}"` : ", e o posto está sem sindicato na planilha")
+        + `. Confira se falta vincular o posto ou lançar a CCT em Licitações › Convenções Coletivas. Na planilha: ${naPlanilha.join(", ")}.`,
+    };
+  }
+
+  const q = montarQuadro(ref);
+  const itens = q.itens.filter(i => i.def.chave !== "vt" && i.texto && !i.naoContem);
+  const principal = (ref.referencias ?? []).find(x => x.id === ref.principal_id) ?? q.usadas[0] ?? null;
+  const nomeCct = principal ? (identificacaoCct(principal) ?? principal.sindicato ?? "CCT") : "CCT";
+  const origem = `Da ${nomeCct} (${NOME_ORIGEM_CCT[ref.origem ?? "posto"] ?? "vinculada"})`;
+
+  // Vigência atual: a do sindicato já vem marcada pelo banco; a vinculada à
+  // mão é conferida aqui — vínculo antigo continua apontando para a CCT velha.
+  const forado = ref.origem === "sindicato"
+    ? !!ref.fora_da_vigencia
+    : !!principal && ((!!principal.vigencia_inicio && hoje < String(principal.vigencia_inicio).slice(0, 10))
+      || (!!principal.vigencia_fim && hoje > String(principal.vigencia_fim).slice(0, 10)));
+  const avisoVigencia = forado && principal
+    ? `A ${nomeCct} (vigência ${vigenciaTxt(principal.vigencia_inicio, principal.vigencia_fim)}) não cobre a data de hoje — confira se falta lançar a CCT vigente. Os benefícios foram importados dela mesmo assim.`
+    : null;
+
+  if (!itens.length) {
+    return { ...vazio, aviso: `A ${nomeCct} (${NOME_ORIGEM_CCT[ref.origem ?? "posto"] ?? "vinculada"}) não tem benefício preenchido além do VT — confira o cadastro da CCT.` };
+  }
+  return {
+    texto: itens.map(i => `${i.def.nome}: ${i.texto}`).join(" · "),
+    origem,
+    aviso: avisoVigencia,
+    nota: null,
+  };
 }
 
 export const ROTULO_ADICIONAL: { chave: keyof RemuneracaoPosto; descricao: string }[] = [
@@ -630,10 +765,20 @@ export const ROTULO_ADICIONAL: { chave: keyof RemuneracaoPosto; descricao: strin
  */
 export function preenchimentoDoPosto(
   r: RemuneracaoPosto | null | undefined,
-  opts: { convencaoNoContrato?: boolean } = {},
+  opts: { convencaoNoContrato?: boolean; hoje?: string } = {},
 ): PreenchimentoPosto {
   const out: PreenchimentoPosto = { valores: {}, origem: {}, avisos: [], adicionais: [] };
   if (!r) return out;
+
+  // Benefícios (SIS-2026-0958): da CCT, pela regra de beneficiosDaCct — vale
+  // também com convenção no contrato (ela é só uma das origens da CCT).
+  const ben = beneficiosDaCct(r, opts.hoje);
+  if (ben.texto) {
+    out.valores.beneficios = ben.texto;
+    out.origem.beneficios = ben.origem ?? undefined;
+  }
+  if (ben.aviso) out.avisos.push(ben.aviso);
+  out.notaBeneficios = ben.nota;
   const daPlanilha = `Da Planilha de Custo${r.vigencia ? ` (vigência ${fmtBr(String(r.vigencia).slice(0, 10))})` : ""}`;
 
   const salario = positivoOuZero(r.salario);
@@ -685,20 +830,10 @@ export function preenchimentoDoPosto(
     }
   }
 
-  // Benefícios
-  if (heranca?.beneficios) {
-    out.valores.beneficios = heranca.beneficios;
-    out.origem.beneficios = nomeCct;
-  } else {
-    const texto = beneficiosDoCusto({
-      vt: r.vt ?? null, va: r.va ?? null, vr: r.vr ?? null, lanche: r.lanche ?? null,
-      cesta_basica: r.cesta_basica ?? null, assistencia_medica: r.assistencia_medica ?? null,
-    } as CustoPosto);
-    if (texto) {
-      out.valores.beneficios = texto;
-      out.origem.beneficios = daPlanilha;
-    }
-  }
+  // Benefícios: já resolvidos no começo (beneficiosDaCct, SIS-2026-0958).
+  // Até ali, sem CCT, o campo vinha do texto da própria planilha
+  // (beneficiosDoCusto) — com o VT dentro; o chamado pediu que sem CCT o
+  // campo fique para preencher à mão, com aviso.
   return out;
 }
 
