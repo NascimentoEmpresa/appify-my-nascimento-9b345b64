@@ -21,3 +21,14 @@ export function compararFatura(somaDespesas: number, valorFatura: number | null 
   const diferenca = r2(Number(valorFatura) - somaDespesas);
   return { status: Math.abs(diferenca) < 0.01 ? "confere" : "divergente", diferenca };
 }
+
+// [SEM-CHAMADO] 19/11/2026: a mesma conferência com o boleto aparece também na lista de competências do cartão e no Classificar
+// Lançamentos — antes só o Fluxo e o card "Faturas consolidadas" comparavam. Motivo: a BB HAGG 09/2026 ficou R$ 1.210,00 menor no
+// Fluxo (parcela 4/10 da AZUL SEGUROS excluída por engano) e nada avisou, porque o valor do boleto não tinha sido informado e as
+// telas só se comparavam entre si. Com o boleto informado, a diferença aparece onde a fatura é classificada.
+export function textoConferenciaFatura(cmp: ComparacaoFatura, valorFatura: number | null | undefined, fmt: (n: number) => string): string {
+  if (cmp.status === "sem_valor") return "valor da fatura não informado";
+  if (cmp.status === "confere") return "confere com a fatura";
+  const quanto = fmt(Math.abs(cmp.diferenca));
+  return `fatura ${fmt(Number(valorFatura))} · ${cmp.diferenca > 0 ? `faltam ${quanto}` : `sobram ${quanto}`} nos itens`;
+}

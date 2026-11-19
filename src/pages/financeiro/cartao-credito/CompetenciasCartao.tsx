@@ -8,6 +8,9 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useFaturasImportadas, urlArquivoFaturaAssinada } from "@/hooks/useCartaoFatura";
 import { useItensParaClassificar } from "@/hooks/useCartaoFaturaRateio";
+import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
+import { chaveFatura } from "./faturaConsolidada";
+import { ConferenciaFatura } from "./ConferenciaFatura";
 
 // SIS-2026-0751: ao clicar em "Fatura" de um cartão, em vez de abrir direto o formulário de
 // importação, lista as 12 competências do ano (jan–dez, navegando de ano em ano): as já
@@ -20,6 +23,8 @@ export function CompetenciasCartao({ cartaoId, onImportar }: { cartaoId: string;
   const { data: itens = [] } = useItensParaClassificar();
   const { can } = usePermissoes();
   const podeClassificar = can("visualizar", "financeiro", "financeiro-cartao-credito-classificar");
+  const podeAlterarFatura = can("alterar", "financeiro", "financeiro-cartao-credito");
+  const { data: faturasInformadas } = useFaturasInformadas();
   const [ano, setAno] = useState(new Date().getFullYear());
 
   const faturaPorMes = useMemo(() => new Map(faturas.filter((f) => f.cartao_id === cartaoId).map((f) => [f.competencia.slice(0, 7), f])), [faturas, cartaoId]);
@@ -79,6 +84,16 @@ export function CompetenciasCartao({ cartaoId, onImportar }: { cartaoId: string;
                     ) : (
                       <Badge variant="secondary">Classificada · no Fluxo</Badge>
                     ))}
+                  {/* [SEM-CHAMADO] 19/11/2026: soma dos itens × valor do boleto (ver ConferenciaFatura). */}
+                  {r.itens > 0 && (
+                    <ConferenciaFatura
+                      cartaoId={cartaoId}
+                      competencia={chave}
+                      soma={Math.round(r.total * 100) / 100}
+                      valorInformado={faturasInformadas?.get(chaveFatura(cartaoId, chave))}
+                      podeAlterar={podeAlterarFatura}
+                    />
+                  )}
                   <div className="ml-auto flex items-center gap-1">
                     {f.arquivo_original_path && (
                       <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={() => abrirArquivo(f.arquivo_original_path!)}>
