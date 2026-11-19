@@ -39,6 +39,27 @@ export const IMPOSTOS_RETIDOS = [
 
 export type CampoImposto = (typeof IMPOSTOS_RETIDOS)[number]["campo"];
 
+// SIS-2026-0867: descontos de uma nota separados pelo momento em que entram. ANTES da nota = já abatidos no valor emitido (faltas, postos não
+// implementados, multas, glosas e outros); DEPOIS = lançados após a emissão (multas, glosas e outros), que não estão no líquido. Só existem por item.
+export interface ItemComDescontos {
+  faltas?: number | null; posto_nao_implementado?: number | null; multas?: number | null; glosas?: number | null; outros_descontos?: number | null;
+  multas_pos_emissao?: number | null; glosas_pos_emissao?: number | null; outros_descontos_pos_emissao?: number | null;
+}
+export interface DescontosDaNf {
+  antes: { faltas: number; postosNaoImplementados: number; multas: number; glosas: number; outros: number; total: number };
+  depois: { multas: number; glosas: number; outros: number; total: number };
+}
+export function descontosDaNf(itens: ItemComDescontos[]): DescontosDaNf {
+  const soma = (f: (i: ItemComDescontos) => number | null | undefined) => Math.round(itens.reduce((s, i) => s + (f(i) ?? 0), 0) * 100) / 100;
+  const antes = { faltas: soma((i) => i.faltas), postosNaoImplementados: soma((i) => i.posto_nao_implementado), multas: soma((i) => i.multas), glosas: soma((i) => i.glosas), outros: soma((i) => i.outros_descontos) };
+  const depois = { multas: soma((i) => i.multas_pos_emissao), glosas: soma((i) => i.glosas_pos_emissao), outros: soma((i) => i.outros_descontos_pos_emissao) };
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    antes: { ...antes, total: r2(antes.faltas + antes.postosNaoImplementados + antes.multas + antes.glosas + antes.outros) },
+    depois: { ...depois, total: r2(depois.multas + depois.glosas + depois.outros) },
+  };
+}
+
 /** Soma dos seis impostos retidos numa nota. */
 export function retencoesDaNf(n: NfParaTotais): number {
   return IMPOSTOS_RETIDOS.reduce((soma, i) => soma + (n[i.campo] ?? 0), 0);

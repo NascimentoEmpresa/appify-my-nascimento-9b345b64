@@ -9,6 +9,12 @@ export type FiltroDashboardCompras = {
 export type SerieNomeQuantidade = { nome: string; quantidade: number };
 export type SerieNomeValor = { nome: string; valor: number };
 
+export interface DashboardCancelamentosDados {
+  total: number;
+  por_motivo: SerieNomeQuantidade[];
+  por_origem: SerieNomeQuantidade[];
+}
+
 export interface PeriodoDisponivelDashboardCompras {
   inicio: string | null;
   fim: string | null;
@@ -69,6 +75,7 @@ export interface DashboardComprasEstoqueDados {
   saving_resumo: { total: number; implantacao: number; execucao: number };
   solicitacoes_por_contrato: (SerieNomeQuantidade & { despachadas: number; pendentes: number })[];
   motivos_pendencias: SerieNomeQuantidade[];
+  cancelamentos?: DashboardCancelamentosDados;
   /** Envios feitos na rota Cotações do Malote, um processo por solicitação. */
   cotacoes_malote_por_comprador?: SerieNomeQuantidade[];
   /** Respostas enviadas no módulo de Cotações para Licitação. */
@@ -158,6 +165,23 @@ export interface DashboardComprasEstoqueDados {
    * mostra o aviso em vez de uma tabela vazia.
    */
   posicao_por_item?: PosicaoItem[];
+}
+
+export function anexarCancelamentosDashboard(
+  painel: DashboardComprasEstoqueDados,
+  cancelamentos: Partial<DashboardCancelamentosDados> | null | undefined,
+): DashboardComprasEstoqueDados {
+  const normalizarSerie = (serie?: SerieNomeQuantidade[]) => (serie ?? [])
+    .map((item) => ({ nome: String(item.nome), quantidade: Number(item.quantidade) || 0 }))
+    .filter((item) => item.quantidade > 0);
+  return {
+    ...painel,
+    cancelamentos: {
+      total: Number(cancelamentos?.total) || 0,
+      por_motivo: normalizarSerie(cancelamentos?.por_motivo),
+      por_origem: normalizarSerie(cancelamentos?.por_origem),
+    },
+  };
 }
 
 /**
@@ -441,6 +465,11 @@ export function consolidarDashboardsCompras(
     solicitacoes_por_contrato: [...solicitacoesPorContrato.values()]
       .sort((a, b) => b.quantidade - a.quantidade).slice(0, 10),
     motivos_pendencias: agruparNomeQuantidade(paineis.map((p) => p.motivos_pendencias)),
+    cancelamentos: {
+      total: soma((p) => p.cancelamentos?.total ?? 0),
+      por_motivo: agruparNomeQuantidade(paineis.map((p) => p.cancelamentos?.por_motivo ?? [])),
+      por_origem: agruparNomeQuantidade(paineis.map((p) => p.cancelamentos?.por_origem ?? [])),
+    },
     cotacoes_malote_por_comprador: agruparNomeQuantidade(
       paineis.map((p) => p.cotacoes_malote_por_comprador ?? []),
       10,

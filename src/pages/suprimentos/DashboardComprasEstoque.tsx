@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
+  Ban,
   BarChart3,
   Boxes,
   Clock3,
@@ -64,6 +65,7 @@ import { RotatividadeEstoque } from "@/components/suprimentos/dashboard/Rotativi
 import { EstoqueSaudavel } from "@/components/suprimentos/dashboard/EstoqueSaudavel";
 import { EntregasMensais } from "@/components/suprimentos/dashboard/EntregasMensais";
 import { SaidasPorContrato } from "@/components/suprimentos/dashboard/SaidasPorContrato";
+import { CancelamentosPedidos } from "@/components/suprimentos/dashboard/CancelamentosPedidos";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useDashboardComprasEstoque } from "@/hooks/useDashboardComprasEstoque";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -201,12 +203,14 @@ function TabelaCotacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
 
 function CardsSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const r = dados.resumo;
+  const cancelados = dados.cancelamentos?.total ?? 0;
   return (
     <>
       <CartaoIndicador titulo="Pedidos cadastrados" valor={formatarNumero(r.solicitacoes_total_geral)} icone={<FileText className="h-6 w-6" />} detalhe="total geral — igual a Pedidos de Materiais" />
       <CartaoIndicador titulo="Solicitações realizadas" valor={formatarNumero(r.solicitacoes)} icone={<FileText className="h-6 w-6" />} detalhe="no período selecionado" />
       <CartaoIndicador titulo="Despachadas" valor={formatarNumero(r.despachadas)} icone={<PackageCheck className="h-6 w-6" />} tom="green" detalhe={`${percentual(r.despachadas, r.solicitacoes)}% — entregues ou aguardando confirmação`} />
       <CartaoIndicador titulo="Pendentes" valor={formatarNumero(r.pendentes)} icone={<Clock3 className="h-6 w-6" />} tom="amber" detalhe="pedidos únicos; parcial entra aqui" />
+      <CartaoIndicador titulo="Cancelados" valor={formatarNumero(cancelados)} icone={<Ban className="h-6 w-6" />} tom="red" detalhe="no período, inclui registros antigos — detalhe na aba Cancelamentos" />
       <CartaoIndicador titulo="Tempo médio de atendimento" valor={`${formatarNumero(r.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} detalhe="da solicitação ao despacho" />
     </>
   );
@@ -385,6 +389,7 @@ function PainelExpedicoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
 function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const cotacoesMalote = dados.cotacoes_malote_por_comprador ?? [];
   const cotacoesLicitacao = dados.cotacoes_licitacao_por_comprador ?? [];
+  const cancelamentos = dados.cancelamentos ?? { total: 0, por_motivo: [], por_origem: [] };
   return (
     <>
       <div className="grid gap-3 xl:grid-cols-2">
@@ -393,6 +398,20 @@ function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }
         </PainelGrafico>
         <PainelGrafico titulo="Motivos das Pendências">
           {dados.motivos_pendencias.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.motivos_pendencias} layout="vertical" margin={{ left: 25, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={115} interval={0} tick={<TickCategoria maximo={24} />} /><Tooltip /><Bar dataKey="quantidade" name="Pendências" fill="#ef8888" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhuma pendência no período." />}
+        </PainelGrafico>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        <PainelGrafico
+          titulo="Cancelamentos por Motivo"
+          subtitulo="Pedidos cujo cancelamento foi aprovado pelo Suprimentos dentro do período selecionado."
+        >
+          {cancelamentos.por_motivo.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={cancelamentos.por_motivo} layout="vertical" margin={{ left: 25, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={160} interval={0} tick={<TickCategoria maximo={28} />} /><Tooltip /><Bar dataKey="quantidade" name="Cancelamentos" fill="#ef4444" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhum pedido cancelado no período." />}
+        </PainelGrafico>
+        <PainelGrafico
+          titulo="Origem das Solicitações de Cancelamento"
+          subtitulo="Quem iniciou o pedido de cancelamento que depois foi aprovado."
+        >
+          {cancelamentos.por_origem.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={cancelamentos.por_origem} dataKey="quantidade" nameKey="nome" innerRadius={58} outerRadius={92} paddingAngle={2}>{cancelamentos.por_origem.map((_, i) => <Cell key={i} fill={["#f97316", "#ef4444"][i % 2]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhuma solicitação aprovada no período." />}
         </PainelGrafico>
       </div>
       <div className="grid gap-3 xl:grid-cols-2">
@@ -621,7 +640,7 @@ export default function DashboardComprasEstoque() {
         {consulta.isLoading && <Carregando />}
         {consulta.error && <Alert variant="destructive"><AlertTitle>Não foi possível carregar o dashboard</AlertTitle><AlertDescription>{(consulta.error as Error).message}. Se a migration do SIS-2026-0607 ainda não foi aplicada no Supabase, execute-a antes de abrir esta tela.</AlertDescription></Alert>}
         {dados && <Tabs defaultValue="geral" className="space-y-3">
-          <TabsList className="grid h-auto w-full grid-cols-7 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger><TabsTrigger value="rotatividade" className="gap-2 py-2.5"><Repeat className="h-4 w-4" /><span className="hidden sm:inline">Rotatividade do Estoque</span></TabsTrigger><TabsTrigger value="saudavel" className="gap-2 py-2.5"><Gauge className="h-4 w-4" /><span className="hidden sm:inline">Estoque Saudável</span></TabsTrigger><TabsTrigger value="saidas" className="gap-2 py-2.5"><Truck className="h-4 w-4" /><span className="hidden sm:inline">Saídas por Contrato</span></TabsTrigger><TabsTrigger value="entregas" className="gap-2 py-2.5" aria-label="Entregas mensais"><Mail className="h-4 w-4" /><span className="hidden sm:inline">Entregas mensais</span></TabsTrigger></TabsList>
+          <TabsList className="grid h-auto w-full grid-cols-8 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger><TabsTrigger value="rotatividade" className="gap-2 py-2.5"><Repeat className="h-4 w-4" /><span className="hidden sm:inline">Rotatividade do Estoque</span></TabsTrigger><TabsTrigger value="saudavel" className="gap-2 py-2.5"><Gauge className="h-4 w-4" /><span className="hidden sm:inline">Estoque Saudável</span></TabsTrigger><TabsTrigger value="saidas" className="gap-2 py-2.5"><Truck className="h-4 w-4" /><span className="hidden sm:inline">Saídas por Contrato</span></TabsTrigger><TabsTrigger value="entregas" className="gap-2 py-2.5" aria-label="Entregas mensais"><Mail className="h-4 w-4" /><span className="hidden sm:inline">Entregas mensais</span></TabsTrigger><TabsTrigger value="cancelamentos" className="gap-2 py-2.5" aria-label="Cancelamentos"><Ban className="h-4 w-4" /><span className="hidden sm:inline">Cancelamentos</span></TabsTrigger></TabsList>
           <p className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-900">
             <strong>Escopos conferíveis:</strong> “Pedidos cadastrados” é o total histórico da mesma empresa e da mesma tabela usada em Pedidos de Materiais. Pendentes e despachadas usam os mesmos status operacionais dessa rota, inclusive a identificação de pedido parcialmente despachado. Entregas mensais usa a competência escolhida dentro da aba. Os demais indicadores respeitam empresa, contrato, categoria e o período de {new Date(`${filtros.inicio}T12:00:00`).toLocaleDateString("pt-BR")} a {new Date(`${filtros.fim}T12:00:00`).toLocaleDateString("pt-BR")}.
           </p>
@@ -641,6 +660,9 @@ export default function DashboardComprasEstoque() {
               planejamento de um contrato só. */}
           <TabsContent value="saudavel">{empresaId ? <EstoqueSaudavel empresaId={empresaId} contratoId={filtros.contratoId} /> : <Alert><AlertTitle>Selecione uma empresa para planejar o estoque saudável</AlertTitle><AlertDescription>Mínimo, máximo, lead time e aprovações são políticas próprias de cada empresa e não podem ser alterados em um consolidado.</AlertDescription></Alert>}</TabsContent>
           <TabsContent value="entregas"><EntregasMensais empresaId={empresaId} contratoId={filtros.contratoId} categoria={filtros.categoria} /></TabsContent>
+          {/* Cancelamentos (SIS-2026-0945) tem RPC própria e só monta quando a
+              aba abre. Recebe todas as empresas da consulta numa chamada só. */}
+          <TabsContent value="cancelamentos"><CancelamentosPedidos empresaIds={empresaIdsConsulta} inicio={filtros.inicio} fim={filtros.fim} contratoId={filtros.contratoId} categoria={filtros.categoria} /></TabsContent>
           <TabsContent value="saidas"><SaidasPorContrato empresaId={empresaId} inicio={filtros.inicio} fim={filtros.fim} contratoId={filtros.contratoId} /></TabsContent>
         </Tabs>}
       </div>

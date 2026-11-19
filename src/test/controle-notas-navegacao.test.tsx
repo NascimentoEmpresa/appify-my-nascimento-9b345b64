@@ -18,6 +18,7 @@ function permitir(...codes: string[]) {
     { codigo: "nf-emissao", rota: ROTA_CONTROLE_NOTAS, ativo: true },
     { codigo: "nf_emissao_cadastro", rota: ETAPAS_CONTROLE_NOTAS[0].rota, ativo: true },
     { codigo: "nf_emissao_controle", rota: ETAPAS_CONTROLE_NOTAS[1].rota, ativo: true },
+    { codigo: "financeiro-nfse-parametros", rota: ETAPAS_CONTROLE_NOTAS[2].rota, ativo: true },
   ] };
 }
 function LocalAtual() { return <span data-testid="rota-atual">{useLocation().pathname}</span>; }
@@ -57,6 +58,15 @@ describe("Controle de Notas: entrada e troca de etapas", () => {
     abrir(ROTA_CONTROLE_NOTAS);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Solicite a liberação");
+  });
+  it("só oferece a Parametrização Fiscal a quem tem o menu próprio (SIS-2026-0941)", () => {
+    permitir("nf-emissao", "nf_emissao_controle");
+    const tela = abrir(ROTA_CONTROLE_NOTAS);
+    expect(screen.queryByRole("link", { name: "Parametrização Fiscal" })).not.toBeInTheDocument();
+    tela.unmount();
+    permitir("nf-emissao", "financeiro-nfse-parametros");
+    abrir(ROTA_CONTROLE_NOTAS);
+    expect(screen.getByRole("link", { name: "Parametrização Fiscal" })).toHaveAttribute("href", ETAPAS_CONTROLE_NOTAS[2].rota);
   });
   it("preserva atalhos antigos exigindo permissão no destino e respeitando menu inativo", () => {
     permitir("nf-emissao");

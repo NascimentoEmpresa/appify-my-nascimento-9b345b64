@@ -16,6 +16,7 @@ import { type Denuncia, tipoEfetivo } from "./metricas";
 import { BlocoAnexos, BlocoPresidencia, BlocoProvidencias } from "./BlocosApuracao";
 import { HistoricoDenuncia } from "./HistoricoDenuncia";
 import { ParecerIaDenuncia } from "./ParecerIaDenuncia";
+import { DocumentosInvestigacao } from "./DocumentosInvestigacao";
 import { fmtData, fmtDataHora } from "./dossie";
 
 // =====================================================================
@@ -107,6 +108,11 @@ export default function FichaPresidencia({ denuncia: d, podeDecidir, podeVerSigi
               {d.parecer_interno && <p className="whitespace-pre-wrap">{d.parecer_interno}</p>}
             </Leitura>
           </Bloco>
+
+          {/* ------------------------------------- abertura de investigação */}
+          {/* Termo de Abertura e Parecer Conclusivo do relator; a Presidência
+              também redige e gera minuta com a I.A. */}
+          <DocumentosInvestigacao denunciaId={d.id} relatorId={d.apuracao_responsavel_id ?? null} />
 
           {/* ------------------------------------------------ parecer I.A */}
           {/* O mesmo card da ficha do Comitê. A função lê com o login da

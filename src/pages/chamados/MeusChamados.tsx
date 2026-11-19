@@ -113,13 +113,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   const pendentesIds = useMemo(() => new Set(soAvaliacoes.map((p) => p.id)), [soAvaliacoes]);
   const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string; participante?: boolean } | null>(null);
   const [confirmarAlvo, setConfirmarAlvo] = useState<Pick<Chamado, "id" | "numero" | "status" | "responsavel_id" | "assunto"> | null>(null);
-  // SIS-2026-0955: visão, filtros e página sobrevivem a abrir um chamado e
-  // voltar em "Meus chamados" (antes o componente remontava zerado e caía
-  // sempre em "Com pendência"). sessionStorage via useEstadoPersistido — mesmo
-  // padrão do SIS-2026-0350 no Malote; some ao fechar a aba. Chave por `base`
-  // porque esta tela é montada em mais de uma rota.
-  const chaveEstado = `meus-chamados:${base}`;
-  const [pagina, setPagina] = useEstadoPersistido(chaveEstado, "pagina", 1);
+  const [pagina, setPagina] = useEstadoPersistido(`chamados-meus:${base}`, "pagina", 1);
 
   const { data: stats } = useQuery({
     queryKey: ["chamados-meus-stats"],
@@ -183,10 +177,15 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   });
 
   // Padrão: só o que tem pendência (pedido do solicitante + Pablo, 13/11/2026).
-  // SIS-2026-0955: ao voltar de um chamado vale a última visão escolhida na
-  // sessão, não o padrão.
-  const [visao, setVisao] = useEstadoPersistido<Visao>(chaveEstado, "visao", "pendentes");
-  const [filtros, setFiltros] = useEstadoPersistido<FiltrosMeusChamados>(chaveEstado, "filtros", FILTROS_VAZIOS);
+  // 19/11/2026: aba, busca, filtros e página ficam guardados na sessão da aba
+  // do navegador — "Abrir Novo Chamado" (e Acompanhar) trocam de rota e
+  // desmontam a lista; ao voltar tudo vinha zerado. Sobrevive a F5 também.
+  // Os filtros guardados são mesclados com FILTROS_VAZIOS para um campo
+  // novo no futuro não chegar `undefined` de um balde antigo.
+  const chaveSessao = `chamados-meus:${base}`;
+  const [visao, setVisao] = useEstadoPersistido<Visao>(chaveSessao, "visao", "pendentes");
+  const [filtrosGuardados, setFiltros] = useEstadoPersistido<FiltrosMeusChamados>(chaveSessao, "filtros", FILTROS_VAZIOS);
+  const filtros = useMemo(() => ({ ...FILTROS_VAZIOS, ...filtrosGuardados }), [filtrosGuardados]);
   const mudarFiltro = (patch: Partial<FiltrosMeusChamados>) => { setFiltros((f) => ({ ...f, ...patch })); setPagina(1); };
   const mudarVisao = (v: Visao) => { setVisao(v); setPagina(1); };
 
@@ -213,8 +212,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   // Marcação pessoal de revisão (SIS-2026-0938): só minha, fora da trava de
   // pendências — não entra em `motivos` nem em qtdPendentes.
   const { data: revisoes = {} } = useRevisoesChamados();
-  // SIS-2026-0955: persiste junto com visão/filtros — é o filtro da rotina de revisão sequencial.
-  const [filtroRevisao, setFiltroRevisao] = useEstadoPersistido<FiltroRevisao>(chaveEstado, "filtroRevisao", "");
+  const [filtroRevisao, setFiltroRevisao] = useEstadoPersistido<FiltroRevisao>(chaveSessao, "revisao", "");
   const qtdRevisao = useMemo(
     () => contarRevisoes(chamados.map((c) => revisoes[c.id]?.estado ?? null)),
     [chamados, revisoes],

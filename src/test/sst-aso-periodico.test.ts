@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   calcularVencimento, contarPainel, diasParaVencer, erroConfig, erroMesesContrato, nomeContrato, ordenar,
-  pendenciasParaRealizar, periodicidadeMeses, rotuloPeriodicidade, somarMeses, statusPeriodico, type ItemPeriodico,
+  motivoAfastamento, ordenarAfastados, pendenciasParaRealizar, periodicidadeMeses, rotuloPeriodicidade, somarMeses,
+  statusComAfastamento, statusPeriodico, casaBusca, contaNoPainel, empresaDoItem, funcaoDoItem, type ItemPeriodico,
 } from "@/lib/sst/asoPeriodico";
+import { ehMEI } from "@/lib/rh/mei";
 
 const HOJE = "2026-11-14";
 const item = (x: Partial<ItemPeriodico> = {}): ItemPeriodico => ({
@@ -113,7 +115,7 @@ describe("painel", () => {
       item({ status: "Aguardando agendamento" }), item({ status: "Agendado" }), item({ status: "Realizado/recebido" }),
       item({ status: "Em dia" }), item({ status: "Sem ASO" }),
     ];
-    expect(contarPainel(itens)).toEqual({ previstos: 6, proximos: 1, vencidos: 2, aguardando: 1, agendados: 1, realizados: 1 });
+    expect(contarPainel(itens)).toEqual({ previstos: 6, proximos: 1, vencidos: 2, aguardando: 1, agendados: 1, realizados: 1, afastados: 0 });
   });
 });
 
@@ -139,5 +141,112 @@ describe("marcar realizado/recebido", () => {
     expect(pendenciasParaRealizar({}, HOJE)).toEqual(["data da realização", "resultado (apto ou inapto)"]);
     expect(pendenciasParaRealizar({ realizado_em: "2026-11-15", resultado: "apto" }, HOJE)).toEqual(["data da realização não pode ser futura"]);
     expect(pendenciasParaRealizar({ realizado_em: HOJE, resultado: "inapto" }, HOJE)).toEqual([]);
+  });
+});
+
+// SIS-2026-0886 (mig 20261119190000): afastados por aposentadoria, benefício
+// do INSS ou licença-maternidade saem das pendências; férias continuam.
+describe("afastados fora das pendências (SIS-2026-0886)", () => {
+  it("cada motivo pedido é reconhecido pela situação da Senior", () => {
+    expect(motivoAfastamento("Aposentadoria por Invalidez")).toBe("aposentadoria");
+    expect(motivoAfastamento("Aposentado")).toBe("aposentadoria");
+    expect(motivoAfastamento("Auxílio Doença")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Aux. Doença Previdenciário")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Acidente de Trabalho")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Afastamento INSS")).toBe("beneficio_inss");
+    expect(motivoAfastamento("Licença Maternidade")).toBe("licenca_maternidade");
+    expect(motivoAfastamento("Prorrogação Licença Maternidade")).toBe("licenca_maternidade");
+  });
+  it("férias, atestado, doença até 15 dias, paternidade, aviso e trabalhando continuam no periódico", () => {
+    for (const s of ["Férias", "FERIAS", "Atestado Médico", "Doença até 15 dias", "Licença Paternidade",
+      "Licença sem Remuneração", "Aviso Prévio", "Trabalhando", "", null, "Demitido", "Pedido Rescisão Indireta"]) {
+      expect(motivoAfastamento(s)).toBeNull();
+    }
+  });
+  it("afastado sai de vencido, próximo, aguardando, em dia e sem ASO", () => {
+    for (const s of ["Vencido", "Próximo do vencimento", "Aguardando agendamento", "Em dia", "Sem ASO"] as const) {
+      expect(statusComAfastamento(s, true)).toBe("Afastado");
+    }
+  });
+  it("agendado e realizado de um afastado continuam no status deles", () => {
+    expect(statusComAfastamento("Agendado", true)).toBe("Agendado");
+    expect(statusComAfastamento("Realizado/recebido", true)).toBe("Realizado/recebido");
+  });
+  it("fim do afastamento: sem afastamento, volta ao status calculado (nada gravado)", () => {
+    const vencido = { vencimento: "2026-01-01", ultimo_tipo: "admissional" as const, ciclo: null };
+    expect(statusComAfastamento(statusPeriodico(vencido, HOJE), true)).toBe("Afastado");
+    expect(statusComAfastamento(statusPeriodico(vencido, HOJE), false)).toBe("Vencido");
+    // ciclo solicitado durante o afastamento reaparece como aguardando no retorno
+    const comCiclo = { ...vencido, ciclo: { agendado_para: null } };
+    expect(statusComAfastamento(statusPeriodico(comCiclo, HOJE), true)).toBe("Afastado");
+    expect(statusComAfastamento(statusPeriodico(comCiclo, HOJE), false)).toBe("Aguardando agendamento");
+  });
+  it("painel: afastado não conta em nada dos periódicos, só no cartão de afastados (SIS-2026-0918, 19/11)", () => {
+    const af = { motivo: "beneficio_inss" as const, situacao: "Auxílio Doença", desde: "2026-03-01", previsao_retorno: null, fonte: "senior" as const };
+    const p = contarPainel([
+      item({ status: "Vencido" }),
+      item({ status: "Afastado", afastamento: af }),
+      item({ status: "Agendado", afastamento: af }),
+      item({ status: "Realizado/recebido", afastamento: { ...af, motivo: "aposentadoria" as const } }),
+      item({ status: "Próximo do vencimento" }),
+    ]);
+    expect(p.vencidos).toBe(1);
+    expect(p.proximos).toBe(1);
+    expect(p.agendados).toBe(0);  // agendado, mas afastado: fora da contagem
+    expect(p.realizados).toBe(0); // idem
+    expect(p.previstos).toBe(2);  // só vencido + próximo
+    expect(p.afastados).toBe(3);
+    expect(contaNoPainel(item({ afastamento: af }))).toBe(false);
+    expect(contaNoPainel(item())).toBe(true);
+  });
+  it("afastados: previsão de retorno mais próxima primeiro, sem previsão por último", () => {
+    const af = (previsao_retorno: string | null) => ({ motivo: "licenca_maternidade" as const, situacao: null, desde: null, previsao_retorno, fonte: "controle_afastamentos" as const });
+    const l = [item({ nome: "C", afastamento: af(null) }), item({ nome: "B", afastamento: af("2027-02-01") }), item({ nome: "A", afastamento: af("2026-12-10") })]
+      .sort(ordenarAfastados).map((i) => i.nome);
+    expect(l).toEqual(["A", "B", "C"]);
+  });
+});
+
+// SIS-2026-0886 parte 2 (mig 20261119200000): função e empresa do vínculo.
+describe("empresa e função na lista (SIS-2026-0886, parte 2)", () => {
+  it("empresa pelo código da Senior, na régua das telas de RH", () => {
+    expect(empresaDoItem({ empresa_codigo: "1", empresa_nome: "HAGG SERVICOS LTDA" })).toBe("HAGG");
+    expect(empresaDoItem({ empresa_codigo: "2", empresa_nome: null })).toBe("SN");
+    expect(empresaDoItem({ empresa_codigo: "3", empresa_nome: null })).toBe("CANAÃ");
+    expect(empresaDoItem({ empresa_codigo: "5", empresa_nome: null })).toBe("NH");
+  });
+  it("sem código conhecido: cai no nome da empresa; sem nada, traço", () => {
+    expect(empresaDoItem({ empresa_codigo: "9", empresa_nome: "NH SERVICOS" })).toBe("NH");
+    expect(empresaDoItem({ empresa_codigo: "9", empresa_nome: "OUTRA LTDA" })).toBe("OUTRA LTDA");
+    expect(empresaDoItem({ empresa_codigo: null, empresa_nome: null })).toBe("—");
+    expect(empresaDoItem({})).toBe("—"); // RPC antiga, sem as chaves
+  });
+  it("função: o cargo da Senior, ou o aviso quando falta", () => {
+    expect(funcaoDoItem({ cargo: "Servente" })).toBe("Servente");
+    expect(funcaoDoItem({ cargo: null })).toBe("Sem função na Senior");
+    expect(funcaoDoItem({ cargo: "  " })).toBe("Sem função na Senior");
+  });
+  it("busca acha por empresa (sigla ou nome) e por função", () => {
+    const i = item({ nome: "Maria", cargo: "Copeira", empresa_codigo: "2", empresa_nome: "SN SERVICOS" });
+    expect(casaBusca(i, "sn")).toBe(true);
+    expect(casaBusca(i, "servicos")).toBe(true);
+    expect(casaBusca(i, "copeira")).toBe(true);
+    expect(casaBusca(i, "maria")).toBe(true);
+    expect(casaBusca(i, "")).toBe(true);
+    expect(casaBusca(i, "hagg")).toBe(false);
+  });
+});
+
+// SIS-2026-0918 (19/11, mig 20261120150000): MEI sai da base do periódico.
+// A função SQL sst_aso_per_eh_mei espelha esta régua do RH (lib/rh/mei.ts):
+// sigla MEI como palavra inteira ou "MICROEMPREEND" numa coluna de tipo/categoria.
+describe("MEI fora do periódico (SIS-2026-0918)", () => {
+  it("reconhece o MEI pela régua do RH, a mesma da função SQL", () => {
+    expect(ehMEI({ "TIPO DE CONTRATO": "MEI" })).toBe(true);
+    expect(ehMEI({ "TIPO DE CONTRATO": "mei" })).toBe(true);
+    expect(ehMEI({ "Descrição (Cat. eSocial)": "Contribuinte individual - Microempreendedor Individual" })).toBe(true);
+    expect(ehMEI({ "TIPO DE CONTRATO": "CLT" })).toBe(false);
+    expect(ehMEI({ "TIPO DE CONTRATO": null })).toBe(false);
+    expect(ehMEI({ "TIPO DE CONTRATO": "COMEIA" })).toBe(false); // só a sigla inteira
   });
 });

@@ -94,6 +94,8 @@ export const PATRIM_RESET = {
   classificacao: "", matricula: "", possui_escritura: "", especie_escritura: "",
   situacao_pagamento: "", valor_contrato: "", valor_entrada: "", valor_estimado: "",
   latitude: "", longitude: "",
+  // SIS-2026-0911: integrante do imóvel (id do colaborador; -1 = Empresa), a base para direcionar os gastos do imóvel.
+  integrante_empregado_id: "",
 };
 
 export const CAMPOS_PATRIMONIO = Object.keys(PATRIM_RESET) as (keyof typeof PATRIM_RESET)[];
