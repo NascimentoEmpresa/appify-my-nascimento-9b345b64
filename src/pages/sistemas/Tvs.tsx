@@ -739,7 +739,7 @@ function paraItemTv(i: TvItem, contratos: { id: string; nome: string }[]): ItemT
     rel_contrato_nome: i.rel_contrato ? contratos.find((c) => c.id === i.rel_contrato)?.nome ?? null : null,
   };
 }
-const nomeDoItem = (i: Pick<ItemTv, "tipo" | "titulo" | "texto" | "url" | "relatorio" | "rel_periodo">) =>
+export const nomeDoItem = (i: Pick<ItemTv, "tipo" | "titulo" | "texto" | "url" | "relatorio" | "rel_periodo">) =>
   i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo || "Item";
 
 /**
@@ -754,7 +754,7 @@ const nomeDoItem = (i: Pick<ItemTv, "tipo" | "titulo" | "texto" | "url" | "relat
  * — saiu a Fullscreen API. Com `encaixar`, o quadro ocupa a altura que o pai
  * der e o palco cabe pela largura E pela altura, centralizado no preto.
  */
-function QuadroTv({ tela, onFim, rotulo, encaixar = false }: { tela: TelaTv; onFim?: () => void; rotulo: string; encaixar?: boolean }) {
+export function QuadroTv({ tela, onFim, rotulo, encaixar = false }: { tela: TelaTv; onFim?: () => void; rotulo: string; encaixar?: boolean }) {
   const caixa = useRef<HTMLDivElement>(null);
   const quadro = useRef<HTMLIFrameElement>(null);
   const [largura, setLargura] = useState(0);
@@ -902,7 +902,7 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
  * O "tocador" (itens, item atual, tempos) mora em useTocadorPrevia: o mesmo
  * serve o quadro pequeno e o card grande do "Ver tela inteira".
  */
-function useTocadorPrevia(p: TvPlaylist, playlists: TvPlaylist[], rascunho: ItemTv | null) {
+export function useTocadorPrevia(p: TvPlaylist, playlists: TvPlaylist[], rascunho: ItemTv | null) {
   const contratos = useContratosRelatorio().data ?? SEM_CONTRATOS;
   const itens = useMemo<(ItemTv & { novo?: boolean })[]>(() => [
     ...expandirPlaylist(p.itens, playlists).map((i) => paraItemTv(i, contratos)),

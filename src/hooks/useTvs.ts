@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { FOLGA_AVISO_S, ajustarDefasagem, medirDefasagem, type AoVivoTv, type FiltroTv, type LayoutAviso, type TipoItem } from "@/lib/tv/tv";
+import type { PlaylistVisivel } from "@/lib/tv/visualizarTvs";
 
 // =====================================================================
 // Sistemas › TV's — gestão (mig 20261007000012). Tabelas TV_* com RLS por
@@ -229,3 +230,25 @@ export const useTvFiltro = () => useQuery({
 
 export const useDefinirFiltroTv = () => useMut(async (filtro: FiltroTv | null) =>
   ok(await sb.rpc("tv_definir_filtro", { p_filtro: filtro })));
+
+// ---- Visualizar TVs (20/11/2026, mig 20261120200000) ------------------------
+// Uma RPC só: as playlists liberadas para o login (+ as que elas incluem,
+// liberada = false, só para a prévia abrir "Outra playlist"), o nº de TVs de
+// cada uma e o filtro global. Quem só assiste não lê as tabelas TV_*.
+export interface DadosVisualizarTvs {
+  todas: boolean;
+  filtro: FiltroTv | null;
+  playlists: (TvPlaylist & PlaylistVisivel<TvItem>)[];
+}
+export const useTvVisualizar = () => useQuery({
+  queryKey: [K, "visualizar"], staleTime: 30_000,
+  queryFn: async (): Promise<DadosVisualizarTvs> => {
+    const { data, error } = await sb.rpc("tv_visualizar_playlists");
+    if (error) throw error;
+    return {
+      todas: !!data?.todas,
+      filtro: (data?.filtro as FiltroTv | null) ?? null,
+      playlists: (data?.playlists ?? []).map((p: TvPlaylist & PlaylistVisivel<TvItem>) => ({ ...p, itens: [...(p.itens ?? [])].sort((a, b) => a.ordem - b.ordem) })),
+    };
+  },
+});
