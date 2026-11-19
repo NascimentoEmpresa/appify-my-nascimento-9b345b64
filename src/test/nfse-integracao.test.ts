@@ -269,6 +269,35 @@ describe("NFS-e: documento fiscal e certificado", () => {
     expect(xml).toContain("<imovel><end><CEP>90000000</CEP>");
     await documento.validarEsquema(xml);
   });
+  it("remove espaços nas extremidades do endereço do imóvel antes de validar e enviar a DPS", async () => {
+    const s = solicitacao();
+    s.dados.parametros.ibs_indicador_operacao = "020201";
+    s.dados.parametros.informar_imovel = true;
+    s.dados.parametros.imovel = {
+      cep: "90000000", logradouro: " RS-030", numero: " 311 ",
+      bairro: " Centro ", complemento: " Sala 1 ", inscricao: "",
+    };
+    const xml = documento.gerarDps(s);
+    expect(xml).toContain("<xLgr>RS-030</xLgr><nro>311</nro><xCpl>Sala 1</xCpl><xBairro>Centro</xBairro>");
+    expect(xml).not.toContain("<xLgr> RS-030</xLgr>");
+    await documento.validarEsquema(xml);
+    const deps = dependencias();
+    await executarSolicitacao(s, deps);
+    expect(deps.cliente.enviar).toHaveBeenCalledOnce();
+  });
+  it("não deixa espaços nas extremidades de textos da DPS nem complemento vazio", async () => {
+    const s = solicitacao();
+    s.dados.parametros.tomador.logradouro = "  Rua de teste  ";
+    s.dados.parametros.tomador.complemento = "   ";
+    for (const descricao of ["Limpeza & conservação <teste> ", "\n Limpeza & conservação <teste> \n"]) {
+      s.dados.parametros.descricao = descricao;
+      const xml = documento.gerarDps(s);
+      expect(xml).toContain("<xLgr>Rua de teste</xLgr>");
+      expect(xml).toContain("<xDescServ>Limpeza &amp; conservação &lt;teste&gt;</xDescServ>");
+      expect(xml).not.toContain("<xCpl>");
+      await documento.validarEsquema(xml);
+    }
+  });
   it("envia o código da prefeitura em cIntContrib sem confundir com cTribMun e passa no XSD assinado", async () => {
     for (const codigo of ["7830200", "8111700", "8630502"]) {
       const s = solicitacao();
