@@ -36,6 +36,7 @@ import TvPlayer from "./pages/tv/TvPlayer";
 import TvPrevia from "./pages/tv/TvPrevia";
 import TvsSistemas from "./pages/sistemas/Tvs";
 import TvsIndicadores from "./pages/sistemas/TvsIndicadores";
+import TvsVisualizar from "./pages/sistemas/TvsVisualizar";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
 import Documentos from "./pages/Documentos";
@@ -431,6 +432,7 @@ import SolicitarVagaCentral from "./pages/central-servicos/SolicitarVaga";
 import QuadroAvisos from "./pages/central-servicos/QuadroAvisos";
 import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
 import SolicitarManutencaoEquipamento from "./pages/central-servicos/SolicitarManutencaoEquipamento";
+import ManutencaoEquipamentoPublica from "./pages/public/ManutencaoEquipamentoPublica";
 import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
 import EspacoColaborador from "./pages/central-servicos/espaco-colaborador/EspacoColaborador";
@@ -566,6 +568,8 @@ const App = () => (
           <Route path="/fornecedor/cadastro/:token" element={<FornecedorCadastro />} />
           {/* Fornecedor abre pelo link do e-mail, sem login: o token e a credencial. */}
           <Route path="/pedido/confirmar/:token" element={<PedidoConfirmar />} />
+          {/* Prestadora acompanha a manutencao pelo QR exclusivo da maquina. */}
+          <Route path="/manutencao/equipamento/:token" element={<ManutencaoEquipamentoPublica />} />
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
           {/* Site institucional público — aponta para /vagas, /denuncia e /login */}
           <Route path="/site" element={<Site />} />
@@ -643,6 +647,7 @@ const App = () => (
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
+            <Route path="operacional/entrega-epi" element={<EntregasEpi menuCodigo="ope_epi_entregas" modulo="Operacional" />} />
             {/* Vieram do RH em 03/11/2026 (mig 20261103005100), mesmos códigos de menu. */}
             <Route path="operacional/colaboradores" element={<Colaboradores />} />
             {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
@@ -656,6 +661,8 @@ const App = () => (
             <Route path="sistemas/tvs" element={<TvsSistemas />} />
             {/* TVs gerenciais por diretoria (mig 20261012000001, SIS-2026-0635). */}
             <Route path="sistemas/tvs/indicadores" element={<TvsIndicadores />} />
+            {/* Visualizar TVs: só assistir, cada um as TVs liberadas (mig 20261120200000). */}
+            <Route path="sistemas/tvs/visualizar" element={<TvsVisualizar />} />
             <Route path="sistemas/checklist-modulos/:moduloId" element={<ChecklistModuloDetalhe />} />
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />

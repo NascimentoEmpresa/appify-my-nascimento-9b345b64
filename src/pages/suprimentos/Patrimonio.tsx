@@ -9,19 +9,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useContratosCatalogo } from "@/hooks/useSupCatalogo";
 import { ModalManutencao } from "@/components/suprimentos/ModalManutencao";
+import { QrManutencaoDialog } from "@/components/suprimentos/QrManutencaoDialog";
 import {
   useBens, useSalvarBem, useExcluirBem, usePostosDoContrato, useFotosDosBens,
   LABEL_CATEGORIA, SEM_CONTRATO, rotuloIndisponivel, type Bem, type Categoria,
 } from "@/hooks/useSupPatrimonio";
 import {
   Search, Plus, Car, Wrench, ChevronDown, ChevronRight, Pencil, Trash2,
-  MapPin, FileText, ShieldAlert, Boxes, ClipboardList,
+  MapPin, FileText, ShieldAlert, Boxes, ClipboardList, QrCode,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { dataBR } from "@/lib/veiculos/indisponibilidade";
 
 /**
  * Patrimônio — frota e maquinário, em cascata Contrato → Posto → Item.
@@ -52,6 +53,7 @@ export default function Patrimonio() {
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
   const [editando, setEditando] = useState<Partial<Bem> | null>(null);
   const [manutencaoDe, setManutencaoDe] = useState<Bem | null>(null);
+  const [qrDe, setQrDe] = useState<Bem | null>(null);
 
   const termo = busca.trim();
 
@@ -255,6 +257,7 @@ export default function Patrimonio() {
                                             fotoUrl={b.foto_path ? fotos[b.foto_path] : undefined}
                                             onAbrir={() => setManutencaoDe(b)}
                                             onEditar={() => setEditando(b)}
+                                            onQr={() => setQrDe(b)}
                                           />
                                         ))}
                                       </div>
@@ -281,21 +284,17 @@ export default function Patrimonio() {
         onFechar={() => setEditando(null)}
       />
       <ModalManutencao bem={manutencaoDe} onFechar={() => setManutencaoDe(null)} />
+      <QrManutencaoDialog bem={qrDe} onFechar={() => setQrDe(null)} />
     </div>
   );
 }
 
 /** Card do bem. O identificador vem em destaque porque é o que distingue
  *  duas unidades do mesmo modelo — há 3 "ROÇADEIRA STHIL FS 220" na base. */
-function hojeLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 function CardBem({
-  bem, modoEdicao, onAbrir, onEditar, fotoUrl,
+  bem, modoEdicao, onAbrir, onEditar, onQr, fotoUrl,
 }: {
-  bem: Bem; modoEdicao: boolean; onAbrir: () => void; onEditar: () => void;
+  bem: Bem; modoEdicao: boolean; onAbrir: () => void; onEditar: () => void; onQr: () => void;
   fotoUrl?: string;
 }) {
   const Icone = bem.categoria === "veiculo" ? Car : Wrench;
@@ -323,7 +322,9 @@ function CardBem({
         )}
         <span className="line-clamp-2 text-sm font-medium">{bem.nome}</span>
         <span className="line-clamp-1 font-mono text-[11px] text-muted-foreground">
-          {bem.identificador ?? "sem identificador"}
+          {bem.categoria === "equipamento"
+            ? [bem.numero_serie, bem.placa_patrimonial].filter(Boolean).join(" · ") || "sem identificação"
+            : bem.identificador ?? "sem identificador"}
         </span>
         {bem.em_manutencao && (
           bem.motivo_indisponivel === "contrato"
@@ -336,23 +337,14 @@ function CardBem({
                        className="max-w-full border-rose-400/60 text-[10px] text-rose-700 dark:text-rose-300">
                   <span className="truncate">{rotuloIndisponivel(bem)}</span>
                 </Badge>
-              : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">
-                  {/* Período que ainda vai começar (SIS-2026-0930) não é "em manutenção" ainda. */}
-                  {bem.data_inicio_manutencao && bem.data_inicio_manutencao.slice(0, 10) > hojeLocal()
-                    ? `manutenção em ${dataBR(bem.data_inicio_manutencao.slice(0, 10))}`
-                    : "em manutenção"}
-                </Badge>
+              : <Badge variant="outline" className="border-amber-400/60 text-[10px] text-amber-700 dark:text-amber-300">em manutenção</Badge>
         )}
       </button>
       {modoEdicao && (
-        <Button
-          size="icon" variant="secondary"
-          className="absolute -right-1.5 -top-1.5 h-6 w-6 rounded-full shadow"
-          onClick={onEditar}
-          aria-label={`Editar ${bem.nome}`}
-        >
-          <Pencil className="h-3 w-3" />
-        </Button>
+        <div className="absolute -right-1.5 -top-1.5 flex gap-1">
+          {bem.categoria === "equipamento" && <AcessoGate menu="sup_patrimonio" acao="alterar"><Button size="icon" variant="secondary" className="h-7 w-7 rounded-full shadow" onClick={onQr} aria-label={`QR de ${bem.nome}`}><QrCode className="h-3.5 w-3.5" /></Button></AcessoGate>}
+          <Button size="icon" variant="secondary" className="h-7 w-7 rounded-full shadow" onClick={onEditar} aria-label={`Editar ${bem.nome}`}><Pencil className="h-3 w-3" /></Button>
+        </div>
       )}
     </div>
   );
@@ -409,6 +401,13 @@ function DialogBem({
               É o que distingue duas unidades do mesmo modelo. Pode ficar vazio.
             </p>
           </div>
+
+          {form.categoria === "equipamento" && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div><Label>Número de série</Label><Input value={form.numero_serie ?? ""} onChange={(e) => setForm((s) => ({ ...s, numero_serie: e.target.value }))} placeholder="Número de série da máquina" className="font-mono" /></div>
+              <div><Label>Placa patrimonial</Label><Input value={form.placa_patrimonial ?? ""} onChange={(e) => setForm((s) => ({ ...s, placa_patrimonial: e.target.value }))} placeholder="Número do patrimônio" className="font-mono" /></div>
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>

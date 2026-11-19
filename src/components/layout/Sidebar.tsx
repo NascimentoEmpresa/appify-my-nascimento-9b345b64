@@ -89,7 +89,7 @@ import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { useImplantacaoConfirmacaoNotif } from "@/hooks/useImplantacaoConfirmacaoNotif";
 import { itemComBolinha } from "@/lib/implantacao/notifConfirmacao";
 import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
-import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
+import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge, Eye } from "lucide-react";
 import { FileX2 } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
@@ -972,6 +972,8 @@ const tvsModule: ModuleDef = {
         { label: "Gestão das TVs", to: "/app/sistemas/tvs", icon: MonitorPlay },
         // TVs gerenciais por diretoria (mig 20261012000001, SIS-2026-0635).
         { label: "Indicadores gerenciais", to: "/app/sistemas/tvs/indicadores", icon: Gauge },
+        // Visualizar TVs: assistir o que passa em cada TV liberada (mig 20261120200000).
+        { label: "Visualizar TVs", to: "/app/sistemas/tvs/visualizar", icon: Eye },
       ],
     },
   ],
@@ -1386,6 +1388,7 @@ const operacionalModule: ModuleDef = {
         // SIS-2026-0599: locais, cidades e cobertura do contrato que inicia.
         { label: "Início de Contrato", to: "/app/operacional/inicio-de-contrato", icon: Building2 },
         { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
+        { label: "Entrega de EPIs", to: "/app/operacional/entrega-epi", icon: ShieldCheck },
         // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
         // telas ficam em abas dentro dela; menu ope_efetividade.
