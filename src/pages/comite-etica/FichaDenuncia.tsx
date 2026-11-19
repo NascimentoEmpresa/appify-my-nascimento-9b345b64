@@ -30,6 +30,7 @@ import { ExportarDenuncia } from "./ExportarDenuncia";
 import { HistoricoDenuncia } from "./HistoricoDenuncia";
 import { ParecerIaDenuncia } from "./ParecerIaDenuncia";
 import { DocumentosInvestigacao } from "./DocumentosInvestigacao";
+import { FluxoMedidas } from "./FluxoMedidas";
 
 // =====================================================================
 // FICHA DE APURAÇÃO — o formulário que o Comitê de Ética preenche
@@ -504,6 +505,11 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
               na hora, à parte do "Salvar ficha". O relator é o responsável
               GRAVADO (não o do select ainda não salvo): é o que a RLS confere. */}
           <DocumentosInvestigacao denunciaId={d.id} relatorId={d.apuracao_responsavel_id ?? null} />
+
+          {/* ------------------- Presidência, Jurídico e cumprimento (0957) */}
+          {/* O que a presidente decidiu em cada ciclo, o reenvio do parecer
+              e a aplicação registrada pelo supervisor do contrato. */}
+          <FluxoMedidas denunciaId={d.id} statusDenuncia={d.status} modo="comite" />
 
           {/* -------------------------------------------------- investigação */}
           <Bloco titulo="Investigação" desc="Responsável e datas da apuração.">

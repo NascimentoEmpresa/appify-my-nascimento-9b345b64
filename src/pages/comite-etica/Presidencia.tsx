@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { db } from "./db";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -57,7 +58,10 @@ export default function PresidenciaComiteEtica() {
   const [busca, setBusca] = useState("");
   // Guarda o id, não a linha: depois de salvar, a ficha relê a versão nova
   // da lista — e fecha sozinha se o caso foi devolvido ao Comitê.
-  const [alvoId, setAlvoId] = useState<string | null>(null);
+  // ?denuncia=<id> (SIS-2026-0957): o sino "Parecer do Comitê para decidir"
+  // abre direto a ficha do caso.
+  const [params] = useSearchParams();
+  const [alvoId, setAlvoId] = useState<string | null>(() => params.get("denuncia"));
 
   const { data: denuncias = [], isLoading } = useQuery({
     queryKey: ["comite-etica-presidencia"],

@@ -103,6 +103,8 @@ interface Props {
    * Convenção Coletiva do contrato (13/11/2026, mig 20261113100500): com
    * ela, benefícios e percentuais de TODOS os postos saem da convenção, só
    * leitura — mudar é no cadastro dela.
+   * SIS-2026-0958: só os PERCENTUAIS seguem só leitura; os benefícios vêm da
+   * CCT pelo preenchimento automático e ficam editáveis.
    */
   heranca?: { convencaoId: string; valores: HerancaConvencao } | null;
 }
@@ -408,8 +410,8 @@ function LinhaDoQuadro({
         title: `Da Planilha de Custo — posto "${remuneracao.posto}"`,
         description: [
           daConvencao
-            ? "Salário atualizado. Benefícios e percentuais continuam os da Convenção Coletiva do contrato."
-            : "Salário, percentuais e benefícios atualizados com o que a planilha e a convenção do posto têm.",
+            ? "Salário e benefícios atualizados. Os percentuais continuam os da Convenção Coletiva do contrato."
+            : "Salário, percentuais e benefícios atualizados com o que a planilha e a CCT do posto têm.",
           ...preench.avisos,
         ].join(" "),
       });
@@ -444,7 +446,7 @@ function LinhaDoQuadro({
         custo.por_posto === false
           ? "O nome não casou exato; foi usado o posto de mesma cidade e jornada. Confira os valores."
           : daConvencao
-            ? "Salário preenchido. Benefícios e percentuais continuam os da Convenção Coletiva do contrato."
+            ? "Salário preenchido. Os percentuais continuam os da Convenção Coletiva do contrato."
             : "Salário, percentuais e benefícios preenchidos.",
         ...p.avisos,
       ].join(" "),
@@ -659,7 +661,7 @@ function LinhaDoQuadro({
               {!somenteLeitura && (
                 <Button
                   type="button" variant="outline" size="sm" className="h-9" onClick={puxarDaPlanilha}
-                  title="Troca salário, percentuais e benefícios pelo que a Planilha de Custo e a convenção do posto têm — inclusive o que foi digitado."
+                  title="Troca salário, percentuais e benefícios pelo que a Planilha de Custo e a CCT do posto têm — inclusive o que foi digitado."
                 >
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                   Atualizar da Planilha
@@ -681,26 +683,20 @@ function LinhaDoQuadro({
           )}
 
           <div className="flex flex-col gap-1">
-            <Label className="text-xs">Benefícios{daConvencao && <span className="font-normal text-muted-foreground"> — da Convenção Coletiva do contrato</span>}</Label>
-            {daConvencao ? (
-              <>
-                <Textarea className="min-h-[60px] text-xs" value={l.beneficios || "A convenção não tem benefício preenchido."} disabled readOnly />
-                <AvisoConvencaoDoContrato convencaoId={convencaoId!} compacto />
-              </>
-            ) : (
-              <>
-                <Textarea
-                  rows={2} className="text-sm" placeholder="Ex: VT R$ 126,28/mês · VA R$ 461,82/mês"
-                  value={l.beneficios}
-                  disabled={somenteLeitura}
-                  onChange={e => onMexer({ beneficios: e.target.value })}
-                />
-                <span className="text-[11px] text-muted-foreground">
-                  {dica("beneficios") ? `${dica("beneficios")}. ` : ""}
-                  Vai para a vaga exatamente como está escrito aqui. Vem sozinho da convenção vinculada ao posto ou, sem ela, da Planilha de Custo.
-                </span>
-              </>
-            )}
+            <Label className="text-xs">Benefícios</Label>
+            {/* SIS-2026-0958: sempre editável — também com convenção no
+                contrato. O automático vem da CCT (beneficiosDaCct), sem VT. */}
+            <Textarea
+              rows={2} className="text-sm" placeholder="Ex: Vale-Alimentação (VA): R$ 27,15 / dia · Prêmio Assiduidade: R$ 80,00 / mês"
+              value={l.beneficios}
+              disabled={somenteLeitura}
+              onChange={e => onMexer({ beneficios: e.target.value })}
+            />
+            <span className="text-[11px] text-muted-foreground">
+              {dica("beneficios") ? `${dica("beneficios")}. ` : preench.notaBeneficios ? `${preench.notaBeneficios}. ` : ""}
+              Vai para a vaga exatamente como está escrito aqui. Vem da CCT vinculada (contrato, posto ou sindicato) quando o posto tem benefício na Planilha de Custo. O VT não é importado.
+            </span>
+            {daConvencao && <AvisoConvencaoDoContrato convencaoId={convencaoId!} compacto />}
           </div>
 
           {/* Outros proventos (SIS-2026-0884): fora do convencional, à mão,
