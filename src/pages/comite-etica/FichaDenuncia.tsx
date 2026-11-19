@@ -29,6 +29,7 @@ import { BlocoAnexos, BlocoPresidencia, BlocoProvidencias } from "./BlocosApurac
 import { ExportarDenuncia } from "./ExportarDenuncia";
 import { HistoricoDenuncia } from "./HistoricoDenuncia";
 import { ParecerIaDenuncia } from "./ParecerIaDenuncia";
+import { DocumentosInvestigacao } from "./DocumentosInvestigacao";
 
 // =====================================================================
 // FICHA DE APURAÇÃO — o formulário que o Comitê de Ética preenche
@@ -497,6 +498,12 @@ export default function FichaDenuncia({ denuncia, slas, todas, onFechar, onSalvo
               <Campo label="Cidade"><Input value={f.cidade} onChange={(e) => set("cidade", e.target.value)} /></Campo>
             </div>
           </Bloco>
+
+          {/* ------------------------------------- abertura de investigação */}
+          {/* Termo de Abertura e Parecer Conclusivo, com minuta da I.A. Grava
+              na hora, à parte do "Salvar ficha". O relator é o responsável
+              GRAVADO (não o do select ainda não salvo): é o que a RLS confere. */}
+          <DocumentosInvestigacao denunciaId={d.id} relatorId={d.apuracao_responsavel_id ?? null} />
 
           {/* -------------------------------------------------- investigação */}
           <Bloco titulo="Investigação" desc="Responsável e datas da apuração.">
