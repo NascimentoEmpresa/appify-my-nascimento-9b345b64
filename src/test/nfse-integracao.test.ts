@@ -289,12 +289,14 @@ describe("NFS-e: documento fiscal e certificado", () => {
     const s = solicitacao();
     s.dados.parametros.tomador.logradouro = "  Rua de teste  ";
     s.dados.parametros.tomador.complemento = "   ";
-    s.dados.parametros.descricao = "\n Limpeza & conservação <teste> \n";
-    const xml = documento.gerarDps(s);
-    expect(xml).toContain("<xLgr>Rua de teste</xLgr>");
-    expect(xml).toContain("<xDescServ>Limpeza &amp; conservação &lt;teste&gt;</xDescServ>");
-    expect(xml).not.toContain("<xCpl>");
-    await documento.validarEsquema(xml);
+    for (const descricao of ["Limpeza & conservação <teste> ", "\n Limpeza & conservação <teste> \n"]) {
+      s.dados.parametros.descricao = descricao;
+      const xml = documento.gerarDps(s);
+      expect(xml).toContain("<xLgr>Rua de teste</xLgr>");
+      expect(xml).toContain("<xDescServ>Limpeza &amp; conservação &lt;teste&gt;</xDescServ>");
+      expect(xml).not.toContain("<xCpl>");
+      await documento.validarEsquema(xml);
+    }
   });
   it("envia o código da prefeitura em cIntContrib sem confundir com cTribMun e passa no XSD assinado", async () => {
     for (const codigo of ["7830200", "8111700", "8630502"]) {
