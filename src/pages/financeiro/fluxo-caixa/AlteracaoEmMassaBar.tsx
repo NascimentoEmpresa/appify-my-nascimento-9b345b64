@@ -13,6 +13,7 @@ import { useContasBanco } from "@/hooks/useContasBanco";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { rotuloConta } from "@/lib/contaBanco";
 import { AcessoGate } from "@/components/auth/AcessoGate";
+import { ehVinculavel, usePatrimoniosParaVinculo, useVincularPatrimonio } from "@/hooks/useImoveisDetalhamento";
 import { ConfirmarUnificacaoDialog, MENU_UNIFICAR, RatearUnificacaoDialog } from "./UnificacaoDialogs";
 import { planejarUnificacao, type LinhaUnificavel } from "./unificacao";
 import {
@@ -40,7 +41,8 @@ export function AlteracaoEmMassaBar({
   onSelecionadas: (chaves: Set<string>) => void;
 }) {
   // SIS-2026-0927: "unificar" não troca campo (não usa destino nem o plano): junta as linhas marcadas num pagamento só.
-  const [tipo, setTipo] = useState<TipoMassa | "unificar" | "">("");
+  // SIS-2026-0911: "patrimonio" também não troca campo do lançamento: só liga as linhas a um imóvel (ou tira o vínculo).
+  const [tipo, setTipo] = useState<TipoMassa | "unificar" | "patrimonio" | "">("");
   const [confirmandoUnif, setConfirmandoUnif] = useState(false);
   const [ratearUnifId, setRatearUnifId] = useState<string | null>(null);
   const [destinoId, setDestinoId] = useState("");
@@ -49,6 +51,13 @@ export function AlteracaoEmMassaBar({
   const [progresso, setProgresso] = useState<{ feitas: number; total: number } | null>(null);
   const [resultado, setResultado] = useState<ResultadoAlteracaoEmMassa | null>(null);
   const massa = useAlteracaoEmMassaFluxo();
+  const { data: patrimonios = [] } = usePatrimoniosParaVinculo(ativo && tipo === "patrimonio");
+  const vincularPatrimonio = useVincularPatrimonio();
+  const opcoesPatrimonio = useMemo(
+    () => [{ value: "__remover", label: "— Remover vínculo com imóvel —" }, ...patrimonios.map((p) => ({ value: String(p.id), label: `${p.classificacao ? p.classificacao + " · " : ""}${p.descricao}` }))],
+    [patrimonios],
+  );
+  const vinculaveis = useMemo(() => selecionadas.filter((l) => ehVinculavel(l.origem)), [selecionadas]);
   const { data: integrantes = [] } = useIntegrantesFluxo(ativo && tipo === "integrante");
   const opcoesIntegrante = useMemo(() => integrantes.map((i) => ({ value: String(i.id), label: i.nome })), [integrantes]);
 
@@ -64,7 +73,7 @@ export function AlteracaoEmMassaBar({
   const opcoesClassificacao = useMemo(() => classificacoes.filter((c) => c.ativo).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [classificacoes]);
 
   const plano: PlanoMassa | null = useMemo(() => {
-    if (!tipo || tipo === "unificar" || !destinoId) return null;
+    if (!tipo || tipo === "unificar" || tipo === "patrimonio" || !destinoId) return null;
     if (tipo === "classificacao") return planejarTrocaDeClassificacao(selecionadas, destinoId);
     if (tipo === "integrante") return planejarTrocaDeIntegrante(selecionadas, Number(destinoId));
     if (tipo === "conta_banco") {
@@ -85,12 +94,24 @@ export function AlteracaoEmMassaBar({
   const planoUnif = useMemo(() => (tipo === "unificar" ? planejarUnificacao(selecionadas as unknown as LinhaUnificavel[]) : null), [tipo, selecionadas]);
 
   function trocarTipo(v: string) {
-    setTipo(v as TipoMassa | "unificar");
+    setTipo(v as TipoMassa | "unificar" | "patrimonio");
     setDestinoId("");
   }
 
+  async function vincular() {
+    if (!destinoId || vinculaveis.length === 0) return;
+    try {
+      const n = await vincularPatrimonio.mutateAsync({ linhas: vinculaveis, patrimonioId: destinoId === "__remover" ? null : Number(destinoId) });
+      const fora = selecionadas.length - vinculaveis.length;
+      toast.success(`${n} lançamento(s) ${destinoId === "__remover" ? "sem vínculo com imóvel" : "vinculado(s) ao imóvel"}${fora > 0 ? `; ${fora} ficaram de fora (cartão, aplicação ou conta garantida não são gastos de imóvel)` : ""}.`);
+      onSelecionadas(new Set());
+    } catch (e: any) {
+      toast.error(e?.message ?? "Não foi possível vincular ao imóvel.");
+    }
+  }
+
   async function aplicar() {
-    if (!tipo || tipo === "unificar" || !plano || plano.aplicar.length === 0) return;
+    if (!tipo || tipo === "unificar" || tipo === "patrimonio" || !plano || plano.aplicar.length === 0) return;
     setProgresso({ feitas: 0, total: plano.aplicar.length });
     try {
       const r = await massa.mutateAsync({
@@ -132,6 +153,7 @@ export function AlteracaoEmMassaBar({
             <SelectItem value="classificacao">{ROTULO_TIPO.classificacao}</SelectItem>
             {opcoesConta.length > 0 && <SelectItem value="conta_banco">{ROTULO_TIPO.conta_banco}</SelectItem>}
             <SelectItem value="integrante">{ROTULO_TIPO.integrante}</SelectItem>
+            <SelectItem value="patrimonio">Vincular a imóvel (Patrimônio)</SelectItem>
             <AcessoGate menu={MENU_UNIFICAR} acao="visualizar"><SelectItem value="unificar">Unificar lançamentos</SelectItem></AcessoGate>
           </SelectContent>
         </Select>
@@ -140,6 +162,17 @@ export function AlteracaoEmMassaBar({
           <span className="text-xs font-medium text-sky-900 dark:text-sky-200">
             {selecionadas.length < 2 ? "Marque 2 ou mais lançamentos do mesmo pagamento" : `${selecionadas.length} lançamentos selecionados (${planoUnif?.somaTexto ?? ""})`}
           </span>
+        ) : tipo === "patrimonio" ? (
+          <SearchableSelect
+            value={destinoId || null}
+            onChange={setDestinoId}
+            options={opcoesPatrimonio}
+            placeholder={patrimonios.length === 0 ? "Sem imóveis (acesso a Patrimônios necessário)" : "Selecione o imóvel"}
+            searchPlaceholder="Buscar imóvel..."
+            disabled={!ativo}
+            className="w-[340px]"
+            triggerClassName="h-9 bg-background text-sm"
+          />
         ) : tipo === "integrante" ? (
           <SearchableSelect
             value={destinoId || null}
@@ -165,7 +198,11 @@ export function AlteracaoEmMassaBar({
         )}
 
         <span className="text-xs text-muted-foreground">{ativo ? `${selecionadas.length} linha(s) marcada(s)` : ""}</span>
-        {tipo === "unificar" ? (
+        {tipo === "patrimonio" ? (
+          <Button className="ml-auto gap-1.5" disabled={!ativo || !destinoId || vinculaveis.length === 0 || vincularPatrimonio.isPending} onClick={vincular}>
+            <Link2 className="h-4 w-4" /> {vincularPatrimonio.isPending ? "Gravando…" : destinoId === "__remover" ? "Remover vínculo" : `Vincular ${vinculaveis.length} lançamento(s)`}
+          </Button>
+        ) : tipo === "unificar" ? (
           <Button className="ml-auto gap-1.5" disabled={!ativo || selecionadas.length < 2} onClick={() => setConfirmandoUnif(true)}>
             <Link2 className="h-4 w-4" /> Unificar lançamentos
           </Button>
