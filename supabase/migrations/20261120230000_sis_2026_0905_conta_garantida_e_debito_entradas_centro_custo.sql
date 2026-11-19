@@ -21,6 +21,14 @@
 --
 -- Idempotente. NOTIFY ao final.
 --
+-- RENUMERADA 20261120220000 → 20261120230000 (19/11/2026): colidiu com 20261120220000_sis_2026_0821_ope_entregas_epi.sql, que entrou
+-- na main antes. Esta já tinha sido aplicada pelo pgAdmin e registrada sob 20261120220000 — e esse registro fez o aplicador PULAR a do
+-- SIS-2026-0821 (epi_entrega_pode não existia no banco). Junto com a renumeração, o registro foi movido no banco:
+--   UPDATE supabase_migrations.schema_migrations
+--      SET version = '20261120230000', name = '20261120230000_sis_2026_0905_conta_garantida_e_debito_entradas_centro_custo.sql'
+--    WHERE version = '20261120220000' AND name = 'sis_2026_0905_conta_garantida_e_debito_entradas_centro_custo';
+-- liberando o 20261120220000 para a do SIS-2026-0821 (idempotente) ser aplicada.
+--
 -- ROLLBACK:
 --   -- 1) a view volta a devolver contrato NULL: recriar v_conta_garantida_fluxo_caixa com "NULL::uuid AS contrato_id, NULL::text AS contrato_nome"
 --   --    e sem o LEFT JOIN LATERAL mf (o resto da definição é igual a esta).
@@ -137,7 +145,7 @@ BEGIN
 END $$;
 
 INSERT INTO supabase_migrations.schema_migrations (version, name)
-VALUES ('20261120220000', 'sis_2026_0905_conta_garantida_e_debito_entradas_centro_custo')
+VALUES ('20261120230000', '20261120230000_sis_2026_0905_conta_garantida_e_debito_entradas_centro_custo.sql')
 ON CONFLICT DO NOTHING;
 
 NOTIFY pgrst, 'reload schema';
