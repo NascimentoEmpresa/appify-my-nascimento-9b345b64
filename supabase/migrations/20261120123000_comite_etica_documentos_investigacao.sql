@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS public."CANAL_DENUNCIA_DOCUMENTO_VERSAO" (
 CREATE INDEX IF NOT EXISTS idx_canal_documento_versao_doc
   ON public."CANAL_DENUNCIA_DOCUMENTO_VERSAO"(documento_id, versao DESC);
 
+-- Índice em toda FK (Guardião de desempenho, M2): sem eles, apagar uma
+-- denúncia ou um usuário varre as duas tabelas inteiras.
+CREATE INDEX IF NOT EXISTS canal_denuncia_documento_finalizado_por_idx ON public."CANAL_DENUNCIA_DOCUMENTO" (finalizado_por);
+CREATE INDEX IF NOT EXISTS canal_denuncia_documento_atualizado_por_idx ON public."CANAL_DENUNCIA_DOCUMENTO" (atualizado_por);
+CREATE INDEX IF NOT EXISTS canal_denuncia_documento_versao_denuncia_id_idx ON public."CANAL_DENUNCIA_DOCUMENTO_VERSAO" (denuncia_id);
+CREATE INDEX IF NOT EXISTS canal_denuncia_documento_versao_salvo_por_idx ON public."CANAL_DENUNCIA_DOCUMENTO_VERSAO" (salvo_por);
+
 -- ── 4. Quem pode redigir ─────────────────────────────────────────────
 -- DEFINER: authenticated não lê CANAL_DENUNCIA (só id/empresa_id/status),
 -- e o relator mora em apuracao_responsavel_id.
