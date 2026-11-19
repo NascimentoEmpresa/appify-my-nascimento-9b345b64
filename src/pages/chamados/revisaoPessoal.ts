@@ -69,6 +69,35 @@ export function contarRevisoes(estados: Iterable<EstadoRevisaoOuNada>) {
   return { revisar, revisado };
 }
 
+// ---- Histórico de observações (SIS-2026-0951, mig 20261120190000) -------
+// Cada "Salvar observação" é um registro NOVO em
+// "CHAMADO_SISTEMA_REVISAO_OBSERVACAO" — nada é substituído. Independe da
+// marcação: Revisar/Revisado não grava nem apaga o histórico.
+
+export interface ObservacaoRevisao {
+  id: string;
+  chamado_id: string;
+  texto: string;
+  created_at: string;
+}
+
+/** Limite do banco (CHECK em texto). */
+export const LIMITE_OBSERVACAO = 4000;
+
+/** Pode salvar? Texto não vazio e dentro do limite. */
+export const podeSalvarObservacao = (s: string | null | undefined) => {
+  const t = normalizarObservacao(s);
+  return !!t && t.length <= LIMITE_OBSERVACAO;
+};
+
+/** Mais recente primeiro (como no modelo do chamado). */
+export const ordenarHistorico = <T extends { created_at: string }>(lista: readonly T[]): T[] =>
+  [...lista].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+
+/** "18/11/2026, 09:41". */
+export const dataHoraObservacao = (iso: string) =>
+  new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
 /** Observação vazia vira null (não grava string em branco). */
 export const normalizarObservacao = (s: string | null | undefined) => {
   const t = (s ?? "").trim();
