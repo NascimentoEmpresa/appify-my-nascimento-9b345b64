@@ -136,6 +136,7 @@ export interface ChamadoPrazo {
   prazo_definido_em?: string | null;
   prazo_posicao_fila?: number | null;
   concluido_no_prazo?: boolean | null;
+  desenvolvimento_entregue_em?: string | null;
 }
 
 const ENCERRADOS = ["concluido", "reprovado", "cancelado"];
@@ -220,6 +221,12 @@ export function situacaoPrazo(c: ChamadoPrazo, previsao: Previsao | null | undef
   }
   if (!ativo(c.status)) return null;
   if (!c.prazo_dias || !previsao) return "sem_prazo";
+  // Já entregue ao Gestor de Sistemas: o relógio parou na entrega (mig
+  // 20261120170000) — o tempo do gestor avaliando não vira atraso do dev.
+  if (c.desenvolvimento_entregue_em) {
+    return entregueNoPrazo(previsao.data, c.desenvolvimento_entregue_em, c.prazo_unidade)
+      ? "concluido_no_prazo" : "concluido_atraso";
+  }
   if (c.prazo_unidade === "horas") {
     const ms = previsao.data.getTime() - agora.getTime();
     if (ms < 0) return "atrasado";
@@ -227,6 +234,37 @@ export function situacaoPrazo(c: ChamadoPrazo, previsao: Previsao | null | undef
   }
   if (diaLocal(previsao.data) < diaLocal(agora)) return "atrasado";
   return diasUteisAte(agora, previsao.data) <= 1 ? "risco" : "no_prazo";
+}
+
+// ---- Hora da conclusão = entrega do dev (19/11/2026, Pablo) ------------
+// "o tempo da conclusão do chamado tem que ser quando o dev mergea a pr, não
+// quando o gestor dá o concluido, pq por exemplo o gestor pode ficar 3 dias
+// analisando enquanto o dev já lançou a pr e da parte do dev estava no prazo".
+// O banco (mig 20261120170000) grava concluido_em = desenvolvimento_entregue_em
+// e mede concluido_no_prazo por ela; a hora do gestor fica em
+// concluido_gestor_em. Aqui, a mesma régua para o que ainda está ativo.
+
+/**
+ * Até quando o prazo do dev conta: a entrega (merge da PR ou botão do dev);
+ * concluído sem entrega marcada, a conclusão; ainda não entregue, agora.
+ */
+export function fimDoPrazoDev(
+  c: { status: string; desenvolvimento_entregue_em?: string | null; concluido_em?: string | null },
+  agora = new Date(),
+): Date {
+  if (c.desenvolvimento_entregue_em) return new Date(c.desenvolvimento_entregue_em);
+  if (c.status === "concluido" && c.concluido_em) return new Date(c.concluido_em);
+  return agora;
+}
+
+/**
+ * Entregue dentro da previsão? Espelha o gatilho: horas → até a hora exata;
+ * dias/semanas → até o fim do dia da previsão.
+ */
+export function entregueNoPrazo(previsao: Date, entregueEm: Date | string, unidade?: string | null): boolean {
+  const e = typeof entregueEm === "string" ? new Date(entregueEm) : entregueEm;
+  if (unidade === "horas") return e.getTime() <= previsao.getTime();
+  return diaLocal(e) <= diaLocal(previsao);
 }
 
 // ---- Aviso de data repetida (pedido de 28/10, continua valendo) -------
@@ -286,10 +324,14 @@ export function situacaoDesenvolvimento(
   return null;
 }
 
-/** Previsão estourada: tem previsão gravada, ainda não concluiu e o dia já passou. */
+/**
+ * Previsão estourada: tem previsão gravada, ainda não concluiu e o dia já
+ * passou. Mede até a entrega ao gestor (fimDoPrazoDev): se o dev entregou no
+ * prazo, a espera do gestor não deixa o chamado "vencido".
+ */
 export const prazoVencido = (
-  c: { status: string; prazo_conclusao_em?: string | null }, agora = new Date(),
-) => !!c.prazo_conclusao_em && ativo(c.status) && diaLocal(c.prazo_conclusao_em) < diaLocal(agora);
+  c: { status: string; prazo_conclusao_em?: string | null; desenvolvimento_entregue_em?: string | null }, agora = new Date(),
+) => !!c.prazo_conclusao_em && ativo(c.status) && diaLocal(c.prazo_conclusao_em) < diaLocal(fimDoPrazoDev(c, agora));
 
 // ---- Prazo do solicitante (mig 20261028001420) --------------------------
 

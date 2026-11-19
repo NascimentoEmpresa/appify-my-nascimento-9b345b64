@@ -53,6 +53,8 @@ export interface ChamadoGerencial {
   avaliacao_nota: number | null;
   avaliacao_comentario: string | null;
   acoes_pendentes: number | null;
+  /** Entrega do dev ao Gestor de Sistemas (mig 20261120170000 devolve na RPC). */
+  desenvolvimento_entregue_em?: string | null;
 }
 
 // ---- Abas -------------------------------------------------------------
@@ -81,7 +83,7 @@ export function grupoGerencial(c: Pick<ChamadoGerencial,
 }
 
 /** Previsão do dev vencida com o chamado ainda ativo (mesma regra do Painel do Desenvolvedor). */
-export const atrasadoGerencial = (c: Pick<ChamadoGerencial, "status" | "prazo_conclusao_em">, agora = new Date()) =>
+export const atrasadoGerencial = (c: Pick<ChamadoGerencial, "status" | "prazo_conclusao_em" | "desenvolvimento_entregue_em">, agora = new Date()) =>
   prazoVencido(c, agora);
 
 /**
