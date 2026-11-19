@@ -73,8 +73,10 @@ describe("preenchimentoDoPosto", () => {
     expect(p.valores.insalubridade_pct).toBe("40");
   });
 
-  it("benefícios: sem convenção, os da planilha", () => {
-    expect(preenchimentoDoPosto(planilha()).valores.beneficios).toMatch(/^VT .*126,28.*VA .*461,82/);
+  it("benefícios: sem convenção, nada (SIS-2026-0958 — antes vinha o texto da planilha, com VT)", () => {
+    const p = preenchimentoDoPosto(planilha({ referencia: { status: "sem_vinculo", posto: "X" } }));
+    expect(p.valores.beneficios).toBeUndefined();
+    expect(p.avisos.join(" ")).toMatch(/não tem CCT vinculada/);
   });
 
   it("com convenção no contrato, só o salário (o resto é da convenção)", () => {

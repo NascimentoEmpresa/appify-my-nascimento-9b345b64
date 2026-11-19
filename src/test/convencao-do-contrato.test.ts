@@ -72,15 +72,21 @@ describe("aplicarHerancaNoQuadro", () => {
     expect(aplicarHerancaNoQuadro(linhas, null)).toBe(linhas);
   });
 
-  it("com convenção, todos os postos recebem os mesmos benefícios (por cima do digitado)", () => {
+  it("com convenção, todos os postos recebem os mesmos percentuais (por cima do digitado)", () => {
     const h = herancaDaConvencao(doContrato())!;
     const r = aplicarHerancaNoQuadro(linhas, h);
     for (const l of r) {
-      expect(l.beneficios).toBe(h.beneficios);
       expect(l.insalubridade_pct).toBe("20");
       expect(l.periculosidade_pct).toBe("");
     }
     expect(r[0].posto_nome).toBe("UPA");
+  });
+
+  it("SIS-2026-0958: os benefícios não são mais forçados — ficam editáveis", () => {
+    const h = herancaDaConvencao(doContrato())!;
+    const r = aplicarHerancaNoQuadro(linhas, h);
+    expect(r[0].beneficios).toBe("VT R$ 1,00/mês");
+    expect(r[1].beneficios).toBe("");
   });
 });
 
