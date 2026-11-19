@@ -431,6 +431,7 @@ import SolicitarVagaCentral from "./pages/central-servicos/SolicitarVaga";
 import QuadroAvisos from "./pages/central-servicos/QuadroAvisos";
 import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
 import SolicitarManutencaoEquipamento from "./pages/central-servicos/SolicitarManutencaoEquipamento";
+import ManutencaoEquipamentoPublica from "./pages/public/ManutencaoEquipamentoPublica";
 import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
 import EspacoColaborador from "./pages/central-servicos/espaco-colaborador/EspacoColaborador";
@@ -566,6 +567,8 @@ const App = () => (
           <Route path="/fornecedor/cadastro/:token" element={<FornecedorCadastro />} />
           {/* Fornecedor abre pelo link do e-mail, sem login: o token e a credencial. */}
           <Route path="/pedido/confirmar/:token" element={<PedidoConfirmar />} />
+          {/* Prestadora acompanha a manutencao pelo QR exclusivo da maquina. */}
+          <Route path="/manutencao/equipamento/:token" element={<ManutencaoEquipamentoPublica />} />
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
           {/* Site institucional público — aponta para /vagas, /denuncia e /login */}
           <Route path="/site" element={<Site />} />
