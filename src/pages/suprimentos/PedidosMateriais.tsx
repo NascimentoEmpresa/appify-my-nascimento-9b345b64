@@ -47,7 +47,11 @@ import { imprimirDeclaracao } from "@/lib/suprimentos/declaracaoPrint";
 import { abrirComprovacaoPdf } from "@/lib/suprimentos/comprovacaoPdf";
 import { ModalFotosComprovacao } from "@/components/suprimentos/ModalFotosComprovacao";
 import { ModalFichaEpi } from "@/components/suprimentos/ModalFichaEpi";
+import { ModalFichasDigitaisPedido } from "@/components/suprimentos/ModalFichasDigitaisPedido";
 import { FotoCracha } from "@/components/suprimentos/FotoCracha";
+import { useFichasDigitaisPedido } from "@/hooks/useFichasDigitaisPedido";
+import { dataHoraEpi, imprimirComprovanteEpi } from "@/lib/suprimentos/entregaEpi";
+import { comprovanteDaFichaDigital, historicoComFichasConfirmadas, type FichaDigitalPedido } from "@/lib/suprimentos/fichasDigitaisPedido";
 import { calcularEnvioItens, despachadoSemRegistroDeSaida } from "@/lib/suprimentos/envioItens";
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
 import { pedidoElegivelParaRomaneio, pedidoEmRomaneioAberto, validarSelecaoRomaneio } from "@/lib/suprimentos/romaneio";
@@ -271,6 +275,7 @@ export default function PedidosMateriais() {
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
   const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
   const [fichaDe, setFichaDe] = useState<Pedido | null>(null);
+  const [fichasDigitaisDe, setFichasDigitaisDe] = useState<Pedido | null>(null);
   const [decidindoCancelamento, setDecidindoCancelamento] = useState<Pedido | null>(null);
   const [selecionadosRomaneio, setSelecionadosRomaneio] = useState<Set<string>>(new Set());
   const [modalRomaneioAberto, setModalRomaneioAberto] = useState(false);
@@ -737,7 +742,7 @@ export default function PedidosMateriais() {
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
               onEtiqueta={() => setEtiquetaDe(p)}
-              onFichaEpi={() => setFichaDe(p)}
+              onFichaEpi={() => setFichasDigitaisDe(p)}
               calcados={calcadosPorPedido.get(p.id)}
               onDecidirCancelamento={() => setDecidindoCancelamento(p)}
               selecionadoRomaneio={selecionadosRomaneio.has(p.id)}
@@ -803,7 +808,16 @@ export default function PedidosMateriais() {
         />
       </AcessoGate>
 
-      {/* Ficha de EPI com a empresa do contrato no cabeçalho (ver fichaEpi.ts). */}
+      <ModalFichasDigitaisPedido
+        pedido={fichasDigitaisDe}
+        onFechar={() => setFichasDigitaisDe(null)}
+        onAbrirModelo={() => {
+          setFichaDe(fichasDigitaisDe);
+          setFichasDigitaisDe(null);
+        }}
+      />
+
+      {/* Modelo físico legado, separado dos comprovantes digitais confirmados. */}
       <ModalFichaEpi pedido={fichaDe} onFechar={() => setFichaDe(null)} />
 
       <ModalExcluir
@@ -1560,7 +1574,7 @@ function CardPedido({
         <Button size="sm" variant="outline" className="col-span-2 px-2" onClick={onHistorico}>
           <HistoryIcon className="mr-1.5 h-3.5 w-3.5 shrink-0" /> Histórico
         </Button>
-        <Button size="sm" variant="outline" className="col-span-2 px-2" onClick={onFichaEpi} title="Ficha de controle e entrega de EPI">
+        <Button size="sm" variant="outline" className="col-span-2 px-2" onClick={onFichaEpi} title="Consultar fichas digitais de EPI deste pedido">
           <HardHat className="mr-1.5 h-3.5 w-3.5 shrink-0" /> Ficha EPI
         </Button>
         <Button size="sm" variant="outline" className="px-0" onClick={onEtiqueta} title="Emitir etiqueta térmica">
@@ -1725,6 +1739,7 @@ function ModalExcluir({
 function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar: () => void }) {
   const [abrindoEvento, setAbrindoEvento] = useState<string | null>(null);
   const comprovacaoAtual = pedido ? comprovacaoPedido(pedido) : null;
+  const { data: fichas = [], isLoading: carregandoFichas, error: erroFichas } = useFichasDigitaisPedido(pedido?.id ?? null);
   const { data: eventos = [], isLoading } = useQuery({
     queryKey: ["sup_pedido_historico", pedido?.id],
     enabled: !!pedido,
@@ -1767,15 +1782,40 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
     }
   };
 
+  // A confirmação já é evidência imutável em EPI_ENTREGA. Unir as duas
+  // fontes aqui também mostra confirmações antigas sem criar eventos retroativos.
+  const linhas = historicoComFichasConfirmadas(eventos, fichas);
+  const abrirFichaDigital = (ficha: FichaDigitalPedido) => {
+    try { imprimirComprovanteEpi(comprovanteDaFichaDigital(ficha)); }
+    catch (erro) { toast.error(erro instanceof Error ? erro.message : "Não foi possível abrir a ficha de EPI."); }
+  };
+
   return (
     <Dialog open={!!pedido} onOpenChange={(o) => !o && onFechar()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Histórico de {pedido?.pedido_id}</DialogTitle></DialogHeader>
         <div className="max-h-[60vh] space-y-0 overflow-y-auto py-2">
-          {isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Carregando…</p>}
-          {eventos.map((e, i) => (
+          {(isLoading || carregandoFichas) && <p className="py-6 text-center text-sm text-muted-foreground">Carregando…</p>}
+          {erroFichas && <p className="py-2 text-sm text-destructive">Não foi possível consultar as fichas digitais: {(erroFichas as Error).message}</p>}
+          {linhas.map((linha, i) => {
+            if (linha.tipo === "ficha_epi") return (
+              <div key={`ficha-${linha.id}`} className="relative flex gap-3 pb-5 pl-1">
+                {i < linhas.length - 1 && <div className="absolute left-[9px] top-5 h-full w-px bg-border" />}
+                <div className="mt-1 h-[10px] w-[10px] shrink-0 rounded-full bg-primary ring-4 ring-background" />
+                <div className="min-w-0 flex-1 text-sm">
+                  <p className="font-medium">Ficha de EPI confirmada pelo colaborador</p>
+                  <p className="text-muted-foreground">{linha.ficha.itens.map((item) => `${item.quantidade} × ${item.descricao}`).join(" · ")}</p>
+                  <Button size="sm" variant="outline" className="mt-2" onClick={() => abrirFichaDigital(linha.ficha)}>
+                    <FileText className="mr-2 h-3.5 w-3.5" /> Abrir / salvar PDF da ficha
+                  </Button>
+                  <p className="mt-1 text-xs text-muted-foreground">{linha.ficha.colaborador_nome} · {dataHoraEpi(linha.ficha.confirmado_em)}</p>
+                </div>
+              </div>
+            );
+            const e = linha.evento;
+            return (
             <div key={e.id} className="relative flex gap-3 pb-5 pl-1">
-              {i < eventos.length - 1 && <div className="absolute left-[9px] top-5 h-full w-px bg-border" />}
+              {i < linhas.length - 1 && <div className="absolute left-[9px] top-5 h-full w-px bg-border" />}
               <div className="mt-1 h-[10px] w-[10px] shrink-0 rounded-full bg-primary ring-4 ring-background" />
               <div className="min-w-0 flex-1 text-sm">
                 <p className="font-medium">
@@ -1822,8 +1862,9 @@ function ModalHistorico({ pedido, onFechar }: { pedido: Pedido | null; onFechar:
                 </p>
               </div>
             </div>
-          ))}
-          {!isLoading && eventos.length === 0 && (
+          );
+          })}
+          {!isLoading && !carregandoFichas && linhas.length === 0 && !erroFichas && (
             <p className="py-6 text-center text-sm text-muted-foreground">Sem eventos registrados.</p>
           )}
         </div>

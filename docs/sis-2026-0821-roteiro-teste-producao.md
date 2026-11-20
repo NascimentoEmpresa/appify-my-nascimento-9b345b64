@@ -35,7 +35,8 @@ Eduardo pode executar o papel interno com seu acesso amplo. Para o segundo papel
 12. **Colaborador — Confirmar pessoalmente.** Após conferir os equipamentos recebidos, clique em **Conferir e confirmar recebimento**, leia a declaração, marque **Conferi os EPIs e confirmo a declaração acima.**, digite sua senha pessoal e clique em **Confirmar recebimento**. **Resultado esperado:** o portal mostra **Recebido e confirmado em** com data e hora e um identificador **SHA-256**. Essa é a confirmação eletrônica do colaborador; não há etapa de assinatura desenhada na tela.
 13. **Colaborador — Guardar o comprovante.** No mesmo card, use **Imprimir / salvar PDF** para salvar o comprovante pelo diálogo de impressão do navegador. Se desejar conferir os dados estruturados, use **Baixar dados JSON**. **Resultado esperado:** o comprovante contém o protocolo, a identificação do colaborador, os EPIs, a declaração, o momento da confirmação e o identificador SHA-256. O botão de PDF fica disponível após a confirmação.
 14. **Usuário interno — Conferir o retorno no ERP.** Atualize **Operacional › Entrega de EPIs**, busque o protocolo e abra o registro. **Resultado esperado:** situação **Confirmado pelo colaborador**, data e hora em **Confirmado**, identificador SHA-256 e opções **Imprimir / salvar PDF** e **Baixar dados JSON**. Com acesso à rota do Suprimentos, o mesmo registro também deve aparecer em `/app/suprimentos/entregas-epi`, pois as duas telas consultam a mesma entrega.
-15. **Usuário interno — Consultar o pedido original.** Volte a **Suprimentos › Pedidos de Materiais** e localize o protocolo. **Resultado esperado:** o histórico operacional do pedido continua consultável. A confirmação no portal atualiza a **situação da entrega de EPI**; ela não muda automaticamente o status logístico do pedido nessa tela. Para este teste digital, não use o botão antigo **Ficha EPI** do pedido, que pertence ao fluxo de documento físico.
+15. **Usuário interno — Conferir a ficha no histórico do pedido.** Volte a **Suprimentos › Pedidos de Materiais** (`/app/suprimentos/pedidos-materiais`), localize o protocolo e clique em **Histórico**. **Resultado esperado:** além dos eventos logísticos, aparece uma entrada **Ficha de EPI confirmada pelo colaborador** na data da confirmação. Clique em **Abrir / salvar PDF da ficha** e confira protocolo, colaborador, EPIs, declaração, data e identificador SHA-256. A confirmação no portal atualiza a **situação da entrega de EPI**; ela não muda automaticamente o status logístico do pedido.
+16. **Usuário interno — Conferir o botão Ficha EPI.** No card do mesmo pedido, clique em **Ficha EPI**. **Resultado esperado:** aparece uma linha expansível para cada entrega digital registrada nesse pedido, com a situação **Aguardando confirmação** ou **Confirmada pelo colaborador**. Expanda a linha confirmada para ver os itens e abrir o PDF. Se houver duas ou mais entregas do mesmo pedido, cada uma deve ter sua própria linha e seu próprio comprovante; o histórico também deve ter uma entrada por confirmação. O **modelo para impressão sem confirmação digital** continua disponível por um botão separado nessa janela.
 
 ## Resultado a registrar
 
@@ -52,6 +53,8 @@ Preencha após o teste, sem publicar CPF, senha ou outros dados pessoais na PR:
 | Portal exibiu data, hora e SHA-256 | OK / Falhou |
 | Operacional e Suprimentos exibiram **Confirmado pelo colaborador** | OK / Falhou |
 | Comprovante pôde ser salvo em PDF | OK / Falhou |
+| Histórico do pedido exibiu a ficha confirmada e abriu o PDF correto | OK / Falhou |
+| Botão **Ficha EPI** mostrou cada entrega digital do pedido | OK / Falhou |
 | Ajuste necessário, mensagem de erro ou etapa divergente | |
 
 ## Se alguma etapa não aparecer
@@ -62,5 +65,6 @@ Preencha após o teste, sem publicar CPF, senha ou outros dados pessoais na PR:
 - **Entrega ausente no portal:** confirme que o usuário interno já clicou em **Registrar entrega**, que o colaborador do pedido é o mesmo da conta autenticada e atualize **EPIs** no portal.
 - **Portal pede senha pessoal:** use **Perfil › Segurança › Trocar senha** com a própria conta do colaborador e volte a **EPIs**. Se o registro foi criado em **Ficha física assinada e anexada**, ele seguirá o fluxo físico e não exibirá confirmação eletrônica.
 - **PDF não abre:** após a confirmação, permita a janela de impressão do navegador e tente **Imprimir / salvar PDF** novamente.
+- **Ficha digital ausente em Pedidos de Materiais:** confira se o mesmo protocolo foi usado em todo o fluxo, atualize a página e abra novamente **Histórico** ou **Ficha EPI**. Uma ficha pendente aparece no botão **Ficha EPI**, mas só entra no histórico de confirmações e libera o PDF após o colaborador confirmar.
 
 O teste termina quando o colaborador encontra seu comprovante e o usuário interno vê a mesma entrega confirmada no ERP. Registre qualquer divergência no chamado **SIS-2026-0821** para ajuste final.
